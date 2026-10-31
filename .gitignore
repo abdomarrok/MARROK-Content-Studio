@@ -13,3 +13,5 @@ scratch/
 
 test-results/
 playwright-report/
+bun.lock
+bun.lockb
