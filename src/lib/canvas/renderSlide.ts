@@ -86,21 +86,20 @@ export async function renderSlideToCanvas(
   const layout = computeSlideLayoutAwareness(slide, carousel);
 
   // 4. Header: Top-Left Authentic MARROK Vector Badge + Brand Wordmark + Category Tag
-  const headerOverride = slide.layoutOverrides?.headerBadge;
   if (!layout.headerBadge.hidden) {
     ctx.save();
-    if (headerOverride) {
-      const hCx = layout.headerBadge.x + layout.headerBadge.width / 2;
-      const hCy = layout.headerBadge.y + layout.headerBadge.height / 2;
-      ctx.translate(headerOverride.dx || 0, headerOverride.dy || 0);
-      if (headerOverride.scale && headerOverride.scale !== 1) {
-        ctx.translate(hCx, hCy);
-        ctx.scale(headerOverride.scale, headerOverride.scale);
-        ctx.translate(-hCx, -hCy);
-      }
-      if (headerOverride.opacity !== undefined) {
-        ctx.globalAlpha *= Math.max(0.1, Math.min(1, headerOverride.opacity));
-      }
+    const hCx = layout.headerBadge.x + layout.headerBadge.width / 2;
+    const hCy = layout.headerBadge.y + layout.headerBadge.height / 2;
+    if (layout.headerBadge.dx !== 0 || layout.headerBadge.dy !== 0) {
+      ctx.translate(layout.headerBadge.dx, layout.headerBadge.dy);
+    }
+    if (layout.headerBadge.scale && layout.headerBadge.scale !== 1) {
+      ctx.translate(hCx, hCy);
+      ctx.scale(layout.headerBadge.scale, layout.headerBadge.scale);
+      ctx.translate(-hCx, -hCy);
+    }
+    if (layout.headerBadge.opacity !== undefined && layout.headerBadge.opacity < 1) {
+      ctx.globalAlpha *= Math.max(0.1, Math.min(1, layout.headerBadge.opacity));
     }
     drawHeader(ctx, carousel, theme, categoryTag, spec);
     ctx.restore();
@@ -119,7 +118,7 @@ export async function renderSlideToCanvas(
     ctx.save();
     const cx = spec.safeTextCenterX;
     const cy = graphicTransform.cardY + graphicTransform.cardH / 2;
-    const cardShiftX = graphicOverride?.dx || 0;
+    const cardShiftX = layout.graphicCard ? layout.graphicCard.dx : graphicOverride?.dx || 0;
     const cardShiftY = layout.graphicCard
       ? layout.graphicCard.y - graphicTransform.cardY
       : graphicOverride?.dy || 0;
@@ -178,7 +177,7 @@ export async function renderSlideToCanvas(
       layout.arabicBodyBlock && !layout.arabicBodyBlock.hidden ? layout.arabicBodyBlock.top : ceilingY,
       graphicBottom
     );
-    const clipTop = Math.max(110, minTextTop - 20);
+    const clipTop = Math.max(spec.headerY, minTextTop - 16);
 
     const resolveAlignX = (align: 'left' | 'center' | 'right' = 'center', dx: number = 0) => {
       if (align === 'left') return { x: spec.safeMarginLeft + dx, textAlign: 'left' as CanvasTextAlign };
@@ -189,10 +188,10 @@ export async function renderSlideToCanvas(
     ctx.save();
     ctx.beginPath();
     ctx.rect(
-      spec.safeMarginLeft - 36,
+      spec.safeMarginLeft - 8,
       clipTop,
-      spec.safeContentWidth + 72,
-      Math.max(0, ceilingY - clipTop + 16)
+      spec.safeContentWidth + 16,
+      Math.max(0, ceilingY - clipTop + 8)
     );
     ctx.clip();
 

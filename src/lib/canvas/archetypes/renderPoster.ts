@@ -77,8 +77,8 @@ export async function drawTakeawaysBlock(
   const cardX = bounds.x !== undefined ? bounds.x : SAFE_MARGIN_LEFT + (bounds.dx || 0);
   const cardW = bounds.width !== undefined ? bounds.width : SAFE_CONTENT_WIDTH;
   const totalH = bounds.height;
-  const gap = count > 1 ? 12 : 0;
-  const rowH = Math.max(60, Math.floor((totalH - (count - 1) * gap) / count));
+  const gap = count > 1 ? (totalH < 200 ? 10 : 12) : 0;
+  const rowH = Math.max(46, Math.floor((totalH - (count - 1) * gap) / count));
 
   ctx.save();
 
@@ -99,8 +99,8 @@ export async function drawTakeawaysBlock(
       1.2
     );
 
-    // Left Number / Icon Badge (44x44px)
-    const badgeSize = Math.min(44, rowH - 20);
+    // Left Number / Icon Badge
+    const badgeSize = Math.min(44, Math.max(32, rowH - 16));
     const badgeX = cardX + 14;
     const badgeY = rowY + (rowH - badgeSize) / 2;
 
@@ -133,16 +133,17 @@ export async function drawTakeawaysBlock(
     // Text Zone between badge and right edge
     const textStartX = badgeX + badgeSize + 16;
     const textW = cardW - (badgeSize + 40);
+    const isCompactRow = rowH < 64;
 
     // English Takeaway (Top line / Left)
     const fitEn = fitTextInBox(
       ctx,
       item.en,
       textW,
-      26,
+      isCompactRow ? 22 : 26,
       '"Plus Jakarta Sans", sans-serif',
       '700',
-      { maxLines: 1, minFontSize: 24 }
+      { maxLines: 1, minFontSize: isCompactRow ? 18 : 24 }
     );
 
     ctx.font = `700 ${fitEn.fontSize}px "Plus Jakarta Sans", sans-serif`;
@@ -150,7 +151,7 @@ export async function drawTakeawaysBlock(
     ctx.textAlign = 'left';
     ctx.direction = 'ltr';
     ctx.textBaseline = 'top';
-    ctx.fillText(fitEn.lines[0] || item.en, textStartX, rowY + 12);
+    ctx.fillText(fitEn.lines[0] || item.en, textStartX, rowY + (isCompactRow ? 7 : 12));
 
     // Arabic Takeaway (Bottom line / RTL)
     if (item.ar) {
@@ -158,10 +159,10 @@ export async function drawTakeawaysBlock(
         ctx,
         item.ar,
         textW,
-        24,
+        isCompactRow ? 20 : 24,
         '"Cairo", sans-serif',
         '600',
-        { maxLines: 1, minFontSize: 22 }
+        { maxLines: 1, minFontSize: isCompactRow ? 17 : 22 }
       );
 
       ctx.font = `600 ${fitAr.fontSize}px "Cairo", sans-serif`;
@@ -169,7 +170,7 @@ export async function drawTakeawaysBlock(
       ctx.textAlign = 'right';
       ctx.direction = 'rtl';
       ctx.textBaseline = 'bottom';
-      ctx.fillText(fitAr.lines[0] || item.ar, cardX + cardW - 16, rowY + rowH - 10);
+      ctx.fillText(fitAr.lines[0] || item.ar, cardX + cardW - 16, rowY + rowH - (isCompactRow ? 6 : 10));
     }
   }
 

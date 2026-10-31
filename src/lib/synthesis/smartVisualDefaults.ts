@@ -158,6 +158,121 @@ export function extractKeyPhrasesFromSlide(slide: SlideData): string[] {
 }
 
 /**
+ * Heuristic analysis of a slide's headline and body copy to assign the most appropriate
+ * content archetype among Metric, Compare, Code, Row, or Number.
+ */
+export function analyzeSlideTextForArchetype(
+  slide: SlideData,
+  slideIndex: number = 0
+): 'metric' | 'compare' | 'code' | 'row' | 'number' {
+  const title = (slide.enTitle || '').trim();
+  const body = (slide.enBody || '').trim();
+  const arTitle = (slide.arTitle || '').trim();
+  const arBody = (slide.arBody || '').trim();
+  const arText = `${arTitle} ${arBody}`;
+  const fullText = `${title} ${body} ${arText}`;
+
+  let scores: Record<'metric' | 'compare' | 'code' | 'row' | 'number', number> = {
+    code: 0,
+    compare: 0,
+    metric: 0,
+    number: 0,
+    row: 1, // baseline fallback
+  };
+
+  // 1. Code Diff / Query / CLI / Config detection
+  if (
+    /\b(?:SELECT\s+.+\s+FROM|EXPLAIN\s+ANALYZE|CREATE\s+INDEX|docker\s+run|kubectl\s+apply|async\s+fn|function\s+\w+|const\s+\w+\s*=|let\s+\w+\s*=|import\s+.+\s+from|curl\s+-X|git\s+commit|npm\s+run|cargo\s+build)\b/i.test(
+      fullText
+    )
+  ) {
+    scores.code += 6;
+  }
+  if (
+    /\b(?:\w+\.(?:yaml|yml|json|sql|ts|tsx|rs|py|go|sh|toml)|code\s+diff|code\s+snippet|sql\s+query|cli\s+command|config\s+file|terminal\s+command)\b/i.test(
+      fullText
+    ) ||
+    /كود\s+برمجي|مقتطف\s+كود|سطر\s+الأوامر|استعلام\s+SQL|ملف\s+إعدادات/i.test(arText)
+  ) {
+    scores.code += 4;
+  }
+  if (slide.codeSnippet && slide.codeSnippet.trim().length > 10 && !isGenericPlaceholderValue(slide.codeFileName)) {
+    scores.code += 3;
+  }
+
+  // 2. Compare (Before vs After / Trade-off between two approaches)
+  if (
+    /\b(?:vs\.?|versus|compared\s+to|instead\s+of|rather\s+than|before\s+and\s+after|before\s+vs|legacy\s+vs|monolith\s+vs|traditional\s+vs|trade-?off\s+between|difference\s+between|pros\s+and\s+cons)\b/i.test(
+      fullText
+    ) ||
+    /مقارنة\s+بين|مقابل|بدلاً\s+من|قبل\s+وبعد|الفرق\s+بين/.test(arText)
+  ) {
+    scores.compare += 6;
+  }
+  if (/\b(?:vs\.?|versus)\b/i.test(title) || /مقابل/.test(arTitle)) {
+    scores.compare += 3;
+  }
+
+  // 3. Numbered Step / Principle / Phase / Stage detection
+  if (
+    /^(?:step|stage|phase|rule|principle|layer|pillar|#?\d+[.):\s-]|first\s+principle|second\s+stage|third\s+stage|first\s+step|second\s+step|third\s+step)/i.test(
+      title
+    ) ||
+    /^(?:الخطوة|المرحلة|المبدأ|القاعدة|أولاً|ثانياً|ثالثاً|رابعاً|خامساً)/.test(arTitle)
+  ) {
+    scores.number += 5;
+  }
+  if (/\b(?:step|stage|phase|rule|principle)\s+#?\d{1,2}\b/i.test(fullText)) {
+    scores.number += 3;
+  }
+
+  // 4. Metric / Benchmark / Financial or Latency Impact detection
+  if (
+    /(?:\$\s*\d+(?:[.,]\d+)?\s*(?:B|M|K|billion|million)?|\b\d+(?:[.,]\d+)?\s*(?:x|%|ms|μs|ns|gb\/s|mb\/s|rps|req\/s|tb|gb|billion|million|مليار|مليارات|مليون|أضعاف|بالمئة))(?:\b|$)/i.test(
+      fullText
+    )
+  ) {
+    scores.metric += 5;
+  }
+  if (
+    /(?:\$\s*\d+|\b\d+(?:[.,]\d+)?\s*(?:x|%|ms|μs|ns|B|M|K)\b)/i.test(title) ||
+    /\b(?:benchmark|p99|p95|throughput|latency\s+drop|cost\s+reduction|cut\s+spend)\b/i.test(fullText)
+  ) {
+    scores.metric += 2;
+  }
+
+  // 5. Row (Mechanism / Architecture Schematic) signals
+  if (
+    /\b(?:architecture|pipeline|topology|workflow|mechanism|diagram|cluster|isolation|routing|traversal|layer|stack|mesh)\b/i.test(
+      fullText
+    ) ||
+    /آلية|معمارية|شبكة|طبقات|مسار|عزل/.test(arText)
+  ) {
+    scores.row += 2;
+  }
+
+  // Pick the highest-scoring archetype (tie-breaking order: code > compare > metric > number > row)
+  const candidates: Array<'code' | 'compare' | 'metric' | 'number' | 'row'> = [
+    'code',
+    'compare',
+    'metric',
+    'number',
+    'row',
+  ];
+  let best: 'code' | 'compare' | 'metric' | 'number' | 'row' = 'row';
+  let bestScore = scores.row;
+
+  for (const candidate of candidates) {
+    if (scores[candidate] > bestScore) {
+      best = candidate;
+      bestScore = scores[candidate];
+    }
+  }
+
+  return best;
+}
+
+/**
  * Infers the best-fit SlideType archetype from a slide's headline and body content.
  */
 export function inferBestSlideArchetype(
@@ -166,54 +281,9 @@ export function inferBestSlideArchetype(
   totalSlides: number = 8
 ): SlideType {
   if (slide.type === 'poster') return 'poster';
-  if (slideIndex === 0) return 'hub';
-  if (totalSlides > 1 && slideIndex === totalSlides - 1) return 'cta';
-  if (slide.imageUrl && slide.imageUrl.trim().length > 0) return 'image';
+  if (slide.imageUrl && slide.imageUrl.trim().length > 0 && slide.type === 'image') return 'image';
 
-  const title = (slide.enTitle || '').trim();
-  const body = (slide.enBody || '').trim();
-  const arText = `${slide.arTitle || ''} ${slide.arBody || ''}`;
-  const fullText = `${title} ${body} ${arText}`;
-
-  // 1. Code Diff / Query / CLI detection
-  if (
-    /\b(?:SELECT\s+.+\s+FROM|EXPLAIN\s+ANALYZE|docker\s+run|kubectl\s+apply|async\s+fn|function\s+\w+|const\s+\w+\s*=|import\s+.+\s+from|curl\s+-X|git\s+commit|npm\s+run)\b/i.test(
-      fullText
-    ) ||
-    (slide.codeSnippet && slide.codeSnippet.trim().length > 10 && !isGenericPlaceholderValue(slide.codeFileName))
-  ) {
-    return 'code';
-  }
-
-  // 2. Compare (Before vs After / Trade-off between two approaches)
-  if (
-    /\b(?:vs\.?|versus|compared\s+to|instead\s+of|rather\s+than|before\s+and\s+after|legacy\s+vs|monolith\s+vs|traditional\s+vs)\b/i.test(
-      fullText
-    ) ||
-    /مقارنة\s+بين|مقابل|بدلاً\s+من|قبل\s+وبعد/.test(arText)
-  ) {
-    return 'compare';
-  }
-
-  // 3. Metric / Benchmark / Financial Impact detection
-  if (
-    /(?:\$\s*\d+(?:[.,]\d+)?\s*(?:B|M|K|billion|million)?|\b\d+(?:[.,]\d+)?\s*(?:x|%|ms|μs|ns|gb\/s|mb\/s|rps|req\/s|tb|gb|billion|million|مليار|مليارات|مليون|أضعاف|بالمئة))\b/i.test(
-      fullText
-    )
-  ) {
-    return 'metric';
-  }
-
-  // 4. Numbered Step / Principle / Phase detection
-  if (
-    /^(?:step|stage|phase|rule|principle|layer|pillar|#?\d+[.):\s-])/i.test(title) ||
-    /^(?:الخطوة|المرحلة|المبدأ|القاعدة|أولاً|ثانياً|ثالثاً)/.test((slide.arTitle || '').trim())
-  ) {
-    return 'number';
-  }
-
-  // 5. Default to Mechanism Schematic ('row')
-  return 'row';
+  return analyzeSlideTextForArchetype(slide, slideIndex);
 }
 
 /**
@@ -450,11 +520,18 @@ export function resolveSmartSlideVisuals(
       : variantMeta.footer;
 
   // 3. NUMBER ARCHETYPE DEFAULTS
-  const extractedNumMatch = (slide.enTitle || '').match(/^(?:step|stage|phase|rule|#)?\s*(\d{1,2})\b/i);
-  const autoStepStr = extractedNumMatch
-    ? extractedNumMatch[1].padStart(2, '0')
-    : String(slideIndex + 1).padStart(2, '0');
-  const stepNumber = !forceRefresh && slide.stepNumber ? slide.stepNumber : autoStepStr;
+  const extractedNumStr = (() => {
+    const numMatch = fullText.match(/(?:step|stage|phase|rule|principle|layer|pillar|#)\s*0?(\d{1,2})\b/i) ||
+      (slide.enTitle || '').match(/^0?(\d{1,2})[.):\s-]/);
+    if (numMatch) return numMatch[1].padStart(2, '0');
+    if (/\bfirst\b|أولاً|الأول/i.test(fullText)) return '01';
+    if (/\bsecond\b|ثانياً|الثاني/i.test(fullText)) return '02';
+    if (/\bthird\b|ثالثاً|الثالث/i.test(fullText)) return '03';
+    if (/\bfourth\b|رابعاً|الرابع/i.test(fullText)) return '04';
+    if (/\bfifth\b|خامساً|الخامس/i.test(fullText)) return '05';
+    return String(slideIndex + 1).padStart(2, '0');
+  })();
+  const stepNumber = !forceRefresh && slide.stepNumber ? slide.stepNumber : extractedNumStr;
   const domainKicker = phrases[0] ? `STEP ${stepNumber} // ${phrases[0].toUpperCase().slice(0, 16)}` : `STEP ${stepNumber}`;
   const stepLabel =
     !forceRefresh && slide.stepLabel && !/^STEP\s*\d+$/i.test(slide.stepLabel.trim())
@@ -558,6 +635,21 @@ export function resolveSmartSlideVisuals(
     const p0 = phrases[0] || 'System Scope';
     const p1 = phrases[1] || 'Policy Control';
     const p2 = phrases[2] || 'Verification';
+
+    const vsMatch = `${slide.enTitle || ''}. ${slide.enBody || ''}`.match(
+      /([A-Za-z0-9][A-Za-z0-9\s/-]{1,24}?)\s+(?:vs\.?|versus|compared\s+to|instead\s+of)\s+([A-Za-z0-9][A-Za-z0-9\s/-]{1,24}?)(?:[.,;:!?]|$)/i
+    );
+    if (vsMatch) {
+      const leftClean = vsMatch[1].trim().toUpperCase().slice(0, 22);
+      const rightClean = vsMatch[2].trim().toUpperCase().slice(0, 22);
+      return {
+        leftTitle: leftClean,
+        leftBody: `• Legacy ${vsMatch[1].trim()} constraints\n• Higher operational overhead\n• Limited elasticity under load`,
+        rightTitle: rightClean,
+        rightBody: `• Optimized ${vsMatch[2].trim()} path\n• Sub-millisecond execution\n• Deterministic scaling guarantees`,
+      };
+    }
+
     if (/security|breach|threat|permission|ai|اختراق|أمن|ذكاء/.test(lower)) {
       return {
         leftTitle: 'UNSCOPED / DEFAULT',

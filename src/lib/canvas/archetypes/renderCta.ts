@@ -28,17 +28,18 @@ export async function drawCtaSlide(
   // Render Upper Emblem & Brand Header inside scaled graphic space
   if (!layout.graphicCard?.hidden) {
     ctx.save();
-    const graphicOverride = slide.layoutOverrides?.graphicCard;
-    if (graphicOverride) {
-      const gCx = centerX;
-      const gCy = ctaTransform.cardY + ctaTransform.cardH / 2;
-      ctx.translate(gCx + (graphicOverride.dx || 0), gCy + (graphicOverride.dy || 0));
-      const s = graphicOverride.scale ?? 1;
+    const gCx = centerX;
+    const gCy = ctaTransform.cardY + ctaTransform.cardH / 2;
+    const shiftX = layout.graphicCard?.dx || 0;
+    const shiftY = layout.graphicCard ? layout.graphicCard.y - ctaTransform.cardY : 0;
+    const s = layout.graphicCard?.scale ?? 1;
+    if (shiftX !== 0 || shiftY !== 0 || s !== 1) {
+      ctx.translate(gCx + shiftX, gCy + shiftY);
       ctx.scale(s, s);
       ctx.translate(-gCx, -gCy);
-      if (graphicOverride.opacity !== undefined) {
-        ctx.globalAlpha *= Math.max(0.1, Math.min(1, graphicOverride.opacity));
-      }
+    }
+    if (layout.graphicCard?.opacity !== undefined && layout.graphicCard.opacity < 1) {
+      ctx.globalAlpha *= Math.max(0.1, Math.min(1, layout.graphicCard.opacity));
     }
     if (
       ctaTransform.scale !== 1 ||

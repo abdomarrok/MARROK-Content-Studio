@@ -297,4 +297,124 @@ describe('Slide Layout Awareness Engine', () => {
     // Arabic title top stays anchored at its baseline position in freeMoveLayout mode
     expect(movedTitleFree.arabicTitleBlock!.top).toBe(baselineFree.arabicTitleBlock!.top);
   });
+
+  it('guarantees all elements stay strictly inside safe zones across all 5 social formats, composition presets, freeMoveLayout, and extreme overrides', () => {
+    const presets: CanvasDimensionPreset[] = ['tiktok-9:16', 'ig-4:5', 'ig-3:4', 'ig-1:1', 'ig-9:16'];
+    const compPresets = ['standard', 'headline-first', 'visual-hero', 'split-balanced', 'compact-editorial'] as const;
+    const archetypes: SlideData['type'][] = ['hub', 'row', 'number', 'metric', 'code', 'compare', 'poster', 'cta'];
+
+    for (const preset of presets) {
+      const spec = getCanvasDimensionSpec(preset);
+      const mockCarousel: CarouselData = {
+        brand: '@MARROK',
+        category: 'SYSTEMS ARCHITECTURE',
+        theme: 'cyber',
+        caption: 'Safe zone test',
+        dimensionPreset: preset,
+        slides: [],
+      };
+
+      for (const comp of compPresets) {
+        for (const freeMove of [false, true]) {
+          for (const type of archetypes) {
+            const rawSlide: SlideData = applySlideCompositionPreset(
+              {
+                type,
+                enTitle: 'High-Throughput Zero-Copy Kernel Bypass Architecture.',
+                arTitle: 'معمارية تجاوز النواة بدون نسخ للبيانات عالية الإنتاجية',
+                enBody:
+                  'DPDK and io_uring eliminate context-switch overhead by polling NIC ring buffers directly in user space.',
+                arBody:
+                  'تقوم تقنيات DPDK و io_uring بإلغاء عبء تبديل السياق عبر قراءة حلقات الشبكة مباشرة في مساحة المستخدم.',
+                takeaways:
+                  type === 'poster'
+                    ? [
+                        { en: 'Zero-copy ring buffers.', ar: 'حلقات ذاكرة بدون نسخ.' },
+                        { en: 'Sub-microsecond p99 tail.', ar: 'زمن استجابة أقل من ميكروثانية.' },
+                        { en: 'Pinned NUMA core queues.', ar: 'طوابير أنوية NUMA مخصصة.' },
+                      ]
+                    : undefined,
+              },
+              comp
+            );
+
+            // Apply extreme overrides to verify clamping in all cases
+            const stressedSlide: SlideData = {
+              ...rawSlide,
+              freeMoveLayout: freeMove,
+              layoutOverrides: {
+                headerBadge: { dx: -500, dy: -400 },
+                graphicCard: { dx: 600, dy: 500, scale: 1.35 },
+                titleBlock: { dx: -400, dy: 450, scale: 1.2, align: 'left' },
+                arabicTitleBlock: { dx: 400, dy: 450, scale: 1.2, align: 'right' },
+                bodyBlock: { dx: 350, dy: 500, scale: 1.15 },
+                arabicBodyBlock: { dx: -350, dy: 550, scale: 1.15 },
+                takeawaysBlock: { dx: 500, dy: 600, scale: 1.2 },
+                ctaButton: { dx: -500, dy: 600, scale: 1.3 },
+                attributionCard: { dx: 500, dy: 600, scale: 1.3 },
+              },
+            };
+
+            const layout = computeSlideLayoutAwareness(stressedSlide, mockCarousel);
+            const headerFloorY = layout.headerBadge.hidden
+              ? spec.headerY
+              : layout.headerBadge.y + layout.headerBadge.height;
+
+            // Header stays inside horizontal safe margins
+            expect(layout.headerBadge.x).toBeGreaterThanOrEqual(spec.safeMarginLeft);
+            expect(layout.headerBadge.x + layout.headerBadge.width * layout.headerBadge.scale).toBeLessThanOrEqual(
+              spec.safeMarginRight
+            );
+
+            // Graphic card stays inside vertical safe zone [headerFloorY, safeFooterCeilingY]
+            if (layout.graphicCard && !layout.graphicCard.hidden) {
+              expect(layout.graphicCard.effectiveTop).toBeGreaterThanOrEqual(headerFloorY - 1);
+              expect(layout.graphicCard.effectiveBottom).toBeLessThanOrEqual(spec.safeFooterCeilingY + 1);
+            }
+
+            // All text blocks stay inside [headerFloorY, safeFooterCeilingY]
+            for (const block of [
+              layout.titleBlock,
+              layout.arabicTitleBlock,
+              layout.bodyBlock,
+              layout.arabicBodyBlock,
+            ]) {
+              if (block && !block.hidden) {
+                expect(block.top).toBeGreaterThanOrEqual(headerFloorY - 1);
+                expect(block.bottom).toBeLessThanOrEqual(spec.safeFooterCeilingY + 1);
+              }
+            }
+
+            // Takeaways block stays inside horizontal and vertical safe zone
+            if (layout.takeawaysBlock && !layout.takeawaysBlock.hidden) {
+              expect(layout.takeawaysBlock.x).toBeGreaterThanOrEqual(spec.safeMarginLeft - 1);
+              expect(layout.takeawaysBlock.x + layout.takeawaysBlock.width).toBeLessThanOrEqual(
+                spec.safeMarginRight + 1
+              );
+              expect(layout.takeawaysBlock.top).toBeGreaterThanOrEqual(headerFloorY - 1);
+              expect(layout.takeawaysBlock.bottom).toBeLessThanOrEqual(spec.safeFooterCeilingY + 1);
+            }
+
+            // CTA button & attribution card stay inside horizontal and vertical safe zone
+            if (layout.ctaButton && !layout.ctaButton.hidden) {
+              expect(layout.ctaButton.x).toBeGreaterThanOrEqual(spec.safeMarginLeft - 1);
+              expect(layout.ctaButton.x + layout.ctaButton.width).toBeLessThanOrEqual(spec.safeMarginRight + 1);
+              expect(layout.ctaButton.y).toBeGreaterThanOrEqual(headerFloorY - 1);
+              expect(layout.ctaButton.y + layout.ctaButton.height).toBeLessThanOrEqual(spec.safeFooterCeilingY + 1);
+            }
+            if (layout.attributionCard && !layout.attributionCard.hidden) {
+              expect(layout.attributionCard.x).toBeGreaterThanOrEqual(spec.safeMarginLeft - 1);
+              expect(layout.attributionCard.x + layout.attributionCard.width).toBeLessThanOrEqual(
+                spec.safeMarginRight + 1
+              );
+              expect(layout.attributionCard.y).toBeGreaterThanOrEqual(headerFloorY - 1);
+              expect(layout.attributionCard.y + layout.attributionCard.height).toBeLessThanOrEqual(
+                spec.safeFooterCeilingY + 1
+              );
+            }
+          }
+        }
+      }
+    }
+  });
 });

@@ -26,7 +26,10 @@ import {
   DiagramVariant,
   DiagramNode,
 } from '../../types.ts';
-import { resolveSmartSlideVisuals } from '../../lib/synthesis/smartVisualDefaults.ts';
+import {
+  analyzeSlideTextForArchetype,
+  resolveSmartSlideVisuals,
+} from '../../lib/synthesis/smartVisualDefaults.ts';
 import { IconPickerPopover } from './IconPickerPopover.tsx';
 import { IconThumbnail, getIconDisplayName } from './IconThumbnail.tsx';
 
@@ -129,7 +132,7 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
 
   const totalSlides = carousel?.slides?.length || 8;
   const smart = resolveSmartSlideVisuals(currentSlide, currentSlideIndex, false);
-  const recommendedArchetype = smart.recommendedArchetype;
+  const recommendedArchetype = analyzeSlideTextForArchetype(currentSlide, currentSlideIndex);
   const recommendedVariant = smart.recommendedVariant;
 
   const satIcons =
@@ -174,42 +177,77 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
     }
   };
 
-  const handleTriggerSmartMatch = (switchArchetype: boolean = false) => {
-    if (onSmartMatchVisuals) {
-      onSmartMatchVisuals(switchArchetype);
-      return;
-    }
-    const targetType = switchArchetype ? recommendedArchetype : currentSlide.type;
+  const handleTriggerSmartMatch = (switchArchetype: boolean = true) => {
+    const targetType: SlideType = switchArchetype
+      ? analyzeSlideTextForArchetype(currentSlide, currentSlideIndex)
+      : currentSlide.type;
     const refreshed = resolveSmartSlideVisuals(
       { ...currentSlide, type: targetType },
       currentSlideIndex,
       true
     );
+
+    if (onSmartMatchVisuals) {
+      onSmartMatchVisuals(switchArchetype);
+      return;
+    }
+
+    if (switchArchetype) {
+      onSetSlideType(targetType);
+    }
+
+    const updatedFields: Partial<SlideData> = {
+      type: targetType,
+      centerIcon: refreshed.centerIcon,
+      centerTag: refreshed.centerTag,
+      satLabels: refreshed.satLabels,
+      satIcons: refreshed.satIcons,
+      diagramVariant: refreshed.diagramVariant,
+      diagramNodes: refreshed.diagramNodes,
+      diagramEdges: refreshed.diagramEdges,
+      diagramFooter: refreshed.diagramFooter,
+      stepNumber: refreshed.stepNumber,
+      stepLabel: refreshed.stepLabel,
+      metricValue: refreshed.metricValue,
+      metricLabel: refreshed.metricLabel,
+      metricDiff: refreshed.metricDiff,
+      metricIcon: refreshed.metricIcon,
+      codeFileName: refreshed.codeFileName,
+      codeLanguage: refreshed.codeLanguage,
+      codeSnippet: refreshed.codeSnippet,
+      compareLeftTitle: refreshed.compareLeftTitle,
+      compareLeftBody: refreshed.compareLeftBody,
+      compareRightTitle: refreshed.compareRightTitle,
+      compareRightBody: refreshed.compareRightBody,
+    };
+
     if (onUpdateSlideFields) {
-      onUpdateSlideFields({
-        type: targetType,
-        centerIcon: refreshed.centerIcon,
-        centerTag: refreshed.centerTag,
-        satLabels: refreshed.satLabels,
-        satIcons: refreshed.satIcons,
-        diagramVariant: refreshed.diagramVariant,
-        diagramNodes: refreshed.diagramNodes,
-        diagramEdges: refreshed.diagramEdges,
-        diagramFooter: refreshed.diagramFooter,
-        stepNumber: refreshed.stepNumber,
-        stepLabel: refreshed.stepLabel,
-        metricValue: refreshed.metricValue,
-        metricLabel: refreshed.metricLabel,
-        metricDiff: refreshed.metricDiff,
-        metricIcon: refreshed.metricIcon,
-        codeFileName: refreshed.codeFileName,
-        codeLanguage: refreshed.codeLanguage,
-        codeSnippet: refreshed.codeSnippet,
-        compareLeftTitle: refreshed.compareLeftTitle,
-        compareLeftBody: refreshed.compareLeftBody,
-        compareRightTitle: refreshed.compareRightTitle,
-        compareRightBody: refreshed.compareRightBody,
-      });
+      onUpdateSlideFields(updatedFields);
+    } else {
+      if (targetType === 'metric') {
+        onUpdateField('metricValue', refreshed.metricValue);
+        onUpdateField('metricLabel', refreshed.metricLabel);
+        onUpdateField('metricDiff', refreshed.metricDiff);
+        onUpdateField('metricIcon', refreshed.metricIcon);
+      } else if (targetType === 'compare') {
+        onUpdateField('compareLeftTitle', refreshed.compareLeftTitle);
+        onUpdateField('compareLeftBody', refreshed.compareLeftBody);
+        onUpdateField('compareRightTitle', refreshed.compareRightTitle);
+        onUpdateField('compareRightBody', refreshed.compareRightBody);
+      } else if (targetType === 'code') {
+        onUpdateField('codeFileName', refreshed.codeFileName);
+        onUpdateField('codeLanguage', refreshed.codeLanguage);
+        onUpdateField('codeSnippet', refreshed.codeSnippet);
+      } else if (targetType === 'number') {
+        onUpdateField('stepNumber', refreshed.stepNumber);
+        onUpdateField('stepLabel', refreshed.stepLabel);
+        onUpdateField('centerIcon', refreshed.numberIcon);
+      } else if (targetType === 'row') {
+        onUpdateField('diagramVariant', refreshed.diagramVariant);
+        onUpdateField('diagramNodes', refreshed.diagramNodes);
+        onUpdateField('diagramEdges', refreshed.diagramEdges);
+        onUpdateField('diagramFooter', refreshed.diagramFooter);
+      }
     }
   };
 
@@ -232,28 +270,14 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5">
-            {recommendedArchetype !== currentSlide.type &&
-              currentSlideIndex > 0 &&
-              currentSlideIndex < totalSlides - 1 && (
-                <button
-                  type="button"
-                  onClick={() => handleTriggerSmartMatch(true)}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/15 border border-white/15 text-[11px] font-semibold text-white transition-colors cursor-pointer whitespace-nowrap"
-                  title={`Switch to recommended ${recommendedArchetype.toUpperCase()} layout based on slide text`}
-                >
-                  <Sparkles className="w-3 h-3" style={{ color: theme.accent }} />
-                  <span>Use Suggested ({recommendedArchetype.toUpperCase()})</span>
-                </button>
-              )}
-
             <button
               type="button"
-              onClick={() => handleTriggerSmartMatch(false)}
+              onClick={() => handleTriggerSmartMatch(true)}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/35 text-[11px] font-semibold text-cyan-200 transition-colors cursor-pointer whitespace-nowrap"
-              title="Re-extract icons, terms, metrics, and schematic nodes from current slide text"
+              title="Analyze slide text to assign the most appropriate archetype (Metric, Compare, Code, Row, or Number) and update layout configuration"
             >
               <Wand2 className="w-3 h-3" />
-              <span>Smart Match to Copy</span>
+              <span>Smart Match</span>
             </button>
           </div>
         </div>

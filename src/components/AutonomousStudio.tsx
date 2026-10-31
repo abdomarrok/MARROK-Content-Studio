@@ -50,6 +50,9 @@ import {
   copySlideToClipboard,
   downloadAllSlidesZip,
   getCanvasDimensionSpec,
+  CANVAS_DIMENSION_PRESET_LIST,
+  resolveExportTargetPresets,
+  type ExportBundleMode,
 } from '../lib/canvasExporter.ts';
 import { runAutonomousPipeline, enrichAndPaceCarousel } from '../lib/autonomousPipeline.ts';
 import { sanitizeSlide } from '../lib/textSanitizer.ts';
@@ -58,7 +61,7 @@ import {
   synthesizeCarousel,
   condenseCarouselToSingleSlide,
   resolveSmartSlideVisuals,
-  inferBestSlideArchetype,
+  analyzeSlideTextForArchetype,
 } from '../lib/synthesizer.ts';
 import { runQAChecks, CHAR_LIMITS } from '../lib/qaChecks.ts';
 import { runPlatformRiskChecks } from '../lib/riskChecks.ts';
@@ -908,14 +911,14 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   };
 
   // 1-Click Smart Match Visuals to Slide Copy
-  const handleSmartMatchVisuals = (useRecommendedArchetype = false) => {
+  const handleSmartMatchVisuals = (useRecommendedArchetype = true) => {
     let matchedTypeLabel = '';
     applyDeckUpdate((prev) => {
       const targetIndex = Math.min(currentSlideIndex, prev.slides.length - 1);
       const current = prev.slides[targetIndex];
       if (!current) return prev;
 
-      const recommendedArchetype = inferBestSlideArchetype(current, targetIndex, prev.slides.length);
+      const recommendedArchetype = analyzeSlideTextForArchetype(current, targetIndex);
       const targetType: SlideType = useRecommendedArchetype
         ? recommendedArchetype
         : current.type;
@@ -933,7 +936,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     });
     onShowToast(
       useRecommendedArchetype
-        ? `Smart-matched slide copy & switched to ${matchedTypeLabel}`
+        ? `Smart Match: assigned ${matchedTypeLabel} & updated layout configuration`
         : `Smart-matched ${matchedTypeLabel} visual elements to slide copy`
     );
   };
@@ -1084,8 +1087,8 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       ? { label: 'Offline', cls: 'bg-amber-500/15 border-amber-500/30 text-amber-300' }
       : { label: 'Ungrounded AI', cls: 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300' };
 
-  // 1-Click Export ZIP with QA & Platform Safety Gate
-  const handleExportZip = async (exportMode: 'active' | 'dual' = 'active') => {
+  // 1-Click Export ZIP with QA & Platform Safety Gate (Defaults to 5-in-1 Ready to Share Pack)
+  const handleExportZip = async (exportMode: ExportBundleMode = 'all') => {
     const ctaSlide = carousel.slides[carousel.slides.length - 1];
     const hasCreatorCredit = Boolean(
       (
@@ -1112,7 +1115,8 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       onShowToast(`⚠️ Exporting with advisory warnings...`);
     }
     setIsExportingZip(true);
-    const totalCount = exportMode === 'dual' ? carousel.slides.length * 2 : carousel.slides.length;
+    const targetPresets = resolveExportTargetPresets(exportMode, carousel.dimensionPreset);
+    const totalCount = carousel.slides.length * targetPresets.length;
     setExportProgress({ current: 0, total: totalCount });
     try {
       const audit = {
@@ -1138,11 +1142,16 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           // Non-fatal if background post save fails during ZIP download
         }
       }
-      onShowToast(
-        exportMode === 'dual'
-          ? 'Dual Pack (TikTok 9:16 + Instagram 4:5) & Metricool bundle exported into ZIP!'
-          : `All ${activeDimensionSpec.width}×${activeDimensionSpec.height} (${activeDimensionSpec.shortLabel}) JPG slides & Metricool bundle exported into ZIP!`
-      );
+      if (exportMode === 'all') {
+        onShowToast('5-in-1 Ready to Share Pack (TikTok 9:16, IG 4:5, IG 3:4, IG 1:1, IG Reels 9:16 + Captions) exported!');
+      } else if (exportMode === 'dual') {
+        onShowToast('Dual Pack (TikTok 9:16 + Instagram 4:5) & Metricool bundle exported into ZIP!');
+      } else {
+        const spec = getCanvasDimensionSpec(targetPresets[0]);
+        onShowToast(
+          `All ${spec.width}×${spec.height} (${spec.shortLabel}) JPG slides & Metricool bundle exported into ZIP!`
+        );
+      }
     } catch (err) {
       console.error('ZIP export failed:', err);
       onShowToast('Failed to export ZIP file.');
@@ -2285,6 +2294,21 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                       };
                     });
                   }}
+                  onSelectDimensionPreset={handleSelectDimensionPreset}
+                  onExportZip={handleExportZip}
+                  onDownloadSingleSlide={(preset) => {
+                    const spec = getCanvasDimensionSpec(preset);
+                    downloadSingleSlidePng(
+                      carousel,
+                      currentSlideIndex,
+                      undefined,
+                      theme,
+                      carousel.visualOptions,
+                      preset
+                    );
+                    onShowToast(`Downloaded Slide ${currentSlideIndex + 1} (${spec.label}) JPG`);
+                  }}
+                  isExportingZip={isExportingZip}
                   onShowToast={onShowToast}
                 />
               </div>
@@ -2292,14 +2316,28 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           </div>
 
           {/* Consolidated Stage Dock Delivery Bar */}
-          <div className="px-4 py-2.5 bg-black/75 border-t border-white/10 flex items-center justify-between gap-3 shrink-0">
-            {/* Format & Dimensions Meta */}
-            <div className="flex items-center gap-2 text-xs font-mono text-slate-400">
-              <span className="px-2 py-0.5 rounded bg-white/[0.04] border border-white/10 text-slate-300">
-                {activePostFormat === 'reel'
-                  ? '1080×1920'
-                  : `${activeDimensionSpec.width}×${activeDimensionSpec.height} · ${activeDimensionSpec.shortLabel}`}
-              </span>
+          <div className="px-4 py-2.5 bg-black/75 border-t border-white/10 flex items-center justify-between gap-3 shrink-0 flex-wrap">
+            {/* Format & Social Media Dimensions Switcher */}
+            <div className="flex items-center gap-2 text-xs font-mono text-slate-400 flex-wrap">
+              {activePostFormat === 'reel' ? (
+                <span className="px-2 py-0.5 rounded bg-white/[0.04] border border-white/10 text-slate-300">
+                  1080×1920
+                </span>
+              ) : (
+                <select
+                  aria-label="Social Media Export Format"
+                  value={activeDimensionSpec.id}
+                  onChange={(e) => handleSelectDimensionPreset(e.target.value as CanvasDimensionPreset)}
+                  className="px-2 py-1 rounded-lg bg-white/[0.06] hover:bg-white/10 border border-white/15 text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-400 cursor-pointer"
+                  title="Select Social Media Format for Slide Export"
+                >
+                  {CANVAS_DIMENSION_PRESET_LIST.map((preset) => (
+                    <option key={preset.id} value={preset.id} className="bg-[#080d11] text-slate-200">
+                      {preset.shortLabel} ({preset.width}×{preset.height})
+                    </option>
+                  ))}
+                </select>
+              )}
               {activePostFormat === 'carousel' && (
                 <span>Slide {currentSlideIndex + 1} of {carousel.slides.length}</span>
               )}
@@ -2313,13 +2351,39 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
             {/* Single Export Location + 'More' Menu */}
             <div className="flex items-center gap-2">
+              {activePostFormat !== 'reel' && !isBlocked && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (activePostFormat === 'single') {
+                      downloadSingleSlidePng(
+                        carousel,
+                        0,
+                        `MARROK_Single_Post_${activeDimensionSpec.width}x${activeDimensionSpec.height}.jpg`,
+                        theme,
+                        carousel.visualOptions
+                      );
+                      onShowToast(`Downloaded ${activeDimensionSpec.width}×${activeDimensionSpec.height} (${activeDimensionSpec.shortLabel}) JPG!`);
+                    } else {
+                      handleExportZip('active');
+                    }
+                  }}
+                  disabled={isExportingZip}
+                  className="hidden sm:flex items-center gap-1.5 py-1.5 px-3 rounded-xl bg-white/[0.06] hover:bg-white/12 border border-white/15 text-xs font-semibold text-slate-200 transition-colors cursor-pointer disabled:opacity-50"
+                  title={`Export only current format (${activeDimensionSpec.label})`}
+                >
+                  <Download className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>{activeDimensionSpec.shortLabel} Only</span>
+                </button>
+              )}
+
               {/* Secondary Actions 'More' Menu */}
               <div className="relative">
                 <button
                   type="button"
                   onClick={() => setIsMoreMenuOpen((prev) => !prev)}
                   className="p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 text-slate-300 hover:text-white transition-colors cursor-pointer flex items-center justify-center"
-                  title="More actions (Copy Image, Copy Caption, JPG, Dual Pack, Contact Sheet)"
+                  title="More actions (5-in-1 Ready to Share, Copy Image, Copy Caption, JPG, Dual Pack, Contact Sheet)"
                 >
                   <MoreHorizontal className="w-4 h-4" />
                 </button>
@@ -2330,7 +2394,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                       className="fixed inset-0 z-40"
                       onClick={() => setIsMoreMenuOpen(false)}
                     />
-                    <div className="absolute right-0 bottom-full mb-2 w-60 bg-[#0d151e] border border-white/10 rounded-xl shadow-2xl p-1.5 z-50 flex flex-col gap-0.5 text-xs">
+                    <div className="absolute right-0 bottom-full mb-2 w-68 bg-[#0d151e] border border-white/10 rounded-xl shadow-2xl p-1.5 z-50 flex flex-col gap-0.5 text-xs">
                       <button
                         type="button"
                         onClick={() => {
@@ -2384,18 +2448,56 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                         <span>Download Slide JPG ({activeDimensionSpec.shortLabel})</span>
                       </button>
 
-                      {activePostFormat === 'carousel' && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsMoreMenuOpen(false);
-                            handleExportZip('dual');
-                          }}
-                          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-slate-200 transition-colors text-left cursor-pointer"
-                        >
-                          <Smartphone className="w-3.5 h-3.5 text-pink-400" />
-                          <span>Export Dual Pack (TikTok + IG 4:5)</span>
-                        </button>
+                      {activePostFormat !== 'reel' && (
+                        <>
+                          <div className="h-px bg-white/10 my-1" />
+                          <div className="px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider text-slate-400">
+                            Ready-to-Share Social Packs
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsMoreMenuOpen(false);
+                              handleExportZip('all');
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-200 font-semibold transition-colors text-left cursor-pointer"
+                          >
+                            <Layers className="w-3.5 h-3.5 text-cyan-400" />
+                            <span>5-in-1 Ready to Share (All 5 Formats)</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsMoreMenuOpen(false);
+                              handleExportZip('dual');
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-slate-200 transition-colors text-left cursor-pointer"
+                          >
+                            <Smartphone className="w-3.5 h-3.5 text-pink-400" />
+                            <span>Export Dual Pack (TikTok + IG 4:5)</span>
+                          </button>
+
+                          <div className="px-2.5 pt-1 text-[10px] font-mono uppercase tracking-wider text-slate-400">
+                            Export Individual Format ZIP
+                          </div>
+                          <div className="grid grid-cols-2 gap-1 px-2 py-1">
+                            {CANVAS_DIMENSION_PRESET_LIST.map((preset) => (
+                              <button
+                                key={preset.id}
+                                type="button"
+                                onClick={() => {
+                                  setIsMoreMenuOpen(false);
+                                  handleExportZip(preset.id);
+                                }}
+                                className="flex items-center justify-between px-2 py-1 rounded bg-white/[0.04] hover:bg-white/12 border border-white/10 text-[10px] font-mono text-slate-200 cursor-pointer"
+                                title={`Export all slides in ${preset.label}`}
+                              >
+                                <span>{preset.shortLabel}</span>
+                                <span className="text-slate-400">{preset.aspectRatioLabel}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </>
                       )}
 
                       {activePostFormat !== 'single' && (
@@ -2482,37 +2584,14 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   <Film className="w-3.5 h-3.5 stroke-[2.5]" />
                   <span>Export Video</span>
                 </button>
-              ) : activePostFormat === 'single' ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    downloadSingleSlidePng(
-                      carousel,
-                      0,
-                      `MARROK_Single_Post_${activeDimensionSpec.width}x${activeDimensionSpec.height}.jpg`,
-                      theme,
-                      carousel.visualOptions
-                    );
-                    if (onSaveValidPost) {
-                      onSaveValidPost('posted', overrideExportBlock).catch(() => {});
-                    }
-                    onShowToast(`Downloaded ${activeDimensionSpec.width}×${activeDimensionSpec.height} Single-Slide Post JPG!`);
-                  }}
-                  className="py-1.5 px-4 rounded-xl font-bold text-xs uppercase tracking-wider text-slate-950 transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
-                  style={{ backgroundColor: theme.accent }}
-                  title={`Download standalone ${activeDimensionSpec.width}×${activeDimensionSpec.height} JPG post`}
-                >
-                  <Download className="w-3.5 h-3.5 stroke-[2.5]" />
-                  <span>Download JPG</span>
-                </button>
               ) : (
                 <button
                   type="button"
-                  onClick={() => handleExportZip('active')}
+                  onClick={() => handleExportZip('all')}
                   disabled={isExportingZip}
                   className="py-1.5 px-4 rounded-xl font-bold text-xs uppercase tracking-wider text-slate-950 transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                   style={{ backgroundColor: theme.accent }}
-                  title={`Download all ${activeDimensionSpec.width}×${activeDimensionSpec.height} slides + Metricool bundle ZIP`}
+                  title="Export 5-in-1 Ready to Share ZIP (TikTok 9:16, IG 4:5, IG 3:4, IG 1:1, IG Reels 9:16 + Ready-to-Paste Captions)"
                 >
                   {isExportingZip && exportProgress ? (
                     <>
@@ -2524,7 +2603,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   ) : (
                     <>
                       <Download className="w-3.5 h-3.5 stroke-[2.5]" />
-                      <span>Export ZIP</span>
+                      <span>5-in-1 Ready to Share</span>
                     </>
                   )}
                 </button>
@@ -2626,20 +2705,8 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
             }
             if (activePostFormat === 'reel') {
               setIsMotionExportOpen(true);
-            } else if (activePostFormat === 'single') {
-              downloadSingleSlidePng(
-                carousel,
-                0,
-                `MARROK_Single_Post_${activeDimensionSpec.width}x${activeDimensionSpec.height}.jpg`,
-                theme,
-                carousel.visualOptions
-              );
-              if (onSaveValidPost) {
-                onSaveValidPost('posted', overrideExportBlock).catch(() => {});
-              }
-              onShowToast(`Downloaded ${activeDimensionSpec.width}×${activeDimensionSpec.height} Single-Slide Post JPG!`);
             } else {
-              handleExportZip('active');
+              handleExportZip('all');
             }
           }}
           disabled={isExportingZip}
@@ -2654,14 +2721,12 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
               ? `${blockersCount} item${blockersCount > 1 ? 's' : ''} need attention in Review`
               : activePostFormat === 'reel'
               ? 'Export Motion Reel Video'
-              : activePostFormat === 'single'
-              ? 'Download 1080×1920 JPG'
-              : 'Export Metricool ZIP'
+              : 'Export 5-in-1 Ready to Share ZIP (All 5 Social Formats)'
           }
           aria-label={
             isBlocked
               ? `${blockersCount} items need attention before publishing. Tap to review.`
-              : 'Export Post Bundle'
+              : 'Export 5-in-1 Ready to Share Bundle'
           }
         >
           {isExportingZip ? (
@@ -2678,9 +2743,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
               ? `${blockersCount} to fix`
               : activePostFormat === 'reel'
               ? 'Export Video'
-              : activePostFormat === 'single'
-              ? 'Download JPG'
-              : 'Export'}
+              : '5-in-1 Ready to Share'}
           </span>
         </button>
       </div>

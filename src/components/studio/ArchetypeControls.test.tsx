@@ -3,6 +3,11 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_PALETTES, SlideData } from '../../types.ts';
 import {
+  getPresetExportFolderName,
+  resolveExportTargetPresets,
+} from '../../lib/canvas/exporter.ts';
+import {
+  analyzeSlideTextForArchetype,
   inferBestDiagramVariant,
   inferBestSlideArchetype,
   matchSlideIconsFromText,
@@ -140,7 +145,7 @@ describe('ArchetypeControls visual layout editors & smart content-aware defaults
     expect(onUpdateField).toHaveBeenCalledWith('ctaText', 'Follow @MARROK');
   });
 
-  it('extracts tech icons, metrics, and best-fit archetype from slide text', () => {
+  it('extracts tech icons, metrics, and best-fit archetype across Metric, Compare, Code, Row, and Number', () => {
     const metricSlide: SlideData = {
       type: 'row',
       enTitle: 'Docker & Postgres cut cloud spend by $6.3B.',
@@ -156,16 +161,37 @@ describe('ArchetypeControls visual layout editors & smart content-aware defaults
     expect(icons).toContain('postgresql');
     expect(icons).toContain('kubernetes');
 
-    const recommendation = inferBestSlideArchetype(metricSlide, 2, 8);
-    expect(recommendation).toBe('metric');
+    expect(inferBestSlideArchetype(metricSlide, 2, 8)).toBe('metric');
+    expect(
+      analyzeSlideTextForArchetype({
+        type: 'row',
+        enTitle: 'SELECT id FROM items ORDER BY embedding',
+        enBody: 'Run EXPLAIN ANALYZE on vector_index.sql to verify query execution.',
+      })
+    ).toBe('code');
+    expect(
+      analyzeSlideTextForArchetype({
+        type: 'row',
+        enTitle: 'Step 03: Isolate Untrusted Agents',
+        enBody: 'Enforce strict scope policies at the gateway.',
+      })
+    ).toBe('number');
+    expect(
+      analyzeSlideTextForArchetype({
+        type: 'row',
+        enTitle: 'Zero-Trust Isolation Pipeline',
+        enBody: 'Ingress requests pass through the policy enforcement boundary.',
+      })
+    ).toBe('row');
 
     const resolved = resolveSmartSlideVisuals(metricSlide, 2, false);
     expect(resolved.metricValue).toBe('$6.3B');
     expect(resolved.diagramNodes[0].label).not.toBe('Client Ingress');
   });
 
-  it('infers schematic variant and triggers Smart Match to Copy button', () => {
-    const onSmartMatchVisuals = vi.fn();
+  it('triggers Smart Match button to assign the best archetype and update layout configuration', () => {
+    const onSetSlideType = vi.fn();
+    const onUpdateField = vi.fn();
     const compareSlide: SlideData = {
       type: 'row',
       enTitle: 'Hot RAM Cache vs Cold NVMe Tier.',
@@ -175,19 +201,39 @@ describe('ArchetypeControls visual layout editors & smart content-aware defaults
     };
 
     expect(inferBestDiagramVariant(compareSlide)).toBe('split');
+    expect(analyzeSlideTextForArchetype(compareSlide)).toBe('compare');
 
     render(
       <ArchetypeControls
         {...baseProps}
         currentSlide={compareSlide}
         currentSlideIndex={2}
-        onSmartMatchVisuals={onSmartMatchVisuals}
+        onSetSlideType={onSetSlideType}
+        onUpdateField={onUpdateField}
       />
     );
 
-    const smartMatchBtn = screen.getByRole('button', { name: /Smart Match to Copy/i });
+    const smartMatchBtn = screen.getByRole('button', { name: /Smart Match/i });
     fireEvent.click(smartMatchBtn);
-    expect(onSmartMatchVisuals).toHaveBeenCalledWith(false);
+
+    expect(onSetSlideType).toHaveBeenCalledWith('compare');
+    expect(onUpdateField).toHaveBeenCalledWith('compareLeftTitle', 'HOT RAM CACHE');
+    expect(onUpdateField).toHaveBeenCalledWith('compareRightTitle', 'COLD NVME TIER');
+  });
+
+  it('resolves all 5 social media export formats and folder names for multi-format ZIP bundles', () => {
+    const allFormats = resolveExportTargetPresets('all', 'ig-4:5');
+    expect(allFormats).toEqual([
+      'ig-4:5',
+      'tiktok-9:16',
+      'ig-3:4',
+      'ig-1:1',
+      'ig-9:16',
+    ]);
+    expect(getPresetExportFolderName('tiktok-9:16')).toBe('tiktok-9x16');
+    expect(getPresetExportFolderName('ig-4:5')).toBe('instagram-4x5');
+    expect(getPresetExportFolderName('ig-3:4')).toBe('instagram-3x4');
+    expect(getPresetExportFolderName('ig-1:1')).toBe('instagram-1x1');
+    expect(getPresetExportFolderName('ig-9:16')).toBe('instagram-reels-9x16');
   });
 });
-
