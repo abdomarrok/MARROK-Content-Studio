@@ -20,7 +20,7 @@ export const SAFE_TEXT_WIDTH_TITLE = 840;
 export const SAFE_TEXT_WIDTH_BODY = 810;
 export const SAFE_TEXT_CENTER_X = 507;
 
-export const SAFE_HEADER_Y = 112;
+export const SAFE_HEADER_Y = 120;
 export const SAFE_FOOTER_CEILING_Y = 1555;
 export const SAFE_MAX_Y = 1650;
 export const PAGINATION_DOT_Y = 1605;
@@ -82,7 +82,7 @@ export const CANVAS_DIMENSION_PRESETS: Record<CanvasDimensionPreset, CanvasDimen
     safeTextCenterX: SAFE_TEXT_CENTER_X,
     safeTextWidthTitle: SAFE_TEXT_WIDTH_TITLE,
     safeTextWidthBody: SAFE_TEXT_WIDTH_BODY,
-    headerY: 112,
+    headerY: SAFE_HEADER_Y,
     graphicScale: 1,
     graphicOffsetX: 0,
     graphicOffsetY: 0,

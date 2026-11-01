@@ -124,7 +124,7 @@ export function drawCadReticles(
   const resolved = spec || getCanvasDimensionSpec();
   const leftX = resolved.safeMarginLeft;
   const rightX = resolved.safeMarginRight;
-  const topY = resolved.headerY + (resolved.height < 1920 ? 58 : 76);
+  const topY = resolved.headerY + (resolved.height < 1920 ? 58 : 66);
   const midY = Math.round(resolved.height * 0.48);
   const botY = resolved.safeFooterCeilingY + 8;
 

@@ -12,6 +12,31 @@ export function seedSingleSlideTakeaways(
   }
 
   const catUpper = (category || '').toUpperCase();
+  const slideText = `${slide.enTitle || ''} ${slide.enBody || ''} ${slide.arTitle || ''} ${slide.arBody || ''} ${catUpper}`;
+  const isFinancialOrMacro =
+    /\$|\b(?:valuation|billion|trillion|loss|losses|deficit|capital|financing|circular|subsid|taxpayer|retiree|s&p|pension|401k|revenue|spend|spent|cash[- ]?out|stake|economy|economic|inflation|energy\s+bill|gigawatt|nuclear|market|investor|debt|financial|wall\s+street)\b|مليار|تريليون|خسائر|تمويل|تقييم|ضرائب|متقاعد|طاقة|اقتصاد|استثمار|دعم\s+حكومي/i.test(
+      slideText
+    );
+
+  if (isFinancialOrMacro) {
+    return [
+      {
+        en: 'Massive capital commitments outpace current unit revenue.',
+        ar: 'التزامات رأسمالية ضخمة تتجاوز العوائد التشغيلية الحالية.',
+        icon: 'dollarSign',
+      },
+      {
+        en: 'Circular vendor financing concentrates systemic market exposure.',
+        ar: 'التمويل الدائري بين الموردين يضاعف مخاطر التركز السوقي.',
+        icon: 'landmark',
+      },
+      {
+        en: 'Grid power demand and public backstops shift risk to consumers.',
+        ar: 'استهلاك الطاقة والضمانات العامة ينقلان التكلفة للمستهلكين.',
+        icon: 'scales',
+      },
+    ];
+  }
 
   if (catUpper.includes('SECURITY') || catUpper.includes('CYBER') || catUpper.includes('AUTH')) {
     return [

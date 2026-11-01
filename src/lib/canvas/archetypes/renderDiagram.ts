@@ -69,6 +69,12 @@ export async function drawMultiNodeTopologyFlow(
   ctx.stroke();
   ctx.restore();
 
+  const slideContextText = `${slide.enTitle || ''} ${slide.enBody || ''} ${slide.arTitle || ''} ${slide.arBody || ''} ${slide.diagramFooter || ''}`;
+  const isFinancialOrMacro =
+    /\$|\b(?:valuation|billion|trillion|loss|losses|deficit|capital|financing|circular|subsid|taxpayer|retiree|s&p|pension|401k|revenue|spend|spent|cash[- ]?out|stake|economy|economic|inflation|energy|gigawatt|nuclear|market|investor|debt|financial)\b|مليار|تريليون|خسائر|تمويل|تقييم|ضرائب|متقاعد|طاقة|اقتصاد|استثمار/i.test(
+      slideContextText
+    );
+
   // Top Header Tag
   drawRoundRect(ctx, cardX + 32, topY + 22, 360, 40, 10, `${theme.accent}18`, `${theme.accent}50`, 1.2);
   ctx.save();
@@ -76,7 +82,11 @@ export async function drawMultiNodeTopologyFlow(
   ctx.fillStyle = theme.accent;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('TOPOLOGY // PROTOCOL DATAFLOW', cardX + 32 + 180, topY + 42);
+  ctx.fillText(
+    isFinancialOrMacro ? 'TOPOLOGY // CAPITAL & VALUE FLOW' : 'TOPOLOGY // PROTOCOL DATAFLOW',
+    cardX + 32 + 180,
+    topY + 42
+  );
   ctx.restore();
 
   // 2. 3 Connected Component Node Cards
@@ -89,10 +99,11 @@ export async function drawMultiNodeTopologyFlow(
   const nx3 = nx2 + nodeW + gap;
 
   const derived = deriveDynamicSlideNodes(slide);
+  const roles = isFinancialOrMacro ? ['SOURCE', 'MECHANISM', 'IMPACT'] : ['INGRESS', 'PROCESSING', 'TARGET'];
   const nodes = [
-    { x: nx1, icon: derived[0].icon, title: derived[0].label, role: 'INGRESS', sub: derived[0].sublabel, status: derived[0].status, statusColor: theme.accent },
-    { x: nx2, icon: derived[1].icon, title: derived[1].label, role: 'PROCESSING', sub: derived[1].sublabel, status: derived[1].status, statusColor: '#10B981' },
-    { x: nx3, icon: derived[2].icon, title: derived[2].label, role: 'TARGET', sub: derived[2].sublabel, status: derived[2].status, statusColor: theme.accent },
+    { x: nx1, icon: derived[0].icon, title: derived[0].label, role: roles[0], sub: derived[0].sublabel, status: derived[0].status, statusColor: theme.accent },
+    { x: nx2, icon: derived[1].icon, title: derived[1].label, role: roles[1], sub: derived[1].sublabel, status: derived[1].status, statusColor: '#10B981' },
+    { x: nx3, icon: derived[2].icon, title: derived[2].label, role: roles[2], sub: derived[2].sublabel, status: derived[2].status, statusColor: theme.accent },
   ];
 
   for (const n of nodes) {

@@ -437,26 +437,28 @@ export function computeSlideLayoutAwareness(
     spec.safeFooterCeilingY - baseTextCeilingY - gapGraphicToTitle - takeawayClearance
   );
 
-  // Dynamic font fitting pass
-  const initialScaleBase = isCompactAspect ? Math.max(0.74, spec.graphicScale + 0.08) : 1.0;
+  // Dynamic font fitting pass: taller 9:16 canvases use larger body copy so vertical space feels cohesive
+  const initialScaleBase = isCompactAspect ? Math.max(0.74, spec.graphicScale + 0.08) : 1.04;
   let textScale = hasTakeaways
     ? Math.min(0.9, initialScaleBase * 0.9)
     : totalAvailableHeight >= 940
-    ? 1.06
+    ? 1.08
     : initialScaleBase;
   let bodyCap = hasTakeaways ? 2 : isCompactAspect && spec.height <= 1080 ? 3 : 4;
   const minAllowedScale = isCompactAspect ? 0.52 : 0.62;
 
   const measureTextPass = (scale: number, cap: number) => {
+    const baseBodyTarget = isCompactAspect ? 40 : 45;
+    const baseBodyMin = isCompactAspect ? 26 : 28;
     const enTitleTarget = Math.max(28, 74 * scale * titleScale);
     const arTitleTarget = Math.max(26, 70 * scale * arTitleScale);
-    const enBodyTarget = Math.max(22, 40 * scale * bodyScale);
-    const arBodyTarget = Math.max(22, 40 * scale * arBodyScale);
+    const enBodyTarget = Math.max(22, baseBodyTarget * scale * bodyScale);
+    const arBodyTarget = Math.max(22, baseBodyTarget * scale * arBodyScale);
 
     const enTitleMin = Math.max(24, Math.round((isCompactAspect ? 34 : 42) * Math.min(1, titleScale)));
     const arTitleMin = Math.max(24, Math.round((isCompactAspect ? 32 : 40) * Math.min(1, arTitleScale)));
-    const enBodyMin = Math.max(20, Math.round(26 * Math.min(1, bodyScale)));
-    const arBodyMin = Math.max(20, Math.round(26 * Math.min(1, arBodyScale)));
+    const enBodyMin = Math.max(20, Math.round(baseBodyMin * Math.min(1, bodyScale)));
+    const arBodyMin = Math.max(20, Math.round(baseBodyMin * Math.min(1, arBodyScale)));
 
     let enTitle = { lines: rawEnTitle ? [rawEnTitle] : [], fontSize: enTitleTarget, lineHeight: enTitleTarget * 1.19 };
     let arTitle = { lines: rawArTitle ? [rawArTitle] : [], fontSize: arTitleTarget, lineHeight: arTitleTarget * 1.457 };

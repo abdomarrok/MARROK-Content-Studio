@@ -177,23 +177,42 @@ export function balanceCarouselVisualPacing(slides: SlideData[]): SlideData[] {
     lastMechanismVariant = chosenVariant;
     variantCounts[chosenVariant]++;
 
+    const isFinancialOrMacro =
+      /\$|\b(?:valuation|billion|trillion|loss|losses|deficit|capital|financing|circular|subsid|taxpayer|retiree|s&p|pension|401k|revenue|spend|spent|cash[- ]?out|stake|economy|economic|inflation|energy|gigawatt|nuclear|market|investor|debt|financial)\b|مليار|تريليون|خسائر|تمويل|تقييم|ضرائب|متقاعد|طاقة|اقتصاد|استثمار/i.test(
+        slideText
+      );
+
     // Validate and repair diagram nodes, edges, footer
-    const defaultTitleWords = (slide.enTitle || 'System Component')
+    const defaultTitleWords = (slide.enTitle || (isFinancialOrMacro ? 'Capital Flow' : 'System Component'))
       .replace(/[.?!]$/, '')
       .split(/\s+/)
       .filter((w) => w.length > 2);
-    const n1Name = slide.icons?.[0]?.label || defaultTitleWords[0] || 'Ingress Layer';
-    const n2Name = slide.icons?.[1]?.label || defaultTitleWords[1] || 'Execution Engine';
-    const n3Name = slide.icons?.[2]?.label || defaultTitleWords[2] || 'State Persistence';
+    const n1Name =
+      slide.icons?.[0]?.label ||
+      smart.diagramNodes[0]?.label ||
+      defaultTitleWords[0] ||
+      (isFinancialOrMacro ? 'Capital Source' : 'Ingress Layer');
+    const n2Name =
+      slide.icons?.[1]?.label ||
+      smart.diagramNodes[1]?.label ||
+      defaultTitleWords[1] ||
+      (isFinancialOrMacro ? 'Allocation Loop' : 'Execution Engine');
+    const n3Name =
+      slide.icons?.[2]?.label ||
+      smart.diagramNodes[2]?.label ||
+      defaultTitleWords[2] ||
+      (isFinancialOrMacro ? 'Market Impact' : 'State Persistence');
 
     const rawNodes = slide.diagramNodes || [];
 
-    let fallbackSub1 = 'Input Handler';
-    let fallbackSub2 = 'Core Execution';
-    let fallbackSub3 = 'Durable State';
-    let fallbackEdge1 = 'Process';
-    let fallbackEdge2 = 'Commit';
-    let fallbackFooter = 'PIPELINE: ACTIVE • EXECUTION: DETERMINISTIC';
+    let fallbackSub1 = isFinancialOrMacro ? 'Capital & Debt Input' : 'Input Handler';
+    let fallbackSub2 = isFinancialOrMacro ? 'Allocation & Capex' : 'Core Execution';
+    let fallbackSub3 = isFinancialOrMacro ? 'Market & Public Exposure' : 'Durable State';
+    let fallbackEdge1 = isFinancialOrMacro ? 'FINANCE' : 'Process';
+    let fallbackEdge2 = isFinancialOrMacro ? 'ALLOCATE' : 'Commit';
+    let fallbackFooter = isFinancialOrMacro
+      ? 'CAPITAL TOPOLOGY: CIRCULAR FINANCING & VALUE FLOW'
+      : 'PIPELINE: ACTIVE • EXECUTION: DETERMINISTIC';
 
     if (chosenVariant === 'scatter') {
       fallbackSub1 = 'Vector Array';
@@ -231,46 +250,56 @@ export function balanceCarouselVisualPacing(slides: SlideData[]): SlideData[] {
       fallbackEdge2 = 'MERGE';
       fallbackFooter = 'CAPABILITIES: HARD CONSTRAINTS • HIGH PERFORMANCE';
     } else if (chosenVariant === 'isolation') {
-      fallbackSub1 = 'Untrusted Scope';
-      fallbackSub2 = 'Boundary Guard';
-      fallbackSub3 = 'Protected Core';
-      fallbackEdge1 = 'ISOLATE';
-      fallbackEdge2 = 'GUARD';
-      fallbackFooter = 'FAULT DOMAIN: ISOLATED • ESCAPE RISK: ZERO';
+      fallbackSub1 = isFinancialOrMacro ? 'Private Capital Loss' : 'Untrusted Scope';
+      fallbackSub2 = isFinancialOrMacro ? 'Public Subsidy Shield' : 'Boundary Guard';
+      fallbackSub3 = isFinancialOrMacro ? 'Taxpayer Risk Exposure' : 'Protected Core';
+      fallbackEdge1 = isFinancialOrMacro ? 'SHIFT' : 'ISOLATE';
+      fallbackEdge2 = isFinancialOrMacro ? 'BACKSTOP' : 'GUARD';
+      fallbackFooter = isFinancialOrMacro
+        ? 'RISK EXPOSURE: SYSTEMIC MARKET & TAXPAYER BACKSTOP'
+        : 'FAULT DOMAIN: ISOLATED • ESCAPE RISK: ZERO';
     } else if (chosenVariant === 'stack') {
-      fallbackSub1 = 'Interface Tier';
-      fallbackSub2 = 'Processing Engine';
-      fallbackSub3 = 'Storage Tier';
-      fallbackEdge1 = 'DISPATCH';
-      fallbackEdge2 = 'PERSIST';
-      fallbackFooter = 'ARCHITECTURE STACK: VERIFIED • RUNTIME: DETERMINISTIC';
+      fallbackSub1 = isFinancialOrMacro ? 'Equity & Debt Financing' : 'Interface Tier';
+      fallbackSub2 = isFinancialOrMacro ? 'Infrastructure Capex' : 'Processing Engine';
+      fallbackSub3 = isFinancialOrMacro ? 'Consumer & Grid Cost' : 'Storage Tier';
+      fallbackEdge1 = isFinancialOrMacro ? 'LEVERAGE' : 'DISPATCH';
+      fallbackEdge2 = isFinancialOrMacro ? 'PASS-THROUGH' : 'PERSIST';
+      fallbackFooter = isFinancialOrMacro
+        ? 'ECONOMIC STACK: CAPITAL STRUCTURE & REAL-WORLD IMPACT'
+        : 'ARCHITECTURE STACK: VERIFIED • RUNTIME: DETERMINISTIC';
     } else if (chosenVariant === 'takeaway') {
-      fallbackSub1 = 'Standard Workflow';
-      fallbackSub2 = 'Engineered Shift';
-      fallbackSub3 = 'Production Result';
+      fallbackSub1 = isFinancialOrMacro ? 'Unsustainable Unit Burn' : 'Standard Workflow';
+      fallbackSub2 = isFinancialOrMacro ? 'Circular Capital Structure' : 'Engineered Shift';
+      fallbackSub3 = isFinancialOrMacro ? 'Systemic Market Risk' : 'Production Result';
       fallbackEdge1 = 'EVALUATE';
-      fallbackEdge2 = 'ADOPT';
-      fallbackFooter = 'ENGINEERING PRINCIPLE: AUDITED • SYSTEM: PRODUCTION-GRADE';
+      fallbackEdge2 = isFinancialOrMacro ? 'OUTCOME' : 'ADOPT';
+      fallbackFooter = isFinancialOrMacro
+        ? 'ECONOMIC VERDICT: PRIVATE GAINS VS PUBLIC & RETIREE EXPOSURE'
+        : 'ENGINEERING PRINCIPLE: AUDITED • SYSTEM: PRODUCTION-GRADE';
     }
+
+    const defaultIcons = isFinancialOrMacro
+      ? ['dollarSign', 'landmark', 'factory']
+      : ['server', 'cpu', 'database'];
 
     const diagramNodes: DiagramNode[] = [
       {
         label: rawNodes[0]?.label || n1Name,
         sublabel: rawNodes[0]?.sublabel || fallbackSub1,
-        status: rawNodes[0]?.status || 'ACTIVE',
-        icon: rawNodes[0]?.icon || slide.icons?.[0]?.icon || 'server',
+        status: rawNodes[0]?.status || (isFinancialOrMacro ? 'CAPITAL' : 'ACTIVE'),
+        icon: rawNodes[0]?.icon || slide.icons?.[0]?.icon || smart.diagramNodes[0]?.icon || defaultIcons[0],
       },
       {
         label: rawNodes[1]?.label || n2Name,
         sublabel: rawNodes[1]?.sublabel || fallbackSub2,
-        status: rawNodes[1]?.status || 'VERIFIED',
-        icon: rawNodes[1]?.icon || slide.icons?.[1]?.icon || 'cpu',
+        status: rawNodes[1]?.status || (isFinancialOrMacro ? 'ALLOCATED' : 'VERIFIED'),
+        icon: rawNodes[1]?.icon || slide.icons?.[1]?.icon || smart.diagramNodes[1]?.icon || defaultIcons[1],
       },
       {
         label: rawNodes[2]?.label || n3Name,
         sublabel: rawNodes[2]?.sublabel || fallbackSub3,
-        status: rawNodes[2]?.status || 'COMMITTED',
-        icon: rawNodes[2]?.icon || slide.icons?.[2]?.icon || 'database',
+        status: rawNodes[2]?.status || (isFinancialOrMacro ? 'EXPOSED' : 'COMMITTED'),
+        icon: rawNodes[2]?.icon || slide.icons?.[2]?.icon || smart.diagramNodes[2]?.icon || defaultIcons[2],
       },
     ];
 

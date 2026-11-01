@@ -241,4 +241,37 @@ describe('synthesizeUniversalCarousel (Zero AI Slop)', () => {
     expect(slides[7].ctaText).toContain('شارك برأيك');
     expect(slides[7].ctaText).not.toContain('DM for Architecture Review');
   });
+
+  it('processes OpenAI financial engineering YouTube summary with zero DevOps hallucinations, golden stats, finance icons, and grouped human impact', () => {
+    const financialYoutubeSummary = `OpenAI Financial Engineering & Infrastructure Gamble
+- OpenAI reached a $500B valuation despite projecting a massive $20.9B loss and spending $2.60 for every $1 earned.
+- Circular financing: tech giants invest billions into OpenAI, which immediately flows back to rent their cloud servers and buy chips.
+- Massive $1.4 trillion infrastructure commitments require 10 gigawatts of power—equivalent to 10 nuclear reactors.
+- Insiders and employees cashed out $6.6B in secondary sales while taxpayers and a proposed 5% government stake backstop the downside risk.
+- Household electricity bills spiked 63% near data center corridors as consumer utility rates subsidize AI power demand.
+- Systemic risk to S&P 500 retirees: passive index funds and 401(k) pensions are heavily concentrated in the same interconnected AI bubble.
+- The core trade-off: privatized employee windfalls and circular valuation gains versus socialized energy inflation and taxpayer risk.`;
+
+    const slides = synthesizeUniversalCarousel(financialYoutubeSummary);
+    expect(slides).toHaveLength(8);
+
+    const fullJson = JSON.stringify(slides);
+
+    // 1. Strictly ZERO software/DevOps hallucinations
+    expect(fullJson).not.toContain('Modular decoupled boundaries');
+    expect(fullJson).not.toContain('sub-second latency');
+    expect(fullJson).not.toContain('blue-green rollback');
+    expect(fullJson).not.toContain('Ingress Layer');
+    expect(fullJson).not.toContain('Core Engine');
+
+    // 2. Golden data points are extracted and represented
+    expect(fullJson).toMatch(/\$500B|\$20\.9B|\$2\.60|\$1\.4\s*(?:trillion|T)|\$6\.6B|63%|10\s*(?:GW|gigawatts)/i);
+
+    // 3. Topology / Hub icons use financial/infrastructure icons (dollarSign, landmark, factory, scales, trendingDown, users, lifecycle)
+    expect(slides[0].centerIcon).toBe('dollarSign');
+    const topologySlide = slides.find((s) => s.diagramVariant === 'topology');
+    expect(topologySlide).toBeDefined();
+    expect(topologySlide!.diagramNodes?.some((n) => ['dollarSign', 'landmark', 'factory', 'lifecycle', 'trendingDown', 'scales'].includes(n.icon || ''))).toBe(true);
+  });
 });
+

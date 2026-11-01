@@ -63,14 +63,26 @@ export function matchSlideIconsFromText(text: string): string[] {
     }
   }
 
+  const isFinancialOrMacro =
+    /\$|\b(?:valuation|billion|trillion|loss|losses|deficit|capital|financing|circular|subsid|taxpayer|retiree|s&p|pension|401k|revenue|spend|spent|cash[- ]?out|stake|economy|economic|inflation|energy\s+bill|gigawatt|nuclear|market|investor|debt|financial)\b|مليار|تريليون|خسائر|تمويل|تقييم|ضرائب|متقاعد|طاقة|اقتصاد|استثمار/i.test(
+      lower
+    );
+
   // 2. Semantic domain vector icons from ICONS_REGISTRY
   const domainRules: Array<{ rx: RegExp; icon: string }> = [
+    { rx: /\$|\b(?:valuation|capital|revenue|spend|spent|cash[- ]?out|financing|billion|trillion|money|price|cost|fund|funding|invest)\b|مليار|تريليون|تمويل|تقييم|دولار|عوائد|إنفاق/i, icon: 'dollarSign' },
+    { rx: /\b(?:bank|government|gov|taxpayer|treasury|subsid|backstop|fed|policy|state\s+stake|public\s+fund|wall\s+street)\b|حكومة|ضرائب|دعم|خزانة|مصرف|بنك/i, icon: 'landmark' },
+    { rx: /\b(?:loss|losses|deficit|burn|debt|crash|drop|bubble|default|insolven)\b|خسائر|عجز|ديون|انهيار|فقاعة/i, icon: 'trendingDown' },
+    { rx: /\b(?:nuclear|gigawatt|gw\b|power\s+plant|grid|energy|electricity|factory|industrial|megawatt)\b|طاقة|كهرباء|نووي|محطة|مفاعل|جيجاوات/i, icon: 'factory' },
+    { rx: /\b(?:circular|loop|round[- ]?trip|recycle|self[- ]?reinforc)\b|دائري|حلقة|تدوير/i, icon: 'lifecycle' },
+    { rx: /\b(?:retiree|pension|401k|s&p|index\s+fund|household|consumer|worker|employee)\b|متقاعد|معاش|مستهلك|موظف|صناديق/i, icon: 'users' },
+    { rx: /\b(?:trade[- ]?off|risk|exposure|gamble|bet|leverage|balance)\b|مخاطر|مفاضلة|رهان|تعرض/i, icon: 'scales' },
     { rx: /security|breach|hack|threat|attack|vulnerability|zero[- ]?trust|firewall|guard|exploit|اختراق|أمن|تهديد|حماية/i, icon: 'shieldAlert' },
     { rx: /auth|encrypt|tls|mtls|crypto|permission|secret|token|password|lock|تشفير|صلاحيات/i, icon: 'lock' },
     { rx: /key|certificate|jwt|oauth|identity|signing|مفتاح|هوية/i, icon: 'key' },
     { rx: /\bai\b|agent|llm|model|neural|inference|prompt|autonomous|ذكاء اصطناعي|وكيل|نموذج/i, icon: 'robot' },
     { rx: /vector|embedding|database|sql|table|index|query|storage|store|cache|قاعدة بيانات|تخزين|فهرس/i, icon: 'database' },
-    { rx: /cpu|compute|thread|core|kernel|process|engine|execution|معالج|نواة|تشغيل/i, icon: 'cpu' },
+    { rx: /cpu|compute|thread|core|kernel|process|engine|execution|chip|gpu|معالج|نواة|تشغيل|رقائق/i, icon: 'cpu' },
     { rx: /fast|latency|speed|throughput|performance|sub-ms|instant|p99|سرعة|أداء|استجابة/i, icon: 'zap' },
     { rx: /metric|benchmark|telemetry|monitor|observability|rate|score|قياس|مؤشر/i, icon: 'gauge' },
     { rx: /network|mesh|routing|ingress|proxy|gateway|load balanc|cluster|شبكة|توجيه/i, icon: 'network' },
@@ -93,7 +105,9 @@ export function matchSlideIconsFromText(text: string): string[] {
   }
 
   // Ensure at least 6 icons are available for Hub / Node fallbacks
-  const defaultFallbackPool = ['cpu', 'shieldAlert', 'database', 'network', 'zap', 'layers', 'server', 'lock'];
+  const defaultFallbackPool = isFinancialOrMacro
+    ? ['dollarSign', 'landmark', 'factory', 'scales', 'trendingDown', 'lifecycle', 'users', 'cpu']
+    : ['cpu', 'shieldAlert', 'database', 'network', 'zap', 'layers', 'server', 'lock'];
   for (const fb of defaultFallbackPool) {
     addUnique(fb);
   }
@@ -145,7 +159,9 @@ export function extractKeyPhrasesFromSlide(slide: SlideData): string[] {
   // 3. Fallback if slide is purely Arabic or very short
   if (phrases.length < 6) {
     const text = `${slide.enTitle || ''} ${slide.enBody || ''} ${slide.arTitle || ''} ${slide.arBody || ''}`.toLowerCase();
-    if (/security|breach|threat|ai|permission|اختراق|أمن|ذكاء/i.test(text)) {
+    if (/\$|\b(?:valuation|billion|trillion|loss|losses|deficit|capital|financing|subsid|taxpayer|retiree|revenue|spend|economy|economic|energy)\b|مليار|تريليون|خسائر|تمويل|تقييم|ضرائب|طاقة|اقتصاد/i.test(text)) {
+      ['Capital Flow', 'Valuation Risk', 'Circular Finance', 'Unit Deficit', 'Grid Demand', 'Public Backstop'].forEach(addPhrase);
+    } else if (/security|breach|threat|ai|permission|اختراق|أمن|ذكاء/i.test(text)) {
       ['Access Control', 'Scope Policy', 'Threat Guard', 'Audit Log', 'Identity Gate', 'Runtime Sandbox'].forEach(addPhrase);
     } else if (/vector|embedding|hnsw|ivf|search|متجهات|بحث/i.test(text)) {
       ['Embedding Vector', 'Index Graph', 'Cosine Top-K', 'Query Router', 'Candidate Scan', 'Memory Buffer'].forEach(addPhrase);
@@ -228,15 +244,15 @@ export function analyzeSlideTextForArchetype(
 
   // 4. Metric / Benchmark / Financial or Latency Impact detection
   if (
-    /(?:\$\s*\d+(?:[.,]\d+)?\s*(?:B|M|K|billion|million)?|\b\d+(?:[.,]\d+)?\s*(?:x|%|ms|μs|ns|gb\/s|mb\/s|rps|req\/s|tb|gb|billion|million|مليار|مليارات|مليون|أضعاف|بالمئة))(?:\b|$)/i.test(
+    /(?:\$\s*\d+(?:[.,]\d+)?\s*(?:T|B|M|K|trillion|billion|million)?|\b\d+(?:[.,]\d+)?\s*(?:x|%|ms|μs|ns|gw|gigawatts?|gb\/s|mb\/s|rps|req\/s|tb|gb|trillion|billion|million|تريليون|مليار|مليارات|مليون|أضعاف|بالمئة))(?:\b|$)/i.test(
       fullText
     )
   ) {
     scores.metric += 5;
   }
   if (
-    /(?:\$\s*\d+|\b\d+(?:[.,]\d+)?\s*(?:x|%|ms|μs|ns|B|M|K)\b)/i.test(title) ||
-    /\b(?:benchmark|p99|p95|throughput|latency\s+drop|cost\s+reduction|cut\s+spend)\b/i.test(fullText)
+    /(?:\$\s*\d+|\b\d+(?:[.,]\d+)?\s*(?:x|%|ms|μs|ns|T|B|M|K|GW)\b)/i.test(title) ||
+    /\b(?:benchmark|p99|p95|throughput|latency\s+drop|cost\s+reduction|cut\s+spend|valuation|loss|deficit|cash[- ]?out)\b/i.test(fullText)
   ) {
     scores.metric += 2;
   }
@@ -375,13 +391,19 @@ export function resolveSmartSlideVisuals(
   const activeVariant: DiagramVariant =
     !forceRefresh && slide.diagramVariant ? slide.diagramVariant : recommendedVariant;
 
+  const isFinancialOrMacro =
+    /\$|\b(?:valuation|billion|trillion|loss|losses|deficit|capital|financing|circular|subsid|taxpayer|retiree|s&p|pension|401k|revenue|spend|spent|cash[- ]?out|stake|economy|economic|inflation|energy\s+bill|gigawatt|nuclear|market|investor|debt|financial)\b|مليار|تريليون|خسائر|تمويل|تقييم|ضرائب|متقاعد|طاقة|اقتصاد|استثمار/i.test(
+      lower
+    );
+
   // 1. HUB DEFAULTS
   const centerIcon =
     !forceRefresh && slide.centerIcon && slide.centerIcon !== 'gitMerge'
       ? slide.centerIcon
-      : matchedIcons[0] || 'cpu';
+      : matchedIcons[0] || (isFinancialOrMacro ? 'dollarSign' : 'cpu');
 
   const derivedCenterTag = (() => {
+    if (isFinancialOrMacro) return 'CAPITAL & ECONOMICS';
     if (/security|breach|threat|permission|اختراق|أمن/.test(lower)) return 'SECURITY CORE';
     if (/ai|agent|llm|model|ذكاء/.test(lower)) return 'AI GOVERNANCE';
     if (/vector|embedding|hnsw|search|متجهات/.test(lower)) return 'VECTOR ENGINE';
@@ -427,10 +449,14 @@ export function resolveSmartSlideVisuals(
     switch (activeVariant) {
       case 'isolation':
         return {
-          statuses: ['SCOPED', 'ISOLATED', 'GUARDED'],
-          subs: ['Untrusted Input Boundary', 'Policy Enforcement Gate', 'Protected Core State'],
-          edges: ['INSPECT', 'CONTAIN'] as [string, string],
-          footer: 'SECURITY POSTURE: ZERO-TRUST ISOLATION • BLAST RADIUS CONTAINED',
+          statuses: isFinancialOrMacro ? ['EXPOSED', 'BACKSTOP', 'CONTAINED'] : ['SCOPED', 'ISOLATED', 'GUARDED'],
+          subs: isFinancialOrMacro
+            ? ['Private Capital Loss', 'Public Subsidy Shield', 'Taxpayer Risk Exposure']
+            : ['Untrusted Input Boundary', 'Policy Enforcement Gate', 'Protected Core State'],
+          edges: (isFinancialOrMacro ? ['SHIFT', 'BACKSTOP'] : ['INSPECT', 'CONTAIN']) as [string, string],
+          footer: isFinancialOrMacro
+            ? 'RISK EXPOSURE: SYSTEMIC MARKET & TAXPAYER BACKSTOP'
+            : 'SECURITY POSTURE: ZERO-TRUST ISOLATION • BLAST RADIUS CONTAINED',
         };
       case 'scatter':
         return {
@@ -462,17 +488,25 @@ export function resolveSmartSlideVisuals(
         };
       case 'stack':
         return {
-          statuses: ['INGRESS', 'RUNTIME', 'PERSISTED'],
-          subs: ['Interface & API Layer', 'Core Execution Tier', 'Storage & State Layer'],
-          edges: ['DISPATCH', 'COMMIT'] as [string, string],
-          footer: 'LAYERED STACK: DETERMINISTIC VERTICAL EXECUTION',
+          statuses: isFinancialOrMacro ? ['VALUATION', 'COMMITMENTS', 'IMPACT'] : ['INGRESS', 'RUNTIME', 'PERSISTED'],
+          subs: isFinancialOrMacro
+            ? ['Equity & Debt Financing', 'Infrastructure Capex', 'Consumer & Grid Cost']
+            : ['Interface & API Layer', 'Core Execution Tier', 'Storage & State Layer'],
+          edges: (isFinancialOrMacro ? ['LEVERAGE', 'PASS-THROUGH'] : ['DISPATCH', 'COMMIT']) as [string, string],
+          footer: isFinancialOrMacro
+            ? 'ECONOMIC STACK: CAPITAL STRUCTURE & REAL-WORLD IMPACT'
+            : 'LAYERED STACK: DETERMINISTIC VERTICAL EXECUTION',
         };
       case 'takeaway':
         return {
           statuses: ['CONSTRAINT', 'MECHANISM', 'OUTCOME'],
-          subs: ['Architectural Bottleneck', 'Engineered Design Shift', 'Verified Production Gain'],
-          edges: ['EVALUATE', 'ADOPT'] as [string, string],
-          footer: 'ARCHITECTURAL PRINCIPLE: AUDITED & PRODUCTION-VERIFIED',
+          subs: isFinancialOrMacro
+            ? ['Unsustainable Unit Burn', 'Circular Capital Structure', 'Systemic Market Risk']
+            : ['Architectural Bottleneck', 'Engineered Design Shift', 'Verified Production Gain'],
+          edges: ['EVALUATE', 'OUTCOME'] as [string, string],
+          footer: isFinancialOrMacro
+            ? 'ECONOMIC VERDICT: PRIVATE GAINS VS PUBLIC & RETIREE EXPOSURE'
+            : 'ARCHITECTURAL PRINCIPLE: AUDITED & PRODUCTION-VERIFIED',
         };
       case 'features':
         return {
@@ -482,27 +516,38 @@ export function resolveSmartSlideVisuals(
           footer: 'CORE CAPABILITIES: HIGH-THROUGHPUT & RESILIENT',
         };
       default:
-        return {
-          statuses: ['ACTIVE', 'VERIFIED', 'SECURED'],
-          subs: ['Stage 01 Ingress', 'Stage 02 Processing', 'Stage 03 Target State'],
-          edges: ['PROCESS', 'COMMIT'] as [string, string],
-          footer: 'SYSTEM TOPOLOGY: END-TO-END DETERMINISTIC PIPELINE',
-        };
+        return isFinancialOrMacro
+          ? {
+              statuses: ['CAPITAL', 'ALLOCATED', 'BOOKED'],
+              subs: ['Capital & Debt Injection', 'Hardware & Grid Capex', 'Circular Revenue Return'],
+              edges: ['FINANCE', 'RECYCLE'] as [string, string],
+              footer: 'CAPITAL TOPOLOGY: CIRCULAR FINANCING & VALUE FLOW',
+            }
+          : {
+              statuses: ['ACTIVE', 'VERIFIED', 'SECURED'],
+              subs: ['Stage 01 Ingress', 'Stage 02 Processing', 'Stage 03 Target State'],
+              edges: ['PROCESS', 'COMMIT'] as [string, string],
+              footer: 'SYSTEM TOPOLOGY: END-TO-END DETERMINISTIC PIPELINE',
+            };
     }
   })();
+
+  const defaultNodeIcons = isFinancialOrMacro
+    ? ['dollarSign', 'landmark', 'factory']
+    : ['server', 'cpu', 'database'];
 
   const diagramNodes: DiagramNode[] = hasCustomNodes
     ? slide.diagramNodes!.slice(0, 3).map((n, i) => ({
         label: n.label || phrases[i] || `Stage 0${i + 1}`,
         sublabel: !isGenericPlaceholderValue(n.sublabel) ? n.sublabel : variantMeta.subs[i],
         status: n.status || variantMeta.statuses[i],
-        icon: n.icon || matchedIcons[i % matchedIcons.length] || 'cpu',
+        icon: n.icon || matchedIcons[i % matchedIcons.length] || defaultNodeIcons[i],
       }))
     : [0, 1, 2].map((i) => ({
         label: phrases[i] || `Component 0${i + 1}`,
         sublabel: variantMeta.subs[i],
         status: variantMeta.statuses[i],
-        icon: matchedIcons[i % matchedIcons.length] || (i === 0 ? 'server' : i === 1 ? 'cpu' : 'database'),
+        icon: matchedIcons[i % matchedIcons.length] || defaultNodeIcons[i],
       }));
 
   const diagramEdges: [string, string] =
@@ -540,27 +585,35 @@ export function resolveSmartSlideVisuals(
   const numberIcon =
     !forceRefresh && (slide.centerIcon || slide.icons?.[0]?.icon)
       ? (slide.centerIcon || slide.icons?.[0]?.icon)!
-      : matchedIcons[0] || 'cpu';
+      : matchedIcons[0] || (isFinancialOrMacro ? 'dollarSign' : 'cpu');
 
   // 4. METRIC ARCHETYPE DEFAULTS
   const extractedMetric = (() => {
-    const currencyMatch = fullText.match(/\$\s*(\d+(?:[.,]\d+)?)\s*(billion|million|B|M|K)?/i);
+    const currencyMatch = fullText.match(/\$\s*(\d+(?:[.,]\d+)?)\s*(trillion|billion|million|T|B|M|K)?/i);
     if (currencyMatch) {
       const unit = currencyMatch[2] ? currencyMatch[2][0].toUpperCase() : '';
       return `$${currencyMatch[1].replace(',', '.')}${unit}`;
+    }
+    const arabTrillion = fullText.match(/(\d+(?:[.,]\d+)?)\s*(?:تريليونات|تريليون)\s*(?:دولار)?/);
+    if (arabTrillion) {
+      return `$${arabTrillion[1].replace(',', '.')}T`;
     }
     const arabBillion = fullText.match(/(\d+(?:[.,]\d+)?)\s*(?:مليارات|مليار)\s*(?:دولار)?/);
     if (arabBillion) {
       return `$${arabBillion[1].replace(',', '.')}B`;
     }
+    const gwMatch = fullText.match(/\b(\d+(?:[.,]\d+)?)\s*(?:gigawatts?|GW)\b/i);
+    if (gwMatch) {
+      return `${gwMatch[1]} GW`;
+    }
     const techMetric = fullText.match(/\b(\d+(?:\.\d+)?\s*(?:x|%|ms|μs|ns|GB|MB|TB|rps|req\/s))\b/i);
     if (techMetric) {
       return techMetric[1].replace(/\s+/g, '');
     }
-    return '10x';
+    return isFinancialOrMacro ? '$1.4T' : '10x';
   })();
 
-  const isNegativeContext = /breach|loss|hack|threat|risk|drop|latency spike|error|vulnerability|خسائر|اختراق|مخاطر|تهديد/i.test(
+  const isNegativeContext = /breach|loss|losses|deficit|burn|debt|inflation|spike|hack|threat|risk|drop|latency spike|error|vulnerability|خسائر|عجز|تضخم|اختراق|مخاطر|تهديد/i.test(
     lower
   );
 
@@ -572,19 +625,19 @@ export function resolveSmartSlideVisuals(
   const metricLabel =
     !forceRefresh && slide.metricLabel && slide.metricLabel !== 'p99 Latency' && slide.metricLabel !== 'PERFORMANCE MULTIPLIER'
       ? slide.metricLabel
-      : `${(phrases[0] || 'SYSTEM').toUpperCase()} ${isNegativeContext ? 'IMPACT METRIC' : 'BENCHMARK'}`;
+      : `${(phrases[0] || (isFinancialOrMacro ? 'CAPITAL' : 'SYSTEM')).toUpperCase()} ${isNegativeContext ? 'EXPOSURE METRIC' : 'SCALE METRIC'}`;
 
   const metricDiff =
     !forceRefresh && slide.metricDiff && slide.metricDiff !== '▲ 94% faster'
       ? slide.metricDiff
       : isNegativeContext
-      ? `▼ Critical ${phrases[1] || 'Security'} Exposure Detected`
-      : `▲ Verified ${phrases[0] || 'Architecture'} Gain`;
+      ? `▼ High ${phrases[1] || (isFinancialOrMacro ? 'Financial' : 'Security')} Exposure`
+      : `▲ Verified ${phrases[0] || (isFinancialOrMacro ? 'Capital' : 'Architecture')} Scale`;
 
   const metricIcon =
     !forceRefresh && slide.metricIcon && slide.metricIcon !== 'zap'
       ? slide.metricIcon
-      : matchedIcons[0] || 'zap';
+      : matchedIcons[0] || (isFinancialOrMacro ? 'dollarSign' : 'zap');
 
   // 5. CODE DIFF ARCHETYPE DEFAULTS
   const derivedCode = (() => {

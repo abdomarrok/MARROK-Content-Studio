@@ -323,6 +323,48 @@ export const ICONS_REGISTRY: Record<string, { label: string; svgInner: string }>
       <line x1="41" y1="23" x2="23" y2="41" />
     `,
   },
+  dollarSign: {
+    label: 'Capital / Currency',
+    svgInner: `
+      <line x1="32" y1="8" x2="32" y2="56" />
+      <path d="M44 18H26a8 8 0 0 0 0 16h12a8 8 0 0 1 0 16H18" />
+    `,
+  },
+  landmark: {
+    label: 'Bank / Institution / Gov',
+    svgInner: `
+      <polygon points="32 8 54 20 10 20 32 8" />
+      <line x1="16" y1="20" x2="16" y2="46" />
+      <line x1="26" y1="20" x2="26" y2="46" />
+      <line x1="38" y1="20" x2="38" y2="46" />
+      <line x1="48" y1="20" x2="48" y2="46" />
+      <line x1="10" y1="52" x2="54" y2="52" />
+      <line x1="12" y1="46" x2="52" y2="46" />
+    `,
+  },
+  factory: {
+    label: 'Power Plant / Infrastructure',
+    svgInner: `
+      <path d="M10 52V28l14 8V28l14 8V14h16v38H10z" />
+      <line x1="20" y1="44" x2="20" y2="52" />
+      <line x1="32" y1="44" x2="32" y2="52" />
+      <line x1="46" y1="26" x2="46" y2="34" />
+    `,
+  },
+  trendingDown: {
+    label: 'Loss / Deficit / Risk',
+    svgInner: `
+      <polyline points="54 44 34 24 24 34 10 20" />
+      <polyline points="40 44 54 44 54 30" />
+    `,
+  },
+  trendingUp: {
+    label: 'Valuation / Growth',
+    svgInner: `
+      <polyline points="54 20 34 40 24 30 10 44" />
+      <polyline points="40 20 54 20 54 34" />
+    `,
+  },
   marrok: {
     label: 'MARROK Core',
     svgInner: `

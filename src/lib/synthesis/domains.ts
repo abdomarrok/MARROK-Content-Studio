@@ -142,6 +142,14 @@ export const DOMAIN_RULES: DomainRule[] = [
     keywords: ['database', 'distributed', 'storage', 'postgres', 'clickhouse', 'kafka', 'raft', 'paxos', 'replication', 'acid'],
     metricFallback: '0 ms replication lag',
   },
+  {
+    category: 'CAPITAL & INFRASTRUCTURE ECONOMICS',
+    theme: 'amber',
+    centerIcon: 'dollarSign',
+    satIcons: ['landmark', 'factory', 'scales', 'trendingDown', 'users', 'lifecycle'],
+    keywords: ['valuation', 'billion', 'trillion', 'loss', 'losses', 'deficit', 'capital', 'financing', 'circular', 'subsidy', 'subsidies', 'taxpayer', 'retiree', 'retirees', 'pension', 'revenue', 'cash-out', 'economy', 'economic', 'inflation', 'gigawatt', 'gigawatts', 'nuclear'],
+    metricFallback: '$1.4T capital commitment',
+  },
 ];
 
 export const DEFAULT_RULE: DomainRule = {
@@ -154,7 +162,14 @@ export const DEFAULT_RULE: DomainRule = {
 };
 
 export const ICON_AFFINITY: Record<string, string[]> = {
-  cpu: ['core', 'engine', 'execution', 'compute', 'processor', 'runtime', 'microvm'],
+  dollarSign: ['valuation', 'billion', 'trillion', 'capital', 'financing', 'revenue', 'spend', 'spent', 'cash-out', 'money', 'cost', 'price', 'fund'],
+  landmark: ['bank', 'government', 'taxpayer', 'treasury', 'subsidy', 'subsidies', 'backstop', 'stake', 'fed', 'wall street'],
+  factory: ['nuclear', 'gigawatt', 'gigawatts', 'power plant', 'grid', 'energy', 'electricity', 'industrial'],
+  trendingDown: ['loss', 'losses', 'deficit', 'burn', 'debt', 'crash', 'bubble'],
+  trendingUp: ['growth', 'surge', 'valuation', 'rally'],
+  lifecycle: ['circular', 'round-trip', 'loop', 'recycle'],
+  users: ['retiree', 'retirees', 'pension', '401k', 'consumer', 'employee', 'household', 'taxpayer'],
+  cpu: ['core', 'engine', 'execution', 'compute', 'processor', 'runtime', 'microvm', 'chip', 'gpu'],
   server: ['cluster', 'instance', 'host', 'backend', 'node', 'bare-metal'],
   database: ['storage', 'persistence', 'state', 'tables', 'records', 'sql', 'store'],
   hardDrive: ['memory', 'disk', 'cache', 'nvme', 'iops', 'ram', 'shared buffer'],
@@ -173,7 +188,7 @@ export const ICON_AFFINITY: Record<string, string[]> = {
   box: ['container', 'pod', 'oci', 'image', 'shim'],
   layers: ['stack', 'tier', 'architecture', 'layered', 'pipeline'],
   codeFile: ['config', 'manifest', 'schema', 'yaml', 'json'],
-  scales: ['tradeoff', 'balance', 'vs', 'compare', 'contrast', 'cost'],
+  scales: ['tradeoff', 'trade-off', 'balance', 'vs', 'compare', 'contrast', 'cost', 'risk', 'exposure'],
   arrowRightLeft: ['migration', 'transition', 'sync', 'transfer', 'switch'],
   checkCircle: ['validated', 'success', 'compliant', 'passed'],
   xCircle: ['flaw', 'bottleneck', 'failed', 'outdated'],
@@ -231,7 +246,10 @@ export function extractDynamicIcons(lowerText: string, fallbackBase: string[]): 
     }
   }
 
-  const defaultFillers = ['zap', 'layers', 'box', 'shieldAlert', 'database', 'gitMerge', 'server', 'terminal', 'cpu', 'brain'];
+  const isFinancialOrMacro = /\$|\b(?:valuation|billion|trillion|loss|losses|deficit|capital|financing|circular|subsid|taxpayer|retiree|revenue|spend|economy|economic|energy|gigawatt|nuclear)\b/i.test(lowerText);
+  const defaultFillers = isFinancialOrMacro
+    ? ['dollarSign', 'landmark', 'factory', 'scales', 'trendingDown', 'lifecycle', 'users', 'cpu']
+    : ['zap', 'layers', 'box', 'shieldAlert', 'database', 'gitMerge', 'server', 'terminal', 'cpu', 'brain'];
   for (const f of [...fallbackBase, ...defaultFillers]) {
     if (f !== centerIcon && satSet.size < 6) {
       satSet.add(f);

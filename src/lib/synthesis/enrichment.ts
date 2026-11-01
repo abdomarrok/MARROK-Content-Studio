@@ -96,14 +96,19 @@ export function enrichCarouselDiagrams(
       };
     }
 
+    const isFinancialOrMacro =
+      /\$|\b(?:valuation|billion|trillion|loss|losses|deficit|capital|financing|circular|subsid|taxpayer|retiree|s&p|pension|401k|revenue|spend|spent|cash[- ]?out|stake|economy|economic|inflation|energy|gigawatt|nuclear|market|investor|debt|financial)\b|مليار|تريليون|خسائر|تمويل|تقييم|ضرائب|متقاعد|طاقة|اقتصاد|استثمار/i.test(
+        `${slideText} ${topicOrText} ${category}`
+      );
+
     // STRICT INVARIANT 2: If diagramNodes are missing (offline mode / fallback),
     // derive node labels dynamically by splitting actual phrases from slide.enTitle and slide.enBody or slide.icons.
     // Never stamp hardcoded domain strings!
-    const titleClean = (slide.enTitle || 'Core Mechanism').replace(/[.?!]$/, '').trim();
+    const titleClean = (slide.enTitle || (isFinancialOrMacro ? 'Capital Flow' : 'Core Mechanism')).replace(/[.?!]$/, '').trim();
     const titleWords = titleClean.split(/\s+/).filter((w) => w.length > 2);
-    const n1Label = slide.icons?.[0]?.label || titleWords[0] || 'Ingress';
-    const midLabel = slide.icons?.[1]?.label || (titleWords.length > 1 ? titleWords.slice(1, 3).join(' ') : 'Engine');
-    const n3Label = slide.icons?.[2]?.label || (titleWords.length > 3 ? titleWords.slice(3, 5).join(' ') : 'Outcome');
+    const n1Label = slide.icons?.[0]?.label || titleWords[0] || (isFinancialOrMacro ? 'Capital' : 'Ingress');
+    const midLabel = slide.icons?.[1]?.label || (titleWords.length > 1 ? titleWords.slice(1, 3).join(' ') : isFinancialOrMacro ? 'Allocation' : 'Engine');
+    const n3Label = slide.icons?.[2]?.label || (titleWords.length > 3 ? titleWords.slice(3, 5).join(' ') : isFinancialOrMacro ? 'Impact' : 'Outcome');
 
     let diagramNodes: DiagramNode[];
     let diagramEdges: string[];
@@ -111,36 +116,44 @@ export function enrichCarouselDiagrams(
 
     if (variant === 'isolation') {
       diagramNodes = [
-        { label: n1Label, sublabel: 'Input Boundary', status: 'AUDITED', icon: slide.icons?.[0]?.icon || 'shieldAlert' },
-        { label: 'Isolation Guard', sublabel: 'Boundary Enforced', status: 'ISOLATED', icon: 'lock' },
-        { label: n3Label, sublabel: 'Protected Core', status: 'SECURED', icon: slide.icons?.[2]?.icon || 'database' },
+        { label: n1Label, sublabel: isFinancialOrMacro ? 'Private Capital Loss' : 'Input Boundary', status: isFinancialOrMacro ? 'EXPOSED' : 'AUDITED', icon: slide.icons?.[0]?.icon || (isFinancialOrMacro ? 'trendingDown' : 'shieldAlert') },
+        { label: isFinancialOrMacro ? 'Public Backstop' : 'Isolation Guard', sublabel: isFinancialOrMacro ? 'Subsidy & State Stake' : 'Boundary Enforced', status: isFinancialOrMacro ? 'BACKSTOP' : 'ISOLATED', icon: isFinancialOrMacro ? 'landmark' : 'lock' },
+        { label: n3Label, sublabel: isFinancialOrMacro ? 'Taxpayer Exposure' : 'Protected Core', status: isFinancialOrMacro ? 'SHIFTED' : 'SECURED', icon: slide.icons?.[2]?.icon || (isFinancialOrMacro ? 'users' : 'database') },
       ];
-      diagramEdges = ['ISOLATE', 'GUARD'];
-      diagramFooter = 'FAULT DOMAIN: BOUNDED • RESILIENCE: AUDITED';
+      diagramEdges = isFinancialOrMacro ? ['SHIFT', 'BACKSTOP'] : ['ISOLATE', 'GUARD'];
+      diagramFooter = isFinancialOrMacro
+        ? 'RISK EXPOSURE: SYSTEMIC MARKET & TAXPAYER BACKSTOP'
+        : 'FAULT DOMAIN: BOUNDED • RESILIENCE: AUDITED';
     } else if (variant === 'stack') {
       diagramNodes = [
-        { label: n1Label, sublabel: 'Interface Tier', status: 'LAYER 01', icon: slide.icons?.[0]?.icon || 'network' },
-        { label: midLabel, sublabel: 'Execution Layer', status: 'LAYER 02', icon: slide.icons?.[1]?.icon || 'cpu' },
-        { label: n3Label, sublabel: 'Storage & State', status: 'LAYER 03', icon: slide.icons?.[2]?.icon || 'database' },
+        { label: n1Label, sublabel: isFinancialOrMacro ? 'Equity & Debt Capital' : 'Interface Tier', status: isFinancialOrMacro ? 'CAPITAL' : 'LAYER 01', icon: slide.icons?.[0]?.icon || (isFinancialOrMacro ? 'dollarSign' : 'network') },
+        { label: midLabel, sublabel: isFinancialOrMacro ? 'Infrastructure Capex' : 'Execution Layer', status: isFinancialOrMacro ? 'CAPEX' : 'LAYER 02', icon: slide.icons?.[1]?.icon || (isFinancialOrMacro ? 'factory' : 'cpu') },
+        { label: n3Label, sublabel: isFinancialOrMacro ? 'Consumer & Grid Cost' : 'Storage & State', status: isFinancialOrMacro ? 'IMPACT' : 'LAYER 03', icon: slide.icons?.[2]?.icon || (isFinancialOrMacro ? 'landmark' : 'database') },
       ];
-      diagramEdges = ['DISPATCH', 'COMMIT'];
-      diagramFooter = 'ARCHITECTURE STACK: VERIFIED • PIPELINE: DETERMINISTIC';
+      diagramEdges = isFinancialOrMacro ? ['LEVERAGE', 'PASS-THROUGH'] : ['DISPATCH', 'COMMIT'];
+      diagramFooter = isFinancialOrMacro
+        ? 'ECONOMIC STACK: CAPITAL STRUCTURE & REAL-WORLD IMPACT'
+        : 'ARCHITECTURE STACK: VERIFIED • PIPELINE: DETERMINISTIC';
     } else if (variant === 'takeaway') {
       diagramNodes = [
-        { label: n1Label, sublabel: 'Standard Baseline', status: 'RULE 01', icon: slide.icons?.[0]?.icon || 'layers' },
-        { label: midLabel, sublabel: 'Core Shift', status: 'RULE 02', icon: slide.icons?.[1]?.icon || 'shieldAlert' },
-        { label: n3Label, sublabel: 'Production Outcome', status: 'RULE 03', icon: slide.icons?.[2]?.icon || 'activity' },
+        { label: n1Label, sublabel: isFinancialOrMacro ? 'Unit Economics Deficit' : 'Standard Baseline', status: 'RULE 01', icon: slide.icons?.[0]?.icon || (isFinancialOrMacro ? 'dollarSign' : 'layers') },
+        { label: midLabel, sublabel: isFinancialOrMacro ? 'Circular Capital Loop' : 'Core Shift', status: 'RULE 02', icon: slide.icons?.[1]?.icon || (isFinancialOrMacro ? 'landmark' : 'shieldAlert') },
+        { label: n3Label, sublabel: isFinancialOrMacro ? 'Systemic Market Risk' : 'Production Outcome', status: 'RULE 03', icon: slide.icons?.[2]?.icon || (isFinancialOrMacro ? 'scales' : 'activity') },
       ];
       diagramEdges = ['EVALUATE', 'VERIFY'];
-      diagramFooter = 'ENGINEERING PRINCIPLE: AUDITED • STATUS: PRODUCTION-GRADE';
+      diagramFooter = isFinancialOrMacro
+        ? 'ECONOMIC VERDICT: PRIVATE GAINS VS PUBLIC & RETIREE EXPOSURE'
+        : 'ENGINEERING PRINCIPLE: AUDITED • STATUS: PRODUCTION-GRADE';
     } else {
       diagramNodes = [
-        { label: n1Label, sublabel: 'Input Stream', status: 'ACTIVE', icon: slide.icons?.[0]?.icon || 'server' },
-        { label: midLabel, sublabel: 'Core Logic', status: 'ROUTED', icon: slide.icons?.[1]?.icon || 'cpu' },
-        { label: n3Label, sublabel: 'Committed State', status: 'COMMITTED', icon: slide.icons?.[2]?.icon || 'database' },
+        { label: n1Label, sublabel: isFinancialOrMacro ? 'Capital & Debt Input' : 'Input Stream', status: isFinancialOrMacro ? 'CAPITAL' : 'ACTIVE', icon: slide.icons?.[0]?.icon || (isFinancialOrMacro ? 'dollarSign' : 'server') },
+        { label: midLabel, sublabel: isFinancialOrMacro ? 'Vendor Compute Loop' : 'Core Logic', status: isFinancialOrMacro ? 'ALLOCATED' : 'ROUTED', icon: slide.icons?.[1]?.icon || (isFinancialOrMacro ? 'landmark' : 'cpu') },
+        { label: n3Label, sublabel: isFinancialOrMacro ? 'Booked Revenue Flow' : 'Committed State', status: isFinancialOrMacro ? 'BOOKED' : 'COMMITTED', icon: slide.icons?.[2]?.icon || (isFinancialOrMacro ? 'factory' : 'database') },
       ];
-      diagramEdges = ['DATAFLOW', 'SYNC'];
-      diagramFooter = 'DATAFLOW: VERIFIED • STATUS: OPERATIONAL';
+      diagramEdges = isFinancialOrMacro ? ['FINANCE', 'RECYCLE'] : ['DATAFLOW', 'SYNC'];
+      diagramFooter = isFinancialOrMacro
+        ? 'CAPITAL TOPOLOGY: CIRCULAR FINANCING & VALUE FLOW'
+        : 'DATAFLOW: VERIFIED • STATUS: OPERATIONAL';
     }
 
     return {

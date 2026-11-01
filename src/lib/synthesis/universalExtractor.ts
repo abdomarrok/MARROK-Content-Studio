@@ -311,13 +311,37 @@ export function scanMetrics(text: string): ExtractedMetric[] {
     }
   }
 
-  // 6. Percentages (e.g. 99.9%, 57%, 32%)
+  // 6. Percentages (e.g. 99.9%, 57%, 32%, 63%, 5%)
   const percentRegex = /\b(\d+(?:\.\d+)?)\s*%\b/gi;
   while ((match = percentRegex.exec(text)) !== null) {
     const full = `${match[1]}%`;
     if (!seen.has(full.toLowerCase())) {
       seen.add(full.toLowerCase());
       metrics.push({ raw: match[0], value: full, unit: '%', type: 'percent' });
+    }
+  }
+
+  // 7. Financial Currency & Valuation Metrics (e.g. $500B, $1.4 trillion, $20.9B, $6.6B, $2.60)
+  const currencyRegex = /\$\s*(\d+(?:,\d+)*(?:\.\d+)?)\s*(trillion|billion|million|T|B|M|K)?\b/gi;
+  while ((match = currencyRegex.exec(text)) !== null) {
+    const rawNum = match[1].replace(/,/g, '');
+    const rawUnit = match[2] || '';
+    const unitLetter = rawUnit ? rawUnit[0].toUpperCase() : '';
+    const full = `$${rawNum}${unitLetter}`;
+    if (!seen.has(full.toLowerCase())) {
+      seen.add(full.toLowerCase());
+      metrics.push({ raw: match[0], value: full, unit: unitLetter || '$', type: 'general' });
+    }
+  }
+
+  // 8. Power & Energy Scale Metrics (e.g. 10 gigawatts, 10 GW)
+  const powerRegex = /\b(\d+(?:\.\d+)?)\s*(gigawatts?|GW|megawatts?|MW)\b/gi;
+  while ((match = powerRegex.exec(text)) !== null) {
+    const unit = /^g/i.test(match[2]) ? 'GW' : 'MW';
+    const full = `${match[1]} ${unit}`;
+    if (!seen.has(full.toLowerCase())) {
+      seen.add(full.toLowerCase());
+      metrics.push({ raw: match[0], value: full, unit, type: 'general' });
     }
   }
 
@@ -492,8 +516,14 @@ export function synthesizeUniversalCarousel(rawInput: string, options: Universal
   // 3. Extract Core Subject & Headlines
   let coreSubject = '';
   const firstLine = lines[0] || 'System Architecture';
+  const userSubstantivePoints = lines
+    .slice(1)
+    .filter((l) => l.length > 20 && !/^https?:\/\//i.test(l));
+  const isExplicitHeadlineComparison =
+    entities.isComparative &&
+    (/\b(?:vs\.?|versus|compared\s+to|faster\s+than)\b/i.test(firstLine) || userSubstantivePoints.length < 3);
 
-  if (entities.isComparative) {
+  if (isExplicitHeadlineComparison) {
     if (/\b(?:web\s*api|api)\b/i.test(cleaned)) {
       coreSubject = `${entities.rightShort} vs ${entities.leftShort} Web API`;
     } else {
@@ -529,11 +559,7 @@ export function synthesizeUniversalCarousel(rawInput: string, options: Universal
 
   // 5. If user provided multiple substantive bullet points or sentences (>= 3 points):
   // Directly synthesize slides from the user's actual points!
-  const userSubstantivePoints = lines
-    .slice(1)
-    .filter((l) => l.length > 20 && !/^https?:\/\//i.test(l));
-
-  if (userSubstantivePoints.length >= 3 && !entities.isComparative) {
+  if (userSubstantivePoints.length >= 3 && !isExplicitHeadlineComparison) {
     return buildDeckFromUserPoints(coreSubject, userSubstantivePoints, {
       brand,
       brandUrl,
@@ -618,12 +644,20 @@ function buildDeckFromUserPoints(
 ): SlideData[] {
   const { brand, brandUrl, domainCategory, targetCount, metrics } = options;
 
+  const combinedRaw = `${subject} ${userPoints.join(' ')}`;
+  const isFinancialOrMacro =
+    /\$\s*\d+(?:\.\d+)?\s*(?:trillion|billion|million|T|B|M)\b|\b(?:valuation|billion|trillion|deficit|circular\s+financing|subsid|taxpayer|retiree|s&p\s*500|pension|401k|cash[- ]?out|economy|economic|inflation|energy\s+bill|electricity\s+bill|financial\s+engineering|for\s+every\s+\$1)\b|مليار|تريليون|خسائر|تمويل|تقييم|ضرائب|متقاعد|طاقة|اقتصاد|استثمار/i.test(
+      combinedRaw
+    );
+
   const { cleanSubject, arSubject } = extractCleanSubject(subject);
   const hasPreamble = /^(?:this\s+(?:video|article|post|guide|talk)?\s+(?:explains|covers|discusses|breaks\s+down)|in\s+this\s+video)\b/i.test(subject.trim());
   const enHook = hasPreamble
     ? `${cleanSubject}, explained.`
     : enforceHeadlineSpecRule(subject, { isHook: true, fallbackSubject: cleanSubject });
-  const arHook = `تحليل معماري لمنظومة ${arSubject}`;
+  const arHook = isFinancialOrMacro
+    ? `التحليل المالي والاقتصادي لـ ${arSubject}.`
+    : `تحليل معماري لمنظومة ${arSubject}`;
 
   // Extract clean, meaningful satLabels from user points
   const satLabels: string[] = [];
@@ -639,18 +673,27 @@ function buildDeckFromUserPoints(
   }
   if (satLabels.length < 6) {
     for (const pt of userPoints) {
+      const currencyPill = pt.match(/\$\s*\d+(?:\.\d+)?\s*(?:trillion|billion|million|T|B|M)/i);
+      if (currencyPill) {
+        const cleanCurr = currencyPill[0].replace(/\s+/g, '').replace(/trillion/i, 'T').replace(/billion/i, 'B').replace(/million/i, 'M').toUpperCase();
+        if (!satLabels.includes(cleanCurr)) satLabels.push(cleanCurr);
+      }
       const words = pt.replace(/[^A-Za-z0-9\s]/g, '').split(/\s+/).filter((w) => w.length >= 4);
       if (words[0] && !satLabels.includes(words[0].toUpperCase())) satLabels.push(words[0].toUpperCase().slice(0, 14));
       if (satLabels.length >= 6) break;
     }
   }
-  const defaultSatPills = ['Architecture', 'Dataflow', 'Execution', 'Scale', 'Resilience', 'Telemetry'];
+  const defaultSatPills = isFinancialOrMacro
+    ? ['Valuation', 'Deficits', 'Capital Flow', 'Grid Power', 'Retirees', 'Taxpayers']
+    : ['Architecture', 'Dataflow', 'Execution', 'Scale', 'Resilience', 'Telemetry'];
   for (const p of defaultSatPills) {
     if (satLabels.length >= 6) break;
     if (!satLabels.includes(p.toUpperCase())) satLabels.push(p.toUpperCase());
   }
 
-  let hubOverviewEn = `An architectural breakdown of ${cleanSubject}, covering core indexing algorithms, memory trade-offs, and production design.`;
+  let hubOverviewEn = isFinancialOrMacro
+    ? `An economic breakdown of ${cleanSubject}: capital commitments, unit losses, circular financing, and taxpayer risk.`
+    : `An architectural breakdown of ${cleanSubject}, covering core indexing algorithms, memory trade-offs, and production design.`;
   if (hasPreamble && subject.length > 25) {
     const strippedPreamble = subject
       .replace(/^(?:this\s+(?:video|article|post|guide|talk)?\s+(?:explains|covers|discusses|breaks\s+down)|in\s+this\s+video)\s+(?:the\s+role\s+and\s+architecture\s+of\s+)?/i, '')
@@ -668,13 +711,17 @@ function buildDeckFromUserPoints(
     }
   }
 
-  const hubOverviewAr = `نظرة معمارية معمقة تشرح آليات عمل ${arSubject} وخوارزميات الفهرسة والتحديات في بيئات الإنتاج الفعلية.`;
+  const hubOverviewAr = isFinancialOrMacro
+    ? `قراءة مالية واقتصادية معمقة تكشف حجم التقييمات والالتزامات الرأسمالية وتأثيرها المباشر على المستهلكين ودافعي الضرائب.`
+    : `نظرة معمارية معمقة تشرح آليات عمل ${arSubject} وخوارزميات الفهرسة والتحديات في بيئات الإنتاج الفعلية.`;
 
   const slides: SlideData[] = [
     {
       type: 'hub',
-      centerIcon: options.centerIcon || resolveTechLogo(subject) || 'cpu',
-      satIcons: ['server', 'database', 'gauge', 'cpu', 'box', 'activity'],
+      centerIcon: options.centerIcon || (isFinancialOrMacro ? 'dollarSign' : resolveTechLogo(subject) || 'cpu'),
+      satIcons: isFinancialOrMacro
+        ? ['dollarSign', 'trendingDown', 'lifecycle', 'factory', 'users', 'landmark']
+        : ['server', 'database', 'gauge', 'cpu', 'box', 'activity'],
       satLabels: satLabels.slice(0, 6),
       enTitle: enHook,
       arTitle: arHook,
@@ -684,19 +731,75 @@ function buildDeckFromUserPoints(
   ];
 
   // Distribute points across available content slots (targetCount - 2 = 6 slots)
-  // Ensure beginning concepts, core indexing/mechanism, comparisons, and closing takeaways are all represented
   const maxContentSlots = targetCount - 2;
   let selectedPoints: string[] = [];
 
   // Filter out standalone section title lines that don't contain a colon or period and are short
   const substantivePoints = userPoints.filter((p) => {
     const clean = p.replace(/^[•\s\d.-]+/, '').trim();
-    if (clean.length < 25) return false;
-    if (!clean.includes(':') && !clean.includes('.') && clean.length < 40) return false;
+    if (clean.length < 22) return false;
+    if (!clean.includes(':') && !clean.includes('.') && !/\$|\d+%/.test(clean) && clean.length < 40) return false;
     return true;
   });
 
-  if (substantivePoints.length <= maxContentSlots) {
+  if (isFinancialOrMacro && substantivePoints.length > 0) {
+    // Score and group points into the logical narrative arc:
+    // Stage 1: The Problem / Losses & Valuation Gamble ($20.9B loss, $2.60 per $1, $500B valuation)
+    // Stage 2: The Mechanics & Scale (Circular financing, $1.4T commitments, 10GW / nuclear power)
+    // Stage 3: The Real-World & Human Impact Grouped Together (Energy bills +63%, Retirees / S&P 500, $6.6B employee cash-out, 5% gov stake / taxpayers)
+    // Stage 4: The Core Trade-off / Conclusion
+    const classifyNarrativePhase = (pt: string): number => {
+      const lowerPt = pt.toLowerCase();
+      if (/\b(?:trade-?off|verdict|bottom\s+line|conclusion|private\s+gain|socialized)\b/.test(lowerPt)) return 4;
+      if (/\b(?:retiree|pension|401k|s&p\s*500|energy\s+bill|electricity\s+price|63%|taxpayer|government\s+stake|5%\s+stake|backstop|cash[- ]?out|employee|insider|household|consumer)\b/.test(lowerPt)) {
+        return 3;
+      }
+      if (/\b(?:circular|round[- ]?trip|1\.4\s*trillion|\$1\.4t|commitment|infrastructure|gigawatt|10\s*gw|nuclear|reactor|data\s+center)\b/.test(lowerPt)) {
+        return 2;
+      }
+      if (/\b(?:loss|losses|deficit|burn|\$20\.9|\$2\.60|for\s+every\s+\$1|valuation|\$500b|500\s*billion)\b/.test(lowerPt)) {
+        return 1;
+      }
+      return 2;
+    };
+
+    const scoreGoldenPoint = (pt: string): number => {
+      let score = 0;
+      if (/\$\s*\d+(?:\.\d+)?\s*(?:trillion|billion|million|T|B|M)\b/i.test(pt)) score += 5;
+      if (/\$2\.60|\$6\.6|\$500|\$1\.4|\$20\.9|63%|5%|10\s*(?:gw|gigawatt)/i.test(pt)) score += 6;
+      if (/\b(?:cash[- ]?out|taxpayer|retiree|circular|nuclear|loss|valuation)\b/i.test(pt)) score += 4;
+      return score;
+    };
+
+    const indexed = substantivePoints.map((pt, idx) => ({
+      pt,
+      idx,
+      phase: classifyNarrativePhase(pt),
+      score: scoreGoldenPoint(pt),
+    }));
+
+    let chosen = indexed;
+    if (indexed.length > maxContentSlots) {
+      // Ensure each narrative phase is represented and highest-scoring golden stats win
+      const byScore = [...indexed].sort((a, b) => b.score - a.score || a.idx - b.idx);
+      const picked = new Set<number>();
+      for (const phase of [1, 2, 3, 4]) {
+        const phaseMatches = byScore.filter((item) => item.phase === phase);
+        for (const m of phaseMatches.slice(0, phase === 3 ? 2 : 1)) {
+          if (picked.size < maxContentSlots) picked.add(m.idx);
+        }
+      }
+      for (const item of byScore) {
+        if (picked.size >= maxContentSlots) break;
+        picked.add(item.idx);
+      }
+      chosen = indexed.filter((item) => picked.has(item.idx));
+    }
+
+    // Sort chosen points strictly by Narrative Phase (1: Losses -> 2: Mechanics/Scale -> 3: Human/Energy/Taxpayer Impact -> 4: Trade-off)
+    chosen.sort((a, b) => a.phase - b.phase || a.idx - b.idx);
+    selectedPoints = chosen.map((item) => item.pt);
+  } else if (substantivePoints.length <= maxContentSlots) {
     selectedPoints = [...substantivePoints];
   } else {
     // Semantic diversity grouping: collect candidates for distinct mechanism variants
@@ -737,6 +840,113 @@ function buildDeckFromUserPoints(
     const effectiveTitle = topicTitle || point.split(/\s+/).slice(0, 5).join(' ');
     const enTitle = enforceHeadlineSpecRule(effectiveTitle, { isHook: false });
     const hasArabicText = /[\u0600-\u06FF]/.test(topicBody);
+
+    // Financial & Economic Specific Slide Mapping (Prevents DevOps/SQL/Vector Hallucinations)
+    if (isFinancialOrMacro) {
+      // A. Circular Financing / Capital Loop Topology
+      if (/circular|round[- ]?trip|vendor|cloud\s+credit|invest.*spend/i.test(fullText)) {
+        slides.push({
+          type: 'row',
+          diagramVariant: 'topology',
+          diagramNodes: [
+            { label: 'Capital Injection', sublabel: 'Tech Giants & Debt Funds', status: 'CAPITAL', icon: 'dollarSign' },
+            { label: 'Cloud & Chips', sublabel: 'Compute Credits & GPUs', status: 'ALLOCATED', icon: 'cpu' },
+            { label: 'Booked Revenue', sublabel: 'Recycled Vendor Top-Line', status: 'BOOKED', icon: 'landmark' },
+          ],
+          diagramEdges: ['INVEST', 'RECYCLE'],
+          diagramFooter: 'CAPITAL TOPOLOGY: CIRCULAR FINANCING & VALUE FLOW',
+          enTitle,
+          arTitle: `آلية التمويل الدائري: ${effectiveTitle.slice(0, 22)}.`,
+          enBody: autoFitTextToLimits(topicBody, 135),
+          arBody: hasArabicText
+            ? sanitizeArabicSlideText(topicBody.slice(0, 135))
+            : 'تضخ الشركات الكبرى المليارات كاستثمارات ثم تستردها فوراً كعوائد مقابل تأجير السحابة والرقائق.',
+        });
+        return;
+      }
+
+      // B. Insider Cash-Out vs Taxpayer Backstop / $2.60 Spent per $1 Earned Comparison
+      if (/cash[- ]?out|taxpayer|backstop|5%\s+stake|for\s+every\s+\$1|\$2\.60|vs\b|versus/i.test(fullText) && /taxpayer|backstop|cash[- ]?out|for\s+every\s+\$1/i.test(fullText)) {
+        const isUnitEcon = /\$2\.60|for\s+every\s+\$1/i.test(fullText);
+        slides.push({
+          type: 'compare',
+          compareLeftTitle: isUnitEcon ? '$1.00 REVENUE EARNED' : '$6.6B INSIDER CASH-OUT',
+          compareLeftBody: isUnitEcon
+            ? '• Customer subscription inflow\n• Outpaced by compute burn\n• Structural operating deficit'
+            : '• Employees liquidate $6.6B equity\n• Private valuation gains locked in\n• Zero personal downside exposure',
+          compareRightTitle: isUnitEcon ? '$2.60 CAPITAL SPENT' : 'TAXPAYER & PUBLIC RISK',
+          compareRightBody: isUnitEcon
+            ? '• Massive GPU & energy capex\n• $20.9B projected annual loss\n• Relies on continuous new funding'
+            : '• Public subsidies & 5% state stake\n• Grid & infrastructure backstops\n• Downside socialized to taxpayers',
+          enTitle,
+          arTitle: isUnitEcon ? 'مقارنة العوائد مقابل الإنفاق.' : 'سيولة المطلعين مقابل ضمانات الضرائب.',
+          enBody: autoFitTextToLimits(topicBody, 135),
+          arBody: hasArabicText
+            ? sanitizeArabicSlideText(topicBody.slice(0, 135))
+            : 'بينما يحقق المطلعون مكاسب نقدية بمليارات الدولارات، يتحمل دافعو الضرائب وصناديق التقاعد مخاطر التعثر.',
+        });
+        return;
+      }
+
+      // C. Standout Financial / Energy / Valuation Metric ($500B, $20.9B, $1.4T, 63%, 10 GW)
+      const finMetricMatch =
+        point.match(/\$\s*\d+(?:\.\d+)?\s*(?:trillion|billion|million|T|B|M)\b/i) ||
+        point.match(/\b(\d+(?:\.\d+)?\s*(?:%|GW|gigawatts?))\b/i);
+      if (finMetricMatch) {
+        const rawVal = finMetricMatch[0]
+          .replace(/\s+/g, ' ')
+          .replace(/trillion/i, 'T')
+          .replace(/billion/i, 'B')
+          .replace(/million/i, 'M')
+          .replace(/gigawatts?/i, 'GW')
+          .replace(/\$\s+/, '$')
+          .trim();
+        const isEnergy = /energy|electricity|63%|gigawatt|gw\b|nuclear/i.test(fullText);
+        const isLoss = /loss|deficit|burn|\$20\.9/i.test(fullText);
+        slides.push({
+          type: 'metric',
+          metricValue: rawVal,
+          metricLabel: isEnergy
+            ? 'ENERGY & GRID IMPACT'
+            : isLoss
+            ? 'ANNUAL OPERATING DEFICIT'
+            : 'CAPITAL & VALUATION SCALE',
+          metricDiff: isEnergy
+            ? '▲ Consumer power & nuclear grid demand'
+            : isLoss
+            ? '▼ Capital burn outpaces revenue'
+            : '▲ Unprecedented financial commitment',
+          metricIcon: isEnergy ? 'factory' : isLoss ? 'trendingDown' : 'dollarSign',
+          enTitle,
+          arTitle: `الأثر الرقمي: ${rawVal}.`,
+          enBody: autoFitTextToLimits(topicBody, 135),
+          arBody: hasArabicText
+            ? sanitizeArabicSlideText(topicBody.slice(0, 135))
+            : 'أرقام مالية واقتصادية تعكس حجم الالتزامات الرأسمالية وتأثيرها المباشر على السوق والمستهلكين.',
+        });
+        return;
+      }
+
+      // D. Retirees / S&P 500 / Systemic Risk Isolation or Stack
+      slides.push({
+        type: 'row',
+        diagramVariant: /retiree|s&p|pension|taxpayer|risk/i.test(fullText) ? 'isolation' : 'stack',
+        diagramNodes: [
+          { label: 'Valuation Leverage', sublabel: '$500B Priced Perfection', status: 'LEVERAGED', icon: 'dollarSign' },
+          { label: 'Index Concentration', sublabel: 'S&P 500 & Tech Weighting', status: 'EXPOSED', icon: 'landmark' },
+          { label: 'Retiree Portfolios', sublabel: '401(k) & Pension Savings', status: 'AT RISK', icon: 'users' },
+        ],
+        diagramEdges: ['CONCENTRATE', 'EXPOSE'],
+        diagramFooter: 'SYSTEMIC EXPOSURE: RETIREMENT FUNDS & PUBLIC MARKETS',
+        enTitle,
+        arTitle: `المخاطر النظامية: ${effectiveTitle.slice(0, 22)}.`,
+        enBody: autoFitTextToLimits(topicBody, 135),
+        arBody: hasArabicText
+          ? sanitizeArabicSlideText(topicBody.slice(0, 135))
+          : 'ارتباط صناديق التقاعد ومؤشرات السوق بتقييمات الذكاء الاصطناعي يضع مدخرات المتقاعدين في دائرة المخاطر.',
+      });
+      return;
+    }
 
     // 1. Compare Archetype (e.g. Standard DB vs Purpose-Built Vector DB)
     if (/choosing\s+a\s+database|standard\s+database|vs\b|versus|compared\s+to/i.test(fullText)) {
@@ -965,36 +1175,73 @@ function buildDeckFromUserPoints(
 
   // Guarantee Spec §7: If no trade-off slide was created, add one before closing
   if (!slides.some((s) => s.diagramVariant === 'takeaway')) {
-    slides.push({
-      type: 'row',
-      diagramVariant: 'takeaway',
-      icons: [{ icon: 'shieldAlert', label: 'Trade-off' }, { icon: 'activity', label: 'Evaluation' }],
-      diagramNodes: [
-        { label: 'Standard Pattern', sublabel: 'Baseline simplicity', status: 'STANDARD', icon: 'layers' },
-        { label: `${cleanSubject} Shift`, sublabel: 'Target architecture', status: 'SHIFT', icon: 'zap' },
-        { label: 'Operational Cost', sublabel: 'Specialized maintenance', status: 'CAVEAT', icon: 'shieldAlert' },
-      ],
-      diagramEdges: ['Evaluate', 'Adopt'],
-      diagramFooter: 'ENGINEERING DECISION: ARCHITECTURE TRADE-OFFS BALANCED',
-      enTitle: 'The core tradeoff.',
-      arTitle: 'المفاضلة وحدود الاستخدام',
-      enBody: 'Every architectural choice has a cost. Adopt deep optimization only when production scale justifies operational complexity.',
-      arBody: 'لكل اختيار معماري تكلفة؛ اختر التحسين العميق فقط حين يبرر حجم العمل التعقيد.',
-    });
+    slides.push(
+      isFinancialOrMacro
+        ? {
+            type: 'row',
+            diagramVariant: 'takeaway',
+            icons: [
+              { icon: 'dollarSign', label: 'Private Gains' },
+              { icon: 'scales', label: 'Public Risk' },
+            ],
+            diagramNodes: [
+              { label: 'Private Upside', sublabel: 'Insider equity & valuations', status: 'CAPTURED', icon: 'dollarSign' },
+              { label: 'Circular Capex', sublabel: '$1.4T compute & grid bets', status: 'LEVERAGED', icon: 'landmark' },
+              { label: 'Public Exposure', sublabel: 'Taxpayers, bills & retirees', status: 'EXPOSED', icon: 'scales' },
+            ],
+            diagramEdges: ['Leverage', 'Socialize'],
+            diagramFooter: 'ECONOMIC VERDICT: PRIVATE GAINS VS PUBLIC & RETIREE EXPOSURE',
+            enTitle: 'The core economic tradeoff.',
+            arTitle: 'المفاضلة الاقتصادية ومن يدفع الثمن.',
+            enBody: 'Insiders lock in billions in liquidity while energy costs, index concentration, and taxpayer backstops shift risk to the public.',
+            arBody: 'يضمن المطلعون سيولة مليارية فورية بينما تنتقل فواتير الطاقة ومخاطر السوق والضمانات إلى الجمهور.',
+          }
+        : {
+            type: 'row',
+            diagramVariant: 'takeaway',
+            icons: [{ icon: 'shieldAlert', label: 'Trade-off' }, { icon: 'activity', label: 'Evaluation' }],
+            diagramNodes: [
+              { label: 'Standard Pattern', sublabel: 'Baseline simplicity', status: 'STANDARD', icon: 'layers' },
+              { label: `${cleanSubject} Shift`, sublabel: 'Target architecture', status: 'SHIFT', icon: 'zap' },
+              { label: 'Operational Cost', sublabel: 'Specialized maintenance', status: 'CAVEAT', icon: 'shieldAlert' },
+            ],
+            diagramEdges: ['Evaluate', 'Adopt'],
+            diagramFooter: 'ENGINEERING DECISION: ARCHITECTURE TRADE-OFFS BALANCED',
+            enTitle: 'The core tradeoff.',
+            arTitle: 'المفاضلة وحدود الاستخدام',
+            enBody: 'Every architectural choice has a cost. Adopt deep optimization only when production scale justifies operational complexity.',
+            arBody: 'لكل اختيار معماري تكلفة؛ اختر التحسين العميق فقط حين يبرر حجم العمل التعقيد.',
+          }
+    );
   }
 
   // Pad to targetCount - 1 if fewer points provided
   while (slides.length < targetCount - 1) {
     const stepNum = slides.length;
-    slides.splice(1, 0, {
-      type: 'number',
-      stepNumber: `0${stepNum - 1}`,
-      stepLabel: `STEP 0${stepNum - 1} // ARCHITECTURE`,
-      enTitle: 'The scalability bottleneck.',
-      arTitle: 'نقطة الاختناق ومحدودية التوسع',
-      enBody: 'Legacy approaches stall under high concurrency or growing state size, requiring a fundamental shift in system design.',
-      arBody: 'الأساليب التقليدية تصل لحدودها القصوى تحت الضغط العالي، مما يفرض إعادة تصميم بنية المنظومة بالكامل.',
-    });
+    slides.splice(
+      1,
+      0,
+      isFinancialOrMacro
+        ? {
+            type: 'number',
+            stepNumber: `0${stepNum - 1}`,
+            stepLabel: `STEP 0${stepNum - 1} // CAPITAL DEFICIT`,
+            centerIcon: 'trendingDown',
+            enTitle: 'The unit economics gap.',
+            arTitle: 'فجوة العوائد والإنفاق الرأسمالي.',
+            enBody: 'Capital burn and infrastructure commitments far exceed current operating revenue, requiring massive external financing.',
+            arBody: 'تتجاوز الالتزامات الرأسمالية وتكاليف التشغيل العوائد الحالية، مما يفرض الاعتماد على تمويل خارجي مستمر.',
+          }
+        : {
+            type: 'number',
+            stepNumber: `0${stepNum - 1}`,
+            stepLabel: `STEP 0${stepNum - 1} // ARCHITECTURE`,
+            enTitle: 'The scalability bottleneck.',
+            arTitle: 'نقطة الاختناق ومحدودية التوسع',
+            enBody: 'Legacy approaches stall under high concurrency or growing state size, requiring a fundamental shift in system design.',
+            arBody: 'الأساليب التقليدية تصل لحدودها القصوى تحت الضغط العالي، مما يفرض إعادة تصميم بنية المنظومة بالكامل.',
+          }
+    );
   }
 
   // Trim excess if too many points were given
@@ -1005,14 +1252,20 @@ function buildDeckFromUserPoints(
   // Closer Slide
   slides.push({
     type: 'cta',
-    enTitle: enforceHeadlineSpecRule(`Scaling ${cleanSubject}?`, { isCta: true }),
-    arTitle: `تبني حلول ${arSubject}؟`,
-    enBody: 'Connect with software engineers to discuss system design, performance profiling, and production trade-offs.',
-    arBody: 'شارك برأيك وتجربتك في التعليقات حول تصميم الأنظمة المعمارية والمفاضلات التقنية.',
+    enTitle: isFinancialOrMacro
+      ? enforceHeadlineSpecRule(`Is ${cleanSubject} sustainable?`, { isCta: true })
+      : enforceHeadlineSpecRule(`Scaling ${cleanSubject}?`, { isCta: true }),
+    arTitle: isFinancialOrMacro ? `هل هذا النموذج المالي مستدام؟` : `تبني حلول ${arSubject}؟`,
+    enBody: isFinancialOrMacro
+      ? 'Share your perspective on massive AI valuations, circular vendor financing, and who ultimately bears the economic risk.'
+      : 'Connect with software engineers to discuss system design, performance profiling, and production trade-offs.',
+    arBody: isFinancialOrMacro
+      ? 'شارك برأيك في التعليقات حول استدامة التقييمات المليارية والتمويل الدائري وتأثيرها على الاقتصاد.'
+      : 'شارك برأيك وتجربتك في التعليقات حول تصميم الأنظمة المعمارية والمفاضلات التقنية.',
     ctaText: 'Join discussion  •  شارك برأيك',
     url: brandUrl,
     enCredit: '',
-    arCredit: `${brand} · دراسة هندسية في ${domainCategory}`,
+    arCredit: `${brand} · ${isFinancialOrMacro ? 'تحليل مالي واقتصادي' : `دراسة هندسية في ${domainCategory}`}`,
   });
 
   return slides;
