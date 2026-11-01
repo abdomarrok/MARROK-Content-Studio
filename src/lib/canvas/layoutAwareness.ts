@@ -15,6 +15,8 @@ import {
   CanvasDimensionSpec,
   getCanvasDimensionSpec,
   getArchetypeGraphicTransform,
+  isFullMemeSlide,
+  isHeroImageSlide,
 } from './constants.ts';
 import { fitTextInBox } from './textLayout.ts';
 
@@ -255,7 +257,8 @@ function buildSlideLayoutCacheKey(
   const overridesKey = slide.layoutOverrides ? JSON.stringify(slide.layoutOverrides) : '';
   const compPreset = slide.compositionPreset || 'standard';
   const freeMove = slide.freeMoveLayout ? 1 : 0;
-  return `${hasCtx ? 1 : 0}|${preset}|${compPreset}|${freeMove}|${slide.type || ''}|${slide.enTitle || ''}|${slide.arTitle || ''}|${slide.enBody || ''}|${slide.arBody || ''}|${takeawaysCount}|${overridesKey}`;
+  const heroFrame = isFullMemeSlide(slide) ? 'full' : isHeroImageSlide(slide) ? 'hero' : 'std';
+  return `${hasCtx ? 1 : 0}|${preset}|${compPreset}|${freeMove}|${heroFrame}|${slide.type || ''}|${slide.enTitle || ''}|${slide.arTitle || ''}|${slide.enBody || ''}|${slide.arBody || ''}|${takeawaysCount}|${overridesKey}`;
 }
 
 function storeComputedLayout(key: string, layout: ComputedSlideLayout): ComputedSlideLayout {
@@ -362,7 +365,7 @@ export function computeSlideLayoutAwareness(
   const gOpacity = graphicOverride?.opacity ?? 1;
   const gHidden = Boolean(graphicOverride?.hidden);
 
-  const { cardX, cardY: defaultCardY, cardW, cardH } = getArchetypeGraphicTransform(spec, slide.type);
+  const { cardX, cardY: defaultCardY, cardW, cardH } = getArchetypeGraphicTransform(spec, slide.type, slide);
   const gDx = clampBoxDx(cardX + (cardW - cardW * gScale) / 2, cardW * gScale, rawGDx);
 
   // 4. Content Slide Text Measurement & Scaling Pass
@@ -383,11 +386,12 @@ export function computeSlideLayoutAwareness(
   const arBodyScale = arBodyOverride?.scale ?? 1;
   const takeawaysScale = Math.min(1, takeawaysOverride?.scale ?? 1);
 
-  const titleHidden = Boolean(titleOverride?.hidden);
-  const arTitleHidden = Boolean(arTitleOverride?.hidden);
-  const bodyHidden = Boolean(bodyOverride?.hidden);
-  const arBodyHidden = Boolean(arBodyOverride?.hidden);
-  const takeawaysHidden = Boolean(takeawaysOverride?.hidden);
+  const isFullMeme = isFullMemeSlide(slide);
+  const titleHidden = isFullMeme || Boolean(titleOverride?.hidden);
+  const arTitleHidden = isFullMeme || Boolean(arTitleOverride?.hidden);
+  const bodyHidden = isFullMeme || Boolean(bodyOverride?.hidden);
+  const arBodyHidden = isFullMeme || Boolean(arBodyOverride?.hidden);
+  const takeawaysHidden = isFullMeme || Boolean(takeawaysOverride?.hidden);
 
   const isCompactAspect = spec.height < 1920;
   const gapGraphicToTitle = isCompactAspect
@@ -403,8 +407,9 @@ export function computeSlideLayoutAwareness(
     ? Math.max(14, Math.round(MIN_GAP_BODIES * spec.graphicScale))
     : MIN_GAP_BODIES;
 
-  // Takeaway reservation
-  const hasTakeaways = Boolean(slide.takeaways && slide.takeaways.length > 0);
+  // Takeaway reservation (suppressed in tall Hero Meme Frame / Full Meme mode so the meme has clean vertical space)
+  const isHeroImage = isHeroImageSlide(slide);
+  const hasTakeaways = !isHeroImage && !isFullMeme && Boolean(slide.takeaways && slide.takeaways.length > 0);
   const takeawayCount = hasTakeaways ? Math.min(3, slide.takeaways!.length) : 0;
   const baseTakeawayRowH = (takeawayCount === 1 ? 84 : takeawayCount === 2 ? 80 : 76) * takeawaysScale;
   const takeawayRowH = isCompactAspect

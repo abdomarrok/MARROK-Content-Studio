@@ -66,11 +66,14 @@ export interface SlideData {
   compareLeftBody?: string;   // e.g. "Full history clone\nBloated .git folder\nStalls at 100GB"
   compareRightTitle?: string; // e.g. "Scion / MARROK"
   compareRightBody?: string;  // e.g. "Lazy checkout\nVirtual file system\nInstant CI builds"
-  // Image / Web Visual Archetype properties
-  imageUrl?: string;          // Direct URL or data URL of external tech diagram, logo, or photo
+  // Image / Web Visual & Branded Meme Archetype properties
+  imageUrl?: string;          // Direct URL, local asset path, or data URL of meme, diagram, logo, or photo
   imageCaption?: string;      // Micro-badge label for the image
   imageFit?: 'contain' | 'cover'; // Fit mode on canvas (defaults to contain)
   imageFilter?: 'hud' | 'invert' | 'tint' | 'clean'; // Theme integration filter (hud = blueprint dark blend, invert = dark mode inversion, tint = accent wash, clean = original)
+  imageFrameMode?: 'full' | 'hero' | 'standard'; // 'full' = full-height captionless meme (1140px on 9:16, hides slide text below), 'hero' = tall meme + headline (820px), 'standard' = 430px card
+  imageBgStyle?: 'theme' | 'white' | 'obsidian'; // Inner card backdrop fill (white is ideal for light-background memes)
+  brandWatermark?: 'none' | 'bottom-right' | 'top-right' | 'bottom-left'; // Optional MARROK corner watermark badge on the image card
   imagePrompt?: string;       // Prompt used to generate or edit with gemini-nano-banana-2.1
   imageModel?: string;        // Model used (e.g. gemini-nano-banana-2.1)
   imageZoom?: number;         // Image framing zoom inside card (1.0 to 2.5, default 1.0)

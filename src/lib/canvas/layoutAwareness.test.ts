@@ -417,4 +417,90 @@ describe('Slide Layout Awareness Engine', () => {
       }
     }
   });
+
+  it('auto-adapts Hero Meme Frame height across all 5 social media formats while keeping headlines and body inside safe zones', () => {
+    const presets: CanvasDimensionPreset[] = ['tiktok-9:16', 'ig-4:5', 'ig-3:4', 'ig-1:1', 'ig-9:16'];
+    const memeSlide: SlideData = {
+      type: 'poster',
+      imageUrl: '/assets/aistudio/1793547809949_4a78bc04.jpg',
+      imageFrameMode: 'hero',
+      imageFit: 'contain',
+      imageBgStyle: 'white',
+      imageFilter: 'clean',
+      brandWatermark: 'bottom-right',
+      enTitle: 'AI Expectations vs. Enterprise Reality.',
+      arTitle: 'توقعات الذكاء الاصطناعي مقابل الواقع الفعلي.',
+      enBody: 'Everyone expects to boss AI models around—until enterprise dependencies flip the power dynamic.',
+      arBody: 'الجميع يتوقع السيطرة الكاملة على نماذج الذكاء الاصطناعي، حتى تكشف بيئة الإنتاج من يملك القرار فعلياً.',
+    };
+
+    for (const preset of presets) {
+      const spec = getCanvasDimensionSpec(preset);
+      const layout = computeSlideLayoutAwareness(memeSlide, {
+        brand: 'MARROK',
+        category: 'AI ENGINEERING',
+        theme: 'cyber',
+        caption: 'Expectations vs Reality',
+        postFormat: 'single',
+        dimensionPreset: preset,
+        slides: [memeSlide],
+      });
+
+      expect(layout.graphicCard).toBeDefined();
+      // On 9:16 presets, Hero Meme Frame expands to 820px height; on compact formats it scales proportionally
+      if (spec.height >= 1920) {
+        expect(layout.graphicCard!.height).toBe(820);
+      } else {
+        expect(layout.graphicCard!.height).toBeGreaterThan(400);
+      }
+
+      // Headlines and body stay strictly below the Hero Meme Card and above safeFooterCeilingY
+      expect(layout.titleBlock!.top).toBeGreaterThanOrEqual(layout.graphicCard!.effectiveBottom);
+      expect(layout.arabicBodyBlock!.bottom).toBeLessThanOrEqual(spec.safeFooterCeilingY + 1);
+    }
+  });
+
+  it('supports Full Meme Mode (captionless) with 1140px height on 9:16 and hidden text blocks below across all 5 formats', () => {
+    const presets: CanvasDimensionPreset[] = ['tiktok-9:16', 'ig-4:5', 'ig-3:4', 'ig-1:1', 'ig-9:16'];
+    const fullMemeSlide: SlideData = {
+      type: 'poster',
+      imageUrl: '/assets/aistudio/1793547809949_4a78bc04.jpg',
+      imageFrameMode: 'full',
+      imageFit: 'contain',
+      imageBgStyle: 'white',
+      imageFilter: 'clean',
+      brandWatermark: 'bottom-right',
+      enTitle: 'Leftover Title Should Be Hidden.',
+      arTitle: 'عنوان متبقي يجب إخفاؤه',
+      enBody: 'Leftover body text should not render under a self-contained meme.',
+      arBody: 'النص المتبقي لا يجب أن يظهر تحت الميم.',
+    };
+
+    for (const preset of presets) {
+      const spec = getCanvasDimensionSpec(preset);
+      const layout = computeSlideLayoutAwareness(fullMemeSlide, {
+        brand: 'MARROK',
+        category: 'AI ENGINEERING',
+        theme: 'cyber',
+        caption: 'Expectations vs Reality',
+        postFormat: 'single',
+        dimensionPreset: preset,
+        slides: [fullMemeSlide],
+      });
+
+      expect(layout.graphicCard).toBeDefined();
+      if (spec.height >= 1920) {
+        expect(layout.graphicCard!.height).toBe(1140);
+      } else {
+        expect(layout.graphicCard!.height).toBeGreaterThan(600);
+      }
+      expect(layout.graphicCard!.effectiveBottom).toBeLessThanOrEqual(spec.safeFooterCeilingY);
+      expect(layout.titleBlock?.hidden).toBe(true);
+      expect(layout.arabicTitleBlock?.hidden).toBe(true);
+      expect(layout.bodyBlock?.hidden).toBe(true);
+      expect(layout.arabicBodyBlock?.hidden).toBe(true);
+    }
+  });
 });
+
+

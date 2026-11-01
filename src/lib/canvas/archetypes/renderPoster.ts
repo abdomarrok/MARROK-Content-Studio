@@ -1,34 +1,36 @@
 import { SlideData, SlideTakeawayItem, ThemePalette, VisualSystemOptions } from '../../../types.ts';
 import { drawRoundRect } from '../background.ts';
-import { SAFE_CONTENT_WIDTH, SAFE_MARGIN_LEFT, SAFE_TEXT_CENTER_X } from '../constants.ts';
+import { SAFE_CONTENT_WIDTH, SAFE_MARGIN_LEFT } from '../constants.ts';
 import { fitTextInBox } from '../textLayout.ts';
 import { loadIconImage, safeDrawImage } from '../imageLoader.ts';
-import { deriveDynamicSlideNodes } from './renderDiagram.ts';
 import { drawRowSlide } from './renderRow.ts';
+import { drawImageSlide } from './renderImage.ts';
 
 /**
- * Archetype 9: Infographic Poster (`poster`)
- * Dedicated high-density single-slide technical format:
- * 1. Compact CAD Schematic Card at y = 200 (height 430px) with optional benchmark metric pill.
- * 2. Labeled multi-node dataflow / topology.
- * 3. Returns the graphic end Y for the layout-awareness engine.
+ * Archetype 9: Infographic & Branded Meme Poster (`poster`)
+ * Dedicated single-slide format supporting both:
+ * 1. Hero Meme / Image Frame (when `slide.imageUrl` is set) with optional MARROK corner watermark.
+ * 2. Compact CAD Schematic Card at y = 200 (height 430px) with optional benchmark metric pill.
  */
 export async function drawPosterSlide(
   ctx: CanvasRenderingContext2D,
   slide: SlideData,
   theme: ThemePalette,
-  options: VisualSystemOptions
+  options: VisualSystemOptions,
+  brandName: string = 'MARROK'
 ): Promise<number> {
   const topY = 200;
   const cardW = SAFE_CONTENT_WIDTH;
   const cardH = 430;
   const cardX = SAFE_MARGIN_LEFT;
 
-  // Render the diagram card
-  const graphicEnd = await drawRowSlide(ctx, slide, theme, options);
+  // Render Hero Meme / Image card if an image is attached, otherwise render the schematic diagram card
+  const graphicEnd = slide.imageUrl
+    ? await drawImageSlide(ctx, slide, theme, options, brandName)
+    : await drawRowSlide(ctx, slide, theme, options);
 
-  // If slide has a metricValue, draw a metric badge badge in the top right of the diagram card
-  if (slide.metricValue) {
+  // If slide has a metricValue and is a schematic diagram (no imageUrl), draw a metric badge in the top right of the card
+  if (slide.metricValue && !slide.imageUrl) {
     ctx.save();
     const badgeW = 260;
     const badgeH = 58;

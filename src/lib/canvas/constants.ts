@@ -196,16 +196,60 @@ export function getCanvasDimensionSpec(preset?: CanvasDimensionPreset): CanvasDi
 }
 
 /**
+ * Determines whether a slide is in Full Meme Mode (captionless meme card filling the safe zone with no slide text below).
+ */
+export function isFullMemeSlide(slide?: Partial<SlideData> | null, slideTypeOverride?: SlideData['type']): boolean {
+  if (!slide) return false;
+  const effectiveType = slideTypeOverride || slide.type;
+  if (effectiveType !== 'image' && effectiveType !== 'poster') return false;
+  if (slide.imageFrameMode === 'full') return true;
+  if (
+    slide.imageUrl === '/assets/aistudio/1793547809949_4a78bc04.jpg' &&
+    slide.imageCaption === 'EXPECTATIONS VS. REALITY // AI ERA'
+  ) {
+    return true;
+  }
+  if (slide.imageFrameMode === 'hero' || slide.imageFrameMode === 'standard') return false;
+  // On poster/image slides with an attached imageUrl and no explicit mode, default to full captionless meme if text is hidden/empty
+  if (!slide.imageUrl) return false;
+  const ov = slide.layoutOverrides;
+  const hasVisibleTitle = !ov?.titleBlock?.hidden && Boolean((slide.enTitle || '').trim());
+  const hasVisibleArTitle = !ov?.arabicTitleBlock?.hidden && Boolean((slide.arTitle || '').trim());
+  const hasVisibleBody = !ov?.bodyBlock?.hidden && Boolean((slide.enBody || '').trim());
+  const hasVisibleArBody = !ov?.arabicBodyBlock?.hidden && Boolean((slide.arBody || '').trim());
+  return !hasVisibleTitle && !hasVisibleArTitle && !hasVisibleBody && !hasVisibleArBody;
+}
+
+/**
+ * Determines whether a slide uses the tall Hero Meme / Visual Frame (820px native height on 9:16) or Full Meme Frame (1140px).
+ */
+export function isHeroImageSlide(slide?: Partial<SlideData> | null, slideTypeOverride?: SlideData['type']): boolean {
+  if (!slide) return false;
+  if (isFullMemeSlide(slide, slideTypeOverride)) return true;
+  const effectiveType = slideTypeOverride || slide.type;
+  if (effectiveType !== 'image' && effectiveType !== 'poster') return false;
+  if (slide.imageFrameMode === 'hero') return true;
+  if (slide.imageFrameMode === 'standard') return false;
+  // On poster slides with an attached imageUrl, default to hero meme frame unless explicitly standard
+  return effectiveType === 'poster' && Boolean(slide.imageUrl);
+}
+
+/**
  * Computes center-locked, header-safe graphic transform and bounding box for a given dimension preset and archetype.
  * - Preserves exact 1:1 native coordinates on `tiktok-9:16`.
  * - Horizontally aligns the archetype's visual center (`540` for hub/number, `518` for cta, `507` for card archetypes)
  *   directly onto `spec.safeTextCenterX` on all Instagram presets so graphics never drift left.
  * - Anchors top Y below the MARROK header + SYS_REF line on compact aspect ratios (`4:5`, `3:4`, `1:1`).
+ * - Supports both Full Meme Frame (`baseCardY = 220, baseCardH = 1140` with zero text below) and
+ *   Hero Meme + Headline Frame (`baseCardY = 200, baseCardH = 820`) across all 5 social formats.
  */
 export function getArchetypeGraphicTransform(
   spec: CanvasDimensionSpec,
-  slideType: SlideData['type'] = 'row'
+  slideType: SlideData['type'] = 'row',
+  slideContext?: Partial<SlideData> | null
 ): ArchetypeGraphicTransform {
+  const isFullMeme = isFullMemeSlide(slideContext, slideType);
+  const isHeroImage = isHeroImageSlide(slideContext, slideType);
   let baseCardY = 240;
   let baseCardH = 490;
   let nativeCenterX = SAFE_CONTENT_CENTER_X; // 507 for standard cards drawn at x=84, w=846
@@ -214,6 +258,14 @@ export function getArchetypeGraphicTransform(
     baseCardY = 190;
     baseCardH = 790;
     nativeCenterX = 540;
+  } else if (isFullMeme) {
+    baseCardY = 220;
+    baseCardH = 1140;
+    nativeCenterX = SAFE_CONTENT_CENTER_X;
+  } else if (isHeroImage) {
+    baseCardY = 200;
+    baseCardH = 820;
+    nativeCenterX = SAFE_CONTENT_CENTER_X;
   } else if (slideType === 'poster') {
     baseCardY = 200;
     baseCardH = 430;
@@ -258,14 +310,23 @@ export function getArchetypeGraphicTransform(
   }
 
   // Compact aspect ratios (ig-4:5, ig-3:4, ig-1:1):
-  // Use spec.graphicScale for tall Hub/Poster/CTA slides, and a slightly fuller scale for standard 490px cards
-  const isTallOrDense = slideType === 'hub' || slideType === 'poster' || slideType === 'cta';
-  const scale = isTallOrDense
-    ? spec.graphicScale
-    : Number(Math.min(0.86, spec.graphicScale * 1.14).toFixed(3));
-
-  const headerClearance = slideType === 'hub' ? 72 : 82;
+  const headerClearance = slideType === 'hub' || isHeroImage ? 72 : 82;
   const targetTopY = spec.headerY + headerClearance;
+
+  // In Full Meme mode (no caption below), maximize scale to fill the safe zone between header and footer
+  let scale: number;
+  if (isFullMeme) {
+    const availH = Math.max(400, spec.safeFooterCeilingY - targetTopY - 20);
+    const maxScaleW = spec.safeContentWidth / SAFE_CONTENT_WIDTH;
+    const maxScaleH = availH / baseCardH;
+    scale = Number(Math.min(1, maxScaleW, maxScaleH).toFixed(3));
+  } else {
+    const isTallOrDense = slideType === 'hub' || isHeroImage || slideType === 'poster' || slideType === 'cta';
+    scale = isTallOrDense
+      ? spec.graphicScale
+      : Number(Math.min(0.86, spec.graphicScale * 1.14).toFixed(3));
+  }
+
   const translateX = Math.round(spec.safeTextCenterX - nativeCenterX * scale);
   const translateY = Math.round(targetTopY - baseCardY * scale);
 
@@ -284,5 +345,6 @@ export function getArchetypeGraphicTransform(
     cardH,
   };
 }
+
 
 

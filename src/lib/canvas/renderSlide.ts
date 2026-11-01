@@ -106,7 +106,7 @@ export async function renderSlideToCanvas(
   }
 
   // 5. Render Archetype Specific Graphics & Layouts
-  const graphicTransform = getArchetypeGraphicTransform(spec, slide.type);
+  const graphicTransform = getArchetypeGraphicTransform(spec, slide.type, slide);
   let yGraphicEnd = graphicTransform.cardY + graphicTransform.cardH;
   const graphicOverride = slide.layoutOverrides?.graphicCard;
 
@@ -156,9 +156,9 @@ export async function renderSlideToCanvas(
     } else if (slide.type === 'compare') {
       rawGraphicEnd = await drawCompareSlide(ctx, slide, theme, options);
     } else if (slide.type === 'image') {
-      rawGraphicEnd = await drawImageSlide(ctx, slide, theme, options);
+      rawGraphicEnd = await drawImageSlide(ctx, slide, theme, options, carousel.brand || 'MARROK');
     } else if (slide.type === 'poster') {
-      rawGraphicEnd = await drawPosterSlide(ctx, slide, theme, options);
+      rawGraphicEnd = await drawPosterSlide(ctx, slide, theme, options, carousel.brand || 'MARROK');
     }
     yGraphicEnd = Math.round(rawGraphicEnd * graphicTransform.scale + graphicTransform.translateY);
     ctx.restore();

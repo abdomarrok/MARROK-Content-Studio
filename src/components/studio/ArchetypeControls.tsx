@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Cpu,
   Layers,
@@ -17,6 +17,10 @@ import {
   Globe,
   ShieldCheck,
   Wand2,
+  Upload,
+  ClipboardPaste,
+  Maximize2,
+  X,
 } from 'lucide-react';
 import {
   CarouselData,
@@ -90,12 +94,14 @@ const ARCHETYPES: {
   { id: 'hub', label: 'Hub', icon: Cpu },
   { id: 'row', label: 'Mechanism', icon: Layers },
   { id: 'number', label: 'Number', icon: Hash },
-  { id: 'image', label: 'Diagram / AI', icon: ImageIcon },
+  { id: 'image', label: 'Meme / Image', icon: ImageIcon },
   { id: 'code', label: 'Code Diff', icon: Code },
   { id: 'metric', label: 'Metric', icon: Gauge },
   { id: 'compare', label: 'Compare', icon: Columns },
   { id: 'cta', label: 'CTA', icon: ArrowRight },
 ];
+
+export const EXPECTATIONS_VS_REALITY_MEME_URL = '/assets/aistudio/1793547809949_4a78bc04.jpg';
 
 export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
   currentSlide,
@@ -158,6 +164,99 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
   const autoStepStr = String(currentSlideIndex + 1).padStart(2, '0');
   const currentStepNumber = currentSlide.stepNumber || smart.stepNumber || autoStepStr;
   const currentStepLabel = currentSlide.stepLabel || smart.stepLabel || `STEP ${currentStepNumber}`;
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+
+  const applySlideBatchUpdates = (updates: Partial<SlideData>) => {
+    if (onUpdateSlideFields) {
+      onUpdateSlideFields(updates);
+    } else {
+      (Object.keys(updates) as (keyof SlideData)[]).forEach((key) => {
+        onUpdateField(key, updates[key]);
+      });
+    }
+  };
+
+  const handleImageFileUpload = (file?: File | null) => {
+    if (!file || !file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+      if (!dataUrl) return;
+      const targetType: SlideType =
+        currentSlide.type === 'poster' || carousel?.postFormat === 'single' || totalSlides === 1
+          ? 'poster'
+          : 'image';
+      if (currentSlide.type !== targetType) {
+        onSetSlideType(targetType);
+      }
+      applySlideBatchUpdates({
+        type: targetType,
+        imageUrl: dataUrl,
+        imageFrameMode: 'full',
+        imageFit: 'contain',
+        imageFilter: 'clean',
+        imageBgStyle: currentSlide.imageBgStyle || 'white',
+        brandWatermark: currentSlide.brandWatermark || 'bottom-right',
+        imageCaption: '',
+        metricValue: '',
+        metricLabel: '',
+        metricDiff: '',
+        imageZoom: 1,
+        imagePanX: 0,
+        imagePanY: 0,
+        layoutOverrides: undefined,
+      });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleApplyExpectationsMemePreset = () => {
+    const targetType: SlideType =
+      currentSlide.type === 'poster' || carousel?.postFormat === 'single' || totalSlides === 1
+        ? 'poster'
+        : 'image';
+    if (currentSlide.type !== targetType) {
+      onSetSlideType(targetType);
+    }
+    applySlideBatchUpdates({
+      type: targetType,
+      imageUrl: EXPECTATIONS_VS_REALITY_MEME_URL,
+      imageFrameMode: 'full',
+      imageFit: 'contain',
+      imageFilter: 'clean',
+      imageBgStyle: 'white',
+      brandWatermark: 'bottom-right',
+      imageCaption: '',
+      metricValue: '',
+      metricLabel: '',
+      metricDiff: '',
+      imageZoom: 1,
+      imagePanX: 0,
+      imagePanY: 0,
+      layoutOverrides: undefined,
+    });
+  };
+
+  useEffect(() => {
+    if (currentSlide.type !== 'image' && currentSlide.type !== 'poster') return;
+    const onWindowPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith('image/')) {
+          const blob = items[i].getAsFile();
+          if (blob) {
+            handleImageFileUpload(blob);
+            break;
+          }
+        }
+      }
+    };
+    window.addEventListener('paste', onWindowPaste);
+    return () => window.removeEventListener('paste', onWindowPaste);
+  }, [currentSlide.type, currentSlide.imageBgStyle, currentSlide.brandWatermark]);
 
   const handleSelectVariant = (variantId: DiagramVariant) => {
     const nextSmart = resolveSmartSlideVisuals(
@@ -946,43 +1045,183 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
         </div>
       )}
 
-      {/* ARCHETYPE: IMAGE & AI DIAGRAM STUDIO */}
-      {currentSlide.type === 'image' && (
+      {/* ARCHETYPE: BRANDED MEME, HERO IMAGE & AI DIAGRAM STUDIO (Available on both Image & Single-Slide Poster) */}
+      {(currentSlide.type === 'image' || currentSlide.type === 'poster') && (
         <div className="pt-3 border-t border-white/[0.08] animate-fade-in">
-          <div className="p-3.5 rounded-xl bg-black/50 border border-white/10 space-y-3">
+          <div className="p-3.5 rounded-xl bg-black/50 border border-white/10 space-y-3.5">
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                <ImageIcon className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Visual Diagram & AI Studio</span>
-              </span>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2">
+                <ImageIcon className="w-4 h-4" style={{ color: theme.accent }} />
+                <div>
+                  <span className="text-xs font-bold text-white block">
+                    Branded Meme & Hero Image Frame
+                  </span>
+                  <span className="text-[10px] text-slate-400 block">
+                    Drop a meme/image, pick a ready preset, or add a @MARROK corner watermark
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-500/40 text-xs font-semibold cursor-pointer whitespace-nowrap"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Upload Meme / Image</span>
+                </button>
                 <button
                   type="button"
                   onClick={onOpenAiImageStudio}
-                  className="px-2.5 py-1 rounded-lg bg-purple-500/20 text-purple-200 border border-purple-500/40 text-xs font-semibold cursor-pointer"
+                  className="px-2.5 py-1 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 border border-purple-500/40 text-xs font-semibold cursor-pointer whitespace-nowrap"
                 >
                   AI Diagram Studio
                 </button>
                 <button
                   type="button"
                   onClick={onOpenMediaSearch}
-                  className="px-2.5 py-1 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-xs font-semibold cursor-pointer"
+                  className="px-2.5 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 border border-cyan-500/40 text-xs font-semibold cursor-pointer whitespace-nowrap"
                 >
                   Search Web
                 </button>
+                {currentSlide.imageUrl && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      applySlideBatchUpdates({
+                        imageUrl: '',
+                        imageFrameMode: 'standard',
+                      })
+                    }
+                    className="flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-semibold cursor-pointer whitespace-nowrap"
+                    title="Clear attached image and return to schematic diagram"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>Clear Image</span>
+                  </button>
+                )}
               </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <div className="sm:col-span-2">
-                <label className="text-[10px] text-slate-400 block mb-1">Image URL / Path</label>
-                <input
-                  type="text"
-                  value={currentSlide.imageUrl || ''}
-                  onChange={(e) => onUpdateField('imageUrl', e.target.value)}
-                  placeholder="https://... or /generated/..."
-                  className="w-full bg-black/60 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono"
-                />
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleImageFileUpload(file);
+                e.target.value = '';
+              }}
+            />
+
+            {/* Drag & Drop Upload Zone + Ready Meme Preset Card */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsDraggingFile(true);
+                }}
+                onDragLeave={() => setIsDraggingFile(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDraggingFile(false);
+                  const file = e.dataTransfer?.files?.[0];
+                  if (file) handleImageFileUpload(file);
+                }}
+                onClick={() => fileInputRef.current?.click()}
+                className={`flex flex-col items-center justify-center p-3 rounded-xl border border-dashed transition-all cursor-pointer text-center ${
+                  isDraggingFile
+                    ? 'border-emerald-400 bg-emerald-500/15'
+                    : 'border-white/20 bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/35'
+                }`}
+              >
+                <div className="flex items-center gap-2 text-xs font-semibold text-white mb-1">
+                  <Upload className="w-3.5 h-3.5" style={{ color: theme.accent }} />
+                  <span>Drop Meme / Image or Click to Browse</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono">
+                  <ClipboardPaste className="w-3 h-3" />
+                  <span>Or press Ctrl+V / Cmd+V to paste from clipboard</span>
+                </div>
               </div>
+
+              {/* 1-Click Preset: Attached Expectations vs Reality Meme */}
+              <button
+                type="button"
+                onClick={handleApplyExpectationsMemePreset}
+                className={`flex items-center gap-3 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  currentSlide.imageUrl === EXPECTATIONS_VS_REALITY_MEME_URL
+                    ? 'bg-white/15 border-white/40 shadow-sm'
+                    : 'bg-white/[0.03] hover:bg-white/[0.08] border-white/15'
+                }`}
+              >
+                <img
+                  src={EXPECTATIONS_VS_REALITY_MEME_URL}
+                  alt="Expectations vs Reality AI Meme"
+                  referrerPolicy="no-referrer"
+                  className="w-12 h-14 object-cover rounded-lg border border-white/20 bg-white shrink-0"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className="text-[10px] font-mono font-bold uppercase"
+                      style={{ color: theme.accent }}
+                    >
+                      Ready Preset
+                    </span>
+                    <span className="text-[10px] text-slate-400">·</span>
+                    <span className="text-[10px] font-mono text-emerald-300">Hero Meme</span>
+                  </div>
+                  <div className="text-xs font-bold text-white truncate">
+                    Expectations vs. Reality (AI Meme)
+                  </div>
+                  <div className="text-[10px] text-slate-400 truncate">
+                    1-click load with white matte + @MARROK badge
+                  </div>
+                </div>
+              </button>
+            </div>
+
+            {/* Frame Size, Matte Backdrop, Fit Mode, Filter & Brand Watermark Controls */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+              {/* 1. Frame Size Mode (Full Meme No-Text vs Meme + Text vs Standard Card) */}
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1 flex items-center gap-1">
+                  <Maximize2 className="w-3 h-3 text-slate-400" />
+                  <span>Meme Layout & Caption</span>
+                </label>
+                <div className="grid grid-cols-3 gap-1 bg-black/60 p-0.5 rounded-lg border border-white/10">
+                  {(
+                    [
+                      { id: 'full', label: 'Full Meme', tip: 'Full-height meme with no caption underneath' },
+                      { id: 'hero', label: '+ Caption', tip: 'Tall meme card with headline & caption below' },
+                      { id: 'standard', label: 'Standard', tip: 'Compact card with full text & takeaways' },
+                    ] as const
+                  ).map((mode) => {
+                    const currentMode =
+                      currentSlide.imageFrameMode ||
+                      (currentSlide.imageUrl ? 'full' : 'standard');
+                    const active = currentMode === mode.id;
+                    return (
+                      <button
+                        key={mode.id}
+                        type="button"
+                        onClick={() => onUpdateField('imageFrameMode', mode.id)}
+                        title={mode.tip}
+                        className={`py-1 rounded-md text-[10px] font-mono font-bold transition-colors cursor-pointer whitespace-nowrap ${
+                          active ? 'bg-white/20 text-white' : 'text-slate-400 hover:text-white'
+                        }`}
+                        style={active ? { color: theme.accent } : undefined}
+                      >
+                        {mode.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 2. Image Fit Mode */}
               <div>
                 <label className="text-[10px] text-slate-400 block mb-1">Image Fit Mode</label>
                 <div className="grid grid-cols-2 gap-1 bg-black/60 p-0.5 rounded-lg border border-white/10">
@@ -1003,17 +1242,177 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
                   })}
                 </div>
               </div>
+
+              {/* 3. Inner Card Matte Backdrop */}
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Card Backdrop Matte</label>
+                <div className="grid grid-cols-3 gap-1 bg-black/60 p-0.5 rounded-lg border border-white/10">
+                  {(
+                    [
+                      { id: 'white', label: 'White' },
+                      { id: 'theme', label: 'Theme' },
+                      { id: 'obsidian', label: 'Dark' },
+                    ] as const
+                  ).map((bgOpt) => {
+                    const active = (currentSlide.imageBgStyle || 'theme') === bgOpt.id;
+                    return (
+                      <button
+                        key={bgOpt.id}
+                        type="button"
+                        onClick={() => onUpdateField('imageBgStyle', bgOpt.id)}
+                        className={`py-1 rounded-md text-[11px] font-mono font-bold transition-colors cursor-pointer ${
+                          active ? 'bg-white/20 text-white' : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {bgOpt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 4. MARROK Corner Brand Watermark Overlay */}
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">
+                  @MARROK Corner Watermark
+                </label>
+                <div className="grid grid-cols-4 gap-1 bg-black/60 p-0.5 rounded-lg border border-white/10">
+                  {(
+                    [
+                      { id: 'bottom-right', label: 'B-R' },
+                      { id: 'top-right', label: 'T-R' },
+                      { id: 'bottom-left', label: 'B-L' },
+                      { id: 'none', label: 'Off' },
+                    ] as const
+                  ).map((wm) => {
+                    const defaultWm =
+                      currentSlide.imageFrameMode === 'hero' ||
+                      (currentSlide.type === 'poster' && currentSlide.imageUrl)
+                        ? 'bottom-right'
+                        : 'none';
+                    const active = (currentSlide.brandWatermark ?? defaultWm) === wm.id;
+                    return (
+                      <button
+                        key={wm.id}
+                        type="button"
+                        onClick={() => onUpdateField('brandWatermark', wm.id)}
+                        className={`py-1 rounded-md text-[10px] font-mono font-bold transition-colors cursor-pointer ${
+                          active ? 'bg-white/20 text-white' : 'text-slate-400 hover:text-white'
+                        }`}
+                        style={active ? { color: theme.accent } : undefined}
+                        title={`Brand watermark position: ${wm.id}`}
+                      >
+                        {wm.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
-            <div>
-              <label className="text-[10px] text-slate-400 block mb-1">Caption / Sub-title</label>
-              <input
-                type="text"
-                value={currentSlide.imageCaption || ''}
-                onChange={(e) => onUpdateField('imageCaption', e.target.value)}
-                placeholder="e.g. Distributed Consensus State Machine"
-                className="w-full bg-black/60 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white"
-              />
+
+            {/* Image URL, Color Filter & Caption */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Image URL / Asset Path</label>
+                <input
+                  type="text"
+                  value={currentSlide.imageUrl || ''}
+                  onChange={(e) => onUpdateField('imageUrl', e.target.value)}
+                  placeholder="/assets/... or https://..."
+                  className="w-full bg-black/60 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Color Filter</label>
+                <div className="grid grid-cols-4 gap-1 bg-black/60 p-0.5 rounded-lg border border-white/10">
+                  {(
+                    [
+                      { id: 'clean', label: 'Clean' },
+                      { id: 'hud', label: 'HUD' },
+                      { id: 'tint', label: 'Tint' },
+                      { id: 'invert', label: 'Invert' },
+                    ] as const
+                  ).map((flt) => {
+                    const active = (currentSlide.imageFilter || 'clean') === flt.id;
+                    return (
+                      <button
+                        key={flt.id}
+                        type="button"
+                        onClick={() => onUpdateField('imageFilter', flt.id)}
+                        className={`py-1 rounded-md text-[10px] font-mono font-bold transition-colors cursor-pointer ${
+                          active ? 'bg-white/20 text-white' : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {flt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Corner Micro-Caption</label>
+                <input
+                  type="text"
+                  value={currentSlide.imageCaption || ''}
+                  onChange={(e) => onUpdateField('imageCaption', e.target.value)}
+                  placeholder="e.g. EXPECTATIONS VS. REALITY"
+                  className="w-full bg-black/60 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white"
+                />
+              </div>
             </div>
+
+            {/* Zoom & Pan Framing Controls */}
+            {currentSlide.imageUrl && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 border-t border-white/[0.06]">
+                <div>
+                  <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mb-1">
+                    <span>Zoom</span>
+                    <span className="text-white tabular-nums">
+                      {(currentSlide.imageZoom ?? 1).toFixed(2)}x
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0.5}
+                    max={2.5}
+                    step={0.05}
+                    value={currentSlide.imageZoom ?? 1}
+                    onChange={(e) => onUpdateField('imageZoom', parseFloat(e.target.value))}
+                    className="w-full accent-cyan-400 cursor-pointer"
+                  />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mb-1">
+                    <span>Pan X</span>
+                    <span className="text-white tabular-nums">{currentSlide.imagePanX ?? 0}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={-100}
+                    max={100}
+                    step={2}
+                    value={currentSlide.imagePanX ?? 0}
+                    onChange={(e) => onUpdateField('imagePanX', parseInt(e.target.value, 10))}
+                    className="w-full accent-cyan-400 cursor-pointer"
+                  />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mb-1">
+                    <span>Pan Y</span>
+                    <span className="text-white tabular-nums">{currentSlide.imagePanY ?? 0}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={-100}
+                    max={100}
+                    step={2}
+                    value={currentSlide.imagePanY ?? 0}
+                    onChange={(e) => onUpdateField('imagePanY', parseInt(e.target.value, 10))}
+                    className="w-full accent-cyan-400 cursor-pointer"
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

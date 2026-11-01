@@ -556,7 +556,8 @@ function checkFirstFrame(slides: SlideData[], isSingleSlide: boolean = false): Q
     });
   }
 
-  if (!first.enTitle || first.enTitle.length < 3) {
+  const isCaptionlessMeme = Boolean(first.imageUrl) || first.imageFrameMode === 'full';
+  if ((!first.enTitle || first.enTitle.length < 3) && !isCaptionlessMeme) {
     results.push({
       id: 'first-frame-title',
       severity: 'fail',
