@@ -48,40 +48,6 @@ export const SlideNavigator: React.FC<SlideNavigatorProps> = ({
     }
   };
 
-  const renderDimensionBar = () => (
-    <div
-      className="flex items-center justify-between gap-1 bg-black/60 border border-white/10 rounded-lg p-1 text-[11px] font-sans"
-      role="group"
-      aria-label="Canvas Dimension Preset"
-    >
-      <div className="flex items-center gap-0.5 flex-wrap">
-        {CANVAS_DIMENSION_PRESET_LIST.map((preset) => {
-          const isActive = activeSpec.id === preset.id;
-          return (
-            <button
-              key={preset.id}
-              type="button"
-              onClick={() => onSelectDimensionPreset?.(preset.id)}
-              className={`px-1.5 py-0.5 rounded cursor-pointer transition-colors font-semibold ${
-                isActive
-                  ? preset.platform === 'instagram'
-                    ? 'bg-pink-500/25 text-pink-200 border border-pink-500/40'
-                    : 'bg-emerald-500/25 text-emerald-200 border border-emerald-500/40'
-                  : 'text-slate-400 hover:text-white hover:bg-white/5 border border-transparent'
-              }`}
-              title={`${preset.label} (${preset.width}×${preset.height})`}
-            >
-              {preset.shortLabel}
-            </button>
-          );
-        })}
-      </div>
-      <span className="text-[10px] font-mono text-slate-400 px-1 shrink-0 hidden sm:inline">
-        {activeSpec.width}×{activeSpec.height}
-      </span>
-    </div>
-  );
-
   const renderStageToggle = () => (
     <div className="flex items-center gap-0.5 bg-black/70 border border-white/10 rounded-lg p-0.5 text-[11px] font-sans shrink-0">
       <button
@@ -123,8 +89,7 @@ export const SlideNavigator: React.FC<SlideNavigatorProps> = ({
 
   if (isSinglePost) {
     return (
-      <div className="w-full max-w-[380px] space-y-1.5">
-        {onSelectDimensionPreset && renderDimensionBar()}
+      <div className="w-full max-w-[380px]">
         <div className="w-full flex items-center justify-between gap-2 px-1 py-1 text-xs text-slate-300">
           <div className="flex items-center gap-2 font-mono text-xs">
             <span className="text-white font-bold">Single Slide</span>
@@ -141,8 +106,7 @@ export const SlideNavigator: React.FC<SlideNavigatorProps> = ({
   }
 
   return (
-    <div className="w-full max-w-[380px] space-y-1.5">
-      {onSelectDimensionPreset && renderDimensionBar()}
+    <div className="w-full max-w-[380px] space-y-1">
       {/* Top Bar: Slide Count, Management Actions & Stage Mode Switcher */}
       <div className="flex items-center justify-between gap-1 text-xs text-slate-400 px-0.5">
         <div className="flex items-center gap-1.5 font-mono tabular-nums min-w-0">

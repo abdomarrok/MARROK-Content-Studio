@@ -66,10 +66,18 @@ export interface SlideData {
   compareLeftBody?: string;   // e.g. "Full history clone\nBloated .git folder\nStalls at 100GB"
   compareRightTitle?: string; // e.g. "Scion / MARROK"
   compareRightBody?: string;  // e.g. "Lazy checkout\nVirtual file system\nInstant CI builds"
-  // Image / Web Visual & Branded Meme Archetype properties
+  // Image / Video / Web Visual & Branded Meme Archetype properties
+  mediaType?: 'image' | 'video'; // Dynamic media type in central card ('image' | 'video')
   imageUrl?: string;          // Direct URL, local asset path, or data URL of meme, diagram, logo, or photo
-  imageCaption?: string;      // Micro-badge label for the image
-  imageFit?: 'contain' | 'cover'; // Fit mode on canvas (defaults to contain)
+  videoUrl?: string;          // Object URL, data URL, or asset path of video (.mp4, .webm, .mov)
+  videoMimeType?: string;     // Video MIME type ('video/mp4' | 'video/webm' | 'video/quicktime')
+  videoFileName?: string;     // Uploaded video filename
+  videoDuration?: number;     // Video duration in seconds
+  videoMuted?: boolean;       // Preview/export mute toggle (defaults to true in preview)
+  videoPlaying?: boolean;     // Preview playback state (defaults to true)
+  videoBorderRadius?: number; // Inner video border radius in px (defaults to 8px in contain mode)
+  imageCaption?: string;      // Micro-badge label for the image/video
+  imageFit?: 'contain' | 'cover'; // Fit mode inside the central card (defaults to contain)
   imageFilter?: 'hud' | 'invert' | 'tint' | 'clean'; // Theme integration filter (hud = blueprint dark blend, invert = dark mode inversion, tint = accent wash, clean = original)
   imageFrameMode?: 'full' | 'hero' | 'standard'; // 'full' = full-height captionless meme (1140px on 9:16, hides slide text below), 'hero' = tall meme + headline (820px), 'standard' = 430px card
   imageBgStyle?: 'theme' | 'white' | 'obsidian'; // Inner card backdrop fill (white is ideal for light-background memes)
@@ -332,6 +340,20 @@ export type SavedPostStatus = 'validated' | 'posted';
 
 export type SavedPostStorageEngine = 'cloud-kv' | 'vercel-tmp' | 'local-disk' | 'browser-vault';
 
+export type PublishTargetPlatform = 'instagram' | 'facebook' | 'linkedin' | 'tiktok';
+
+export type PublishScheduleMode = 'shareNow' | 'addToQueue' | 'customScheduled';
+
+export interface BufferChannelInfo {
+  id: string;
+  name: string;
+  service: PublishTargetPlatform;
+  handle: string;
+  queuedCount: number;
+  queueLimit: number;
+  provider: 'buffer' | 'metricool';
+}
+
 export interface SavedPostRecord {
   id: string;
   title: string;
@@ -345,8 +367,17 @@ export interface SavedPostRecord {
   qaPassed: boolean;
   storageEngine?: SavedPostStorageEngine;
   deck: CarouselData;
+  // Publishing, Scheduling & Cloudinary Auto-Cleanup Metadata
+  scheduledFor?: string;
+  publishTargets?: PublishTargetPlatform[];
+  hostedSlideUrls?: string[];
+  cloudinaryPublicIds?: string[];
+  cloudinaryCleanedAt?: string;
+  bufferPostIds?: string[];
+  countedInMetricoolMonth?: string;
 }
 
 // Re-export immutable palette repositories for backwards compatibility
 export { DEFAULT_PALETTES, SPEC_PALETTES, THEME_CONFIGS } from './lib/theme/palettes.ts';
+
 

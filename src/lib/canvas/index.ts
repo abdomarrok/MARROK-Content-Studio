@@ -5,3 +5,5 @@ export * from './background.ts';
 export * from './archetypes/index.ts';
 export * from './renderSlide.ts';
 export * from './exporter.ts';
+export * from './singleSlideVideoExporter.ts';
+export * from './videoFrameExtractor.ts';

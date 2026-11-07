@@ -44,7 +44,9 @@ import {
   MotionReelData,
   MotionTemplateId,
   CanvasDimensionPreset,
+  SavedPostRecord,
 } from '../types.ts';
+import { analyzePostHistoryCadence, normalizeThemeId } from '../lib/theme/cadenceEngine.ts';
 import {
   downloadSingleSlidePng,
   copySlideToClipboard,
@@ -52,6 +54,12 @@ import {
   getCanvasDimensionSpec,
   CANVAS_DIMENSION_PRESET_LIST,
   resolveExportTargetPresets,
+  exportSingleSlideVideoMp4,
+  isVideoSlide,
+  isVideoFile,
+  ACCEPTED_SINGLE_SLIDE_MEDIA_ACCEPT,
+  extractVideoStoryboardDataUrl,
+  analyzeVideoForSlideAndCaption,
   type ExportBundleMode,
 } from '../lib/canvasExporter.ts';
 import { runAutonomousPipeline, enrichAndPaceCarousel } from '../lib/autonomousPipeline.ts';
@@ -142,6 +150,8 @@ interface AutonomousStudioProps {
   onSaveValidPost?: (status: SavedPostStatus, allowOverride?: boolean) => Promise<void>;
   isSavingPost?: boolean;
   onShowToast: (msg: string) => void;
+  savedPosts?: SavedPostRecord[];
+  onOpenPublishScheduleModal?: (tab?: 'single' | 'bulk' | 'storage') => void;
 }
 
 const STARTER_TOPICS = [
@@ -189,14 +199,26 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   onSlideChange,
   onUpdateCarousel,
   onSelectTheme,
+  onOpenThemeCustomizer,
   onOpenContactSheet,
   onOpenPreviewDrawer,
   onOpenSavedPostsDrawer,
   onSaveValidPost,
   isSavingPost = false,
   onShowToast,
+  savedPosts = [],
+  onOpenPublishScheduleModal,
 }) => {
   const [promptInput, setPromptInput] = useState('');
+  const [categoryHint, setCategoryHint] = useState<string>('auto');
+
+  // Intelligent Feed Cadence Analysis for Live Context
+  const dockCadence = React.useMemo(() => {
+    return analyzePostHistoryCadence(savedPosts, theme.id, {
+      prompt: promptInput,
+      category: categoryHint,
+    });
+  }, [savedPosts, theme.id, promptInput, categoryHint]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [pipelineStatus, setPipelineStatus] = useState<string | null>(null);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(activeSlideIndex ?? 0);
@@ -250,7 +272,6 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     name: string;
     sizeKb: number;
   } | null>(null);
-  const [categoryHint, setCategoryHint] = useState<string>('auto');
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -574,10 +595,66 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     }
   };
 
-  // Image Upload with client-side downscaling
+  // Image or Video Upload with client-side downscaling / storyboard frame extraction
   const handleImageFile = useCallback(async (file: File) => {
+    if (isVideoFile(file)) {
+      try {
+        const videoBlobUrl =
+          typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function'
+            ? URL.createObjectURL(file)
+            : '';
+        const storyboard = await extractVideoStoryboardDataUrl(file);
+        setUploadedImage({
+          base64: storyboard.dataUrl,
+          mimeType: storyboard.mimeType,
+          name: file.name,
+          sizeKb: Math.max(1, Math.round((storyboard.dataUrl.length * 0.75) / 1024)),
+        });
+        if (videoBlobUrl) {
+          applyDeckUpdate((prev) => {
+            const targetIndex = Math.min(currentSlideIndexRef.current, prev.slides.length - 1);
+            if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
+            const current = prev.slides[targetIndex];
+            const targetType: SlideType =
+              current.type === 'poster' || prev.postFormat === 'single' || prev.slides.length === 1
+                ? 'poster'
+                : 'image';
+            const newSlides = [...prev.slides];
+            newSlides[targetIndex] = {
+              ...current,
+              type: targetType,
+              mediaType: 'video',
+              videoUrl: videoBlobUrl,
+              videoMimeType: file.type || 'video/mp4',
+              videoFileName: file.name,
+              videoDuration: storyboard.duration || current.videoDuration,
+              videoMuted: true,
+              videoPlaying: true,
+              videoBorderRadius: 8,
+              imageFrameMode: 'hero',
+              imageFit: current.imageFit || 'contain',
+              imageBgStyle: current.imageBgStyle || 'white',
+              brandWatermark: current.brandWatermark || 'bottom-right',
+            };
+            return {
+              ...prev,
+              dimensionPreset: prev.dimensionPreset || 'ig-3:4',
+              slides: newSlides,
+            };
+          });
+        }
+        setIsExpanded(true);
+        setActiveTab('upload');
+        onShowToast(`Attached video "${file.name}" & extracted keyframes for AI captioning`);
+      } catch (err) {
+        console.warn('Video frame extraction failed:', err);
+        onShowToast('Attached video file');
+      }
+      return;
+    }
+
     if (!file.type.startsWith('image/')) {
-      onShowToast('Please select a valid image file (PNG, JPG, WebP).');
+      onShowToast('Please select a valid image or video file (PNG, JPG, WebP, MP4, WebM, MOV).');
       return;
     }
     try {
@@ -717,14 +794,29 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         return;
       }
 
-      // Auto-Theme Routing
-      const resolvedTheme =
-        generated.theme && DEFAULT_PALETTES[generated.theme]
-          ? DEFAULT_PALETTES[generated.theme]
-          : theme;
-      if (generated.theme && DEFAULT_PALETTES[generated.theme]) {
-        onSelectTheme(DEFAULT_PALETTES[generated.theme]);
+      // Cadence-Aware Auto-Theme Routing:
+      // Avoids consecutive duplicate colors and applies topic-harmonic resolution based on posted history
+      const cadenceAnalysis = analyzePostHistoryCadence(savedPosts, theme.id, {
+        prompt: query,
+        category: generated.category || (categoryHint !== 'auto' ? categoryHint : undefined),
+      });
+
+      const rawAiThemeKey = generated.theme ? normalizeThemeId(generated.theme) : null;
+      let resolvedTheme = theme;
+      let cadenceToastNote = '';
+
+      // If AI proposed a theme that repeats the most recent posted theme, resolve to harmonic cadence
+      if (rawAiThemeKey && rawAiThemeKey === cadenceAnalysis.lastPostedThemeId) {
+        resolvedTheme = cadenceAnalysis.recommendedPalette;
+        cadenceToastNote = ` · Assigned ${resolvedTheme.name.split(' ')[0]} to avoid repeating last post`;
+      } else if (rawAiThemeKey && DEFAULT_PALETTES[rawAiThemeKey]) {
+        resolvedTheme = DEFAULT_PALETTES[rawAiThemeKey];
+      } else {
+        // If AI returned fallback theme or none, assign the smart next palette
+        resolvedTheme = cadenceAnalysis.recommendedPalette;
       }
+
+      onSelectTheme(resolvedTheme);
 
       if (generated.slides.length > 1) {
         stashedCarouselSlidesRef.current = generated.slides.map((s) => ({ ...s }));
@@ -732,37 +824,77 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         stashedCarouselSlidesRef.current = null;
       }
 
+      const activeSlideBeforeGen = carousel.slides[currentSlideIndex] || carousel.slides[0];
+      const preserveActiveVideo = activeSlideBeforeGen && isVideoSlide(activeSlideBeforeGen);
+      const mergedSlides = preserveActiveVideo
+        ? generated.slides.map((s, idx) =>
+            idx === 0
+              ? {
+                  ...s,
+                  type:
+                    activeSlideBeforeGen.type === 'poster' || activePostFormat === 'single'
+                      ? ('poster' as const)
+                      : ('image' as const),
+                  mediaType: 'video' as const,
+                  videoUrl: activeSlideBeforeGen.videoUrl,
+                  videoMimeType: activeSlideBeforeGen.videoMimeType,
+                  videoFileName: activeSlideBeforeGen.videoFileName,
+                  videoDuration: activeSlideBeforeGen.videoDuration,
+                  videoMuted: activeSlideBeforeGen.videoMuted ?? true,
+                  videoPlaying: activeSlideBeforeGen.videoPlaying ?? true,
+                  videoBorderRadius: activeSlideBeforeGen.videoBorderRadius ?? 8,
+                  imageFrameMode:
+                    activeSlideBeforeGen.imageFrameMode === 'standard' ? ('standard' as const) : ('hero' as const),
+                  imageFit: activeSlideBeforeGen.imageFit || 'contain',
+                  imageBgStyle: activeSlideBeforeGen.imageBgStyle || 'white',
+                  brandWatermark: activeSlideBeforeGen.brandWatermark || 'bottom-right',
+                }
+              : s
+          )
+        : generated.slides;
+
       const finalGenerated: CarouselData =
         activePostFormat === 'reel'
           ? {
               ...generated,
+              slides: mergedSlides,
+              theme: resolvedTheme.id,
               postFormat: 'reel',
               reelConfig: convertCarouselToMotionReel(
-                generated,
+                { ...generated, slides: mergedSlides },
                 resolvedTheme,
                 activeReelConfig.templateId || 'kinetic-text',
                 activeReelConfig.languageMode || 'ar'
               ),
             }
-          : generated;
+          : {
+              ...generated,
+              slides: mergedSlides,
+              dimensionPreset: preserveActiveVideo
+                ? carousel.dimensionPreset || 'ig-3:4'
+                : generated.dimensionPreset,
+              theme: resolvedTheme.id,
+            };
 
       onUpdateCarousel(finalGenerated);
       changeSlide(0, finalGenerated.slides.length);
+      setIsExpanded(false);
+      setInspectorTab('copy');
       if (finalGenerated.sourceMeta?.isFallback || finalGenerated.sourceMeta?.engine === 'offline-synthesizer') {
         onShowToast(
-          activePostFormat === 'single'
+          (activePostFormat === 'single'
             ? 'Offline NLP Engine Activated: Synthesized single-slide post from your notes.'
             : activePostFormat === 'reel'
             ? 'Offline NLP Engine Activated: Synthesized motion reel scenes from your notes.'
-            : 'Offline NLP Engine Activated: Synthesized custom slides from your notes.'
+            : 'Offline NLP Engine Activated: Synthesized custom slides from your notes.') + cadenceToastNote
         );
       } else {
         onShowToast(
-          activePostFormat === 'single'
+          (activePostFormat === 'single'
             ? '✨ Autonomously generated standalone 1080×1920 single-slide post!'
             : activePostFormat === 'reel'
             ? '✨ Autonomously generated 1080×1920 animated Motion Reel!'
-            : '✨ Autonomously generated and perfected 8-slide carousel!'
+            : '✨ Autonomously generated and perfected 8-slide carousel!') + cadenceToastNote
         );
       }
     } catch (err) {
@@ -780,6 +912,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   // Instant local synthesis fallback (0ms latency, zero network dependence)
   const handleInstantSynthesize = () => {
     setIsExpanded(false);
+    setInspectorTab('copy');
     generationRunIdRef.current += 1;
     generationAbortRef.current?.abort();
     generationAbortRef.current = null;
@@ -1173,6 +1306,119 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     }
   };
 
+  // Single-Slide Video MP4 Export State & Handler
+  const [isExportingVideo, setIsExportingVideo] = useState(false);
+  const [videoExportProgress, setVideoExportProgress] = useState(0);
+  const [videoExportStage, setVideoExportStage] = useState('');
+
+  const handleExportSingleSlideVideoMp4 = async (fps: 30 | 60 = 30) => {
+    const activeSlide = carousel.slides[currentSlideIndex] || carousel.slides[0];
+    if (!activeSlide || !isVideoSlide(activeSlide) || isExportingVideo) return;
+    setIsExportingVideo(true);
+    setVideoExportProgress(2);
+    setVideoExportStage('Initializing 1080×1440 MP4 video export...');
+    try {
+      const targetPreset = carousel.dimensionPreset || 'ig-3:4';
+      const result = await exportSingleSlideVideoMp4(carousel, currentSlideIndex, {
+        fps,
+        dimensionPreset: targetPreset,
+        theme,
+        visualOptions: carousel.visualOptions,
+        preserveAudio: !(activeSlide.videoMuted ?? false),
+        onProgress: (pct, stage) => {
+          setVideoExportProgress(pct);
+          setVideoExportStage(stage);
+        },
+      });
+      triggerBlobDownload(result.blob, result.filename);
+      onShowToast(
+        `Exported ${result.width}×${result.height} @ ${result.fps}fps .${result.extension} video!`
+      );
+    } catch (err) {
+      console.error('Single-slide video export failed:', err);
+      onShowToast(
+        err instanceof Error ? err.message : 'Failed to export single-slide MP4 video.'
+      );
+    } finally {
+      setIsExportingVideo(false);
+      setVideoExportProgress(0);
+      setVideoExportStage('');
+    }
+  };
+
+  // Video-to-Slide-Text & Social Caption Generation State & Handler
+  const [isGeneratingFromVideo, setIsGeneratingFromVideo] = useState(false);
+
+  const handleGenerateFromVideo = async (sourceOverride?: File | string) => {
+    const activeSlide = carousel.slides[currentSlideIndex] || carousel.slides[0];
+    const videoSource =
+      sourceOverride || activeSlide?.videoUrl || '';
+    if (!videoSource && !uploadedImage) {
+      onShowToast('Please upload a video first to generate slide text and caption.');
+      return;
+    }
+
+    setIsGeneratingFromVideo(true);
+    setPipelineStatus('Analyzing video frames & generating slide copy + social caption...');
+    try {
+      const targetFormat: 'carousel' | 'single' =
+        activePostFormat === 'single' || carousel.slides.length === 1 ? 'single' : 'carousel';
+      const fileName =
+        sourceOverride instanceof File
+          ? sourceOverride.name
+          : activeSlide?.videoFileName || uploadedImage?.name || 'video-clip.mp4';
+
+      const result = await analyzeVideoForSlideAndCaption({
+        videoSource: videoSource || uploadedImage?.base64 || '',
+        videoFileName: fileName,
+        prompt: promptInput,
+        currentSlide: activeSlide || carousel.slides[0],
+        theme,
+        categoryHint: categoryHint !== 'auto' ? categoryHint : carousel.category,
+        postFormat: targetFormat,
+        onProgress: (status) => setPipelineStatus(status),
+      });
+
+      applyDeckUpdate((prev) => {
+        const targetIndex = Math.min(currentSlideIndexRef.current, prev.slides.length - 1);
+        if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
+        const current = prev.slides[targetIndex];
+        const newSlides = [...prev.slides];
+        newSlides[targetIndex] = sanitizeSlide(
+          {
+            ...current,
+            ...result.slideUpdates,
+            // Preserve the live video URL if already set in state
+            mediaType: 'video',
+            videoUrl: current.videoUrl || result.slideUpdates.videoUrl || '',
+            videoMimeType: current.videoMimeType || result.slideUpdates.videoMimeType || 'video/mp4',
+            videoFileName: current.videoFileName || fileName,
+            // Ensure slide text is visible underneath the white video card!
+            imageFrameMode:
+              current.imageFrameMode === 'standard' ? 'standard' : 'hero',
+          },
+          targetIndex,
+          prev.slides.length
+        );
+        return {
+          ...prev,
+          category: result.category || prev.category,
+          caption: result.caption || prev.caption,
+          hookVariants: result.hookVariants || prev.hookVariants,
+          slides: newSlides,
+        };
+      });
+
+      onShowToast('✨ Generated bilingual slide text & social caption from your video!');
+    } catch (err) {
+      console.error('Video text & caption generation failed:', err);
+      onShowToast('Generated fallback slide text & caption from video metadata.');
+    } finally {
+      setIsGeneratingFromVideo(false);
+      setPipelineStatus(null);
+    }
+  };
+
   // Copy TikTok Caption
   const handleCopyCaption = async () => {
     const rawCaption = carousel.caption || '';
@@ -1297,11 +1543,11 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           e.preventDefault();
           setIsDragOver(false);
         }}
-        onDrop={(e) => {
+          onDrop={(e) => {
           e.preventDefault();
           setIsDragOver(false);
           const file = e.dataTransfer.files?.[0];
-          if (file && file.type.startsWith('image/')) {
+          if (file && (file.type.startsWith('image/') || isVideoFile(file))) {
             handleImageFile(file);
           }
         }}
@@ -1311,7 +1557,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept={ACCEPTED_SINGLE_SLIDE_MEDIA_ACCEPT}
           className="hidden"
           onChange={(e) => {
             const file = e.target.files?.[0];
@@ -1319,9 +1565,9 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           }}
         />
 
-        {/* Slim Single-Row Command Bar */}
+        {/* Unified Studio Command & Workflow Center */}
         <div
-          className={`bg-[#0b1118]/95 border rounded-2xl px-3 py-2 shadow-xl backdrop-blur-xl transition-all duration-200 ${
+          className={`bg-[#0b1118]/95 border rounded-2xl p-2.5 shadow-xl backdrop-blur-xl transition-all duration-200 space-y-2 ${
             isDragOver
               ? 'border-cyan-400 bg-cyan-950/20 ring-2 ring-cyan-400/40'
               : isExpanded
@@ -1329,6 +1575,200 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
               : 'border-white/10'
           }`}
         >
+          {/* Tier 1: Guided Creation Wizard Steps + Format Switcher + Quick Actions */}
+          <div
+            data-testid="guided-wizard-bar"
+            aria-label="Guided Creation Steps"
+            className="flex items-center justify-between gap-2 border-b border-white/[0.06] pb-2 overflow-x-auto"
+          >
+            <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
+              {[
+                {
+                  step: 1,
+                  id: 'ingest',
+                  label: '1. Ingest',
+                  active: isExpanded,
+                  onSelect: () => setIsExpanded((prev) => !prev),
+                },
+                {
+                  step: 2,
+                  id: 'content',
+                  label: '2. Content',
+                  active: !isExpanded && inspectorTab === 'copy',
+                  onSelect: () => {
+                    setIsExpanded(false);
+                    setInspectorTab('copy');
+                  },
+                },
+                ...(activePostFormat !== 'reel'
+                  ? [
+                      {
+                        step: 3,
+                        id: 'design',
+                        label: '3. Design',
+                        active: !isExpanded && inspectorTab === 'visual',
+                        onSelect: () => {
+                          setIsExpanded(false);
+                          setInspectorTab('visual');
+                        },
+                      },
+                      {
+                        step: 4,
+                        id: 'adjust',
+                        label: '4. Adjust',
+                        active: !isExpanded && inspectorTab === 'position',
+                        onSelect: () => {
+                          setIsExpanded(false);
+                          setInspectorTab('position');
+                        },
+                      },
+                    ]
+                  : []),
+                {
+                  step: activePostFormat === 'reel' ? 3 : 5,
+                  id: 'publish',
+                  label: activePostFormat === 'reel' ? '3. Publish' : '5. Publish',
+                  active: !isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption'),
+                  onSelect: () => {
+                    setIsExpanded(false);
+                    setInspectorTab('review');
+                  },
+                },
+              ].map((item, idx, arr) => (
+                <React.Fragment key={item.id}>
+                  <button
+                    type="button"
+                    onClick={item.onSelect}
+                    className={`px-2 py-0.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                      item.active
+                        ? 'bg-white/15 text-white border border-white/15'
+                        : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                    }`}
+                    style={item.active ? { color: theme.accent } : undefined}
+                  >
+                    <span>{item.label}</span>
+                    {item.id === 'publish' && (
+                      <span
+                        className={`text-[10px] font-mono tabular-nums ${
+                          isBlocked ? 'text-amber-400' : 'text-emerald-400'
+                        }`}
+                      >
+                        · {isBlocked ? `${blockersCount}` : 'Ready'}
+                      </span>
+                    )}
+                  </button>
+                  {idx < arr.length - 1 && (
+                    <ChevronRight className="w-3 h-3 text-slate-600 shrink-0 hidden sm:inline" />
+                  )}
+                </React.Fragment>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {/* Post Format Segmented Toggle: Carousel vs Single Slide vs Motion Reel */}
+              <div
+                role="group"
+                aria-label="Post format selector"
+                className="flex items-center bg-black/60 p-0.5 rounded-lg border border-white/10 shrink-0"
+              >
+                <button
+                  type="button"
+                  data-testid="format-toggle-carousel"
+                  onClick={() => handleSwitchPostFormat('carousel')}
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    activePostFormat === 'carousel'
+                      ? 'bg-white/15 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  style={activePostFormat === 'carousel' ? { color: theme.accent } : undefined}
+                  title="Multi-Slide Carousel (8 slides, 1080×1920)"
+                >
+                  <Layers className="w-3 h-3" />
+                  <span>Carousel</span>
+                </button>
+
+                <button
+                  type="button"
+                  data-testid="format-toggle-single"
+                  onClick={() => handleSwitchPostFormat('single')}
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    activePostFormat === 'single'
+                      ? 'bg-white/15 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  style={activePostFormat === 'single' ? { color: theme.accent } : undefined}
+                  title="Standalone Single-Slide Post (1 slide, 1080×1920)"
+                >
+                  <ImageIcon className="w-3 h-3" />
+                  <span>Single Slide</span>
+                </button>
+
+                <button
+                  type="button"
+                  data-testid="format-toggle-reel"
+                  onClick={() => handleSwitchPostFormat('reel')}
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    activePostFormat === 'reel'
+                      ? 'bg-white/15 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  style={activePostFormat === 'reel' ? { color: theme.accent } : undefined}
+                  title="Animated 9:16 Motion Reel Video (1080×1920 + Procedural SFX)"
+                >
+                  <Film className="w-3 h-3" />
+                  <span>Motion Reel</span>
+                </button>
+              </div>
+
+              {/* Engine Provenance Status */}
+              <button
+                type="button"
+                onClick={() => setInspectorTab('review')}
+                className={`hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-mono font-bold transition-colors cursor-pointer shrink-0 ${engineBadge.cls}`}
+                title="Active synthesis engine & verification status (click to inspect in Publish tab)"
+              >
+                <span>{engineBadge.label}</span>
+              </button>
+
+              {/* Quick Step Advance Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (isExpanded) {
+                    setIsExpanded(false);
+                    setInspectorTab('copy');
+                  } else if (inspectorTab === 'copy') {
+                    setInspectorTab(activePostFormat === 'reel' ? 'review' : 'visual');
+                  } else if (inspectorTab === 'visual') {
+                    setInspectorTab('position');
+                  } else if (inspectorTab === 'position') {
+                    setInspectorTab('review');
+                  } else {
+                    handleExportZip('all');
+                  }
+                }}
+                className="hidden lg:flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-white/[0.06] hover:bg-white/12 border border-white/10 text-[11px] font-semibold text-slate-200 hover:text-white transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              >
+                <span>
+                  {isExpanded
+                    ? 'Next: Content →'
+                    : inspectorTab === 'copy'
+                    ? activePostFormat === 'reel'
+                      ? 'Next: Publish →'
+                      : 'Next: Design →'
+                    : inspectorTab === 'visual'
+                    ? 'Next: Adjust →'
+                    : inspectorTab === 'position'
+                    ? 'Next: Publish →'
+                    : isBlocked
+                    ? `Review ${blockersCount} Check(s)`
+                    : 'Export Ready →'}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* Tier 2: Form Row with Topic / Ingestion Input & Primary Actions */}
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -1338,18 +1778,18 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           >
             {/* Topic / Notes Input */}
             <div className="relative flex-1 min-w-[200px] flex items-center gap-1.5">
-              <Sparkles className="w-4 h-4 shrink-0 ml-2" style={{ color: theme.accent }} />
+              <Sparkles className="w-4 h-4 shrink-0 ml-1.5" style={{ color: theme.accent }} />
               <input
                 type="text"
                 value={promptInput}
                 onChange={(e) => handlePromptChange(e.target.value)}
                 placeholder="Enter topic, paste notes, or drop a screenshot (e.g. Zero-Trust Mesh, Redis 8)..."
                 disabled={isGenerating}
-                className="w-full bg-transparent px-2 py-1.5 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none font-sans"
+                className="w-full bg-transparent px-2 py-1 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none font-sans"
               />
 
               {uploadedImage && (
-                <div className="flex items-center gap-1.5 bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-[11px] px-2 py-1 rounded-lg shrink-0">
+                <div className="flex items-center gap-1.5 bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-[11px] px-2 py-0.5 rounded-lg shrink-0">
                   <ImageIcon className="w-3 h-3" />
                   <span className="truncate max-w-[90px] font-mono text-[10px]">{uploadedImage.name}</span>
                   <button
@@ -1373,7 +1813,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                     type="button"
                     onClick={() => handleTriggerStarterTopic(topic)}
                     disabled={isGenerating}
-                    className="px-2 py-1 rounded-lg text-[11px] bg-white/[0.03] hover:bg-white/[0.08] border border-white/5 text-slate-400 hover:text-white transition-colors cursor-pointer whitespace-nowrap"
+                    className="px-2 py-0.5 rounded-lg text-[11px] bg-white/[0.03] hover:bg-white/[0.08] border border-white/5 text-slate-400 hover:text-white transition-colors cursor-pointer whitespace-nowrap"
                     title={topic.desc}
                   >
                     {topic.name}
@@ -1390,76 +1830,11 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
               </div>
             )}
 
-            {/* Post Format Segmented Toggle: Carousel vs Single Slide vs Motion Reel */}
-            <div
-              role="group"
-              aria-label="Post format selector"
-              className="flex items-center bg-black/60 p-0.5 rounded-xl border border-white/10 shrink-0"
-            >
-              <button
-                type="button"
-                data-testid="format-toggle-carousel"
-                onClick={() => handleSwitchPostFormat('carousel')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
-                  activePostFormat === 'carousel'
-                    ? 'bg-white/15 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-                style={activePostFormat === 'carousel' ? { color: theme.accent } : undefined}
-                title="Multi-Slide Carousel (8 slides, 1080×1920)"
-              >
-                <Layers className="w-3 h-3" />
-                <span>Carousel</span>
-              </button>
-
-              <button
-                type="button"
-                data-testid="format-toggle-single"
-                onClick={() => handleSwitchPostFormat('single')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
-                  activePostFormat === 'single'
-                    ? 'bg-white/15 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-                style={activePostFormat === 'single' ? { color: theme.accent } : undefined}
-                title="Standalone Single-Slide Post (1 slide, 1080×1920)"
-              >
-                <ImageIcon className="w-3 h-3" />
-                <span>Single Slide</span>
-              </button>
-
-              <button
-                type="button"
-                data-testid="format-toggle-reel"
-                onClick={() => handleSwitchPostFormat('reel')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
-                  activePostFormat === 'reel'
-                    ? 'bg-white/15 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-                style={activePostFormat === 'reel' ? { color: theme.accent } : undefined}
-                title="Animated 9:16 Motion Reel Video (1080×1920 + Procedural SFX)"
-              >
-                <Film className="w-3 h-3" />
-                <span>Motion Reel</span>
-              </button>
-            </div>
-
-            {/* Engine Provenance Status */}
-            <button
-              type="button"
-              onClick={() => setInspectorTab('caption')}
-              className={`hidden sm:inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] font-mono font-bold transition-colors cursor-pointer shrink-0 ${engineBadge.cls}`}
-              title="Active synthesis engine & verification status (click to inspect)"
-            >
-              <span>{engineBadge.label}</span>
-            </button>
-
             {/* Expand Ingestion Studio Button */}
             <button
               type="button"
               onClick={() => setIsExpanded(!isExpanded)}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border text-xs font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                 isExpanded
                   ? 'border-cyan-400/50 bg-cyan-500/15 text-cyan-200'
                   : 'border-white/10 bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 hover:text-white'
@@ -1475,7 +1850,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
             <button
               type="submit"
               disabled={isGenerating}
-              className="flex items-center justify-center gap-1.5 px-4 py-1.5 min-h-[34px] rounded-xl font-bold text-xs uppercase tracking-wider text-slate-950 transition-all shadow-md cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
+              className="flex items-center justify-center gap-1.5 px-4 py-1.5 min-h-[32px] rounded-xl font-bold text-xs uppercase tracking-wider text-slate-950 transition-all shadow-md cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
               style={{ backgroundColor: theme.accent }}
             >
               {isGenerating ? (
@@ -1511,7 +1886,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
               <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-white/10">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-bold text-white font-jakarta tracking-wide">
-                    Multimodal Source Ingestion
+                    Step 1 · Multimodal Source Ingestion
                   </span>
                   <span className="text-[11px] text-slate-400 hidden sm:inline">
                     · Paste long-form notes, YouTube transcripts, or architecture screenshots
@@ -1602,7 +1977,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   className="w-full bg-black/70 border border-white/15 focus:border-cyan-400/50 rounded-xl p-3.5 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none transition-all shadow-inner resize-y leading-relaxed font-mono min-h-[110px]"
                 />
 
-                <div className="flex items-center justify-between px-3 py-1.5 bg-black/80 border-x border-b border-white/10 rounded-b-xl text-[11px] text-slate-400 font-mono -mt-1.5">
+                <div className="flex items-center justify-between px-3 py-1.5 bg-black/80 border-x border-b border-white/10 rounded-b-xl text-[11px] text-slate-400 font-mono tabular-nums -mt-1.5">
                   <span>{promptInput.length.toLocaleString()} characters</span>
                   {promptInput.length > 200 ? (
                     <span className="text-emerald-400 flex items-center gap-1">
@@ -1610,7 +1985,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                       Direct AI Schema Mode (Search Grounding Bypassed)
                     </span>
                   ) : promptInput.length > 0 ? (
-                    <span className="text-cyan-400">🔍 Real-Time Grounding Mode</span>
+                    <span className="text-cyan-400">Real-Time Grounding Mode</span>
                   ) : (
                     <span>Ready for topic or notes</span>
                   )}
@@ -1630,8 +2005,8 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                         />
                         <div className="min-w-0">
                           <div className="text-xs font-bold text-white truncate">{uploadedImage.name}</div>
-                          <div className="text-[10px] font-mono text-cyan-300">
-                            {uploadedImage.sizeKb} KB • Mobile-optimized JPEG for fast OCR
+                          <div className="text-[10px] font-mono tabular-nums text-cyan-300">
+                            {uploadedImage.sizeKb} KB · Mobile-optimized JPEG for fast OCR
                           </div>
                         </div>
                       </div>
@@ -1711,6 +2086,75 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 </div>
               )}
 
+              {/* Feed Cadence Status & Smart Next Theme Bar */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 px-3 py-2 rounded-xl bg-[#0a1217] border border-white/10 text-xs">
+                <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-[#37E2C0] font-bold">
+                    Feed Cadence
+                  </span>
+                  <span aria-hidden="true" className="text-slate-600">·</span>
+                  {dockCadence.lastPostedThemeId ? (
+                    <div className="flex items-center gap-1.5 text-[11px] font-mono text-slate-400 shrink-0">
+                      <span>Last:</span>
+                      <span
+                        className="w-2.5 h-2.5 rounded-full inline-block border border-white/20"
+                        style={{
+                          backgroundColor:
+                            DEFAULT_PALETTES[dockCadence.lastPostedThemeId]?.accent || '#37E2C0',
+                        }}
+                      />
+                      <span className="text-slate-200 font-semibold">
+                        {DEFAULT_PALETTES[dockCadence.lastPostedThemeId]?.name.split(' ')[0]}
+                      </span>
+                      <span className="text-white/30 select-none">→</span>
+                    </div>
+                  ) : null}
+                  <div className="flex items-center gap-1.5 text-[11px] min-w-0">
+                    <span className="text-slate-400 font-mono shrink-0">Next:</span>
+                    <span
+                      className="w-2.5 h-2.5 rounded-full inline-block border border-white/20 shrink-0"
+                      style={{ backgroundColor: dockCadence.recommendedPalette.accent }}
+                    />
+                    <span className="text-white font-bold truncate">
+                      {dockCadence.recommendedPalette.name.split(' ')[0]}
+                    </span>
+                    <span className="text-slate-400 text-[10px] hidden md:inline truncate">
+                      ({dockCadence.reason})
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {theme.id !== dockCadence.recommendedThemeId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onSelectTheme(dockCadence.recommendedPalette);
+                        onShowToast(`Applied ${dockCadence.recommendedPalette.name} based on post history cadence`);
+                      }}
+                      className="px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all cursor-pointer border hover:opacity-90 active:scale-95"
+                      style={{
+                        borderColor: dockCadence.recommendedPalette.accent + '66',
+                        backgroundColor: dockCadence.recommendedPalette.accent + '20',
+                        color: dockCadence.recommendedPalette.accent,
+                      }}
+                      title="Apply recommended palette to ensure feed contrast"
+                    >
+                      Apply Smart Theme
+                    </button>
+                  )}
+                  {onOpenThemeCustomizer && (
+                    <button
+                      type="button"
+                      onClick={onOpenThemeCustomizer}
+                      className="text-[10px] font-mono text-slate-400 hover:text-white transition-colors cursor-pointer underline underline-offset-2"
+                    >
+                      Theme Studio
+                    </button>
+                  )}
+                </div>
+              </div>
+
               {/* Domain Classification Pills & Actions */}
               <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-white/10">
                 <div className="flex flex-wrap items-center gap-1.5 text-xs">
@@ -1762,12 +2206,14 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         )}
       </div>
 
+
+
       {/* 2. Mobile Segmented Switcher (Visible only on < lg) */}
       <div className="lg:hidden flex items-center p-1 bg-black/75 border border-white/15 rounded-xl gap-1 shrink-0">
         <button
           type="button"
           onClick={() => setMobileStudioTab('canvas')}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
             mobileStudioTab === 'canvas'
               ? 'bg-white/15 text-white shadow-sm'
               : 'text-slate-400 hover:text-white'
@@ -1781,7 +2227,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         <button
           type="button"
           onClick={() => setMobileStudioTab('editor')}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
             mobileStudioTab === 'editor'
               ? 'bg-white/15 text-white shadow-sm'
               : 'text-slate-400 hover:text-white'
@@ -1793,9 +2239,9 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         </button>
       </div>
 
-      {/* 3. Fixed Studio Shell: Left 9:16 Stage + Right Tabbed Inspector */}
+      {/* 3. Fixed Studio Shell: Left 9:16 Stage + Authoritative Delivery Bar | Right 4-Tab Categorized Inspector */}
       <div className="lg:flex-1 lg:min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
-        {/* Left Column: 9:16 Canvas + Compact Storyboard + Quick Export Bar */}
+        {/* Left Column: 9:16 Canvas + Slide Navigator + Single Persistent Under-Canvas Delivery Bar */}
         <div
           className={`lg:col-span-5 flex-col items-center justify-between lg:h-full lg:min-h-0 gap-2 ${
             mobileStudioTab === 'canvas' ? 'flex w-full' : 'hidden lg:flex'
@@ -1852,6 +2298,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   }}
                   onUpdateLayoutOverride={handleUpdateElementLayoutOverride}
                   onDoubleClickElement={handleDoubleClickCanvasElement}
+                  onUpdateSlideField={handleUpdateCurrentSlide}
                 />
               </div>
 
@@ -1873,462 +2320,50 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
               </div>
             </>
           )}
-        </div>
 
-        {/* Mobile Backdrop for Bottom Sheet */}
-        {isSheetOpen && (
+          {/* SINGLE PERSISTENT AUTHORITATIVE DELIVERY BAR UNDER CANVAS */}
           <div
-            className="lg:hidden fixed inset-0 z-40 bg-black/75 backdrop-blur-xs transition-opacity"
-            onClick={() => {
-              setIsMobileSheetOpen(false);
-              setMobileStudioTab('canvas');
-            }}
-            aria-hidden="true"
-          />
-        )}
-
-        {/* Right Column (Desktop) & Slide-Up Bottom Sheet (Mobile) */}
-        <div
-          role="region"
-          aria-label="Slide Inspector and Content Editor"
-          className={`lg:col-span-7 flex flex-col bg-[#0b1118] border-white/10 overflow-hidden shadow-2xl transition-transform duration-300 ${
-            isSheetOpen
-              ? 'fixed inset-x-0 bottom-0 z-50 h-[85vh] rounded-t-3xl border-t translate-y-0'
-              : 'fixed inset-x-0 bottom-0 z-50 h-[85vh] rounded-t-3xl border-t translate-y-full pointer-events-none'
-          } lg:static lg:inset-auto lg:z-auto lg:h-full lg:min-h-0 lg:rounded-2xl lg:border lg:translate-y-0 lg:pointer-events-auto`}
-        >
-          {/* Mobile Bottom Sheet Header Grab Bar */}
-          <div className="lg:hidden flex items-center justify-between px-4 pt-3 pb-2 border-b border-white/10 bg-black/50 shrink-0">
-            <span className="text-xs font-mono font-bold uppercase tracking-wider text-slate-300">
-              Slide {currentSlideIndex + 1} Inspector
-            </span>
-            <div className="w-12 h-1.5 rounded-full bg-white/25" />
-            <button
-              type="button"
-              onClick={() => {
-                setIsMobileSheetOpen(false);
-                setMobileStudioTab('canvas');
-              }}
-              className="p-2 rounded-xl text-slate-400 hover:text-white flex items-center justify-center cursor-pointer min-h-[44px] min-w-[44px]"
-              aria-label="Close inspector bottom sheet"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-          {/* Inspector Top Tab Bar */}
-          <div className="flex items-center justify-between gap-2 px-3 pt-2.5 pb-2 border-b border-white/10 bg-black/40 shrink-0 overflow-x-auto">
-            {activePostFormat === 'reel' ? (
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => setInspectorTab('copy')}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                    inspectorTab === 'copy'
-                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                      : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
-                  }`}
-                >
-                  <Film className="w-3.5 h-3.5" style={inspectorTab === 'copy' ? { color: theme.accent } : undefined} />
-                  <span>Motion Studio</span>
-                  <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-black/50 text-slate-300">
-                    {activeReelConfig.templateId}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  data-testid="tab-caption"
-                  onClick={() => setInspectorTab('caption')}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                    inspectorTab === 'caption'
-                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                      : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
-                  }`}
-                >
-                  <FileText className="w-3.5 h-3.5" style={inspectorTab === 'caption' ? { color: theme.accent } : undefined} />
-                  <span>Caption</span>
-                </button>
-
-                <button
-                  type="button"
-                  data-testid="tab-review"
-                  onClick={() => setInspectorTab('review')}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                    inspectorTab === 'review'
-                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                      : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
-                  }`}
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5" style={inspectorTab === 'review' ? { color: theme.accent } : undefined} />
-                  <span>Review</span>
-                  {blockersCount > 0 ? (
-                    <span className="text-xs font-mono tabular-nums px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                      {blockersCount}
-                    </span>
-                  ) : (
-                    <span className="text-xs font-mono uppercase px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                      PASS
-                    </span>
-                  )}
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => setInspectorTab('copy')}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                    inspectorTab === 'copy'
-                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                      : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
-                  }`}
-                >
-                  <Type className="w-3.5 h-3.5" style={inspectorTab === 'copy' ? { color: theme.accent } : undefined} />
-                  <span>Text</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setInspectorTab('visual')}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                    inspectorTab === 'visual'
-                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                      : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
-                  }`}
-                >
-                  <Layers className="w-3.5 h-3.5" style={inspectorTab === 'visual' ? { color: theme.accent } : undefined} />
-                  <span>Visual Layout</span>
-                  <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-black/50 text-slate-300">
-                    {currentSlide.type}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setInspectorTab('position')}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                    inspectorTab === 'position'
-                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                      : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
-                  }`}
-                >
-                  <Sliders className="w-3.5 h-3.5" style={inspectorTab === 'position' ? { color: theme.accent } : undefined} />
-                  <span>Position</span>
-                  {activeOverridesCount > 0 && (
-                    <span className="text-[10px] font-mono tabular-nums px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300">
-                      {activeOverridesCount}
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  data-testid="tab-caption"
-                  onClick={() => setInspectorTab('caption')}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                    inspectorTab === 'caption'
-                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                      : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
-                  }`}
-                >
-                  <FileText className="w-3.5 h-3.5" style={inspectorTab === 'caption' ? { color: theme.accent } : undefined} />
-                  <span>Caption</span>
-                </button>
-
-                <button
-                  type="button"
-                  data-testid="tab-review"
-                  onClick={() => setInspectorTab('review')}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                    inspectorTab === 'review'
-                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                      : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
-                  }`}
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5" style={inspectorTab === 'review' ? { color: theme.accent } : undefined} />
-                  <span>Review</span>
-                  {blockersCount > 0 ? (
-                    <span className="text-xs font-mono tabular-nums px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                      {blockersCount}
-                    </span>
-                  ) : (
-                    <span className="text-xs font-mono uppercase px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                      PASS
-                    </span>
-                  )}
-                </button>
-              </div>
-            )}
-
-            {/* Selected Layer Quick Badge */}
-            {activePostFormat !== 'reel' && selectedElementId && inspectorTab !== 'position' && (
+            data-testid="under-canvas-delivery-bar"
+            className="w-full px-3 py-2.5 bg-[#0b1118] border border-white/10 rounded-2xl flex items-center justify-between gap-2 shrink-0 flex-wrap shadow-xl"
+          >
+            {/* Left: Readiness Status Badge & Social Dimension Selector */}
+            <div className="flex items-center gap-2 text-xs font-mono text-slate-400 flex-wrap">
               <button
                 type="button"
-                onClick={() => setInspectorTab('position')}
-                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-[11px] font-mono text-cyan-300 hover:bg-cyan-500/20 transition-colors cursor-pointer shrink-0"
-                title="Adjust exact position and scale for selected element"
+                onClick={() => {
+                  setInspectorTab('review');
+                  setMobileStudioTab('editor');
+                }}
+                className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-mono tabular-nums font-bold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  isBlocked
+                    ? 'bg-amber-500/15 border-amber-500/35 text-amber-300 hover:bg-amber-500/25'
+                    : 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300 hover:bg-emerald-500/25'
+                }`}
+                title="View readiness status and pre-export checklist in Publish tab"
               >
-                <span>Layer: {selectedElementId}</span>
-              </button>
-            )}
-          </div>
-
-          {/* Scrollable Tab Viewport */}
-          <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
-            {/* MOTION REEL INSPECTOR */}
-            {activePostFormat === 'reel' && inspectorTab === 'copy' && (
-              <MotionReelInspector
-                reelConfig={activeReelConfig}
-                theme={theme}
-                selectedSceneId={selectedMotionSceneId}
-                onSelectScene={setSelectedMotionSceneId}
-                onChangeReelConfig={(updated) => {
-                  applyDeckUpdate((prev) => ({
-                    ...prev,
-                    reelConfig: updated,
-                  }));
-                }}
-                onSyncFromCarousel={(tplId, langMode) => {
-                  handleSyncReelFromCarousel(tplId, langMode);
-                }}
-                onShowToast={onShowToast}
-              />
-            )}
-
-            {/* TAB 1: SLIDE TEXT (Bilingual Headlines, Body, Hook Variants & Auto-Fit) */}
-            {activePostFormat !== 'reel' && inspectorTab === 'copy' && (
-              <InlineSlideEditor
-                currentSlide={currentSlide}
-                currentSlideIndex={currentSlideIndex}
-                theme={theme}
-                isAdvancedCustomizerOpen={false}
-                onToggleAdvancedCustomizer={() => setInspectorTab('visual')}
-                onUpdateField={handleUpdateCurrentSlide}
-                selectedElementId={selectedElementId}
-                onSelectElement={setSelectedElementId}
-                hookVariants={carousel.hookVariants}
-                onApplyHookVariant={handleApplyHookVariant}
-                onAutoFitSlide={handleAutoFitCurrentSlide}
-                onOpenPolishDrawer={onOpenPreviewDrawer ? () => onOpenPreviewDrawer('polish') : undefined}
-                isSingleSlide={activePostFormat === 'single'}
-              />
-            )}
-
-            {/* TAB 2: VISUAL LAYOUT (8 Archetypes, Hub/Schematic Nodes, Code, Metrics & AI Image Studio) */}
-            {activePostFormat !== 'reel' && inspectorTab === 'visual' && (
-              <div className="space-y-4">
-                <ArchetypeControls
-                  currentSlide={currentSlide}
-                  currentSlideIndex={currentSlideIndex}
-                  carousel={carousel}
-                  theme={theme}
-                  isAdvancedCustomizerOpen={true}
-                  onSetSlideType={handleSetSlideType}
-                  onUpdateField={handleUpdateCurrentSlide}
-                  onUpdateSlideFields={handleUpdateSlideFields}
-                  onSmartMatchVisuals={handleSmartMatchVisuals}
-                  onUpdateCarouselField={(field, value) =>
-                    applyDeckUpdate((prev) => ({
-                      ...prev,
-                      [field]: value,
-                    }))
-                  }
-                  onUpdateSatLabel={handleUpdateSatLabel}
-                  onUpdateSatIcon={handleUpdateSatIcon}
-                  onUpdateCenterIcon={handleUpdateCenterIcon}
-                  onUpdateCenterTag={handleUpdateCenterTag}
-                  onAddSatNode={handleAddSatNode}
-                  onDeleteSatNode={handleDeleteSatNode}
-                  onUpdateDiagramNode={handleUpdateDiagramNode}
-                  onUpdateDiagramEdge={handleUpdateDiagramEdge}
-                  onOpenAiImageStudio={() => setImageStudioTargetIndex(currentSlideIndex)}
-                  onOpenMediaSearch={() =>
-                    setMediaModalTarget({
-                      field: 'imageUrl',
-                      title: 'Search Architecture Graphic',
-                      initialQuery: currentSlide.enTitle?.slice(0, 30) || '',
-                    })
-                  }
-                />
-
-                {imageStudioTargetIndex !== null && carousel.slides[imageStudioTargetIndex] && (
-                  <Suspense fallback={null}>
-                    <SlideImageStudio
-                      slideIndex={imageStudioTargetIndex}
-                      slide={carousel.slides[imageStudioTargetIndex]}
-                      theme={theme}
-                      onApplyImage={(targetIndex, imageUrl, prompt, model) => {
-                        applyDeckUpdate((prev) => {
-                          if (targetIndex < 0 || targetIndex >= prev.slides.length) return prev;
-                          const newSlides = [...prev.slides];
-                          newSlides[targetIndex] = sanitizeSlide(
-                            {
-                              ...newSlides[targetIndex],
-                              imageUrl,
-                              imagePrompt: prompt,
-                              imageModel: model,
-                            },
-                            targetIndex,
-                            prev.slides.length
-                          );
-                          return { ...prev, slides: newSlides };
-                        });
-                        setImageStudioTargetIndex(null);
-                        onShowToast(`Applied AI diagram to Slide ${targetIndex + 1}`);
-                      }}
-                      onClose={() => setImageStudioTargetIndex(null)}
-                      onShowToast={onShowToast}
-                    />
-                  </Suspense>
+                {isBlocked ? (
+                  <>
+                    <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />
+                    <span>{blockersCount} Check{blockersCount > 1 ? 's' : ''}</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                    <span>Ready</span>
+                  </>
                 )}
-              </div>
-            )}
+              </button>
 
-            {/* TAB 3: POSITION (Direct Graphical Layer Offsets, Scale & Anti-Collision Nudge) */}
-            {activePostFormat !== 'reel' && inspectorTab === 'position' && (
-              <ElementInspector
-                slide={currentSlide}
-                theme={theme}
-                isOpen={true}
-                onToggleOpen={() => {}}
-                selectedElementId={selectedElementId}
-                onSelectElement={setSelectedElementId}
-                onUpdateOverride={handleUpdateElementLayoutOverride}
-                onResetOverrides={handleResetSlideLayoutOverrides}
-                onApplyToAllSlides={handleApplyOverrideToAllSlides}
-                onApplySlideLayoutToAllSlides={handleApplySlideLayoutToAllSlides}
-                onUpdateSlideFields={handleUpdateSlideFields}
-              />
-            )}
-
-            {/* TAB: CAPTION (Clean Bilingual TikTok Caption) */}
-            {inspectorTab === 'caption' && (
-              <div className="p-4 space-y-4 max-w-2xl mx-auto w-full">
-                <div className="p-4 rounded-xl bg-black/50 border border-white/10 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-xs font-bold text-white uppercase tracking-wider block">
-                        Bilingual TikTok Posting Copy
-                      </span>
-                      <span className="text-[11px] text-slate-400">
-                        {activePostFormat === 'single'
-                          ? 'Ready to paste directly into TikTok or export in your bundle'
-                          : 'Included automatically in your Metricool ZIP bundle'}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleCopyCaption}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/30 text-xs text-cyan-200 hover:bg-cyan-500/25 font-semibold cursor-pointer transition-colors"
-                    >
-                      {copiedType === 'caption' ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-400" />
-                      ) : (
-                        <Copy className="w-3.5 h-3.5" />
-                      )}
-                      <span>{copiedType === 'caption' ? 'Copied!' : 'Copy Caption Text'}</span>
-                    </button>
-                  </div>
-
-                  <textarea
-                    rows={6}
-                    value={carousel.caption || ''}
-                    onChange={(e) =>
-                      applyDeckUpdate((prev) => ({
-                        ...prev,
-                        caption: e.target.value,
-                      }))
-                    }
-                    placeholder="Enter bilingual TikTok caption..."
-                    className="w-full p-3 rounded-xl bg-black/70 border border-white/10 focus:border-white/30 text-xs text-slate-200 leading-relaxed focus:outline-none resize-y font-sans"
-                  />
-
-                  <div className="text-[11px] font-mono text-slate-400">
-                    {dynamicHashtags.join(' ')}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* TAB: REVIEW (Unified Ready-to-Publish Checklist & Sources) */}
-            {inspectorTab === 'review' && (
-              <div className="p-4 max-w-2xl mx-auto w-full">
-                <PublishChecklist
-                  carousel={carousel}
-                  currentSlideIndex={currentSlideIndex}
-                  theme={theme}
-                  isOfflineDraft={isOfflineDraft}
-                  isReviewed={isReviewed}
-                  qaReport={qaReport}
-                  riskReport={riskReport}
-                  overrideExportBlock={overrideExportBlock}
-                  onToggleOverrideBlock={handleToggleOverrideBlock}
-                  onToggleReviewDraft={handleToggleReviewDraft}
-                  onRetryWithAi={() => handleRunAutonomousPipeline()}
-                  onJumpToSlide={(idx: number) => {
-                    changeSlide(idx);
-                    setInspectorTab('copy');
-                  }}
-                  onUpdateCreator={(newCreator: string) => {
-                    applyDeckUpdate((prev) => {
-                      const trimmed = newCreator.trim();
-                      const newSlides = [...prev.slides];
-                      const lastIdx = newSlides.length - 1;
-                      if (lastIdx >= 0 && (newSlides[lastIdx].type === 'cta' || newSlides.length === 1)) {
-                        newSlides[lastIdx] = {
-                          ...newSlides[lastIdx],
-                          enCredit: trimmed ? `Source: ${trimmed}` : '',
-                          arCredit: trimmed ? `المصدر: ${trimmed}` : '',
-                        };
-                      }
-                      return {
-                        ...prev,
-                        brand: trimmed || prev.brand,
-                        channel: trimmed,
-                        slides: newSlides,
-                        sourceMeta: {
-                          ...prev.sourceMeta,
-                          creator: newCreator,
-                          channel: newCreator,
-                        },
-                      };
-                    });
-                  }}
-                  onSelectDimensionPreset={handleSelectDimensionPreset}
-                  onExportZip={handleExportZip}
-                  onDownloadSingleSlide={(preset) => {
-                    const spec = getCanvasDimensionSpec(preset);
-                    downloadSingleSlidePng(
-                      carousel,
-                      currentSlideIndex,
-                      undefined,
-                      theme,
-                      carousel.visualOptions,
-                      preset
-                    );
-                    onShowToast(`Downloaded Slide ${currentSlideIndex + 1} (${spec.label}) JPG`);
-                  }}
-                  isExportingZip={isExportingZip}
-                  onShowToast={onShowToast}
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Consolidated Stage Dock Delivery Bar */}
-          <div className="px-4 py-2.5 bg-black/75 border-t border-white/10 flex items-center justify-between gap-3 shrink-0 flex-wrap">
-            {/* Format & Social Media Dimensions Switcher */}
-            <div className="flex items-center gap-2 text-xs font-mono text-slate-400 flex-wrap">
               {activePostFormat === 'reel' ? (
-                <span className="px-2 py-0.5 rounded bg-white/[0.04] border border-white/10 text-slate-300">
-                  1080×1920
+                <span className="text-[11px] font-mono tabular-nums text-slate-300">
+                  1080×1920 · {activeReelConfig.duration.toFixed(1)}s
                 </span>
               ) : (
                 <select
                   aria-label="Social Media Export Format"
                   value={activeDimensionSpec.id}
                   onChange={(e) => handleSelectDimensionPreset(e.target.value as CanvasDimensionPreset)}
-                  className="px-2 py-1 rounded-lg bg-white/[0.06] hover:bg-white/10 border border-white/15 text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-400 cursor-pointer"
+                  className="px-2 py-1 rounded-lg bg-white/[0.05] hover:bg-white/10 border border-white/15 text-[11px] font-mono tabular-nums text-slate-200 focus:outline-none focus:border-cyan-400 cursor-pointer"
                   title="Select Social Media Format for Slide Export"
                 >
                   {CANVAS_DIMENSION_PRESET_LIST.map((preset) => (
@@ -2338,42 +2373,71 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   ))}
                 </select>
               )}
-              {activePostFormat === 'carousel' && (
-                <span>Slide {currentSlideIndex + 1} of {carousel.slides.length}</span>
-              )}
-              {activePostFormat === 'single' && (
-                <span>Single-Slide Poster</span>
-              )}
-              {activePostFormat === 'reel' && (
-                <span>Motion Reel ({activeReelConfig.duration.toFixed(1)}s)</span>
-              )}
             </div>
 
-            {/* Single Export Location + 'More' Menu */}
-            <div className="flex items-center gap-2">
-              {activePostFormat !== 'reel' && !isBlocked && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (activePostFormat === 'single') {
+            {/* Right: Consolidated Delivery Actions */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {activePostFormat !== 'reel' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
                       downloadSingleSlidePng(
                         carousel,
-                        0,
-                        `MARROK_Single_Post_${activeDimensionSpec.width}x${activeDimensionSpec.height}.jpg`,
+                        currentSlideIndex,
+                        activePostFormat === 'single'
+                          ? `MARROK_Post_${activeDimensionSpec.width}x${activeDimensionSpec.height}.jpg`
+                          : `MARROK_Slide_${currentSlideIndex + 1}_${activeDimensionSpec.width}x${activeDimensionSpec.height}.jpg`,
                         theme,
                         carousel.visualOptions
                       );
-                      onShowToast(`Downloaded ${activeDimensionSpec.width}×${activeDimensionSpec.height} (${activeDimensionSpec.shortLabel}) JPG!`);
-                    } else {
-                      handleExportZip('active');
-                    }
-                  }}
-                  disabled={isExportingZip}
-                  className="hidden sm:flex items-center gap-1.5 py-1.5 px-3 rounded-xl bg-white/[0.06] hover:bg-white/12 border border-white/15 text-xs font-semibold text-slate-200 transition-colors cursor-pointer disabled:opacity-50"
-                  title={`Export only current format (${activeDimensionSpec.label})`}
+                      onShowToast(
+                        `Downloaded Slide ${currentSlideIndex + 1} (${activeDimensionSpec.width}×${activeDimensionSpec.height}) JPG`
+                      );
+                    }}
+                    className="hidden sm:flex items-center gap-1 py-1.5 px-2.5 rounded-xl bg-white/[0.05] hover:bg-white/10 border border-white/10 text-xs font-semibold text-slate-200 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                    title={`Download Slide ${currentSlideIndex + 1} JPG (${activeDimensionSpec.label})`}
+                  >
+                    <Download className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>JPG</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleCopySlide}
+                    className="hidden sm:flex items-center gap-1 py-1.5 px-2.5 rounded-xl bg-white/[0.05] hover:bg-white/10 border border-white/10 text-xs font-semibold text-slate-200 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                    title="Copy current slide image to clipboard"
+                  >
+                    {copiedType === 'slide' ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5 text-slate-400" />
+                    )}
+                    <span>{copiedType === 'slide' ? 'Copied' : 'Copy Image'}</span>
+                  </button>
+                </>
+              )}
+
+              {activePostFormat !== 'reel' && isVideoSlide(currentSlide) && (
+                <button
+                  type="button"
+                  data-testid="dock-export-video-mp4-btn"
+                  onClick={() => handleExportSingleSlideVideoMp4(30)}
+                  disabled={isExportingVideo}
+                  className="flex items-center gap-1.5 py-1.5 px-2.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-xs font-bold text-emerald-200 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
+                  title="Export 1080×1440 MP4 video with white card frame, registration marks, and audio track"
                 >
-                  <Download className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>{activeDimensionSpec.shortLabel} Only</span>
+                  {isExportingVideo ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-300" />
+                      <span>MP4 {Math.round(videoExportProgress)}%</span>
+                    </>
+                  ) : (
+                    <>
+                      <Film className="w-3.5 h-3.5 text-emerald-300" />
+                      <span>Export MP4</span>
+                    </>
+                  )}
                 </button>
               )}
 
@@ -2382,8 +2446,8 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsMoreMenuOpen((prev) => !prev)}
-                  className="p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 text-slate-300 hover:text-white transition-colors cursor-pointer flex items-center justify-center"
-                  title="More actions (5-in-1 Ready to Share, Copy Image, Copy Caption, JPG, Dual Pack, Contact Sheet)"
+                  className="p-1.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 text-slate-300 hover:text-white transition-colors cursor-pointer flex items-center justify-center"
+                  title="More export packs & tools (5-in-1 Pack, Dual Pack, Schedule, All Slides Grid)"
                 >
                   <MoreHorizontal className="w-4 h-4" />
                 </button>
@@ -2395,6 +2459,20 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                       onClick={() => setIsMoreMenuOpen(false)}
                     />
                     <div className="absolute right-0 bottom-full mb-2 w-68 bg-[#0d151e] border border-white/10 rounded-xl shadow-2xl p-1.5 z-50 flex flex-col gap-0.5 text-xs">
+                      {onOpenPublishScheduleModal && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsMoreMenuOpen(false);
+                            onOpenPublishScheduleModal('single');
+                          }}
+                          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-slate-200 transition-colors text-left cursor-pointer"
+                        >
+                          <BookmarkCheck className="w-3.5 h-3.5" style={{ color: theme.accent }} />
+                          <span>Publish & Schedule Studio</span>
+                        </button>
+                      )}
+
                       <button
                         type="button"
                         onClick={() => {
@@ -2408,7 +2486,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                         ) : (
                           <Copy className="w-3.5 h-3.5 text-slate-400" />
                         )}
-                        <span>{copiedType === 'slide' ? 'Copied Image' : 'Copy Image'}</span>
+                        <span>{copiedType === 'slide' ? 'Copied Image' : 'Copy Slide Image'}</span>
                       </button>
 
                       <button
@@ -2489,7 +2567,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                                   setIsMoreMenuOpen(false);
                                   handleExportZip(preset.id);
                                 }}
-                                className="flex items-center justify-between px-2 py-1 rounded bg-white/[0.04] hover:bg-white/12 border border-white/10 text-[10px] font-mono text-slate-200 cursor-pointer"
+                                className="flex items-center justify-between px-2 py-1 rounded bg-white/[0.04] hover:bg-white/12 border border-white/10 text-[10px] font-mono tabular-nums text-slate-200 cursor-pointer"
                                 title={`Export all slides in ${preset.label}`}
                               >
                                 <span>{preset.shortLabel}</span>
@@ -2510,7 +2588,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-slate-200 transition-colors text-left cursor-pointer"
                         >
                           <LayoutGrid className="w-3.5 h-3.5 text-indigo-400" />
-                          <span>Contact Sheet</span>
+                          <span>All Slides Grid (Contact Sheet)</span>
                         </button>
                       )}
 
@@ -2558,26 +2636,27 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 )}
               </div>
 
-              {/* Primary Action Button */}
+              {/* Primary Export Action Button */}
               {isBlocked ? (
                 <button
                   type="button"
                   onClick={() => {
                     setInspectorTab('review');
                     setMobileStudioTab('editor');
-                    onShowToast(`⚠️ ${blockersCount} item${blockersCount > 1 ? 's' : ''} need attention in Review before exporting.`);
+                    onShowToast(`⚠️ ${blockersCount} item${blockersCount > 1 ? 's' : ''} need attention in Publish before exporting.`);
                   }}
-                  className="py-1.5 px-4 rounded-xl font-bold text-xs uppercase tracking-wider bg-amber-500/15 border border-amber-500/40 text-amber-300 hover:bg-amber-500/25 transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
-                  title="Click to view and resolve blockers in Review checklist"
+                  className="py-1.5 px-3.5 rounded-xl font-bold text-xs uppercase tracking-wider bg-amber-500/15 border border-amber-500/40 text-amber-300 hover:bg-amber-500/25 transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
+                  title="Click to view and resolve blockers in Publish checklist"
                 >
                   <AlertTriangle className="w-3.5 h-3.5 stroke-[2.5] text-amber-400" />
-                  <span>{blockersCount} item{blockersCount > 1 ? 's' : ''} need attention</span>
+                  <span>{blockersCount} Check{blockersCount > 1 ? 's' : ''} Needed →</span>
                 </button>
               ) : activePostFormat === 'reel' ? (
                 <button
                   type="button"
+                  aria-label="Export Post Bundle"
                   onClick={() => setIsMotionExportOpen(true)}
-                  className="py-1.5 px-4 rounded-xl font-bold text-xs uppercase tracking-wider text-slate-950 transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="py-1.5 px-3.5 rounded-xl font-bold text-xs uppercase tracking-wider text-slate-950 transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
                   style={{ backgroundColor: theme.accent }}
                   title="Render & download 1080×1920 Motion Reel video with procedural SFX"
                 >
@@ -2587,9 +2666,10 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
               ) : (
                 <button
                   type="button"
+                  aria-label="Export Post Bundle"
                   onClick={() => handleExportZip('all')}
                   disabled={isExportingZip}
-                  className="py-1.5 px-4 rounded-xl font-bold text-xs uppercase tracking-wider text-slate-950 transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  className="py-1.5 px-3.5 rounded-xl font-bold text-xs uppercase tracking-wider text-slate-950 transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
                   style={{ backgroundColor: theme.accent }}
                   title="Export 5-in-1 Ready to Share ZIP (TikTok 9:16, IG 4:5, IG 3:4, IG 1:1, IG Reels 9:16 + Ready-to-Paste Captions)"
                 >
@@ -2603,9 +2683,534 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   ) : (
                     <>
                       <Download className="w-3.5 h-3.5 stroke-[2.5]" />
-                      <span>5-in-1 Ready to Share</span>
+                      <span>Export ZIP</span>
                     </>
                   )}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Mobile Backdrop for Bottom Sheet */}
+        {isSheetOpen && (
+          <div
+            className="lg:hidden fixed inset-0 z-40 bg-black/75 backdrop-blur-xs transition-opacity"
+            onClick={() => {
+              setIsMobileSheetOpen(false);
+              setMobileStudioTab('canvas');
+            }}
+            aria-hidden="true"
+          />
+        )}
+
+        {/* Right Column (Desktop) & Slide-Up Bottom Sheet (Mobile): 4 Categorized Inspector Tabs */}
+        <div
+          role="region"
+          aria-label="Slide Inspector and Content Editor"
+          className={`lg:col-span-7 flex flex-col bg-[#0b1118] border-white/10 overflow-hidden shadow-2xl transition-transform duration-300 ${
+            isSheetOpen
+              ? 'fixed inset-x-0 bottom-0 z-50 h-[85vh] rounded-t-3xl border-t translate-y-0'
+              : 'fixed inset-x-0 bottom-0 z-50 h-[85vh] rounded-t-3xl border-t translate-y-full pointer-events-none'
+          } lg:static lg:inset-auto lg:z-auto lg:h-full lg:min-h-0 lg:rounded-2xl lg:border lg:translate-y-0 lg:pointer-events-auto`}
+        >
+          {/* Mobile Bottom Sheet Header Grab Bar */}
+          <div className="lg:hidden flex items-center justify-between px-4 pt-3 pb-2 border-b border-white/10 bg-black/50 shrink-0">
+            <span className="text-xs font-mono tabular-nums font-bold uppercase tracking-wider text-slate-300">
+              Slide {currentSlideIndex + 1} Inspector
+            </span>
+            <div className="w-12 h-1.5 rounded-full bg-white/25" />
+            <button
+              type="button"
+              onClick={() => {
+                setIsMobileSheetOpen(false);
+                setMobileStudioTab('canvas');
+              }}
+              className="p-2 rounded-xl text-slate-400 hover:text-white flex items-center justify-center cursor-pointer min-h-[44px] min-w-[44px]"
+              aria-label="Close inspector bottom sheet"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* Categorized Inspector Top Tab Bar: Content, Design, Adjust, Publish */}
+          <div className="flex items-center justify-between gap-2 px-3 pt-2.5 pb-2 border-b border-white/10 bg-black/40 shrink-0 overflow-x-auto">
+            {activePostFormat === 'reel' ? (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  data-testid="tab-content"
+                  onClick={() => setInspectorTab('copy')}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                    inspectorTab === 'copy'
+                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
+                      : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                  }`}
+                >
+                  <Film className="w-3.5 h-3.5" style={inspectorTab === 'copy' ? { color: theme.accent } : undefined} />
+                  <span>Content & Motion</span>
+                  <span className="text-[10px] font-mono uppercase text-slate-400">
+                    · {activeReelConfig.templateId}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  data-testid="tab-review"
+                  onClick={() => setInspectorTab('review')}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                    inspectorTab === 'review' || inspectorTab === 'caption'
+                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
+                      : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                  }`}
+                >
+                  <CheckCircle2
+                    className="w-3.5 h-3.5"
+                    style={inspectorTab === 'review' || inspectorTab === 'caption' ? { color: theme.accent } : undefined}
+                  />
+                  <span>Publish</span>
+                  {blockersCount > 0 ? (
+                    <span className="text-xs font-mono tabular-nums px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                      {blockersCount}
+                    </span>
+                  ) : (
+                    <span className="text-xs font-mono uppercase px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                      PASS
+                    </span>
+                  )}
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  data-testid="tab-content"
+                  onClick={() => setInspectorTab('copy')}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                    inspectorTab === 'copy'
+                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
+                      : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                  }`}
+                >
+                  <Type className="w-3.5 h-3.5" style={inspectorTab === 'copy' ? { color: theme.accent } : undefined} />
+                  <span>Content</span>
+                </button>
+
+                <button
+                  type="button"
+                  data-testid="tab-design"
+                  onClick={() => setInspectorTab('visual')}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                    inspectorTab === 'visual'
+                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
+                      : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                  }`}
+                >
+                  <Layers className="w-3.5 h-3.5" style={inspectorTab === 'visual' ? { color: theme.accent } : undefined} />
+                  <span>Design</span>
+                  <span className="text-[10px] font-mono uppercase text-slate-400">
+                    · {currentSlide.type}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  data-testid="tab-adjust"
+                  onClick={() => setInspectorTab('position')}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                    inspectorTab === 'position'
+                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
+                      : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                  }`}
+                >
+                  <Sliders className="w-3.5 h-3.5" style={inspectorTab === 'position' ? { color: theme.accent } : undefined} />
+                  <span>Adjust</span>
+                  {activeOverridesCount > 0 && (
+                    <span className="text-[10px] font-mono tabular-nums text-cyan-300">
+                      · {activeOverridesCount}
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  data-testid="tab-review"
+                  onClick={() => setInspectorTab('review')}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                    inspectorTab === 'review' || inspectorTab === 'caption'
+                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
+                      : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                  }`}
+                >
+                  <CheckCircle2
+                    className="w-3.5 h-3.5"
+                    style={inspectorTab === 'review' || inspectorTab === 'caption' ? { color: theme.accent } : undefined}
+                  />
+                  <span>Publish</span>
+                  {blockersCount > 0 ? (
+                    <span className="text-xs font-mono tabular-nums px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                      {blockersCount}
+                    </span>
+                  ) : (
+                    <span className="text-xs font-mono uppercase px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                      PASS
+                    </span>
+                  )}
+                </button>
+              </div>
+            )}
+
+            {/* Selected Layer Quick Badge */}
+            {activePostFormat !== 'reel' && selectedElementId && inspectorTab !== 'position' && (
+              <button
+                type="button"
+                onClick={() => setInspectorTab('position')}
+                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-[11px] font-mono text-cyan-300 hover:bg-cyan-500/20 transition-colors cursor-pointer shrink-0"
+                title="Adjust exact position and scale for selected element"
+              >
+                <span>Layer: {selectedElementId}</span>
+              </button>
+            )}
+          </div>
+
+          {/* Scrollable Tab Viewport */}
+          <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+            {/* MOTION REEL INSPECTOR */}
+            {activePostFormat === 'reel' && inspectorTab === 'copy' && (
+              <MotionReelInspector
+                reelConfig={activeReelConfig}
+                theme={theme}
+                selectedSceneId={selectedMotionSceneId}
+                onSelectScene={setSelectedMotionSceneId}
+                onChangeReelConfig={(updated) => {
+                  applyDeckUpdate((prev) => ({
+                    ...prev,
+                    reelConfig: updated,
+                  }));
+                }}
+                onSyncFromCarousel={(tplId, langMode) => {
+                  handleSyncReelFromCarousel(tplId, langMode);
+                }}
+                onShowToast={onShowToast}
+              />
+            )}
+
+            {/* TAB 1: CONTENT (Bilingual Headlines, Body, Hook Variants & Auto-Fit) */}
+            {activePostFormat !== 'reel' && inspectorTab === 'copy' && (
+              <InlineSlideEditor
+                currentSlide={currentSlide}
+                currentSlideIndex={currentSlideIndex}
+                theme={theme}
+                isAdvancedCustomizerOpen={false}
+                onToggleAdvancedCustomizer={() => setInspectorTab('visual')}
+                onUpdateField={handleUpdateCurrentSlide}
+                selectedElementId={selectedElementId}
+                onSelectElement={setSelectedElementId}
+                hookVariants={carousel.hookVariants}
+                onApplyHookVariant={handleApplyHookVariant}
+                onAutoFitSlide={handleAutoFitCurrentSlide}
+                onOpenPolishDrawer={onOpenPreviewDrawer ? () => onOpenPreviewDrawer('polish') : undefined}
+                isSingleSlide={activePostFormat === 'single'}
+                onGenerateFromVideo={() => handleGenerateFromVideo()}
+                isGeneratingFromVideo={isGeneratingFromVideo}
+              />
+            )}
+
+            {/* TAB 2: DESIGN (8 Archetypes, Hub/Schematic Nodes, Code, Metrics & AI Image Studio) */}
+            {activePostFormat !== 'reel' && inspectorTab === 'visual' && (
+              <div className="space-y-4">
+                <ArchetypeControls
+                  currentSlide={currentSlide}
+                  currentSlideIndex={currentSlideIndex}
+                  carousel={carousel}
+                  theme={theme}
+                  isAdvancedCustomizerOpen={true}
+                  onSetSlideType={handleSetSlideType}
+                  onUpdateField={handleUpdateCurrentSlide}
+                  onUpdateSlideFields={handleUpdateSlideFields}
+                  onSmartMatchVisuals={handleSmartMatchVisuals}
+                  onUpdateCarouselField={(field, value) =>
+                    applyDeckUpdate((prev) => ({
+                      ...prev,
+                      [field]: value,
+                    }))
+                  }
+                  onUpdateSatLabel={handleUpdateSatLabel}
+                  onUpdateSatIcon={handleUpdateSatIcon}
+                  onUpdateCenterIcon={handleUpdateCenterIcon}
+                  onUpdateCenterTag={handleUpdateCenterTag}
+                  onAddSatNode={handleAddSatNode}
+                  onDeleteSatNode={handleDeleteSatNode}
+                  onUpdateDiagramNode={handleUpdateDiagramNode}
+                  onUpdateDiagramEdge={handleUpdateDiagramEdge}
+                  onOpenAiImageStudio={() => setImageStudioTargetIndex(currentSlideIndex)}
+                  onOpenMediaSearch={() =>
+                    setMediaModalTarget({
+                      field: 'imageUrl',
+                      title: 'Search Architecture Graphic',
+                      initialQuery: currentSlide.enTitle?.slice(0, 30) || '',
+                    })
+                  }
+                  onExportVideoMp4={handleExportSingleSlideVideoMp4}
+                  isExportingVideo={isExportingVideo}
+                  videoExportProgress={videoExportProgress}
+                  videoExportStage={videoExportStage}
+                  onGenerateFromVideo={(fileOrUrl) => handleGenerateFromVideo(fileOrUrl)}
+                  isGeneratingFromVideo={isGeneratingFromVideo}
+                />
+
+                {imageStudioTargetIndex !== null && carousel.slides[imageStudioTargetIndex] && (
+                  <Suspense fallback={null}>
+                    <SlideImageStudio
+                      slideIndex={imageStudioTargetIndex}
+                      slide={carousel.slides[imageStudioTargetIndex]}
+                      theme={theme}
+                      onApplyImage={(targetIndex, imageUrl, prompt, model) => {
+                        applyDeckUpdate((prev) => {
+                          if (targetIndex < 0 || targetIndex >= prev.slides.length) return prev;
+                          const newSlides = [...prev.slides];
+                          newSlides[targetIndex] = sanitizeSlide(
+                            {
+                              ...newSlides[targetIndex],
+                              imageUrl,
+                              imagePrompt: prompt,
+                              imageModel: model,
+                            },
+                            targetIndex,
+                            prev.slides.length
+                          );
+                          return { ...prev, slides: newSlides };
+                        });
+                        setImageStudioTargetIndex(null);
+                        onShowToast(`Applied AI diagram to Slide ${targetIndex + 1}`);
+                      }}
+                      onClose={() => setImageStudioTargetIndex(null)}
+                      onShowToast={onShowToast}
+                    />
+                  </Suspense>
+                )}
+              </div>
+            )}
+
+            {/* TAB 3: ADJUST (Direct Graphical Layer Offsets, Scale & Anti-Collision Nudge) */}
+            {activePostFormat !== 'reel' && inspectorTab === 'position' && (
+              <ElementInspector
+                slide={currentSlide}
+                theme={theme}
+                isOpen={true}
+                headless={true}
+                onToggleOpen={() => {}}
+                selectedElementId={selectedElementId}
+                onSelectElement={setSelectedElementId}
+                onUpdateOverride={handleUpdateElementLayoutOverride}
+                onResetOverrides={handleResetSlideLayoutOverrides}
+                onApplyToAllSlides={handleApplyOverrideToAllSlides}
+                onApplySlideLayoutToAllSlides={handleApplySlideLayoutToAllSlides}
+                onUpdateSlideFields={handleUpdateSlideFields}
+              />
+            )}
+
+            {/* TAB 4: PUBLISH (Unified Ready-to-Publish Checklist, Sources & Bilingual Social Caption) */}
+            {(inspectorTab === 'review' || inspectorTab === 'caption') && (
+              <div className="space-y-4 max-w-2xl mx-auto w-full">
+                <PublishChecklist
+                  carousel={carousel}
+                  currentSlideIndex={currentSlideIndex}
+                  theme={theme}
+                  isOfflineDraft={isOfflineDraft}
+                  isReviewed={isReviewed}
+                  qaReport={qaReport}
+                  riskReport={riskReport}
+                  overrideExportBlock={overrideExportBlock}
+                  onToggleOverrideBlock={handleToggleOverrideBlock}
+                  onToggleReviewDraft={handleToggleReviewDraft}
+                  onRetryWithAi={() => handleRunAutonomousPipeline()}
+                  onJumpToSlide={(idx: number) => {
+                    changeSlide(idx);
+                    setInspectorTab('copy');
+                  }}
+                  onUpdateCreator={(newCreator: string) => {
+                    applyDeckUpdate((prev) => {
+                      const trimmed = newCreator.trim();
+                      const newSlides = [...prev.slides];
+                      const lastIdx = newSlides.length - 1;
+                      if (lastIdx >= 0 && (newSlides[lastIdx].type === 'cta' || newSlides.length === 1)) {
+                        newSlides[lastIdx] = {
+                          ...newSlides[lastIdx],
+                          enCredit: trimmed ? `Source: ${trimmed}` : '',
+                          arCredit: trimmed ? `المصدر: ${trimmed}` : '',
+                        };
+                      }
+                      return {
+                        ...prev,
+                        brand: trimmed || prev.brand,
+                        channel: trimmed,
+                        slides: newSlides,
+                        sourceMeta: {
+                          ...prev.sourceMeta,
+                          creator: newCreator,
+                          channel: newCreator,
+                        },
+                      };
+                    });
+                  }}
+                  onSelectDimensionPreset={handleSelectDimensionPreset}
+                  onExportZip={handleExportZip}
+                  onDownloadSingleSlide={(preset) => {
+                    const spec = getCanvasDimensionSpec(preset);
+                    downloadSingleSlidePng(
+                      carousel,
+                      currentSlideIndex,
+                      undefined,
+                      theme,
+                      carousel.visualOptions,
+                      preset
+                    );
+                    onShowToast(`Downloaded Slide ${currentSlideIndex + 1} (${spec.label}) JPG`);
+                  }}
+                  onOpenPublishScheduleModal={onOpenPublishScheduleModal}
+                  isExportingZip={isExportingZip}
+                  onShowToast={onShowToast}
+                />
+
+                {/* Bilingual TikTok / Instagram Posting Copy */}
+                <div className="p-4 rounded-2xl bg-slate-900/80 border border-white/10 space-y-3 shadow-xl">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div>
+                      <span className="text-xs font-bold text-white uppercase tracking-wider block">
+                        Bilingual TikTok / Instagram Posting Copy
+                      </span>
+                      <span className="text-[11px] text-slate-400">
+                        {activePostFormat === 'single'
+                          ? 'Ready to paste directly into TikTok/Instagram or export in your bundle'
+                          : 'Included automatically in your Metricool ZIP bundle'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {isVideoSlide(currentSlide) && (
+                        <button
+                          type="button"
+                          data-testid="caption-generate-from-video-btn"
+                          disabled={isGeneratingFromVideo}
+                          onClick={() => handleGenerateFromVideo()}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-xs text-emerald-200 hover:bg-emerald-500/30 font-semibold cursor-pointer transition-colors disabled:opacity-60"
+                          title="Extract keyframes from the active video and generate a bilingual social caption + slide copy"
+                        >
+                          {isGeneratingFromVideo ? (
+                            <>
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-300" />
+                              <span>Analyzing Video...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="w-3.5 h-3.5 text-emerald-300" />
+                              <span>Generate Caption & Text from Video</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleCopyCaption}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/30 text-xs text-cyan-200 hover:bg-cyan-500/25 font-semibold cursor-pointer transition-colors"
+                      >
+                        {copiedType === 'caption' ? (
+                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
+                        <span>{copiedType === 'caption' ? 'Copied!' : 'Copy Caption Text'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <textarea
+                    rows={5}
+                    value={carousel.caption || ''}
+                    onChange={(e) =>
+                      applyDeckUpdate((prev) => ({
+                        ...prev,
+                        caption: e.target.value,
+                      }))
+                    }
+                    placeholder="Enter bilingual TikTok caption..."
+                    className="w-full p-3 rounded-xl bg-black/70 border border-white/10 focus:border-white/30 text-xs text-slate-200 leading-relaxed focus:outline-none resize-y font-sans"
+                  />
+
+                  <div className="text-[11px] font-mono text-slate-400">
+                    {dynamicHashtags.join(' ')}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Guided Step Progression Footer inside Inspector */}
+          <div className="px-4 py-2.5 bg-black/60 border-t border-white/10 flex items-center justify-between gap-3 shrink-0">
+            <div className="text-xs text-slate-400 flex items-center gap-1.5">
+              <span className="font-mono tabular-nums text-white font-semibold">
+                {inspectorTab === 'copy'
+                  ? 'Step 2 · Content'
+                  : inspectorTab === 'visual'
+                  ? 'Step 3 · Design'
+                  : inspectorTab === 'position'
+                  ? 'Step 4 · Adjust'
+                  : activePostFormat === 'reel'
+                  ? 'Step 3 · Publish'
+                  : 'Step 5 · Publish'}
+              </span>
+              <span aria-hidden="true" className="text-slate-600">·</span>
+              <span className="hidden sm:inline">
+                {inspectorTab === 'copy'
+                  ? 'Edit bilingual headlines, body & takeaways'
+                  : inspectorTab === 'visual'
+                  ? 'Choose slide archetype & diagram variant'
+                  : inspectorTab === 'position'
+                  ? 'Fine-tune element coordinates & scale'
+                  : 'Verify checks, copy caption & export bundle'}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {inspectorTab !== 'copy' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (inspectorTab === 'review' || inspectorTab === 'caption') {
+                      setInspectorTab(activePostFormat === 'reel' ? 'copy' : 'position');
+                    } else if (inspectorTab === 'position') {
+                      setInspectorTab('visual');
+                    } else {
+                      setInspectorTab('copy');
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-white/[0.04] hover:bg-white/10 border border-white/10 text-xs font-semibold text-slate-300 hover:text-white transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  ← Previous
+                </button>
+              )}
+
+              {inspectorTab !== 'review' && inspectorTab !== 'caption' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (inspectorTab === 'copy') {
+                      setInspectorTab(activePostFormat === 'reel' ? 'review' : 'visual');
+                    } else if (inspectorTab === 'visual') {
+                      setInspectorTab('position');
+                    } else {
+                      setInspectorTab('review');
+                    }
+                  }}
+                  className="px-3.5 py-1.5 rounded-xl bg-white/[0.08] hover:bg-white/15 border border-white/15 text-xs font-bold text-white transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  {inspectorTab === 'copy'
+                    ? activePostFormat === 'reel'
+                      ? 'Next: Publish →'
+                      : 'Next: Design →'
+                    : inspectorTab === 'visual'
+                    ? 'Next: Adjust →'
+                    : 'Next: Publish →'}
                 </button>
               )}
             </div>
@@ -2726,7 +3331,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           aria-label={
             isBlocked
               ? `${blockersCount} items need attention before publishing. Tap to review.`
-              : 'Export 5-in-1 Ready to Share Bundle'
+              : 'Export Post Bundle'
           }
         >
           {isExportingZip ? (
@@ -2743,7 +3348,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
               ? `${blockersCount} to fix`
               : activePostFormat === 'reel'
               ? 'Export Video'
-              : '5-in-1 Ready to Share'}
+              : 'Export ZIP'}
           </span>
         </button>
       </div>

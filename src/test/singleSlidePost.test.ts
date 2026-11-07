@@ -212,4 +212,127 @@ describe('Single-Slide Post & Infographic Poster System', () => {
 
     expect(hitElement).toBe('takeawaysBlock');
   });
+
+  it('detects video MIME types (.mp4, .webm, .mov) and computes 1080x1440 white card media geometry', async () => {
+    const {
+      isVideoMimeType,
+      isVideoFile,
+      isVideoSlide,
+      getSlideMediaType,
+      getCanvasDimensionSpec,
+      computeWhiteCardMediaGeometry,
+      exportSingleSlideVideoMp4,
+    } = await import('../lib/canvasExporter.ts');
+
+    expect(isVideoMimeType('video/mp4')).toBe(true);
+    expect(isVideoMimeType('video/webm')).toBe(true);
+    expect(isVideoMimeType('video/quicktime')).toBe(true);
+    expect(isVideoMimeType('image/jpeg')).toBe(false);
+
+    expect(isVideoFile({ type: 'video/mp4', name: 'clip.mp4' })).toBe(true);
+    expect(isVideoFile({ type: '', name: 'demo.mov' })).toBe(true);
+    expect(isVideoFile({ type: 'image/png', name: 'meme.png' })).toBe(false);
+
+    const videoSlide: SlideData = {
+      type: 'poster',
+      mediaType: 'video',
+      videoUrl: 'blob:http://localhost:3000/test-video-id',
+      videoMimeType: 'video/mp4',
+      videoFileName: 'demo.mp4',
+      videoDuration: 1.5,
+      imageFrameMode: 'full',
+      imageFit: 'contain',
+      imageBgStyle: 'white',
+      brandWatermark: 'bottom-right',
+      enTitle: 'System Architecture Video.',
+      arTitle: 'فيديو معمارية النظام.',
+      enBody: 'Live demo inside the 1080x1440 white card.',
+      arBody: 'عرض مباشر داخل البطاقة البيضاء.',
+    };
+
+    expect(isVideoSlide(videoSlide)).toBe(true);
+    expect(getSlideMediaType(videoSlide)).toBe('video');
+
+    const spec1440 = getCanvasDimensionSpec('ig-3:4');
+    expect(spec1440.width).toBe(1080);
+    expect(spec1440.height).toBe(1440);
+    expect(spec1440.cadRefLabel).toBe('SYS_REF // 1080x1440.IG_GRID');
+
+    const geom = computeWhiteCardMediaGeometry(spec1440, videoSlide);
+    expect(geom.isWhiteBg).toBe(true);
+    expect(geom.fit).toBe('contain');
+    expect(geom.cardW).toBeGreaterThan(800);
+    expect(geom.cardH).toBeGreaterThan(700);
+    expect(geom.imgW).toBeLessThan(geom.cardW);
+
+    const progressUpdates: Array<{ pct: number; stage: string }> = [];
+    const result = await exportSingleSlideVideoMp4(
+      {
+        category: 'AI & AGENTS',
+        theme: 'emerald',
+        caption: 'Video Spec Test',
+        postFormat: 'single',
+        dimensionPreset: 'ig-3:4',
+        slides: [videoSlide],
+      },
+      0,
+      {
+        fps: 30,
+        onProgress: (pct, stage) => progressUpdates.push({ pct, stage }),
+      }
+    );
+
+    expect(result.width).toBe(1080);
+    expect(result.height).toBe(1440);
+    expect(result.fps).toBe(30);
+    expect(result.extension).toBe('mp4');
+    expect(result.filename).toContain('1080x1440_30FPS.mp4');
+    expect(result.blob.size).toBeGreaterThan(0);
+    expect(progressUpdates.length).toBeGreaterThan(0);
+    expect(progressUpdates[progressUpdates.length - 1].pct).toBe(100);
+  });
+
+  it('extracts video keyframes and generates bilingual slide text + social caption while keeping video and revealing slide text (hero mode)', async () => {
+    const {
+      extractVideoStoryboardDataUrl,
+      analyzeVideoForSlideAndCaption,
+    } = await import('../lib/canvasExporter.ts');
+    const { DEFAULT_PALETTES } = await import('../types.ts');
+
+    const storyboard = await extractVideoStoryboardDataUrl('blob:http://localhost:3000/kubernetes-mesh-demo.mp4');
+    expect(storyboard.dataUrl).toContain('data:image/');
+
+    const currentVideoSlide: SlideData = {
+      type: 'poster',
+      mediaType: 'video',
+      videoUrl: 'blob:http://localhost:3000/kubernetes-mesh-demo.mp4',
+      videoMimeType: 'video/mp4',
+      videoFileName: 'kubernetes-zero-trust-mesh.mp4',
+      imageFrameMode: 'full',
+      imageFit: 'contain',
+      imageBgStyle: 'white',
+      brandWatermark: 'bottom-right',
+    };
+
+    const generated = await analyzeVideoForSlideAndCaption({
+      videoSource: currentVideoSlide.videoUrl!,
+      videoFileName: currentVideoSlide.videoFileName,
+      prompt: 'Zero-trust Kubernetes service mesh with mTLS sidecars',
+      currentSlide: currentVideoSlide,
+      theme: DEFAULT_PALETTES.teal,
+      postFormat: 'single',
+    });
+
+    expect(generated.slideUpdates.enTitle).toBeTruthy();
+    expect(generated.slideUpdates.arTitle).toBeTruthy();
+    expect(generated.slideUpdates.enBody).toBeTruthy();
+    expect(generated.slideUpdates.arBody).toBeTruthy();
+    expect(generated.caption).toBeTruthy();
+    // Preserves video and sets imageFrameMode to 'hero' so slide text renders on canvas
+    expect(generated.slideUpdates.mediaType).toBe('video');
+    expect(generated.slideUpdates.videoUrl).toBe('blob:http://localhost:3000/kubernetes-mesh-demo.mp4');
+    expect(generated.slideUpdates.imageFrameMode).toBe('hero');
+  });
 });
+
+

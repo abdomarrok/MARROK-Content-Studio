@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { Palette, RotateCcw, Check, Sparkles, Sliders, X, Eye } from 'lucide-react';
-import { DEFAULT_PALETTES, ThemePalette } from '../types';
+import React, { useState, useMemo } from 'react';
+import { Palette, RotateCcw, Check, Sparkles, Sliders, X, Eye, ArrowRight, History } from 'lucide-react';
+import { DEFAULT_PALETTES, ThemePalette, SavedPostRecord } from '../types';
+import { analyzePostHistoryCadence } from '../lib/theme/cadenceEngine';
 
 interface ThemeCustomizerProps {
   currentPalette: ThemePalette;
@@ -8,6 +9,7 @@ interface ThemeCustomizerProps {
   isOpen: boolean;
   onClose: () => void;
   onShowToast: (msg: string) => void;
+  savedPosts?: SavedPostRecord[];
 }
 
 export const ThemeCustomizer: React.FC<ThemeCustomizerProps> = ({
@@ -16,9 +18,14 @@ export const ThemeCustomizer: React.FC<ThemeCustomizerProps> = ({
   isOpen,
   onClose,
   onShowToast,
+  savedPosts = [],
 }) => {
   const [activeTab, setActiveTab] = useState<'presets' | 'custom' | 'visual'>('presets');
   const [customColors, setCustomColors] = useState<ThemePalette>(currentPalette);
+
+  const cadenceAnalysis = useMemo(() => {
+    return analyzePostHistoryCadence(savedPosts, currentPalette.id);
+  }, [savedPosts, currentPalette.id]);
 
   if (!isOpen) return null;
 
@@ -256,61 +263,227 @@ export const ThemeCustomizer: React.FC<ThemeCustomizerProps> = ({
               </div>
             </div>
           ) : activeTab === 'presets' ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-              {Object.entries(DEFAULT_PALETTES).map(([key, pal]) => {
-                const isSelected = currentPalette.id === pal.id;
-                return (
-                  <button
-                    key={key}
-                    onClick={() => handlePresetSelect(key)}
-                    className={`flex flex-col text-left p-3.5 rounded-xl border transition-all text-xs group relative overflow-hidden ${
-                      isSelected
-                        ? 'border-[#37E2C0] bg-[#121e25] ring-1 ring-[#37E2C0]/50 shadow-lg'
-                        : 'border-[#1E2833] bg-[#0e161c] hover:border-[#2e3e4f] hover:bg-[#131d24]'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between w-full mb-2.5">
-                      <span className="font-semibold text-white group-hover:text-[#37E2C0] transition-colors">
-                        {pal.name}
+            <div className="space-y-4">
+              {/* Feed Cadence & Smart Next Palette Section */}
+              <div className="p-4 rounded-2xl bg-[#0c141a] border border-[#1b2b35] space-y-3.5 shadow-inner">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-[#37E2C0] font-bold px-2 py-0.5 rounded bg-[#37E2C0]/10 border border-[#37E2C0]/20">
+                      FEED CADENCE
+                    </span>
+                    <span className="text-xs text-white font-semibold">Smart Next Palette</span>
+                  </div>
+                  {cadenceAnalysis.lastPostedThemeId && (
+                    <div className="text-[11px] font-mono text-[#8E989E] flex items-center gap-1.5">
+                      <span>Last posted:</span>
+                      <span
+                        className="w-2.5 h-2.5 rounded-full inline-block border border-white/20 shrink-0"
+                        style={{
+                          backgroundColor:
+                            DEFAULT_PALETTES[cadenceAnalysis.lastPostedThemeId]?.accent || '#37E2C0',
+                        }}
+                      />
+                      <span className="text-slate-200 font-semibold">
+                        {DEFAULT_PALETTES[cadenceAnalysis.lastPostedThemeId]?.name.split(' ')[0]}
                       </span>
-                      {isSelected && (
-                        <span className="flex items-center gap-1 text-[10px] text-[#37E2C0] bg-[#37E2C0]/15 px-2 py-0.5 rounded-full font-bold">
-                          <Check className="w-3 h-3" /> Active
-                        </span>
-                      )}
                     </div>
+                  )}
+                </div>
 
-                    {/* Color Swatch Bar */}
-                    <div className="flex items-center gap-1.5 w-full h-6 rounded-lg p-1 bg-black/40 border border-white/5">
-                      <div
-                        className="flex-1 h-full rounded"
-                        style={{ backgroundColor: pal.baseBg }}
-                        title={`Canvas: ${pal.baseBg}`}
-                      />
-                      <div
-                        className="flex-1 h-full rounded"
-                        style={{ backgroundColor: pal.surface }}
-                        title={`Surface: ${pal.surface}`}
-                      />
-                      <div
-                        className="w-6 h-full rounded shadow-sm"
-                        style={{ backgroundColor: pal.accent }}
-                        title={`Accent: ${pal.accent}`}
-                      />
-                      <div
-                        className="w-4 h-full rounded"
-                        style={{ backgroundColor: pal.alert }}
-                        title={`Alert: ${pal.alert}`}
-                      />
-                      <div
-                        className="w-4 h-full rounded"
-                        style={{ backgroundColor: pal.textWhite }}
-                        title={`Headline: ${pal.textWhite}`}
+                {/* Recommendation Hero Box */}
+                <div
+                  className="p-3.5 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-all"
+                  style={{
+                    backgroundColor: cadenceAnalysis.recommendedPalette.surface,
+                    borderColor: cadenceAnalysis.recommendedPalette.accent + '44',
+                  }}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div
+                      className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-lg border"
+                      style={{
+                        backgroundColor: cadenceAnalysis.recommendedPalette.baseBg,
+                        borderColor: cadenceAnalysis.recommendedPalette.accent,
+                      }}
+                    >
+                      <Sparkles
+                        className="w-5 h-5"
+                        style={{ color: cadenceAnalysis.recommendedPalette.accent }}
                       />
                     </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-bold text-white truncate">
+                          {cadenceAnalysis.recommendedPalette.name}
+                        </span>
+                        <span
+                          className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded border font-semibold shrink-0"
+                          style={{
+                            color: cadenceAnalysis.recommendedPalette.accent,
+                            borderColor: cadenceAnalysis.recommendedPalette.accent + '55',
+                            backgroundColor: cadenceAnalysis.recommendedPalette.accent + '15',
+                          }}
+                        >
+                          Recommended Next
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-[#A0ACB3] mt-0.5 line-clamp-2 leading-relaxed">
+                        {cadenceAnalysis.reason}
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handlePresetSelect(cadenceAnalysis.recommendedThemeId)}
+                    className="w-full sm:w-auto px-3.5 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer whitespace-nowrap shadow-md text-slate-950 shrink-0 hover:opacity-90 active:scale-[0.98]"
+                    style={{ backgroundColor: cadenceAnalysis.recommendedPalette.accent }}
+                  >
+                    {currentPalette.id === cadenceAnalysis.recommendedThemeId ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-slate-950" />
+                        <span>Active in Studio</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Apply Smart Palette</span>
+                        <ArrowRight className="w-3.5 h-3.5 text-slate-950" />
+                      </>
+                    )}
                   </button>
-                );
-              })}
+                </div>
+
+                {/* Recent Feed History Strip */}
+                {cadenceAnalysis.recentCadence.length > 0 ? (
+                  <div className="pt-2 border-t border-white/[0.06] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px]">
+                    <div className="flex items-center gap-1.5 text-[#8E989E] shrink-0">
+                      <History className="w-3.5 h-3.5" />
+                      <span>Recent posts:</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 overflow-x-auto py-0.5 scrollbar-thin">
+                      {cadenceAnalysis.recentCadence.slice(0, 4).map((post, idx) => (
+                        <React.Fragment key={post.id || idx}>
+                          <div
+                            className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-black/40 border border-white/10 shrink-0 text-[10px] font-mono text-slate-300"
+                            title={`Post: ${post.title} (${post.themeName})`}
+                          >
+                            <span
+                              className="w-2 h-2 rounded-full shrink-0"
+                              style={{ backgroundColor: post.accentColor }}
+                            />
+                            <span className="truncate max-w-[80px]">{post.themeName}</span>
+                            {idx === 0 && (
+                              <span className="text-[9px] text-[#37E2C0] font-bold">Latest</span>
+                            )}
+                          </div>
+                          {idx < Math.min(3, cadenceAnalysis.recentCadence.length - 1) && (
+                            <span className="text-white/20 select-none">→</span>
+                          )}
+                        </React.Fragment>
+                      ))}
+                      <span className="text-white/20 select-none">→</span>
+                      <div
+                        className="flex items-center gap-1 px-2 py-0.5 rounded-md shrink-0 text-[10px] font-mono font-bold border"
+                        style={{
+                          borderColor: cadenceAnalysis.recommendedPalette.accent + '66',
+                          backgroundColor: cadenceAnalysis.recommendedPalette.accent + '20',
+                          color: cadenceAnalysis.recommendedPalette.accent,
+                        }}
+                      >
+                        <Sparkles className="w-2.5 h-2.5" />
+                        <span>Next: {cadenceAnalysis.recommendedPalette.name.split(' ')[0]}</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="pt-1 text-[11px] text-[#8E989E] flex items-center gap-1.5 font-mono">
+                    <History className="w-3.5 h-3.5 text-slate-500" />
+                    <span>No saved posts in vault yet. Initial feed rotation active.</span>
+                  </div>
+                )}
+              </div>
+
+              {/* All Curated Presets Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                {Object.entries(DEFAULT_PALETTES).map(([key, pal]) => {
+                  const isSelected = currentPalette.id === pal.id;
+                  const isSmartRecommended = cadenceAnalysis.recommendedThemeId === pal.id;
+                  const isLastPosted = cadenceAnalysis.lastPostedThemeId === pal.id;
+
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => handlePresetSelect(key)}
+                      className={`flex flex-col text-left p-3.5 rounded-xl border transition-all text-xs group relative overflow-hidden ${
+                        isSelected
+                          ? 'border-[#37E2C0] bg-[#121e25] ring-1 ring-[#37E2C0]/50 shadow-lg'
+                          : isSmartRecommended
+                          ? 'border-[#38BDF8]/60 bg-[#0e1822] hover:border-[#38BDF8] hover:bg-[#111f2c]'
+                          : 'border-[#1E2833] bg-[#0e161c] hover:border-[#2e3e4f] hover:bg-[#131d24]'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between w-full mb-2.5 gap-2">
+                        <span className="font-semibold text-white group-hover:text-[#37E2C0] transition-colors truncate">
+                          {pal.name}
+                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {isLastPosted && !isSelected && (
+                            <span className="text-[9px] font-mono text-[#8E989E] bg-white/5 border border-white/10 px-1.5 py-0.5 rounded">
+                              Last Posted
+                            </span>
+                          )}
+                          {isSmartRecommended && !isSelected && (
+                            <span
+                              className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded font-bold border"
+                              style={{
+                                color: pal.accent,
+                                borderColor: pal.accent + '55',
+                                backgroundColor: pal.accent + '15',
+                              }}
+                            >
+                              ★ Smart Next
+                            </span>
+                          )}
+                          {isSelected && (
+                            <span className="flex items-center gap-1 text-[10px] text-[#37E2C0] bg-[#37E2C0]/15 px-2 py-0.5 rounded-full font-bold">
+                              <Check className="w-3 h-3" /> Active
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Color Swatch Bar */}
+                      <div className="flex items-center gap-1.5 w-full h-6 rounded-lg p-1 bg-black/40 border border-white/5">
+                        <div
+                          className="flex-1 h-full rounded"
+                          style={{ backgroundColor: pal.baseBg }}
+                          title={`Canvas: ${pal.baseBg}`}
+                        />
+                        <div
+                          className="flex-1 h-full rounded"
+                          style={{ backgroundColor: pal.surface }}
+                          title={`Surface: ${pal.surface}`}
+                        />
+                        <div
+                          className="w-6 h-full rounded shadow-sm"
+                          style={{ backgroundColor: pal.accent }}
+                          title={`Accent: ${pal.accent}`}
+                        />
+                        <div
+                          className="w-4 h-full rounded"
+                          style={{ backgroundColor: pal.alert }}
+                          title={`Alert: ${pal.alert}`}
+                        />
+                        <div
+                          className="w-4 h-full rounded"
+                          style={{ backgroundColor: pal.textWhite }}
+                          title={`Headline: ${pal.textWhite}`}
+                        />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           ) : (
             <div className="space-y-4">

@@ -14,6 +14,10 @@ export interface ServerConfig {
   isVercel: boolean;
   kvRestUrl: string;
   kvRestToken: string;
+  cloudinaryCloudName: string;
+  cloudinaryApiKey: string;
+  cloudinaryApiSecret: string;
+  bufferApiKey: string;
 }
 
 export interface CandidateGeminiKey {
@@ -190,6 +194,10 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
   const isVercel = Boolean(env.VERCEL || env.VERCEL_ENV);
   const kvRestUrl = (env.KV_REST_API_URL || env.UPSTASH_REDIS_REST_URL || '').trim();
   const kvRestToken = (env.KV_REST_API_TOKEN || env.UPSTASH_REDIS_REST_TOKEN || '').trim();
+  const cloudinaryCloudName = (env.CLOUDINARY_CLOUD_NAME || '').trim();
+  const cloudinaryApiKey = (env.CLOUDINARY_API_KEY || '').trim();
+  const cloudinaryApiSecret = (env.CLOUDINARY_API_SECRET || '').trim();
+  const bufferApiKey = (env.BUFFER_API_KEY || '').trim();
 
   return {
     geminiApiKey,
@@ -205,6 +213,10 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     isVercel,
     kvRestUrl,
     kvRestToken,
+    cloudinaryCloudName,
+    cloudinaryApiKey,
+    cloudinaryApiSecret,
+    bufferApiKey,
   };
 }
 

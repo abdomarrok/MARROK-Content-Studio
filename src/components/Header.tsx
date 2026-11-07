@@ -9,6 +9,8 @@ import {
   BookmarkCheck,
   Check,
   FileEdit,
+  Send,
+  Layers,
 } from 'lucide-react';
 import { ThemePalette } from '../types.ts';
 
@@ -28,6 +30,8 @@ interface HeaderProps {
   deckStatus?: 'draft' | 'ready' | 'posted';
   onSaveToVault?: () => void;
   isSavingPost?: boolean;
+  activePhase?: 'studio' | 'publish';
+  onPhaseChange?: (phase: 'studio' | 'publish') => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -45,6 +49,8 @@ export const Header: React.FC<HeaderProps> = ({
   deckStatus = 'draft',
   onSaveToVault,
   isSavingPost = false,
+  activePhase = 'studio',
+  onPhaseChange,
 }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -69,21 +75,55 @@ export const Header: React.FC<HeaderProps> = ({
   }, [isMobileMenuOpen]);
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-white/[0.08] bg-[#080d11]/90 backdrop-blur-md px-3 sm:px-6 py-2.5 sm:py-3 transition-colors">
+    <header className="sticky top-0 z-40 w-full border-b border-white/[0.08] bg-[#080d11]/95 backdrop-blur-md px-4 sm:px-6 py-2.5 transition-colors">
       <div className="max-w-6xl mx-auto flex items-center justify-between gap-4 sm:gap-8">
-        {/* Zone 1: Brand Wordmark */}
-        <div className="flex items-center gap-2 shrink-0">
-          <a href="#" title="MARROK Content Studio" className="flex items-center gap-2 group whitespace-nowrap shrink-0">
-            <div className="w-7 h-7 rounded-lg overflow-hidden border border-white/15 bg-[#0D0D0D] flex items-center justify-center shadow-sm group-hover:border-white/30 transition-all shrink-0">
+        {/* Zone 1: Brand Wordmark + Studio/Publish Phase Switcher */}
+        <div className="flex items-center gap-4 shrink-0">
+          <a
+            href="#"
+            title="MARROK Content Studio"
+            className="flex items-center gap-2 group whitespace-nowrap shrink-0"
+          >
+            <div className="w-7 h-7 rounded-lg overflow-hidden border border-white/15 bg-[#0D0D0D] flex items-center justify-center group-hover:border-white/30 transition-colors shrink-0">
               <img src="/marrok-logo.svg" alt="M" className="w-full h-full object-contain" />
             </div>
-            <span className="text-lg sm:text-xl font-extrabold tracking-tight text-white font-jakarta whitespace-nowrap">
+            <span className="text-base sm:text-lg font-extrabold tracking-tight text-white font-jakarta whitespace-nowrap">
               MARROK
             </span>
-            <span className="hidden lg:inline-block text-[10px] font-mono uppercase tracking-widest text-slate-400 border border-white/10 bg-white/[0.03] px-1.5 py-0.5 rounded-md">
-              Content Studio
-            </span>
           </a>
+
+          {onPhaseChange && (
+            <div
+              role="group"
+              aria-label="Workspace Phase"
+              className="flex items-center gap-1 p-1 rounded-lg border border-white/10 bg-black/50"
+            >
+              <button
+                type="button"
+                onClick={() => onPhaseChange('studio')}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  activePhase === 'studio'
+                    ? 'bg-white/15 text-white shadow-xs'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" style={{ color: currentPalette.accent }} />
+                <span>1. Create Studio</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onPhaseChange('publish')}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  activePhase === 'publish'
+                    ? 'bg-emerald-500/20 text-emerald-200'
+                    : 'text-slate-400 hover:text-emerald-300'
+                }`}
+              >
+                <Send className="w-3.5 h-3.5 text-emerald-400" />
+                <span>2. Publish Hub</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Zone 2: Workspace Navigation & History Controls */}
@@ -119,7 +159,7 @@ export const Header: React.FC<HeaderProps> = ({
               title="View all slides in Contact Sheet"
             >
               <Grid className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Contact Sheet</span>
+              <span>All Slides Grid</span>
             </button>
           )}
 
@@ -137,15 +177,15 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
 
           {lastSavedTime && (
-            <div className="hidden xl:flex items-center gap-1.5 text-xs text-slate-400 font-mono tabular-nums whitespace-nowrap shrink-0">
-              <span>Draft {lastSavedTime}</span>
+            <div className="hidden xl:flex items-center gap-1.5 text-xs text-slate-500 font-mono tabular-nums whitespace-nowrap shrink-0">
+              <span>Saved {lastSavedTime}</span>
               {onResetDraft && (
                 <>
                   <span aria-hidden="true">·</span>
                   <button
                     type="button"
                     onClick={onResetDraft}
-                    className="text-slate-500 hover:text-rose-400 cursor-pointer transition-colors"
+                    className="text-slate-400 hover:text-rose-400 cursor-pointer transition-colors"
                     title="Reset workspace"
                   >
                     Reset
@@ -156,38 +196,35 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </nav>
 
-        {/* Zone 3: Primary Studio Actions (One Save to Vault button + Saved Posts Vault Drawer) */}
+        {/* Zone 3: Primary Vault Actions */}
         <div className="flex items-center gap-2 shrink-0">
           {onSaveToVault && (
             <button
               type="button"
               disabled={isSavingPost}
               onClick={onSaveToVault}
-              className={`flex items-center gap-1.5 px-3 py-2 min-h-[44px] text-xs font-bold rounded-xl border transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50 ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 min-h-[38px] text-xs font-semibold rounded-lg border transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50 ${
                 deckStatus === 'posted'
                   ? 'border-emerald-400/35 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25'
                   : deckStatus === 'ready'
-                  ? 'border-teal-400/40 bg-teal-500/20 text-teal-200 hover:bg-teal-500/30'
-                  : 'border-white/15 bg-white/[0.06] text-slate-300 hover:bg-white/[0.12] hover:text-white'
+                  ? 'border-teal-400/40 bg-teal-500/15 text-teal-200 hover:bg-teal-500/25'
+                  : 'border-white/15 bg-white/[0.05] text-slate-200 hover:bg-white/[0.1] hover:text-white'
               }`}
               title={`Save current deck to Vault (Status: ${deckStatus.toUpperCase()})`}
             >
               {deckStatus === 'posted' ? (
-                <Check className="w-4 h-4 text-emerald-300" />
+                <Check className="w-3.5 h-3.5 text-emerald-300" />
               ) : deckStatus === 'ready' ? (
-                <BookmarkCheck
-                  className="w-4 h-4"
-                  style={{ color: currentPalette.accent }}
-                />
+                <BookmarkCheck className="w-3.5 h-3.5" style={{ color: currentPalette.accent }} />
               ) : (
-                <FileEdit className="w-4 h-4 text-slate-400" />
+                <FileEdit className="w-3.5 h-3.5 text-slate-400" />
               )}
               <span className="hidden sm:inline">
                 {deckStatus === 'posted'
                   ? 'Posted'
                   : deckStatus === 'ready'
-                  ? 'Save to Vault · Ready'
-                  : 'Save to Vault · Draft'}
+                  ? 'Save · Ready'
+                  : 'Save Draft'}
               </span>
               <span className="sm:hidden">
                 {deckStatus === 'posted' ? 'Posted' : 'Save'}
@@ -199,15 +236,14 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               type="button"
               onClick={onOpenSavedPostsDrawer}
-              className="flex items-center gap-1.5 px-3 py-2 min-h-[44px] text-xs font-bold rounded-xl border border-white/10 bg-white/[0.04] text-slate-300 hover:bg-white/[0.08] hover:text-white transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              className="flex items-center gap-1.5 px-3 py-1.5 min-h-[38px] text-xs font-semibold rounded-lg border border-white/10 bg-white/[0.04] text-slate-300 hover:bg-white/[0.08] hover:text-white transition-colors cursor-pointer whitespace-nowrap shrink-0"
               title="Open Saved & Posted Carousels Vault"
               aria-label="Open Saved Posts Vault"
             >
               <span className="hidden sm:inline">Saved Posts</span>
               <span className="sm:hidden">Vault</span>
-              <span className="px-1.5 py-0.2 rounded-md text-xs font-mono bg-white/10 text-white">
-                {savedPostsCount}
-              </span>
+              <span aria-hidden="true" className="text-slate-500">·</span>
+              <span className="font-mono tabular-nums text-white">{savedPostsCount}</span>
             </button>
           )}
 

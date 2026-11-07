@@ -409,6 +409,13 @@ export function validateAndBuildPostRecord(
     slideCount: sanitizedDeck.slides.length,
     qaPassed: qaReport.canExport && riskReport.status !== 'BLOCK',
     deck: sanitizedDeck,
+    scheduledFor: input.existingRecord?.scheduledFor,
+    publishTargets: input.existingRecord?.publishTargets,
+    hostedSlideUrls: input.existingRecord?.hostedSlideUrls,
+    cloudinaryPublicIds: input.existingRecord?.cloudinaryPublicIds,
+    cloudinaryCleanedAt: input.existingRecord?.cloudinaryCleanedAt,
+    bufferPostIds: input.existingRecord?.bufferPostIds,
+    countedInMetricoolMonth: input.existingRecord?.countedInMetricoolMonth,
   };
 
   return { ok: true, record };

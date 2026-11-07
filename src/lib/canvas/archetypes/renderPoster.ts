@@ -1,15 +1,15 @@
 import { SlideData, SlideTakeawayItem, ThemePalette, VisualSystemOptions } from '../../../types.ts';
 import { drawRoundRect } from '../background.ts';
-import { SAFE_CONTENT_WIDTH, SAFE_MARGIN_LEFT } from '../constants.ts';
+import { SAFE_CONTENT_WIDTH, SAFE_MARGIN_LEFT, isVideoSlide } from '../constants.ts';
 import { fitTextInBox } from '../textLayout.ts';
 import { loadIconImage, safeDrawImage } from '../imageLoader.ts';
 import { drawRowSlide } from './renderRow.ts';
 import { drawImageSlide } from './renderImage.ts';
 
 /**
- * Archetype 9: Infographic & Branded Meme Poster (`poster`)
- * Dedicated single-slide format supporting both:
- * 1. Hero Meme / Image Frame (when `slide.imageUrl` is set) with optional MARROK corner watermark.
+ * Archetype 9: Infographic, Branded Meme & Video Poster (`poster`)
+ * Dedicated single-slide format supporting:
+ * 1. Hero Meme / Image / Video Frame (when `slide.imageUrl` or `slide.videoUrl` is set) with corner registration marks and `@MARROK` watermark.
  * 2. Compact CAD Schematic Card at y = 200 (height 430px) with optional benchmark metric pill.
  */
 export async function drawPosterSlide(
@@ -17,20 +17,23 @@ export async function drawPosterSlide(
   slide: SlideData,
   theme: ThemePalette,
   options: VisualSystemOptions,
-  brandName: string = 'MARROK'
+  brandName: string = 'MARROK',
+  videoElement?: HTMLVideoElement | null
 ): Promise<number> {
   const topY = 200;
   const cardW = SAFE_CONTENT_WIDTH;
   const cardH = 430;
   const cardX = SAFE_MARGIN_LEFT;
 
-  // Render Hero Meme / Image card if an image is attached, otherwise render the schematic diagram card
-  const graphicEnd = slide.imageUrl
-    ? await drawImageSlide(ctx, slide, theme, options, brandName)
+  const hasVisualMedia = Boolean(slide.imageUrl || isVideoSlide(slide) || videoElement);
+
+  // Render Hero Meme / Image / Video card if media is attached, otherwise render the schematic diagram card
+  const graphicEnd = hasVisualMedia
+    ? await drawImageSlide(ctx, slide, theme, options, brandName, videoElement)
     : await drawRowSlide(ctx, slide, theme, options);
 
-  // If slide has a metricValue and is a schematic diagram (no imageUrl), draw a metric badge in the top right of the card
-  if (slide.metricValue && !slide.imageUrl) {
+  // If slide has a metricValue and is a schematic diagram (no image/video), draw a metric badge in the top right of the card
+  if (slide.metricValue && !hasVisualMedia) {
     ctx.save();
     const badgeW = 260;
     const badgeH = 58;

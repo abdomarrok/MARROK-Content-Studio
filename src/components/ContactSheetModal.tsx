@@ -105,8 +105,9 @@ export const ContactSheetModal: React.FC<ContactSheetModalProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-white">Visual QA Contact Sheet (Spec §10)</h2>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/10 text-slate-300 font-bold uppercase">
+                <h2 className="text-base font-bold text-white">All Slides Grid · Visual QA Overview</h2>
+                <span aria-hidden="true" className="text-slate-500">·</span>
+                <span className="text-xs font-mono tabular-nums text-slate-300 font-semibold">
                   {carousel.slides.length} Slides
                 </span>
               </div>

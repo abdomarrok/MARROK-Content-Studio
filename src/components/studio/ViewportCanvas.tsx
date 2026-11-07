@@ -20,15 +20,30 @@ import {
   ZoomOut,
   EyeOff,
   AlignHorizontalSpaceAround,
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import {
   CarouselData,
+  SlideData,
   GraphicalElementId,
   ElementLayoutOverride,
   ThemePalette,
   TextAlignment,
 } from '../../types.ts';
-import { renderSlideToCanvas, getCanvasDimensionSpec } from '../../lib/canvasExporter.ts';
+import {
+  renderSlideToCanvas,
+  getCanvasDimensionSpec,
+  computeWhiteCardMediaGeometry,
+  getSlideMediaType,
+  getSlideMediaUrl,
+  isFullMemeSlide,
+  isVideoSlide,
+} from '../../lib/canvasExporter.ts';
 import { computeSlideElementBounds, findSlideElementAtPoint, ElementBounds } from '../../lib/canvas/layoutBounds.ts';
 import { clampElementDrag } from '../../lib/canvas/layoutAwareness.ts';
 
@@ -58,6 +73,7 @@ interface ViewportCanvasProps {
   onSelectElement?: (id: GraphicalElementId | null) => void;
   onUpdateLayoutOverride?: (id: GraphicalElementId, override: ElementLayoutOverride | null) => void;
   onDoubleClickElement?: (id: GraphicalElementId) => void;
+  onUpdateSlideField?: <K extends keyof SlideData>(field: K, value: SlideData[K]) => void;
 }
 
 export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
@@ -73,9 +89,11 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
   onSelectElement,
   onUpdateLayoutOverride,
   onDoubleClickElement,
+  onUpdateSlideField,
 }) => {
   const internalCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const activeCanvasRef = externalCanvasRef || internalCanvasRef;
+  const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
 
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
@@ -219,6 +237,10 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
       imagePanY: slide.imagePanY,
       imageFit: slide.imageFit,
       imageFilter: slide.imageFilter,
+      mediaType: slide.mediaType,
+      videoUrl: slide.videoUrl,
+      imageBgStyle: slide.imageBgStyle,
+      brandWatermark: slide.brandWatermark,
       themeId: theme.id,
       visualOptions: carousel.visualOptions,
     });
@@ -244,7 +266,8 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
           currentSlideIndex,
           offscreen,
           theme,
-          carousel.visualOptions
+          carousel.visualOptions,
+          videoPreviewRef.current
         );
         if (!isMounted || renderSequence !== renderSequenceRef.current) return;
 
@@ -469,6 +492,40 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
   const topSafePct = `${((spec.headerY / spec.height) * 100).toFixed(1)}%`;
   const bottomSafePct = `${(((spec.height - spec.safeFooterCeilingY) / spec.height) * 100).toFixed(1)}%`;
 
+  // Detect active white-card media (video vs image) for single-slide / full-card meme mode
+  const activeMediaType = currentSlide ? getSlideMediaType(currentSlide) : 'none';
+  const activeMediaUrl = currentSlide ? getSlideMediaUrl(currentSlide) : '';
+  const hasWhiteCardMedia = Boolean(
+    currentSlide &&
+      (currentSlide.type === 'poster' || currentSlide.type === 'image') &&
+      (isFullMemeSlide(currentSlide) || isVideoSlide(currentSlide)) &&
+      activeMediaUrl
+  );
+  const whiteCardGeom = useMemo(() => {
+    if (!currentSlide || !hasWhiteCardMedia) return null;
+    return computeWhiteCardMediaGeometry(spec, currentSlide);
+  }, [currentSlide, hasWhiteCardMedia, spec]);
+
+  const isVideoActive = activeMediaType === 'video' && Boolean(activeMediaUrl);
+  const isVideoPlaying = currentSlide?.videoPlaying ?? true;
+  const isVideoMuted = currentSlide?.videoMuted ?? true;
+  const activeFitMode: 'contain' | 'cover' =
+    currentSlide?.imageFit || (isVideoActive ? 'contain' : 'contain');
+
+  useEffect(() => {
+    const videoEl = videoPreviewRef.current;
+    if (!videoEl || !isVideoActive) return;
+    videoEl.muted = isVideoMuted;
+    if (isVideoPlaying) {
+      const p = videoEl.play();
+      if (p && typeof p.catch === 'function') {
+        p.catch(() => {});
+      }
+    } else {
+      videoEl.pause();
+    }
+  }, [isVideoActive, isVideoPlaying, isVideoMuted, activeMediaUrl]);
+
   return (
     <div
       tabIndex={0}
@@ -491,6 +548,222 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
             : 'Click any element to select & edit'
         }
       />
+
+      {/* Central White Card Media Container (<video> or <img> fallback) + Layered Corner Registration Marks & @MARROK Badge */}
+      {whiteCardGeom && currentSlide && (
+        <div
+          data-testid="white-card-media-container"
+          data-media-type={activeMediaType}
+          data-fit-mode={activeFitMode}
+          className="absolute pointer-events-none overflow-hidden"
+          style={{
+            left: `${((whiteCardGeom.cardX / spec.width) * 100).toFixed(3)}%`,
+            top: `${((whiteCardGeom.cardY / spec.height) * 100).toFixed(3)}%`,
+            width: `${((whiteCardGeom.cardW / spec.width) * 100).toFixed(3)}%`,
+            height: `${((whiteCardGeom.cardH / spec.height) * 100).toFixed(3)}%`,
+            borderRadius: `${((whiteCardGeom.cardR / spec.width) * 100).toFixed(2)}%`,
+            backgroundColor: whiteCardGeom.isWhiteBg ? '#f8fafc' : 'transparent',
+            zIndex: 10,
+          }}
+        >
+          {/* Inner Padded Media Slot */}
+          <div
+            data-testid="white-card-inner-slot"
+            className="absolute flex items-center justify-center overflow-hidden"
+            style={{
+              left: `${((whiteCardGeom.pad / whiteCardGeom.cardW) * 100).toFixed(3)}%`,
+              top: `${((whiteCardGeom.pad / whiteCardGeom.cardH) * 100).toFixed(3)}%`,
+              width: `${((whiteCardGeom.imgW / whiteCardGeom.cardW) * 100).toFixed(3)}%`,
+              height: `${((whiteCardGeom.imgH / whiteCardGeom.cardH) * 100).toFixed(3)}%`,
+              zIndex: 10,
+            }}
+          >
+            {activeMediaType === 'video' ? (
+              <video
+                ref={videoPreviewRef}
+                data-testid="white-card-video-element"
+                src={activeMediaUrl}
+                playsInline
+                loop
+                muted={isVideoMuted}
+                autoPlay={isVideoPlaying}
+                onLoadedMetadata={(e) => {
+                  const dur = e.currentTarget.duration;
+                  if (
+                    onUpdateSlideField &&
+                    Number.isFinite(dur) &&
+                    dur > 0 &&
+                    Math.abs((currentSlide.videoDuration || 0) - dur) > 0.1
+                  ) {
+                    onUpdateSlideField('videoDuration', Number(dur.toFixed(2)));
+                  }
+                }}
+                className="w-full h-full transition-all duration-150"
+                style={{
+                  objectFit: activeFitMode,
+                  borderRadius:
+                    activeFitMode === 'contain'
+                      ? `${currentSlide.videoBorderRadius ?? 8}px`
+                      : '12px',
+                  transform: `scale(${currentSlide.imageZoom ?? 1}) translate(${currentSlide.imagePanX ?? 0}%, ${currentSlide.imagePanY ?? 0}%)`,
+                }}
+              />
+            ) : (
+              <img
+                data-testid="white-card-image-element"
+                src={activeMediaUrl}
+                alt={currentSlide.enTitle || 'Slide media'}
+                className="w-full h-full transition-all duration-150 select-none"
+                style={{
+                  objectFit: activeFitMode,
+                  borderRadius: activeFitMode === 'contain' ? '8px' : '12px',
+                  transform: `scale(${currentSlide.imageZoom ?? 1}) translate(${currentSlide.imagePanX ?? 0}%, ${currentSlide.imagePanY ?? 0}%)`,
+                }}
+              />
+            )}
+          </div>
+
+          {/* Layered Corner Registration Marks (Top-Left, Top-Right, Bottom-Left) above the video/image */}
+          <div
+            data-testid="corner-registration-marks"
+            className="absolute inset-0 pointer-events-none"
+            style={{ zIndex: 20 }}
+          >
+            {/* Top-Left Registration Mark */}
+            <div
+              data-testid="corner-mark-tl"
+              className="absolute top-2.5 left-2.5 w-3 h-3 border-t-2 border-l-2"
+              style={{
+                borderColor: whiteCardGeom.isWhiteBg
+                  ? 'rgba(15, 23, 42, 0.45)'
+                  : `${theme.accent}99`,
+              }}
+            />
+            {/* Top-Right Registration Mark */}
+            <div
+              data-testid="corner-mark-tr"
+              className="absolute top-2.5 right-2.5 w-3 h-3 border-t-2 border-r-2"
+              style={{
+                borderColor: whiteCardGeom.isWhiteBg
+                  ? 'rgba(15, 23, 42, 0.45)'
+                  : `${theme.accent}99`,
+              }}
+            />
+            {/* Bottom-Left Registration Mark */}
+            <div
+              data-testid="corner-mark-bl"
+              className="absolute bottom-2.5 left-2.5 w-3 h-3 border-b-2 border-l-2"
+              style={{
+                borderColor: whiteCardGeom.isWhiteBg
+                  ? 'rgba(15, 23, 42, 0.45)'
+                  : `${theme.accent}99`,
+              }}
+            />
+          </div>
+
+          {/* Layered Bottom-Right @MARROK Badge Overlay above the video/image */}
+          {currentSlide.brandWatermark !== 'none' && (
+            <div
+              data-testid="white-card-watermark-badge"
+              className={`absolute flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#0b1118]/85 border border-white/20 shadow-md ${
+                currentSlide.brandWatermark === 'bottom-left'
+                  ? 'bottom-2.5 left-2.5'
+                  : currentSlide.brandWatermark === 'top-right'
+                  ? 'top-2.5 right-2.5'
+                  : 'bottom-2.5 right-2.5'
+              }`}
+              style={{ zIndex: 25 }}
+            >
+              <span
+                className="w-1.5 h-1.5 rounded-full shrink-0"
+                style={{ backgroundColor: theme.accent }}
+              />
+              <span className="text-[8px] font-mono font-bold tracking-wider text-white">
+                @MARROK
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Floating Video Preview Controls Bar (Play/Pause, Mute/Unmute, Fit Mode Contain/Cover) */}
+      {isVideoActive && onUpdateSlideField && (
+        <div
+          data-testid="viewport-video-controls"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-1 rounded-xl bg-[#0b1118]/90 backdrop-blur-md border border-white/20 shadow-2xl z-30"
+        >
+          <button
+            type="button"
+            data-testid="viewport-video-play-toggle"
+            onClick={() => onUpdateSlideField('videoPlaying', !isVideoPlaying)}
+            className="flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold text-white hover:bg-white/15 transition-colors cursor-pointer"
+            title={isVideoPlaying ? 'Pause Video Preview' : 'Play Video Preview'}
+          >
+            {isVideoPlaying ? (
+              <>
+                <Pause className="w-3 h-3 text-amber-400" />
+                <span>Pause</span>
+              </>
+            ) : (
+              <>
+                <Play className="w-3 h-3 text-emerald-400" />
+                <span>Play</span>
+              </>
+            )}
+          </button>
+
+          <div className="w-px h-3.5 bg-white/15" />
+
+          <button
+            type="button"
+            data-testid="viewport-video-mute-toggle"
+            onClick={() => onUpdateSlideField('videoMuted', !isVideoMuted)}
+            className="flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold text-white hover:bg-white/15 transition-colors cursor-pointer"
+            title={isVideoMuted ? 'Unmute Video Preview' : 'Mute Video Preview'}
+          >
+            {isVideoMuted ? (
+              <>
+                <VolumeX className="w-3 h-3 text-slate-400" />
+                <span>Muted</span>
+              </>
+            ) : (
+              <>
+                <Volume2 className="w-3 h-3 text-cyan-400" />
+                <span>Audio On</span>
+              </>
+            )}
+          </button>
+
+          <div className="w-px h-3.5 bg-white/15" />
+
+          <button
+            type="button"
+            data-testid="viewport-video-fit-toggle"
+            onClick={() =>
+              onUpdateSlideField(
+                'imageFit',
+                activeFitMode === 'contain' ? 'cover' : 'contain'
+              )
+            }
+            className="flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold text-cyan-300 hover:bg-white/15 transition-colors cursor-pointer"
+            title="Toggle Video Fit Mode (Contain vs Cover)"
+          >
+            {activeFitMode === 'contain' ? (
+              <>
+                <Minimize2 className="w-3 h-3" />
+                <span>Contain</span>
+              </>
+            ) : (
+              <>
+                <Maximize2 className="w-3 h-3" />
+                <span>Cover</span>
+              </>
+            )}
+          </button>
+        </div>
+      )}
 
       {/* Magnetic Horizontal Center Snap Guide Line */}
       {isDragging && isSnappedCenterX && (

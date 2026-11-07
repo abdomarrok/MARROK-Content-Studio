@@ -57,10 +57,16 @@ MARROK guarantees that slide elements never collide or overlay each other across
 7. **Image Visual Card (`image`):** Elevated technical diagram or visual asset container with `contain` or `cover` fit, caption badge, and blueprint grid.
 8. **Final CTA (`cta`):** Geometric branding emblem, domain question, CTA pill, and required creator/source attribution credit.
 
-### 📌 Standalone 1-Slide Infographic Poster Mode (`src/lib/synthesis/singleSlideCondenser.ts`)
+### 📌 Standalone 1-Slide Infographic Poster, Video & Meme Modes (`src/lib/synthesis/singleSlideCondenser.ts`, `src/lib/canvas/singleSlideVideoExporter.ts`)
 - **Dual Visual Modes:** Toggle between **Dense Infographic Poster** (`poster` layout with compact top graphic + bilingual headlines + 3 numbered bilingual takeaway cards) and **Standard Slide Archetype**.
+- **Standalone Meme Full-Bleed Mode (`standaloneMeme`):** One-click toggle on `image` slides that hides the bottom English/Arabic title and body block and expands the visual frame (`h = 1260px`) so self-contained memes and infographics command the full vertical stage without redundant captions.
+- **Single-Slide Video Ingestion & MP4 Export (`videoFrameExtractor.ts` & `singleSlideVideoExporter.ts`):** Upload any `.mp4`/`.webm`/`.mov` clip to extract a 2×2 keyframe storyboard for Gemini Vision analysis, and export a muxed `.mp4`/`.webm` video framed inside MARROK's OLED chrome with original audio preserved.
 - **Expanded Copy Limits (`SINGLE_SLIDE_CHAR_LIMITS`):** Supports deeper single-frame breakdowns (`enTitle` $\le 60$, `arTitle` $\le 55$, `enBody` $\le 220$, `arBody` $\le 240$) and 3 bilingual takeaway items.
 - **1-Click Carousel Condenser:** Instantly condense any 8-slide carousel into a 1-slide poster (or expand back to 8 slides without losing your work), complete with a clean `SOURCE //` + `@MARROK` footer without carousel pagination dots.
+
+### 🎨 Feed Color Cadence & Smart Palette Rotation (`src/lib/theme/cadenceEngine.ts`)
+- **Posted History Cadence Analysis (`analyzePostHistoryCadence`):** Inspects your posted Vault history (`postStatus === 'posted'`) to prevent consecutive same-color posts on your social grid.
+- **Harmonious Conflict Resolution (`resolveHarmoniousPaletteWithoutRepetition`):** Automatically rotates to the least-used harmonious palette when an AI-synthesized topic matches a recently used accent color, and displays a live **Recommended Next Palette** banner inside the Theme Customizer.
 
 ### 🎬 9:16 Motion Reel Studio (`src/lib/motion/`)
 - **Authentic MARROK Slide Chrome in Motion:** Every frame renders MARROK's OLED base background, radial ambient glow, `108px` engineering grid, CAD safe-zone reticles (`SYS_REF // 1080x1920.CAD_SAFE // MOTION_REEL`), glowing `32×32px` `drawMarrokVectorBadge` header + `MARROK` wordmark, elevated dark surface cards, and animated scene pagination footer.
@@ -71,9 +77,17 @@ MARROK guarantees that slide elements never collide or overlay each other across
   - `product-showcase` (**Architecture & Metrics**): Problem hook card, UI assembly, staggered mechanisms, and a 200x metric counter.
 - **48kHz Procedural SFX Synthesizer & Video Exporter:** Synthesizes mathematical sound effects (`click`, `pop`, `thump`, `whoosh`) synced to scene keyframes and exports muxed **1080×1920 WebM/MP4 Video**, **16-bit PCM WAV Audio**, or **Standalone HTML**.
 
-### 📦 Complete Deliverables & Metricool Publishing Bundle (100% JPG)
+### 🚀 Separated Full-Page Publishing Hub, Buffer API & Official 99-Column Metricool CSV (`src/components/studio/PublishingHubWorkspace.tsx`)
+Switch between **`1. Create Studio`** and **`2. Publish Hub`** from the top header to access a dedicated full-page publishing command center:
+- **Hybrid Zero-Cost Channel Routing:**
+  - **Buffer Free GraphQL API (`https://api.buffer.com`):** Directly publishes or schedules carousels and single-slide posts to **Instagram (`@marrok_org`)**, **Facebook (`Marrok`)**, and **LinkedIn (`Marrok`)** (10-slot rolling queue per channel, zero monthly cap).
+  - **Official 99-Column Metricool CSV Template (`Mtr_calendar_template.csv`):** Generates the exact 99-column Metricool bulk import file (`Text` through `Brand name`) with auto-populated **`TikTok Title`** ($\le 90$ chars), **`First Comment Text`**, **`Document title`** ($\le 58$ chars for LinkedIn PDF Carousels), **`Alt text picture 1..10`**, **`LinkedIn Images as Carousel`** (`true`), and **`TikTok Auto Add Music`** (`true`).
+- **Interactive CSV Preview Table & Weekly Calendar Queue:** Inspect and inline-edit every row (`Date`, `Time`, `TikTok Title`, `First Comment`, `Networks`) or batch-schedule multiple Vault posts across a weekly cadence (*Mon/Wed/Fri*, *Tue/Thu/Sat*, *Weekdays*, *Daily*).
+- **Signed Cloudinary Staging & Post-Publish Auto-Cleanup (`api/controllers/publishController.ts`):** Uploads rendered slide JPEGs to Cloudinary (`marrok_staging/*`) using SHA-1 signatures and **automatically destroys (`image/destroy`) staged images** immediately after `Publish Now` or `+1 hour` after a scheduled post's `dueAt` timestamp so free storage never fills up.
+
+### 📦 Complete Deliverables & 5-in-1 Ready-to-Share Bundle (100% JPG)
 1-click export packages everything needed to publish immediately on mobile or via social schedulers (Metricool, Buffer):
-- `slide1.jpg` through `slideN.jpg` (1080×1920 9:16 high-res JPG Q95 slides — never PNG, strictly TikTok & Safe-Zone compliant)
+- `slide1.jpg` through `slideN.jpg` (multi-ratio 9:16, 4:5, 3:4, and 1:1 high-res JPG Q95 slides — never PNG, strictly TikTok & Safe-Zone compliant)
 - `caption-bilingual.txt` & `caption.txt` (Ready-to-paste Metricool copy with screen hooks, English + Arabic captions, and topic-derived hashtags)
 - `first_comment.txt` (Pinned first comment to drive engagement, discussion points, and source links)
 - `carousel-manifest.json` & `post_metadata.json` (Full serialized `CarouselData` and grounding provenance for deck archival)
@@ -126,6 +140,10 @@ cp .env.example .env
 | `FREE_TEXT_BACKUP_MODELS` | Optional | `"openai,mistral,llama"` | Comma-separated zero-key Pollinations text models |
 | `GEMINI_GENERATION_MODELS` | Optional | `gemini-3.8-flash,...` | Comma-separated model cascade for `/api/generate` and `/api/refine-slide` |
 | `GEMINI_IMAGE_MODELS` | Optional | `gemini-nano-banana-2.1,...` | Comma-separated model cascade for `/api/generate-image` |
+| `CLOUDINARY_CLOUD_NAME` | Optional | `""` | Cloudinary cloud name for temporary slide image staging during publishing |
+| `CLOUDINARY_API_KEY` | Optional | `""` | Cloudinary API key for signed uploads and post-publish auto-cleanup |
+| `CLOUDINARY_API_SECRET` | Optional | `""` | Cloudinary API secret for SHA-1 signed upload and `image/destroy` cleanup |
+| `BUFFER_API_KEY` | Optional | `""` | Buffer Developer API token (`https://api.buffer.com`) for direct IG/FB/LinkedIn publishing |
 | `ALLOWED_ORIGIN` | Optional | `*` | CORS `Access-Control-Allow-Origin` header value |
 | `API_SHARED_SECRET` | Optional | `""` | Shared secret (`x-api-secret`) required when relying on server `GEMINI_API_KEY` |
 | `RATE_LIMIT_RPM` | Optional | `30` | Per-IP requests per minute limit on AI endpoints |

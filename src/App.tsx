@@ -14,6 +14,11 @@ const ContactSheetModal = lazy(() =>
 const SavedPostsDrawer = lazy(() =>
   import('./components/studio/SavedPostsDrawer').then((m) => ({ default: m.SavedPostsDrawer }))
 );
+const PublishingHubWorkspace = lazy(() =>
+  import('./components/studio/PublishingHubWorkspace').then((m) => ({
+    default: m.PublishingHubWorkspace,
+  }))
+);
 import {
   CarouselData,
   DEFAULT_PALETTES,
@@ -37,6 +42,7 @@ import {
   exportVaultJson,
   importVaultJson,
 } from './lib/storage/postsVaultClient';
+import { fetchPublishStatus } from './lib/publish/publishClient';
 
 const MAX_HISTORY_STEPS = 30;
 
@@ -123,6 +129,8 @@ export default function App() {
   }, [carousel]);
 
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
+  const [activePhase, setActivePhase] = useState<'studio' | 'publish'>('studio');
+  const [publishHubTab, setPublishHubTab] = useState<'single' | 'bulk' | 'storage'>('single');
   const [isThemeCustomizerOpen, setIsThemeCustomizerOpen] = useState(false);
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
   const [isContactSheetOpen, setIsContactSheetOpen] = useState(false);
@@ -153,8 +161,18 @@ export default function App() {
   }, []);
 
   // Load Saved & Posted Carousels on startup and re-sync when switching browser tabs
+  // Also triggers automatic background Cloudinary cleanup for any scheduled post whose dueAt has passed
   useEffect(() => {
     refreshVaultPosts(true);
+    fetchPublishStatus()
+      .then((status) => {
+        if (status.autoCleanedPostIds && status.autoCleanedPostIds.length > 0) {
+          refreshVaultPosts(false);
+        }
+      })
+      .catch(() => {
+        // Non-fatal in offline mode
+      });
     const handleFocus = () => refreshVaultPosts(false);
     window.addEventListener('focus', handleFocus);
     return () => {
@@ -402,27 +420,58 @@ export default function App() {
         onRedo={handleRedo}
         lastSavedTime={lastSavedTime}
         onResetDraft={handleResetDraft}
+        activePhase={activePhase}
+        onPhaseChange={(phase) => setActivePhase(phase)}
       />
 
-      {/* Primary Autonomous Studio Viewport */}
+      {/* Primary Viewport: Either Phase 1 (Creation Studio) or Phase 2 (Separated Full-Page Publishing Hub) */}
       <main className="flex-1 lg:min-h-0 max-w-6xl w-full mx-auto px-4 sm:px-6 py-3 sm:py-4 pb-24 lg:pb-4 flex flex-col">
-        <AutonomousStudio
-          carousel={carousel}
-          theme={currentPalette}
-          activeSlideIndex={activeSlideIndex}
-          onSlideChange={setActiveSlideIndex}
-          onUpdateCarousel={handleUpdateCarousel}
-          onSelectTheme={handleSelectPalette}
-          onOpenThemeCustomizer={() => setIsThemeCustomizerOpen(true)}
-          onOpenContactSheet={() => setIsContactSheetOpen(true)}
-          onOpenSavedPostsDrawer={() => {
-            refreshVaultPosts(false);
-            setIsSavedPostsDrawerOpen(true);
-          }}
-          onSaveValidPost={handleSaveValidPost}
-          isSavingPost={isSavingPost}
-          onShowToast={showToast}
-        />
+        {activePhase === 'publish' ? (
+          <Suspense
+            fallback={
+              <div className="flex-1 flex items-center justify-center text-xs font-mono text-slate-400">
+                Loading Publishing Hub...
+              </div>
+            }
+          >
+            <PublishingHubWorkspace
+              initialTab={publishHubTab}
+              carousel={carousel}
+              theme={currentPalette}
+              savedPosts={savedPosts}
+              onBackToStudio={() => setActivePhase('studio')}
+              onSelectPostIntoStudio={(record) => {
+                handleSelectSavedPost(record);
+                setActivePhase('studio');
+              }}
+              onRefreshVault={() => refreshVaultPosts(false)}
+              onShowToast={showToast}
+            />
+          </Suspense>
+        ) : (
+          <AutonomousStudio
+            carousel={carousel}
+            theme={currentPalette}
+            activeSlideIndex={activeSlideIndex}
+            onSlideChange={setActiveSlideIndex}
+            onUpdateCarousel={handleUpdateCarousel}
+            onSelectTheme={handleSelectPalette}
+            onOpenThemeCustomizer={() => setIsThemeCustomizerOpen(true)}
+            onOpenContactSheet={() => setIsContactSheetOpen(true)}
+            onOpenSavedPostsDrawer={() => {
+              refreshVaultPosts(false);
+              setIsSavedPostsDrawerOpen(true);
+            }}
+            onSaveValidPost={handleSaveValidPost}
+            isSavingPost={isSavingPost}
+            onShowToast={showToast}
+            savedPosts={savedPosts}
+            onOpenPublishScheduleModal={(tab) => {
+              setPublishHubTab(tab || 'single');
+              setActivePhase('publish');
+            }}
+          />
+        )}
       </main>
 
       {/* Slide-Over Saved & Posted Carousels Vault Drawer */}
@@ -442,6 +491,11 @@ export default function App() {
             onDeletePost={handleDeleteSavedPost}
             onExportVault={handleExportVault}
             onImportVault={handleImportVault}
+            onOpenPublishScheduleModal={(tab) => {
+              setIsSavedPostsDrawerOpen(false);
+              setPublishHubTab(tab || 'bulk');
+              setActivePhase('publish');
+            }}
           />
         </Suspense>
       )}
@@ -455,6 +509,7 @@ export default function App() {
             isOpen={isThemeCustomizerOpen}
             onClose={() => setIsThemeCustomizerOpen(false)}
             onShowToast={showToast}
+            savedPosts={savedPosts}
           />
         </Suspense>
       )}

@@ -11,6 +11,13 @@ import {
   handleUpdatePostStatus,
   handleDeletePost,
 } from './controllers/postsController.ts';
+import {
+  handleGetPublishStatus,
+  handleUploadPublishMedia,
+  handleCleanupPublishMedia,
+  handleDispatchPublish,
+  handleServeStagedMedia,
+} from './controllers/publishController.ts';
 import { getServerConfig, createRateLimiter, securityHeadersMiddleware } from './config.ts';
 
 dotenv.config();
@@ -87,6 +94,14 @@ app.post(['/api/posts', '/posts'], handleSavePost);
 app.patch(['/api/posts/:id/status', '/posts/:id/status'], handleUpdatePostStatus);
 app.delete(['/api/posts/:id', '/posts/:id'], handleDeletePost);
 
+// Publishing, Scheduling & Cloudinary Auto-Cleanup Endpoints
+app.get(['/api/publish/status', '/publish/status'], handleGetPublishStatus);
+app.post(['/api/publish/upload-media', '/publish/upload-media'], handleUploadPublishMedia);
+app.post(['/api/publish/cleanup-media', '/publish/cleanup-media'], handleCleanupPublishMedia);
+app.post(['/api/publish/dispatch', '/publish/dispatch'], handleDispatchPublish);
+app.get(['/api/publish/media/:assetId', '/publish/media/:assetId'], handleServeStagedMedia);
+
 export default app;
 export { app };
+
 

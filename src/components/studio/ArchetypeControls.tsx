@@ -20,7 +20,15 @@ import {
   Upload,
   ClipboardPaste,
   Maximize2,
+  Minimize2,
   X,
+  Video,
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  Download,
+  Loader2,
 } from 'lucide-react';
 import {
   CarouselData,
@@ -30,6 +38,14 @@ import {
   DiagramVariant,
   DiagramNode,
 } from '../../types.ts';
+import {
+  ACCEPTED_SINGLE_SLIDE_MEDIA_ACCEPT,
+  isVideoFile,
+  isVideoUrl,
+  isVideoSlide,
+  getSlideMediaType,
+  getSlideMediaUrl,
+} from '../../lib/canvas/constants.ts';
 import {
   analyzeSlideTextForArchetype,
   resolveSmartSlideVisuals,
@@ -58,6 +74,12 @@ interface ArchetypeControlsProps {
   onUpdateDiagramEdge: (edgeIndex: number, value: string) => void;
   onOpenAiImageStudio: () => void;
   onOpenMediaSearch: () => void;
+  onExportVideoMp4?: (fps?: 30 | 60) => void;
+  isExportingVideo?: boolean;
+  videoExportProgress?: number;
+  videoExportStage?: string;
+  onGenerateFromVideo?: (fileOrUrl?: File | string) => void;
+  isGeneratingFromVideo?: boolean;
 }
 
 const DIAGRAM_VARIANTS: { id: DiagramVariant; label: string }[] = [
@@ -123,7 +145,14 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
   onUpdateDiagramEdge,
   onOpenAiImageStudio,
   onOpenMediaSearch,
+  onExportVideoMp4,
+  isExportingVideo = false,
+  videoExportProgress = 0,
+  videoExportStage = '',
+  onGenerateFromVideo,
+  isGeneratingFromVideo = false,
 }) => {
+  const [selectedVideoFps, setSelectedVideoFps] = useState<30 | 60>(30);
   const [iconPickerState, setIconPickerState] = useState<{
     isOpen: boolean;
     title: string;
@@ -178,21 +207,91 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
     }
   };
 
-  const handleImageFileUpload = (file?: File | null) => {
-    if (!file || !file.type.startsWith('image/')) return;
+  const handleMediaFileUpload = (file?: File | null) => {
+    if (!file) return;
+
+    const targetType: SlideType =
+      currentSlide.type === 'poster' || carousel?.postFormat === 'single' || totalSlides === 1
+        ? 'poster'
+        : 'image';
+
+    if (isVideoFile(file)) {
+      const applyVideoSource = (videoSrc: string) => {
+        if (!videoSrc) return;
+        if (currentSlide.type !== targetType) {
+          onSetSlideType(targetType);
+        }
+        if (
+          onUpdateCarouselField &&
+          (targetType === 'poster' || carousel?.postFormat === 'single' || totalSlides === 1) &&
+          !carousel?.dimensionPreset
+        ) {
+          onUpdateCarouselField('dimensionPreset', 'ig-3:4');
+        }
+        applySlideBatchUpdates({
+          type: targetType,
+          mediaType: 'video',
+          videoUrl: videoSrc,
+          videoMimeType: file.type || 'video/mp4',
+          videoFileName: file.name,
+          videoMuted: true,
+          videoPlaying: true,
+          videoBorderRadius: 8,
+          imageUrl: '',
+          imageFrameMode: 'full',
+          imageFit: 'contain',
+          imageFilter: 'clean',
+          imageBgStyle: currentSlide.imageBgStyle || 'white',
+          brandWatermark: currentSlide.brandWatermark || 'bottom-right',
+          imageCaption: '',
+          metricValue: '',
+          metricLabel: '',
+          metricDiff: '',
+          imageZoom: 1,
+          imagePanX: 0,
+          imagePanY: 0,
+          layoutOverrides: undefined,
+        });
+        if (onGenerateFromVideo) {
+          onGenerateFromVideo(file);
+        }
+      };
+
+      if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+        try {
+          const blobUrl = URL.createObjectURL(file);
+          if (blobUrl) {
+            applyVideoSource(blobUrl);
+            return;
+          }
+        } catch {
+          // Fallback to FileReader below
+        }
+      }
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+        applyVideoSource(dataUrl);
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    if (!file.type.startsWith('image/')) return;
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = typeof reader.result === 'string' ? reader.result : '';
       if (!dataUrl) return;
-      const targetType: SlideType =
-        currentSlide.type === 'poster' || carousel?.postFormat === 'single' || totalSlides === 1
-          ? 'poster'
-          : 'image';
       if (currentSlide.type !== targetType) {
         onSetSlideType(targetType);
       }
       applySlideBatchUpdates({
         type: targetType,
+        mediaType: 'image',
+        videoUrl: '',
+        videoMimeType: undefined,
+        videoFileName: undefined,
         imageUrl: dataUrl,
         imageFrameMode: 'full',
         imageFit: 'contain',
@@ -222,6 +321,10 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
     }
     applySlideBatchUpdates({
       type: targetType,
+      mediaType: 'image',
+      videoUrl: '',
+      videoMimeType: undefined,
+      videoFileName: undefined,
       imageUrl: EXPECTATIONS_VS_REALITY_MEME_URL,
       imageFrameMode: 'full',
       imageFit: 'contain',
@@ -245,10 +348,11 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
       const items = e.clipboardData?.items;
       if (!items) return;
       for (let i = 0; i < items.length; i++) {
-        if (items[i].type.startsWith('image/')) {
+        const itemType = items[i].type || '';
+        if (itemType.startsWith('image/') || itemType.startsWith('video/')) {
           const blob = items[i].getAsFile();
           if (blob) {
-            handleImageFileUpload(blob);
+            handleMediaFileUpload(blob);
             break;
           }
         }
@@ -1045,30 +1149,35 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
         </div>
       )}
 
-      {/* ARCHETYPE: BRANDED MEME, HERO IMAGE & AI DIAGRAM STUDIO (Available on both Image & Single-Slide Poster) */}
+      {/* ARCHETYPE: BRANDED MEME, VIDEO, HERO IMAGE & AI DIAGRAM STUDIO (Available on both Image & Single-Slide Poster) */}
       {(currentSlide.type === 'image' || currentSlide.type === 'poster') && (
         <div className="pt-3 border-t border-white/[0.08] animate-fade-in">
           <div className="p-3.5 rounded-xl bg-black/50 border border-white/10 space-y-3.5">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2">
-                <ImageIcon className="w-4 h-4" style={{ color: theme.accent }} />
+                {isVideoSlide(currentSlide) ? (
+                  <Video className="w-4 h-4" style={{ color: theme.accent }} />
+                ) : (
+                  <ImageIcon className="w-4 h-4" style={{ color: theme.accent }} />
+                )}
                 <div>
                   <span className="text-xs font-bold text-white block">
-                    Branded Meme & Hero Image Frame
+                    Branded Meme, Video & Hero Media Frame
                   </span>
                   <span className="text-[10px] text-slate-400 block">
-                    Drop a meme/image, pick a ready preset, or add a @MARROK corner watermark
+                    Drop an image or video (.mp4, .webm, .mov) inside the white card with @MARROK corner watermark
                   </span>
                 </div>
               </div>
               <div className="flex items-center gap-1.5 flex-wrap">
                 <button
                   type="button"
+                  data-testid="upload-media-btn"
                   onClick={() => fileInputRef.current?.click()}
                   className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-500/40 text-xs font-semibold cursor-pointer whitespace-nowrap"
                 >
                   <Upload className="w-3.5 h-3.5" />
-                  <span>Upload Meme / Image</span>
+                  <span>Upload Meme / Video</span>
                 </button>
                 <button
                   type="button"
@@ -1084,20 +1193,25 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
                 >
                   Search Web
                 </button>
-                {currentSlide.imageUrl && (
+                {(currentSlide.imageUrl || currentSlide.videoUrl) && (
                   <button
                     type="button"
+                    data-testid="clear-media-btn"
                     onClick={() =>
                       applySlideBatchUpdates({
+                        mediaType: undefined,
+                        videoUrl: '',
+                        videoMimeType: undefined,
+                        videoFileName: undefined,
                         imageUrl: '',
                         imageFrameMode: 'standard',
                       })
                     }
                     className="flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-semibold cursor-pointer whitespace-nowrap"
-                    title="Clear attached image and return to schematic diagram"
+                    title="Clear attached media and return to schematic diagram"
                   >
                     <X className="w-3.5 h-3.5" />
-                    <span>Clear Image</span>
+                    <span>Clear Media</span>
                   </button>
                 )}
               </div>
@@ -1105,12 +1219,13 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
 
             <input
               ref={fileInputRef}
+              data-testid="single-slide-media-input"
               type="file"
-              accept="image/*"
+              accept={ACCEPTED_SINGLE_SLIDE_MEDIA_ACCEPT}
               className="hidden"
               onChange={(e) => {
                 const file = e.target.files?.[0];
-                if (file) handleImageFileUpload(file);
+                if (file) handleMediaFileUpload(file);
                 e.target.value = '';
               }}
             />
@@ -1118,6 +1233,7 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
             {/* Drag & Drop Upload Zone + Ready Meme Preset Card */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <div
+                data-testid="media-drop-zone"
                 onDragOver={(e) => {
                   e.preventDefault();
                   setIsDraggingFile(true);
@@ -1127,7 +1243,7 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
                   e.preventDefault();
                   setIsDraggingFile(false);
                   const file = e.dataTransfer?.files?.[0];
-                  if (file) handleImageFileUpload(file);
+                  if (file) handleMediaFileUpload(file);
                 }}
                 onClick={() => fileInputRef.current?.click()}
                 className={`flex flex-col items-center justify-center p-3 rounded-xl border border-dashed transition-all cursor-pointer text-center ${
@@ -1138,11 +1254,11 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
               >
                 <div className="flex items-center gap-2 text-xs font-semibold text-white mb-1">
                   <Upload className="w-3.5 h-3.5" style={{ color: theme.accent }} />
-                  <span>Drop Meme / Image or Click to Browse</span>
+                  <span>Drop Image or Video (.mp4, .webm, .mov)</span>
                 </div>
                 <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono">
                   <ClipboardPaste className="w-3 h-3" />
-                  <span>Or press Ctrl+V / Cmd+V to paste from clipboard</span>
+                  <span>Or press Ctrl+V / Cmd+V to paste media</span>
                 </div>
               </div>
 
@@ -1151,7 +1267,8 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
                 type="button"
                 onClick={handleApplyExpectationsMemePreset}
                 className={`flex items-center gap-3 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                  currentSlide.imageUrl === EXPECTATIONS_VS_REALITY_MEME_URL
+                  currentSlide.imageUrl === EXPECTATIONS_VS_REALITY_MEME_URL &&
+                  !isVideoSlide(currentSlide)
                     ? 'bg-white/15 border-white/40 shadow-sm'
                     : 'bg-white/[0.03] hover:bg-white/[0.08] border-white/15'
                 }`}
@@ -1183,6 +1300,201 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
               </button>
             </div>
 
+            {/* Video Playback Controls, Fit Mode Toggle & 1080x1440 MP4 Export Pipeline */}
+            {isVideoSlide(currentSlide) && (
+              <div
+                data-testid="video-preview-and-export-panel"
+                className="p-3 rounded-xl bg-cyan-950/25 border border-cyan-500/30 space-y-3"
+              >
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <Video className="w-4 h-4 text-cyan-400" />
+                    <div>
+                      <span className="text-xs font-bold text-white block">
+                        Video Preview & 1080×1440 MP4 Export
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono block">
+                        {currentSlide.videoFileName || 'Active Video Track'}
+                        {currentSlide.videoDuration
+                          ? ` · ${currentSlide.videoDuration.toFixed(1)}s`
+                          : ''}{' '}
+                        · Corner registration marks & @MARROK badge layered above video
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Playback Controls: Play/Pause, Mute/Unmute, Fit Mode (Contain vs Cover) */}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      data-testid="sidebar-video-play-toggle"
+                      onClick={() =>
+                        onUpdateField(
+                          'videoPlaying',
+                          !(currentSlide.videoPlaying ?? true)
+                        )
+                      }
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 border border-white/15 text-xs font-mono font-bold text-white cursor-pointer"
+                    >
+                      {(currentSlide.videoPlaying ?? true) ? (
+                        <>
+                          <Pause className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Pause</span>
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Play</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      data-testid="sidebar-video-mute-toggle"
+                      onClick={() =>
+                        onUpdateField(
+                          'videoMuted',
+                          !(currentSlide.videoMuted ?? true)
+                        )
+                      }
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 border border-white/15 text-xs font-mono font-bold text-white cursor-pointer"
+                    >
+                      {(currentSlide.videoMuted ?? true) ? (
+                        <>
+                          <VolumeX className="w-3.5 h-3.5 text-slate-400" />
+                          <span>Unmute</span>
+                        </>
+                      ) : (
+                        <>
+                          <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>Mute</span>
+                        </>
+                      )}
+                    </button>
+
+                    <div className="flex items-center bg-black/60 p-0.5 rounded-lg border border-white/15">
+                      <button
+                        type="button"
+                        data-testid="sidebar-video-fit-contain"
+                        onClick={() => onUpdateField('imageFit', 'contain')}
+                        className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold transition-colors cursor-pointer ${
+                          (currentSlide.imageFit || 'contain') === 'contain'
+                            ? 'bg-cyan-500/30 text-cyan-200'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                        title="Contain (Default for 16:9 videos): Fits full video horizontally inside padded white card"
+                      >
+                        <Minimize2 className="w-3 h-3" />
+                        <span>Contain</span>
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="sidebar-video-fit-cover"
+                        onClick={() => onUpdateField('imageFit', 'cover')}
+                        className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold transition-colors cursor-pointer ${
+                          currentSlide.imageFit === 'cover'
+                            ? 'bg-cyan-500/30 text-cyan-200'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                        title="Cover (Full Card): Fills inner white card area while respecting padding and corner overlays"
+                      >
+                        <Maximize2 className="w-3 h-3" />
+                        <span>Cover</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* MP4 Export Action Row + FPS Selector */}
+                <div className="flex items-center justify-between flex-wrap gap-2 pt-2 border-t border-white/10">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono text-slate-300">Frame Rate:</span>
+                    <div className="flex items-center bg-black/60 p-0.5 rounded-lg border border-white/15">
+                      {([30, 60] as const).map((fpsOpt) => (
+                        <button
+                          key={fpsOpt}
+                          type="button"
+                          data-testid={`video-fps-${fpsOpt}`}
+                          onClick={() => setSelectedVideoFps(fpsOpt)}
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold transition-colors cursor-pointer ${
+                            selectedVideoFps === fpsOpt
+                              ? 'bg-white/20 text-white'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {fpsOpt} FPS
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {onGenerateFromVideo && (
+                      <button
+                        type="button"
+                        data-testid="sidebar-generate-from-video-btn"
+                        disabled={isGeneratingFromVideo}
+                        onClick={() => onGenerateFromVideo()}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 disabled:opacity-60 border border-cyan-400/40 text-cyan-200 font-bold text-xs transition-all cursor-pointer"
+                        title="Extract keyframes from video and generate bilingual slide headline, body copy, and social media caption"
+                      >
+                        {isGeneratingFromVideo ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-300" />
+                            <span>Analyzing Video...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-3.5 h-3.5 text-cyan-300" />
+                            <span>Generate Text & Caption from Video</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+
+                    {onExportVideoMp4 && (
+                      <button
+                        type="button"
+                        data-testid="export-single-slide-mp4-btn"
+                        disabled={isExportingVideo}
+                        onClick={() => onExportVideoMp4(selectedVideoFps)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-slate-950 font-bold text-xs shadow-lg transition-all cursor-pointer"
+                      >
+                        {isExportingVideo ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <span>Rendering MP4 ({Math.round(videoExportProgress)}%)...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Export 1080×1440 MP4</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Progress Bar during MP4 Rendering/Encoding */}
+                {isExportingVideo && (
+                  <div data-testid="video-export-progress-bar" className="space-y-1">
+                    <div className="flex items-center justify-between text-[10px] font-mono text-cyan-200">
+                      <span>{videoExportStage || 'Encoding 1080×1440 MP4 frames...'}</span>
+                      <span>{Math.round(videoExportProgress)}%</span>
+                    </div>
+                    <div className="w-full h-2 rounded-full bg-black/60 overflow-hidden border border-white/10">
+                      <div
+                        className="h-full bg-gradient-to-r from-cyan-400 to-emerald-400 transition-all duration-150"
+                        style={{ width: `${Math.max(4, Math.min(100, videoExportProgress))}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Frame Size, Matte Backdrop, Fit Mode, Filter & Brand Watermark Controls */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
               {/* 1. Frame Size Mode (Full Meme No-Text vs Meme + Text vs Standard Card) */}
@@ -1201,7 +1513,7 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
                   ).map((mode) => {
                     const currentMode =
                       currentSlide.imageFrameMode ||
-                      (currentSlide.imageUrl ? 'full' : 'standard');
+                      (currentSlide.imageUrl || isVideoSlide(currentSlide) ? 'full' : 'standard');
                     const active = currentMode === mode.id;
                     return (
                       <button
@@ -1221,9 +1533,11 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
                 </div>
               </div>
 
-              {/* 2. Image Fit Mode */}
+              {/* 2. Media Fit Mode (Contain vs Cover) */}
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Image Fit Mode</label>
+                <label className="text-[10px] text-slate-400 block mb-1">
+                  Media Fit Mode (Contain / Cover)
+                </label>
                 <div className="grid grid-cols-2 gap-1 bg-black/60 p-0.5 rounded-lg border border-white/10">
                   {(['contain', 'cover'] as const).map((fitMode) => {
                     const active = (currentSlide.imageFit || 'contain') === fitMode;
@@ -1231,6 +1545,7 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
                       <button
                         key={fitMode}
                         type="button"
+                        data-testid={`media-fit-${fitMode}`}
                         onClick={() => onUpdateField('imageFit', fitMode)}
                         className={`py-1 rounded-md text-[11px] font-mono uppercase font-bold transition-colors cursor-pointer ${
                           active ? 'bg-white/20 text-white' : 'text-slate-400 hover:text-white'
@@ -1287,6 +1602,7 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
                   ).map((wm) => {
                     const defaultWm =
                       currentSlide.imageFrameMode === 'hero' ||
+                      isVideoSlide(currentSlide) ||
                       (currentSlide.type === 'poster' && currentSlide.imageUrl)
                         ? 'bottom-right'
                         : 'none';
@@ -1310,15 +1626,37 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
               </div>
             </div>
 
-            {/* Image URL, Color Filter & Caption */}
+            {/* Media URL, Color Filter & Caption */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Image URL / Asset Path</label>
+                <label className="text-[10px] text-slate-400 block mb-1">
+                  Media URL / Asset Path (Image or .mp4/.webm/.mov)
+                </label>
                 <input
                   type="text"
-                  value={currentSlide.imageUrl || ''}
-                  onChange={(e) => onUpdateField('imageUrl', e.target.value)}
-                  placeholder="/assets/... or https://..."
+                  data-testid="media-url-input"
+                  value={getSlideMediaUrl(currentSlide)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (isVideoUrl(val)) {
+                      applySlideBatchUpdates({
+                        mediaType: 'video',
+                        videoUrl: val,
+                        imageUrl: '',
+                        imageFrameMode: currentSlide.imageFrameMode || 'full',
+                        imageFit: currentSlide.imageFit || 'contain',
+                        imageBgStyle: currentSlide.imageBgStyle || 'white',
+                        brandWatermark: currentSlide.brandWatermark || 'bottom-right',
+                      });
+                    } else {
+                      applySlideBatchUpdates({
+                        mediaType: val ? 'image' : undefined,
+                        videoUrl: '',
+                        imageUrl: val,
+                      });
+                    }
+                  }}
+                  placeholder="/assets/... or https://... (.jpg, .png, .mp4)"
                   className="w-full bg-black/60 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono"
                 />
               </div>
@@ -1362,7 +1700,7 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
             </div>
 
             {/* Zoom & Pan Framing Controls */}
-            {currentSlide.imageUrl && (
+            {(currentSlide.imageUrl || isVideoSlide(currentSlide)) && (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 border-t border-white/[0.06]">
                 <div>
                   <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mb-1">

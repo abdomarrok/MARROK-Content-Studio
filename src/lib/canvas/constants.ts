@@ -195,8 +195,162 @@ export function getCanvasDimensionSpec(preset?: CanvasDimensionPreset): CanvasDi
   return CANVAS_DIMENSION_PRESETS['tiktok-9:16'];
 }
 
+export const ACCEPTED_SINGLE_SLIDE_MEDIA_ACCEPT =
+  'image/*,video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov';
+
+export const SUPPORTED_VIDEO_MIME_TYPES = [
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+] as const;
+
+export function isVideoMimeType(mime?: string | null): boolean {
+  if (!mime) return false;
+  const clean = mime.toLowerCase().trim();
+  return (
+    clean === 'video/mp4' ||
+    clean === 'video/webm' ||
+    clean === 'video/quicktime' ||
+    clean.startsWith('video/')
+  );
+}
+
+export function isVideoUrl(url?: string | null): boolean {
+  if (!url) return false;
+  const clean = url.trim().toLowerCase();
+  if (clean.startsWith('data:video/')) return true;
+  return /\.(mp4|webm|mov)(\?.*|#.*)?$/i.test(clean);
+}
+
+export function isVideoFile(file?: { type?: string; name?: string } | null): boolean {
+  if (!file) return false;
+  if (isVideoMimeType(file.type)) return true;
+  if (file.name && /\.(mp4|webm|mov)$/i.test(file.name.trim())) return true;
+  return false;
+}
+
+export function isVideoSlide(slide?: Partial<SlideData> | null): boolean {
+  if (!slide) return false;
+  if (slide.mediaType === 'video') return Boolean(slide.videoUrl || slide.imageUrl);
+  if (slide.videoUrl && slide.videoUrl.trim().length > 0) return true;
+  if (isVideoMimeType(slide.videoMimeType) && Boolean(slide.videoUrl || slide.imageUrl)) return true;
+  return isVideoUrl(slide.imageUrl);
+}
+
+export function getSlideMediaType(slide?: Partial<SlideData> | null): 'image' | 'video' {
+  return isVideoSlide(slide) ? 'video' : 'image';
+}
+
+export function getSlideMediaUrl(slide?: Partial<SlideData> | null): string {
+  if (!slide) return '';
+  if (isVideoSlide(slide)) {
+    return (slide.videoUrl || slide.imageUrl || '').trim();
+  }
+  return (slide.imageUrl || slide.videoUrl || '').trim();
+}
+
+export interface WhiteCardMediaGeometry {
+  cardX: number;
+  cardY: number;
+  cardW: number;
+  cardH: number;
+  cardR: number;
+  cardRadius: number;
+  pad: number;
+  innerPad: number;
+  imgX: number;
+  imgY: number;
+  imgW: number;
+  imgH: number;
+  innerX: number;
+  innerY: number;
+  innerW: number;
+  innerH: number;
+  innerBorderRadius: number;
+  fit: 'contain' | 'cover';
+  isWhiteBg: boolean;
+  scale: number;
+  cardLeftPct: string;
+  cardTopPct: string;
+  cardWidthPct: string;
+  cardHeightPct: string;
+  innerLeftPct: string;
+  innerTopPct: string;
+  innerWidthPct: string;
+  innerHeightPct: string;
+}
+
 /**
- * Determines whether a slide is in Full Meme Mode (captionless meme card filling the safe zone with no slide text below).
+ * Computes exact pixel and percentage coordinates for the central white rounded card
+ * and its inner padded media container across any active dimension preset (e.g. 1080x1440 IG_GRID).
+ */
+export function computeWhiteCardMediaGeometry(
+  spec: CanvasDimensionSpec,
+  slide?: Partial<SlideData> | null
+): WhiteCardMediaGeometry {
+  const effectiveType = slide?.type || 'poster';
+  const transform = getArchetypeGraphicTransform(spec, effectiveType, slide);
+  const ov = slide?.layoutOverrides?.graphicCard;
+  const gScale = ov?.scale ?? 1;
+  const gDx = ov?.dx ?? 0;
+  const gDy = ov?.dy ?? 0;
+
+  const cardW = Math.round(transform.cardW * gScale);
+  const cardH = Math.round(transform.cardH * gScale);
+  const cardX = Math.round(transform.cardX + (transform.cardW - cardW) / 2 + gDx);
+  const cardY = Math.round(transform.cardY + (transform.cardH - cardH) / 2 + gDy);
+  const effectiveScale = Number((transform.scale * gScale).toFixed(3));
+  const cardRadius = Math.max(16, Math.round(32 * effectiveScale));
+
+  const isHero = isHeroImageSlide(slide, effectiveType);
+  const basePad = isHero ? 18 : 24;
+  const innerPad = Math.max(10, Math.round(basePad * effectiveScale));
+  const innerX = cardX + innerPad;
+  const innerY = cardY + innerPad;
+  const innerW = Math.max(40, cardW - innerPad * 2);
+  const innerH = Math.max(40, cardH - innerPad * 2);
+  const innerBorderRadius = slide?.videoBorderRadius ?? 8;
+  const fit: 'contain' | 'cover' = slide?.imageFit || 'contain';
+  const isWhiteBg =
+    slide?.imageBgStyle === 'white' ||
+    (!slide?.imageBgStyle && (isHero || isVideoSlide(slide)));
+
+  const toPct = (v: number, total: number) => `${((v / total) * 100).toFixed(2)}%`;
+
+  return {
+    cardX,
+    cardY,
+    cardW,
+    cardH,
+    cardR: cardRadius,
+    cardRadius,
+    pad: innerPad,
+    innerPad,
+    imgX: innerX,
+    imgY: innerY,
+    imgW: innerW,
+    imgH: innerH,
+    innerX,
+    innerY,
+    innerW,
+    innerH,
+    innerBorderRadius,
+    fit,
+    isWhiteBg,
+    scale: effectiveScale,
+    cardLeftPct: toPct(cardX, spec.width),
+    cardTopPct: toPct(cardY, spec.height),
+    cardWidthPct: toPct(cardW, spec.width),
+    cardHeightPct: toPct(cardH, spec.height),
+    innerLeftPct: toPct(innerX, spec.width),
+    innerTopPct: toPct(innerY, spec.height),
+    innerWidthPct: toPct(innerW, spec.width),
+    innerHeightPct: toPct(innerH, spec.height),
+  };
+}
+
+/**
+ * Determines whether a slide is in Full Meme / Video Card Mode (captionless card filling the safe zone with no slide text below).
  */
 export function isFullMemeSlide(slide?: Partial<SlideData> | null, slideTypeOverride?: SlideData['type']): boolean {
   if (!slide) return false;
@@ -210,8 +364,9 @@ export function isFullMemeSlide(slide?: Partial<SlideData> | null, slideTypeOver
     return true;
   }
   if (slide.imageFrameMode === 'hero' || slide.imageFrameMode === 'standard') return false;
-  // On poster/image slides with an attached imageUrl and no explicit mode, default to full captionless meme if text is hidden/empty
-  if (!slide.imageUrl) return false;
+  // On poster/image slides with an attached imageUrl or videoUrl and no explicit mode, default to full captionless card if text is hidden/empty
+  const hasMedia = Boolean(slide.imageUrl || isVideoSlide(slide));
+  if (!hasMedia) return false;
   const ov = slide.layoutOverrides;
   const hasVisibleTitle = !ov?.titleBlock?.hidden && Boolean((slide.enTitle || '').trim());
   const hasVisibleArTitle = !ov?.arabicTitleBlock?.hidden && Boolean((slide.arTitle || '').trim());
@@ -230,8 +385,8 @@ export function isHeroImageSlide(slide?: Partial<SlideData> | null, slideTypeOve
   if (effectiveType !== 'image' && effectiveType !== 'poster') return false;
   if (slide.imageFrameMode === 'hero') return true;
   if (slide.imageFrameMode === 'standard') return false;
-  // On poster slides with an attached imageUrl, default to hero meme frame unless explicitly standard
-  return effectiveType === 'poster' && Boolean(slide.imageUrl);
+  // On poster slides with an attached imageUrl or videoUrl, default to hero frame unless explicitly standard
+  return effectiveType === 'poster' && Boolean(slide.imageUrl || isVideoSlide(slide));
 }
 
 /**

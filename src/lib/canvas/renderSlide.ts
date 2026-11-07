@@ -33,7 +33,8 @@ export async function renderSlideToCanvas(
   slideIndex: number,
   targetCanvas?: HTMLCanvasElement,
   customPalette?: ThemePalette,
-  visualOptions?: VisualSystemOptions
+  visualOptions?: VisualSystemOptions,
+  videoElement?: HTMLVideoElement | null
 ): Promise<HTMLCanvasElement> {
   // Ensure custom webfonts are loaded
   if (typeof document !== 'undefined' && document.fonts) {
@@ -156,9 +157,9 @@ export async function renderSlideToCanvas(
     } else if (slide.type === 'compare') {
       rawGraphicEnd = await drawCompareSlide(ctx, slide, theme, options);
     } else if (slide.type === 'image') {
-      rawGraphicEnd = await drawImageSlide(ctx, slide, theme, options, carousel.brand || 'MARROK');
+      rawGraphicEnd = await drawImageSlide(ctx, slide, theme, options, carousel.brand || 'MARROK', videoElement);
     } else if (slide.type === 'poster') {
-      rawGraphicEnd = await drawPosterSlide(ctx, slide, theme, options, carousel.brand || 'MARROK');
+      rawGraphicEnd = await drawPosterSlide(ctx, slide, theme, options, carousel.brand || 'MARROK', videoElement);
     }
     yGraphicEnd = Math.round(rawGraphicEnd * graphicTransform.scale + graphicTransform.translateY);
     ctx.restore();

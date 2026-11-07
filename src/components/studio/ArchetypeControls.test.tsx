@@ -46,7 +46,7 @@ describe('ArchetypeControls visual layout editors & smart content-aware defaults
     expect(screen.getByRole('button', { name: /Hub/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Mechanism/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Number/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Diagram \/ AI/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Meme \/ Image|Diagram \/ AI/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Code Diff/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Metric/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Compare/i })).toBeInTheDocument();
@@ -236,4 +236,226 @@ describe('ArchetypeControls visual layout editors & smart content-aware defaults
     expect(getPresetExportFolderName('ig-1:1')).toBe('instagram-1x1');
     expect(getPresetExportFolderName('ig-9:16')).toBe('instagram-reels-9x16');
   });
+
+  it('accepts image and video MIME types (.mp4, .webm, .mov) and provides Play/Pause, Mute/Unmute, Fit Mode (Contain/Cover), and 1080x1440 MP4 export controls', () => {
+    const onUpdateField = vi.fn();
+    const onUpdateSlideFields = vi.fn();
+    const onExportVideoMp4 = vi.fn();
+
+    const videoPosterSlide: SlideData = {
+      type: 'poster',
+      mediaType: 'video',
+      videoUrl: 'blob:http://localhost:3000/sample.mp4',
+      videoMimeType: 'video/mp4',
+      videoFileName: 'architecture-demo.mp4',
+      videoDuration: 6.4,
+      videoPlaying: true,
+      videoMuted: true,
+      imageFrameMode: 'full',
+      imageFit: 'contain',
+      imageBgStyle: 'white',
+      brandWatermark: 'bottom-right',
+      enTitle: 'Distributed Consensus.',
+      arTitle: 'الإجماع الموزع.',
+    };
+
+    const { rerender } = render(
+      <ArchetypeControls
+        {...baseProps}
+        currentSlide={videoPosterSlide}
+        onUpdateField={onUpdateField}
+        onUpdateSlideFields={onUpdateSlideFields}
+        onExportVideoMp4={onExportVideoMp4}
+        isExportingVideo={false}
+        videoExportProgress={0}
+      />
+    );
+
+    const fileInput = screen.getByTestId('single-slide-media-input') as HTMLInputElement;
+    expect(fileInput.accept).toContain('image/*');
+    expect(fileInput.accept).toContain('video/mp4');
+    expect(fileInput.accept).toContain('video/webm');
+    expect(fileInput.accept).toContain('video/quicktime');
+
+    // Verify playback controls in sidebar
+    const playToggle = screen.getByTestId('sidebar-video-play-toggle');
+    fireEvent.click(playToggle);
+    expect(onUpdateField).toHaveBeenCalledWith('videoPlaying', false);
+
+    const muteToggle = screen.getByTestId('sidebar-video-mute-toggle');
+    fireEvent.click(muteToggle);
+    expect(onUpdateField).toHaveBeenCalledWith('videoMuted', false);
+
+    // Verify fit mode selector (Contain vs Cover)
+    const coverBtn = screen.getByTestId('sidebar-video-fit-cover');
+    fireEvent.click(coverBtn);
+    expect(onUpdateField).toHaveBeenCalledWith('imageFit', 'cover');
+
+    // Verify FPS selection and MP4 export trigger
+    fireEvent.click(screen.getByTestId('video-fps-60'));
+    fireEvent.click(screen.getByTestId('export-single-slide-mp4-btn'));
+    expect(onExportVideoMp4).toHaveBeenCalledWith(60);
+
+    // Verify progress bar renders during MP4 export
+    rerender(
+      <ArchetypeControls
+        {...baseProps}
+        currentSlide={videoPosterSlide}
+        onUpdateField={onUpdateField}
+        onUpdateSlideFields={onUpdateSlideFields}
+        onExportVideoMp4={onExportVideoMp4}
+        isExportingVideo={true}
+        videoExportProgress={64}
+        videoExportStage="Rendering frame 38 / 60 (1080×1440 @ 30fps)"
+      />
+    );
+    expect(screen.getByTestId('video-export-progress-bar')).toBeInTheDocument();
+    expect(screen.getAllByText(/64%/i).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('renders <video> inside the central white card with layered corner registration marks and @MARROK badge, falling back to <img> for static images', async () => {
+    const { ViewportCanvas } = await import('./ViewportCanvas.tsx');
+    const onUpdateSlideField = vi.fn();
+
+    const videoSlide: SlideData = {
+      type: 'poster',
+      mediaType: 'video',
+      videoUrl: 'blob:http://localhost:3000/demo-video.mp4',
+      videoMimeType: 'video/mp4',
+      videoPlaying: true,
+      videoMuted: true,
+      videoBorderRadius: 8,
+      imageFrameMode: 'full',
+      imageFit: 'contain',
+      imageBgStyle: 'white',
+      brandWatermark: 'bottom-right',
+      enTitle: 'Video Card Spec.',
+      arTitle: 'بطاقة فيديو تقنية.',
+    };
+
+    const { rerender } = render(
+      <ViewportCanvas
+        carousel={{
+          category: 'AI & AGENTS',
+          theme: 'emerald',
+          caption: 'Video Spec Test',
+          postFormat: 'single',
+          dimensionPreset: 'ig-3:4',
+          slides: [videoSlide],
+        }}
+        currentSlideIndex={0}
+        theme={DEFAULT_PALETTES.emerald ? DEFAULT_PALETTES.emerald : Object.values(DEFAULT_PALETTES)[0]}
+        showSafeZones={false}
+        onToggleSafeZones={() => {}}
+        onPreviousSlide={() => {}}
+        onNextSlide={() => {}}
+        onUpdateSlideField={onUpdateSlideField}
+      />
+    );
+
+    const videoEl = screen.getByTestId('white-card-video-element') as HTMLVideoElement;
+    expect(videoEl).toBeInTheDocument();
+    expect(videoEl.tagName).toBe('VIDEO');
+    expect(videoEl.playsInline).toBe(true);
+    expect(videoEl.loop).toBe(true);
+    expect(videoEl.style.objectFit).toBe('contain');
+    expect(videoEl.style.borderRadius).toBe('8px');
+
+    // Corner registration marks (top-left, top-right, bottom-left) and @MARROK watermark layered above video
+    const marksOverlay = screen.getByTestId('corner-registration-marks');
+    const innerSlot = screen.getByTestId('white-card-inner-slot');
+    const watermarkBadge = screen.getByTestId('white-card-watermark-badge');
+
+    expect(screen.getByTestId('corner-mark-tl')).toBeInTheDocument();
+    expect(screen.getByTestId('corner-mark-tr')).toBeInTheDocument();
+    expect(screen.getByTestId('corner-mark-bl')).toBeInTheDocument();
+    expect(Number(marksOverlay.style.zIndex)).toBeGreaterThan(Number(innerSlot.style.zIndex));
+    expect(Number(watermarkBadge.style.zIndex)).toBeGreaterThan(Number(innerSlot.style.zIndex));
+    expect(watermarkBadge.textContent).toContain('@MARROK');
+
+    // Fallback to <img> when static image is provided
+    const imageSlide: SlideData = {
+      type: 'poster',
+      mediaType: 'image',
+      imageUrl: '/assets/aistudio/1793547809949_4a78bc04.jpg',
+      imageFrameMode: 'full',
+      imageFit: 'cover',
+      imageBgStyle: 'white',
+      brandWatermark: 'bottom-right',
+      enTitle: 'Static Image Spec.',
+      arTitle: 'بطاقة صورة ثابتة.',
+    };
+
+    rerender(
+      <ViewportCanvas
+        carousel={{
+          category: 'AI & AGENTS',
+          theme: 'emerald',
+          caption: 'Static Image Spec Test',
+          postFormat: 'single',
+          dimensionPreset: 'ig-3:4',
+          slides: [imageSlide],
+        }}
+        currentSlideIndex={0}
+        theme={Object.values(DEFAULT_PALETTES)[0]}
+        showSafeZones={false}
+        onToggleSafeZones={() => {}}
+        onPreviousSlide={() => {}}
+        onNextSlide={() => {}}
+        onUpdateSlideField={onUpdateSlideField}
+      />
+    );
+
+    const imgEl = screen.getByTestId('white-card-image-element') as HTMLImageElement;
+    expect(imgEl).toBeInTheDocument();
+    expect(imgEl.tagName).toBe('IMG');
+    expect(imgEl.style.objectFit).toBe('cover');
+  });
+
+  it('allows generating slide text & caption from video and auto-reveals slide text on canvas when editing in InlineSlideEditor', async () => {
+    const { InlineSlideEditor } = await import('./InlineSlideEditor.tsx');
+    const onUpdateField = vi.fn();
+    const onGenerateFromVideo = vi.fn();
+
+    const videoSlideInFullMode: SlideData = {
+      type: 'poster',
+      mediaType: 'video',
+      videoUrl: 'blob:http://localhost:3000/demo-clip.mp4',
+      videoFileName: 'redis-8-benchmark.mp4',
+      imageFrameMode: 'full',
+      imageFit: 'contain',
+      imageBgStyle: 'white',
+      enTitle: 'Old Headline.',
+      arTitle: 'عنوان قديم.',
+      enBody: 'Old body text.',
+      arBody: 'نص قديم.',
+    };
+
+    render(
+      <InlineSlideEditor
+        currentSlide={videoSlideInFullMode}
+        currentSlideIndex={0}
+        theme={theme}
+        isAdvancedCustomizerOpen={false}
+        onToggleAdvancedCustomizer={() => {}}
+        onUpdateField={onUpdateField}
+        isSingleSlide={true}
+        onGenerateFromVideo={onGenerateFromVideo}
+        isGeneratingFromVideo={false}
+      />
+    );
+
+    expect(screen.getByTestId('editor-video-text-bar')).toBeInTheDocument();
+    const genBtn = screen.getByTestId('editor-generate-from-video-btn');
+    fireEvent.click(genBtn);
+    expect(onGenerateFromVideo).toHaveBeenCalledTimes(1);
+
+    // Editing English headline while in 'full' mode automatically switches imageFrameMode to 'hero' so slide text is visible below the video card
+    const enTitleInput = screen.getByDisplayValue('Old Headline.');
+    fireEvent.change(enTitleInput, { target: { value: 'Redis 8 Multi-Threaded Core.' } });
+    expect(onUpdateField).toHaveBeenCalledWith('imageFrameMode', 'hero');
+    expect(onUpdateField).toHaveBeenCalledWith('enTitle', 'Redis 8 Multi-Threaded Core.');
+  });
 });
+
+

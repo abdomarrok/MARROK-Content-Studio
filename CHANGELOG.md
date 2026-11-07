@@ -1,5 +1,23 @@
 # Changelog — MARROK Content Studio
 
+## [1.3.0] — Separated Publishing Hub, Official 99-Column Metricool CSV, Cloudinary Auto-Cleanup, Feed Color Cadence & Single-Slide Video
+
+### 1. Separated Full-Page Publishing & Scheduling Hub (`src/components/studio/PublishingHubWorkspace.tsx`, `src/App.tsx`, `src/components/Header.tsx`)
+- **Top-Level Phase Switcher (`1. Create Studio` ↔ `2. Publish Hub`):** Separated the publishing workflow from the creation canvas into a dedicated full-page 3-zone workspace featuring an Active Post / Vault Batch Queue selector, Weekly Calendar Cadence Generator (*Mon/Wed/Fri*, *Tue/Thu/Sat*, *Weekdays*, *Daily*), Interactive CSV Preview Table, and Hybrid Channel Router.
+- **Official 99-Column Metricool CSV Template Engine (`src/lib/publish/publishClient.ts`):** Implemented `OFFICIAL_METRICOOL_CSV_HEADERS` and `generateMetricoolBulkCsv()` matching `Mtr_calendar_template.csv` with auto-populated `TikTok Title` ($\le 90$ chars), `First Comment Text`, `Document title` ($\le 58$ chars), `Alt text picture 1..10`, `LinkedIn Images as Carousel` (PDF), `TikTok Auto Add Music`, `TikTok Post Privacy`, and `Brand name`.
+- **Hybrid Zero-Cost Channel Dispatch (`api/controllers/publishController.ts`):** Connected **Buffer Free GraphQL API** (`https://api.buffer.com`) for Instagram (`@marrok_org`), Facebook (`Marrok`), and LinkedIn (`Marrok`) (10-slot rolling queue per channel) while reserving Metricool Free's 20 posts/month cap for TikTok (`@Marrok`).
+- **Signed Cloudinary Staging & Post-Publish Auto-Cleanup:** Added SHA-1 signed slide uploads (`uploadSlideToCloudinary`) to `marrok_staging/*` and automatic asset destruction (`destroyCloudinaryAsset`, `sweepExpiredCloudinaryAssets`) immediately after `shareNow` publish or `+1 hour` after scheduled `dueAt`.
+
+### 2. Feed Color Cadence & Smart Palette Rotation (`src/lib/theme/cadenceEngine.ts`, `src/components/ThemeCustomizer.tsx`)
+- **Posted History Cadence Analyzer (`analyzePostHistoryCadence`):** Analyzes posted Vault records (`postStatus === 'posted'`) to prevent consecutive same-color posts on the social grid.
+- **Automatic Harmonious Palette Rotation (`resolveHarmoniousPaletteWithoutRepetition`):** Automatically rotates to the closest harmonious palette when an AI-synthesized topic matches a recently used color, and displays a live **Recommended Next Palette** banner with a recent feed color strip in the Theme Customizer.
+
+### 3. Single-Slide Video Ingestion, MP4 Export & Standalone Meme Mode (`src/lib/canvas/singleSlideVideoExporter.ts`, `src/lib/canvas/videoFrameExtractor.ts`, `src/lib/canvas/archetypes/renderImage.ts`)
+- **Video Storyboard Extraction & MP4 Export:** Added `extractVideoStoryboardDataUrl()` (2×2 keyframe contact sheet for Gemini Vision video analysis) and `exportSingleSlideVideo()` (hardware-accelerated `mp4-muxer` / `MediaRecorder` MP4 & WebM export with MARROK slide chrome and preserved audio).
+- **Standalone Meme Full-Bleed Mode (`standaloneMeme`):** Added one-click `standaloneMeme` support on `image` slides that hides redundant bottom title/body captions and expands the visual frame (`getImageCardRect`) to fill the vertical canvas stage (`h = 1260px`).
+
+---
+
 ## [1.2.0] — MARROK Content Studio Rename & Multi-Platform Viewport Engine
 
 ### 1. Rebrand to MARROK Content Studio (`marrok-content-studio`)

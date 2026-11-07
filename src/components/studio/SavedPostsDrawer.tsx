@@ -35,6 +35,7 @@ interface SavedPostsDrawerProps {
   onDeletePost: (id: string) => Promise<void>;
   onExportVault: () => void;
   onImportVault: (file: File) => Promise<void>;
+  onOpenPublishScheduleModal?: (tab?: 'single' | 'bulk' | 'storage') => void;
 }
 
 export const SavedPostsDrawer: React.FC<SavedPostsDrawerProps> = ({
@@ -51,6 +52,7 @@ export const SavedPostsDrawer: React.FC<SavedPostsDrawerProps> = ({
   onDeletePost,
   onExportVault,
   onImportVault,
+  onOpenPublishScheduleModal,
 }) => {
   const [filterTab, setFilterTab] = useState<'all' | 'posted' | 'validated'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -209,22 +211,38 @@ export const SavedPostsDrawer: React.FC<SavedPostsDrawerProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] font-mono text-slate-400">
               Vault Status: <span className="font-bold uppercase text-white">{activePostRecord?.postStatus || 'Draft (Unsaved)'}</span>
             </span>
 
-            <button
-              type="button"
-              disabled={isSaving || activePostRecord?.postStatus === 'posted'}
-              onClick={() => onSaveCurrentPost('posted')}
-              className="flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-xl font-bold text-xs text-slate-950 transition-all shadow-md cursor-pointer disabled:opacity-50"
-              style={{ backgroundColor: theme.accent }}
-              title="Mark this deck as published/posted to social channels"
-            >
-              <Send className="w-3.5 h-3.5 text-slate-950" />
-              <span>{activePostRecord?.postStatus === 'posted' ? 'Marked as Posted ✓' : 'Mark as Posted'}</span>
-            </button>
+            <div className="flex items-center gap-1.5">
+              {onOpenPublishScheduleModal && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenPublishScheduleModal('bulk');
+                  }}
+                  className="flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl font-semibold text-xs bg-white/[0.06] hover:bg-white/[0.12] border border-white/15 text-slate-200 transition-colors cursor-pointer whitespace-nowrap"
+                  title="Batch schedule multiple Vault posts to a weekly calendar queue"
+                >
+                  <span>Bulk Weekly Queue</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                disabled={isSaving || activePostRecord?.postStatus === 'posted'}
+                onClick={() => onSaveCurrentPost('posted')}
+                className="flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-xl font-bold text-xs text-slate-950 transition-all shadow-md cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                style={{ backgroundColor: theme.accent }}
+                title="Mark this deck as published/posted to social channels"
+              >
+                <Send className="w-3.5 h-3.5 text-slate-950" />
+                <span>{activePostRecord?.postStatus === 'posted' ? 'Marked as Posted ✓' : 'Mark as Posted'}</span>
+              </button>
+            </div>
           </div>
         </div>
 

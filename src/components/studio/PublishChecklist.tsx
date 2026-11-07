@@ -12,13 +12,10 @@ import {
   ChevronDown,
   ChevronUp,
   RefreshCw,
-  FileCheck2,
-  Download,
   Smartphone,
-  Layers,
 } from 'lucide-react';
 import { CanvasDimensionPreset, CarouselData, ThemePalette } from '../../types.ts';
-import { CANVAS_DIMENSION_PRESET_LIST, getCanvasDimensionSpec } from '../../lib/canvas/constants.ts';
+import { getCanvasDimensionSpec } from '../../lib/canvas/constants.ts';
 import type { ExportBundleMode } from '../../lib/canvas/exporter.ts';
 import { isThirdPartySource, getAttributionCredit, isValidCreatorCredit } from '../../lib/riskChecks.ts';
 import { QAReport } from '../../lib/qaChecks.ts';
@@ -41,6 +38,7 @@ export interface PublishChecklistProps {
   onSelectDimensionPreset?: (preset: CanvasDimensionPreset) => void;
   onExportZip?: (exportMode: ExportBundleMode) => void;
   onDownloadSingleSlide?: (preset: CanvasDimensionPreset) => void;
+  onOpenPublishScheduleModal?: (tab?: 'single' | 'bulk' | 'storage') => void;
   isExportingZip?: boolean;
   onShowToast?: (msg: string) => void;
 }
@@ -133,6 +131,7 @@ export const PublishChecklist: React.FC<PublishChecklistProps> = ({
   onSelectDimensionPreset,
   onExportZip,
   onDownloadSingleSlide,
+  onOpenPublishScheduleModal,
   isExportingZip = false,
   onShowToast,
 }) => {
@@ -301,13 +300,26 @@ ${facts.length > 0 ? `\nFACTS:\n${facts.map((f, i) => `${i + 1}. [${f.verified.t
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setIsEditingCredit(!isEditingCredit)}
-                className="text-xs text-cyan-300 hover:text-white font-medium cursor-pointer shrink-0"
-              >
-                {isEditingCredit ? 'Done' : hasCreatorCredit ? 'Edit' : 'Add Credit'}
-              </button>
+              <div className="flex items-center gap-2 shrink-0">
+                {!hasCreatorCredit && onUpdateCreator && (
+                  <button
+                    type="button"
+                    onClick={() => onUpdateCreator('@MARROK')}
+                    className="px-2 py-1 rounded-md bg-white/[0.06] hover:bg-white/10 border border-white/10 text-[11px] font-mono text-slate-200 cursor-pointer transition-colors"
+                    title="Auto-fill default @MARROK channel attribution"
+                  >
+                    Use @MARROK
+                  </button>
+                )}
+                <button
+                  type="button"
+                  aria-label="Edit creator credit"
+                  onClick={() => setIsEditingCredit(!isEditingCredit)}
+                  className="text-xs text-cyan-300 hover:text-white font-medium cursor-pointer shrink-0"
+                >
+                  {isEditingCredit ? 'Done' : hasCreatorCredit ? 'Edit' : 'Add Credit'}
+                </button>
+              </div>
             </div>
 
             {((!hasCreatorCredit && isThirdPartySource(carousel)) || isEditingCredit) && (
@@ -481,118 +493,29 @@ ${facts.length > 0 ? `\nFACTS:\n${facts.map((f, i) => `${i + 1}. [${f.verified.t
             </div>
           </div>
         )}
-      </div>
-
-      {/* Social Media Formats & Multi-Platform Export Matrix */}
-      <div className="bg-slate-900/80 border border-white/10 rounded-2xl p-4 space-y-3 shadow-xl">
-        <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-white/10">
-          <div className="flex items-center gap-2">
-            <Smartphone className="w-4 h-4 text-cyan-400 shrink-0" />
-            <div>
-              <h3 className="text-xs font-bold uppercase tracking-wider text-white">
-                Social Media Export Formats
-              </h3>
-              <p className="text-[11px] text-slate-400">
-                All 5 TikTok & Instagram safe-zone calibrated dimensions
-              </p>
-            </div>
+        {/* Active Stage Format Summary & Schedule Trigger */}
+        <div className="pt-2.5 border-t border-white/[0.08] flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+          <div className="flex items-center gap-2 font-mono tabular-nums">
+            <Smartphone className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+            <span className="text-slate-300 font-semibold">{activeDimensionSpec.label}</span>
+            <span aria-hidden="true">·</span>
+            <span>
+              {activeDimensionSpec.width}×{activeDimensionSpec.height}
+            </span>
           </div>
-
-          {onExportZip && (
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <button
-                type="button"
-                disabled={isExportingZip}
-                onClick={() => onExportZip('dual')}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/12 border border-white/15 text-[11px] font-semibold text-slate-200 transition-colors cursor-pointer disabled:opacity-50"
-                title="Export TikTok 9:16 (1080×1920) + Instagram 4:5 (1080×1350) Dual Pack ZIP"
-              >
-                <Layers className="w-3.5 h-3.5 text-pink-400" />
-                <span>Dual Pack (TikTok + IG 4:5)</span>
-              </button>
-
-              <button
-                type="button"
-                disabled={isExportingZip}
-                onClick={() => onExportZip('all')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-[11px] font-bold text-cyan-200 transition-colors cursor-pointer disabled:opacity-50"
-                title="Export all slides in all 5 social media formats (TikTok 9:16, IG 4:5, IG 3:4, IG 1:1, IG Reels 9:16) with ready-to-share captions inside one ZIP"
-              >
-                <Download className="w-3.5 h-3.5 text-cyan-300" />
-                <span>5-in-1 Ready to Share (All 5 Formats ZIP)</span>
-              </button>
-            </div>
+          {onOpenPublishScheduleModal ? (
+            <button
+              type="button"
+              onClick={() => onOpenPublishScheduleModal('single')}
+              className="px-3 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/10 border border-white/15 text-xs font-semibold text-white cursor-pointer transition-colors"
+            >
+              Schedule & Distribute →
+            </button>
+          ) : (
+            <span className="text-[11px] text-slate-500">
+              Export or schedule directly from the under-canvas delivery bar
+            </span>
           )}
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {CANVAS_DIMENSION_PRESET_LIST.map((preset) => {
-            const isSelected = activeDimensionSpec.id === preset.id;
-            const isIG = preset.platform === 'instagram';
-            return (
-              <div
-                key={preset.id}
-                className={`flex items-center justify-between gap-2 p-2.5 rounded-xl border transition-all ${
-                  isSelected
-                    ? 'bg-white/[0.08] border-cyan-400/50 shadow-sm'
-                    : 'bg-black/40 border-white/5 hover:border-white/15'
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={() => onSelectDimensionPreset?.(preset.id)}
-                  className="flex flex-col text-left min-w-0 flex-1 cursor-pointer"
-                  title={`Preview canvas in ${preset.label}`}
-                >
-                  <div className="flex items-center gap-1.5">
-                    <span
-                      className={`text-[10px] font-mono font-bold uppercase px-1.5 py-0.5 rounded ${
-                        isIG
-                          ? 'bg-pink-500/20 text-pink-300 border border-pink-500/30'
-                          : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                      }`}
-                    >
-                      {preset.shortLabel}
-                    </span>
-                    <span className="text-xs font-bold text-white truncate">
-                      {preset.width}×{preset.height}
-                    </span>
-                    {isSelected && (
-                      <span className="text-[10px] font-mono text-cyan-300">● Active</span>
-                    )}
-                  </div>
-                  <span className="text-[11px] text-slate-400 truncate mt-0.5">
-                    {preset.label} · {preset.aspectRatioLabel} Safe Zone
-                  </span>
-                </button>
-
-                <div className="flex items-center gap-1 shrink-0">
-                  {onDownloadSingleSlide && (
-                    <button
-                      type="button"
-                      onClick={() => onDownloadSingleSlide(preset.id)}
-                      className="px-2 py-1 rounded-lg bg-white/[0.06] hover:bg-white/15 border border-white/10 text-[10px] font-semibold text-slate-200 transition-colors cursor-pointer"
-                      title={`Download current slide JPG in ${preset.label}`}
-                    >
-                      JPG
-                    </button>
-                  )}
-                  {onExportZip && (
-                    <button
-                      type="button"
-                      disabled={isExportingZip}
-                      onClick={() => onExportZip(preset.id)}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-[10px] font-bold text-cyan-200 transition-colors cursor-pointer disabled:opacity-50"
-                      title={`Export ${carousel.slides.length} slide${carousel.slides.length === 1 ? '' : 's'} in ${preset.label} ZIP`}
-                    >
-                      <Download className="w-3 h-3" />
-                      <span>ZIP</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
         </div>
       </div>
 
@@ -606,7 +529,8 @@ ${facts.length > 0 ? `\nFACTS:\n${facts.map((f, i) => `${i + 1}. [${f.verified.t
           <div className="flex items-center gap-2">
             <Globe className="w-4 h-4 text-cyan-400 shrink-0" />
             <span className="text-xs font-bold text-white">Sources & Grounded Citations</span>
-            <span className="text-xs font-mono px-2 py-0.5 rounded bg-white/5 border border-white/10 text-slate-300">
+            <span aria-hidden="true" className="text-slate-500">·</span>
+            <span className="text-xs font-mono tabular-nums text-slate-300">
               {carousel.sourceMeta?.groundingSources?.length || 0} Sources
             </span>
           </div>
