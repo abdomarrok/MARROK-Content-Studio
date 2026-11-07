@@ -287,6 +287,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
   // Mobile Studio Segmented Mode Switcher ('canvas' | 'editor')
   const [mobileStudioTab, setMobileStudioTab] = useState<'canvas' | 'editor'>('canvas');
+  const [isMobileEditorExpanded, setIsMobileEditorExpanded] = useState(false);
   const isSheetOpen = isMobileSheetOpen || mobileStudioTab === 'editor';
 
   // Motion Reel Studio States
@@ -569,6 +570,8 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
   const handleDoubleClickCanvasElement = (elementId: GraphicalElementId) => {
     setSelectedElementId(elementId);
+    setIsMobileSheetOpen(true);
+    setMobileStudioTab('editor');
     if (elementId === 'graphicCard') {
       setInspectorTab('visual');
       return;
@@ -584,7 +587,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         el.focus();
       }
-    }, 50);
+    }, 80);
   };
 
   // Smart Dock Text input with auto-expansion when pasting or typing long material (> 200 chars)
@@ -1533,7 +1536,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
   return (
     <div className="w-full lg:flex-1 lg:min-h-0 flex flex-col gap-3 animate-fade-in">
-      {/* 1. Compact Command Bar with Overlay Ingestion Drawer */}
+      {/* 1. Compact Command Bar with Overlay Ingestion Drawer (Auto-shrinks on mobile when split-screen editor is active) */}
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -1543,7 +1546,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           e.preventDefault();
           setIsDragOver(false);
         }}
-          onDrop={(e) => {
+        onDrop={(e) => {
           e.preventDefault();
           setIsDragOver(false);
           const file = e.dataTransfer.files?.[0];
@@ -1551,7 +1554,9 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
             handleImageFile(file);
           }
         }}
-        className="relative z-30 shrink-0"
+        className={`relative z-30 shrink-0 ${
+          isSheetOpen && !isExpanded ? 'hidden lg:block' : 'block'
+        }`}
       >
         {/* Hidden file input */}
         <input
@@ -1565,13 +1570,13 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           }}
         />
 
-        {/* Single-Row Top Command & Ingestion Bar */}
+        {/* Single-Row Top Command & Ingestion Bar (Compact 1-row on mobile, full inline on sm:+) */}
         <form
           onSubmit={(e) => {
             e.preventDefault();
             handleRunAutonomousPipeline();
           }}
-          className={`flex flex-wrap sm:flex-nowrap items-center gap-2 bg-[#0b1118]/95 border rounded-2xl p-2 shadow-xl backdrop-blur-xl transition-all duration-200 ${
+          className={`flex flex-nowrap items-center gap-1.5 sm:gap-2 bg-[#0b1118]/95 border rounded-2xl p-1.5 sm:p-2 shadow-xl backdrop-blur-xl transition-all duration-200 ${
             isDragOver
               ? 'border-cyan-400 bg-cyan-950/20 ring-2 ring-cyan-400/40'
               : isExpanded
@@ -1580,7 +1585,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           }`}
         >
           {/* Topic / Notes Input */}
-          <div className="relative flex-1 min-w-[200px] flex items-center gap-1.5">
+          <div className="relative flex-1 min-w-0 flex items-center gap-1.5">
             <Sparkles className="w-4 h-4 shrink-0 ml-1.5" style={{ color: theme.accent }} />
             <input
               type="text"
@@ -1588,13 +1593,13 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
               onChange={(e) => handlePromptChange(e.target.value)}
               placeholder="Enter topic, paste notes, or drop a screenshot (e.g. Zero-Trust Mesh, Redis 8)..."
               disabled={isGenerating}
-              className="w-full bg-transparent px-2 py-1 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none font-sans"
+              className="w-full min-w-0 bg-transparent px-1.5 sm:px-2 py-1 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none font-sans"
             />
 
             {uploadedImage && (
-              <div className="flex items-center gap-1.5 bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-[11px] px-2 py-0.5 rounded-lg shrink-0">
+              <div className="flex items-center gap-1 bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-[11px] px-1.5 py-0.5 rounded-lg shrink-0">
                 <ImageIcon className="w-3 h-3" />
-                <span className="truncate max-w-[90px] font-mono text-[10px]">{uploadedImage.name}</span>
+                <span className="truncate max-w-[64px] sm:max-w-[90px] font-mono text-[10px]">{uploadedImage.name}</span>
                 <button
                   type="button"
                   onClick={() => setUploadedImage(null)}
@@ -1633,11 +1638,11 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
             </div>
           )}
 
-          {/* Post Format Segmented Toggle: Carousel vs Single Slide vs Motion Reel */}
+          {/* Post Format Segmented Toggle: Inline on sm:+, inside collapsible drawer on mobile */}
           <div
             role="group"
             aria-label="Post format selector"
-            className="flex items-center bg-black/60 p-0.5 rounded-xl border border-white/10 shrink-0"
+            className="hidden sm:flex items-center bg-black/60 p-0.5 rounded-xl border border-white/10 shrink-0"
           >
             <button
               type="button"
@@ -1698,44 +1703,49 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
             <span>{engineBadge.label}</span>
           </button>
 
-          {/* Expand Ingestion Studio Button */}
+          {/* Expand Format & Source Ingestion Drawer Button */}
           <button
             type="button"
             onClick={() => setIsExpanded(!isExpanded)}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+            className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1.5 min-h-[34px] rounded-xl border text-xs font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
               isExpanded
                 ? 'border-cyan-400/50 bg-cyan-500/15 text-cyan-200'
                 : 'border-white/10 bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 hover:text-white'
             }`}
-            title="Open Multimodal Ingestion Drawer (Notes, YouTube Transcript, Screenshot OCR)"
+            title="Open Format & Multimodal Ingestion Drawer (Notes, YouTube Transcript, Screenshot OCR)"
           >
-            <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400" />
+            <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+            <span className="sm:hidden text-[11px] font-mono uppercase" style={{ color: theme.accent }}>
+              {activePostFormat === 'single' ? '1-Slide' : activePostFormat === 'reel' ? 'Reel' : 'Deck'}
+            </span>
             <span className="hidden sm:inline">Source / OCR</span>
-            {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            {isExpanded ? <ChevronUp className="w-3.5 h-3.5 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 shrink-0" />}
           </button>
 
           {/* Primary Generate Button */}
           <button
             type="submit"
             disabled={isGenerating}
-            className="flex items-center justify-center gap-1.5 px-4 py-1.5 min-h-[34px] rounded-xl font-bold text-xs uppercase tracking-wider text-slate-950 transition-all shadow-md cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
+            className="flex items-center justify-center gap-1.5 px-3 sm:px-4 py-1.5 min-h-[34px] rounded-xl font-bold text-xs uppercase tracking-wider text-slate-950 transition-all shadow-md cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
             style={{ backgroundColor: theme.accent }}
           >
             {isGenerating ? (
               <>
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Generating...</span>
+                <span className="hidden sm:inline">Generating...</span>
+                <span className="sm:hidden">...</span>
               </>
             ) : (
               <>
-                <Sparkles className="w-3.5 h-3.5 text-slate-950" />
-                <span>
+                <Sparkles className="w-3.5 h-3.5 text-slate-950 shrink-0" />
+                <span className="hidden sm:inline">
                   {activePostFormat === 'single'
                     ? 'Generate Slide'
                     : activePostFormat === 'reel'
                     ? 'Generate Reel'
                     : 'Generate'}
                 </span>
+                <span className="sm:hidden">Generate</span>
               </>
             )}
           </button>
@@ -1748,9 +1758,57 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
               className="fixed inset-0 z-30 bg-black/50 backdrop-blur-[2px]"
               onClick={() => setIsExpanded(false)}
             />
-            <div className="absolute inset-x-0 top-full mt-2 z-40 bg-[#0b1118] border border-white/20 rounded-2xl p-4 sm:p-5 shadow-2xl space-y-4 animate-fade-in">
+            <div className="absolute inset-x-0 top-full mt-2 z-40 bg-[#0b1118] border border-white/20 rounded-2xl p-3.5 sm:p-5 shadow-2xl space-y-3.5 sm:space-y-4 animate-fade-in max-h-[80dvh] overflow-y-auto">
+              {/* Mobile Post Format Selector inside Collapsible Drawer */}
+              <div className="sm:hidden flex items-center justify-between gap-2 pb-3 border-b border-white/10">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                  Post Format
+                </span>
+                <div className="flex items-center bg-black/60 p-0.5 rounded-xl border border-white/10">
+                  <button
+                    type="button"
+                    onClick={() => handleSwitchPostFormat('carousel')}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                      activePostFormat === 'carousel'
+                        ? 'bg-white/15 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                    style={activePostFormat === 'carousel' ? { color: theme.accent } : undefined}
+                  >
+                    <Layers className="w-3 h-3" />
+                    <span>Carousel</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSwitchPostFormat('single')}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                      activePostFormat === 'single'
+                        ? 'bg-white/15 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                    style={activePostFormat === 'single' ? { color: theme.accent } : undefined}
+                  >
+                    <ImageIcon className="w-3 h-3" />
+                    <span>1-Slide</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSwitchPostFormat('reel')}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                      activePostFormat === 'reel'
+                        ? 'bg-white/15 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                    style={activePostFormat === 'reel' ? { color: theme.accent } : undefined}
+                  >
+                    <Film className="w-3 h-3" />
+                    <span>Reel</span>
+                  </button>
+                </div>
+              </div>
+
               {/* Header with Ingestion Tabs and Collapse Toggle */}
-              <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-white/10">
+              <div className="flex flex-wrap items-center justify-between gap-2.5 pb-3 border-b border-white/10">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-bold text-white font-jakarta tracking-wide">
                     Step 1 · Multimodal Source Ingestion
@@ -2075,44 +2133,11 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
 
 
-      {/* 2. Mobile Segmented Switcher (Visible only on < lg) */}
-      <div className="lg:hidden flex items-center p-1 bg-black/75 border border-white/15 rounded-xl gap-1 shrink-0">
-        <button
-          type="button"
-          onClick={() => setMobileStudioTab('canvas')}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-            mobileStudioTab === 'canvas'
-              ? 'bg-white/15 text-white shadow-sm'
-              : 'text-slate-400 hover:text-white'
-          }`}
-          style={mobileStudioTab === 'canvas' ? { color: theme.accent } : undefined}
-        >
-          <ImageIcon className="w-3.5 h-3.5" />
-          <span>9:16 Canvas Stage</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setMobileStudioTab('editor')}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-            mobileStudioTab === 'editor'
-              ? 'bg-white/15 text-white shadow-sm'
-              : 'text-slate-400 hover:text-white'
-          }`}
-          style={mobileStudioTab === 'editor' ? { color: theme.accent } : undefined}
-        >
-          <Sliders className="w-3.5 h-3.5" />
-          <span>Slide Inspector</span>
-        </button>
-      </div>
-
-      {/* 3. Fixed Studio Shell: Left 9:16 Stage + Authoritative Delivery Bar | Right 4-Tab Categorized Inspector */}
-      <div className="lg:flex-1 lg:min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
+      {/* 2. Fixed Studio Shell: Left 9:16 Stage (Always visible on mobile top half) | Right 4-Tab Categorized Inspector */}
+      <div className="lg:flex-1 lg:min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-3 lg:gap-5 items-stretch">
         {/* Left Column: 9:16 Canvas + Slide Navigator + Single Persistent Under-Canvas Delivery Bar */}
         <div
-          className={`lg:col-span-5 flex-col items-center justify-between lg:h-full lg:min-h-0 gap-2 ${
-            mobileStudioTab === 'canvas' ? 'flex w-full' : 'hidden lg:flex'
-          }`}
+          className="lg:col-span-5 flex flex-col items-center justify-between w-full lg:h-full lg:min-h-0 gap-1.5 sm:gap-2"
         >
           {activePostFormat === 'reel' ? (
             <MotionReelViewport
@@ -2139,7 +2164,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
             />
           ) : (
             <>
-              <div className="flex-1 min-h-0 flex items-center justify-center w-full pt-1 sm:pt-0">
+              <div className="flex-1 min-h-0 flex items-center justify-center w-full pt-0.5 sm:pt-0">
                 <ViewportCanvas
                   carousel={carousel}
                   currentSlideIndex={currentSlideIndex}
@@ -2166,6 +2191,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   onUpdateLayoutOverride={handleUpdateElementLayoutOverride}
                   onDoubleClickElement={handleDoubleClickCanvasElement}
                   onUpdateSlideField={handleUpdateCurrentSlide}
+                  compactMobileStage={isSheetOpen}
                 />
               </div>
             </>
@@ -2192,7 +2218,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
             <div
               data-testid="under-canvas-delivery-bar"
-              className={`w-full flex items-center justify-between gap-2 flex-wrap ${
+              className={`hidden lg:flex w-full items-center justify-between gap-2 flex-wrap ${
                 activePostFormat !== 'reel' ? 'pt-2 border-t border-white/[0.06]' : ''
               }`}
             >
@@ -2563,52 +2589,77 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           </div>
         </div>
 
-        {/* Mobile Backdrop for Bottom Sheet */}
-        {isSheetOpen && (
-          <div
-            className="lg:hidden fixed inset-0 z-40 bg-black/75 backdrop-blur-xs transition-opacity"
-            onClick={() => {
-              setIsMobileSheetOpen(false);
-              setMobileStudioTab('canvas');
-            }}
-            aria-hidden="true"
-          />
-        )}
-
-        {/* Right Column (Desktop) & Slide-Up Bottom Sheet (Mobile): 4 Categorized Inspector Tabs */}
+        {/* Right Column (Desktop) & Docked Split-Screen Bottom Editor (Mobile): Live Slide Remains Visible Above! */}
         <div
           role="region"
           aria-label="Slide Inspector and Content Editor"
-          className={`lg:col-span-7 flex flex-col bg-[#0b1118] border-white/10 overflow-hidden shadow-2xl transition-transform duration-300 ${
+          className={`lg:col-span-7 flex flex-col bg-[#0b1118]/98 border-white/15 overflow-hidden shadow-[0_-12px_36px_rgba(0,0,0,0.75)] transition-all duration-300 ${
             isSheetOpen
-              ? 'fixed inset-x-0 bottom-0 z-50 h-[85vh] rounded-t-3xl border-t translate-y-0'
-              : 'fixed inset-x-0 bottom-0 z-50 h-[85vh] rounded-t-3xl border-t translate-y-full pointer-events-none'
-          } lg:static lg:inset-auto lg:z-auto lg:h-full lg:min-h-0 lg:rounded-2xl lg:border lg:translate-y-0 lg:pointer-events-auto`}
+              ? `fixed inset-x-0 bottom-[88px] z-40 ${
+                  isMobileEditorExpanded ? 'h-[66dvh]' : 'h-[43dvh]'
+                } rounded-t-2xl border-t translate-y-0`
+              : 'fixed inset-x-0 bottom-[88px] z-40 h-[43dvh] rounded-t-2xl border-t translate-y-[120%] pointer-events-none'
+          } lg:static lg:inset-auto lg:z-auto lg:h-full lg:min-h-0 lg:rounded-2xl lg:border lg:shadow-2xl lg:translate-y-0 lg:pointer-events-auto`}
         >
-          {/* Mobile Bottom Sheet Header Grab Bar */}
-          <div className="lg:hidden flex items-center justify-between px-4 pt-3 pb-2 border-b border-white/10 bg-black/50 shrink-0">
-            <span className="text-xs font-mono tabular-nums font-bold uppercase tracking-wider text-slate-300">
-              Slide {currentSlideIndex + 1} Inspector
-            </span>
-            <div className="w-12 h-1.5 rounded-full bg-white/25" />
-            <button
-              type="button"
-              onClick={() => {
-                setIsMobileSheetOpen(false);
-                setMobileStudioTab('canvas');
-              }}
-              className="p-2 rounded-xl text-slate-400 hover:text-white flex items-center justify-center cursor-pointer min-h-[44px] min-w-[44px]"
-              aria-label="Close inspector bottom sheet"
-            >
-              <X className="w-5 h-5" />
-            </button>
+          {/* Mobile Split-Screen Editor Compact Header Bar */}
+          <div className="lg:hidden flex items-center justify-between px-3 py-1.5 border-b border-white/10 bg-black/60 shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <span
+                className="w-2 h-2 rounded-full shrink-0"
+                style={{ backgroundColor: theme.accent }}
+              />
+              <span className="text-[11px] font-mono tabular-nums font-bold uppercase tracking-wider text-slate-200 truncate">
+                Slide {currentSlideIndex + 1} ·{' '}
+                {inspectorTab === 'copy'
+                  ? 'Content'
+                  : inspectorTab === 'visual'
+                  ? `Design (${currentSlide.type})`
+                  : inspectorTab === 'position'
+                  ? 'Adjust'
+                  : 'Publish'}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsExpanded((prev) => !prev)}
+                className="px-2 py-1 rounded-lg bg-white/[0.05] hover:bg-white/10 border border-white/10 text-[10px] font-mono text-cyan-300 hover:text-white flex items-center gap-1 cursor-pointer"
+                title="Open AI Topic & Source Ingestion"
+              >
+                <Sparkles className="w-3 h-3" />
+                <span>Prompt</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsMobileEditorExpanded((prev) => !prev)}
+                className="px-2 py-1 rounded-lg bg-white/[0.05] hover:bg-white/10 border border-white/10 text-[10px] font-mono text-slate-300 hover:text-white flex items-center gap-1 cursor-pointer"
+                title={isMobileEditorExpanded ? 'Restore 50/50 split-screen view' : 'Expand editor height'}
+              >
+                <span>{isMobileEditorExpanded ? 'Split View' : 'Expand'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMobileSheetOpen(false);
+                  setMobileStudioTab('canvas');
+                }}
+                className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-[11px] font-bold text-white flex items-center gap-1 cursor-pointer"
+                aria-label="Close inspector bottom sheet"
+              >
+                <ChevronDown className="w-3.5 h-3.5" />
+                <span>Done</span>
+              </button>
+            </div>
           </div>
 
-          {/* Unified Guided Wizard & Categorized Inspector Tab Bar */}
+          {/* Unified Guided Wizard & Categorized Inspector Tab Bar (Desktop lg:+) */}
           <div
             data-testid="guided-wizard-bar"
             aria-label="Guided Creation Steps"
-            className="flex items-center justify-between gap-2 px-3 pt-2.5 pb-2 border-b border-white/10 bg-black/40 shrink-0 overflow-x-auto"
+            className="hidden lg:flex items-center justify-between gap-2 px-3 pt-2.5 pb-2 border-b border-white/10 bg-black/40 shrink-0 overflow-x-auto"
           >
             <div className="flex items-center gap-1 sm:gap-1.5">
               {/* Step 1: Ingest (Opens Source / OCR Drawer) */}
@@ -3054,8 +3105,8 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
             )}
           </div>
 
-          {/* Guided Step Progression Footer inside Inspector */}
-          <div className="px-4 py-2.5 bg-black/60 border-t border-white/10 flex items-center justify-between gap-3 shrink-0">
+          {/* Guided Step Progression Footer inside Inspector (Desktop lg:+) */}
+          <div className="hidden lg:flex px-4 py-2.5 bg-black/60 border-t border-white/10 items-center justify-between gap-3 shrink-0">
             <div className="text-xs text-slate-400 flex items-center gap-1.5">
               <span className="font-mono tabular-nums text-white font-semibold">
                 {inspectorTab === 'copy'
@@ -3127,139 +3178,326 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         </div>
       </div>
 
-      {/* ONE Fixed Mobile Bottom Bar (WCAG 2.1 AAA >= 44px Touch Targets) */}
-      <div className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-[#080d11]/95 border-t border-white/10 px-3 py-2 backdrop-blur-md flex items-center justify-between gap-2 shadow-2xl">
-        {activePostFormat === 'carousel' && (
-          <>
-            <button
-              type="button"
-              onClick={() => changeSlide((prev) => Math.max(0, prev - 1))}
-              disabled={currentSlideIndex === 0}
-              className="p-2 min-h-[44px] min-w-[44px] rounded-xl bg-white/[0.05] border border-white/10 text-white disabled:opacity-25 active:bg-white/15 cursor-pointer flex items-center justify-center shrink-0 focus-visible:ring-2 focus-visible:ring-cyan-400"
-              aria-label="Previous Slide"
-            >
-              <ChevronLeft className="w-5 h-5" />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setIsMobileSheetOpen(true);
-                setMobileStudioTab('editor');
-              }}
-              className="flex-1 flex items-center justify-center gap-1.5 py-2 px-2.5 min-h-[44px] rounded-xl bg-white/[0.04] border border-white/10 text-xs font-mono font-bold text-slate-200 active:bg-white/10 cursor-pointer focus-visible:ring-2 focus-visible:ring-cyan-400"
-              aria-label={`Slide ${currentSlideIndex + 1} of ${carousel.slides.length}. Tap to open inspector`}
-            >
-              <span>Slide</span>
-              <span style={{ color: theme.accent }}>{currentSlideIndex + 1}</span>
-              <span className="text-slate-400">/ {carousel.slides.length}</span>
-              <span className="text-xs uppercase font-sans px-1.5 py-0.5 rounded bg-white/10 text-cyan-300 ml-1">
-                Edit
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => changeSlide((prev) => Math.min(carousel.slides.length - 1, prev + 1))}
-              disabled={currentSlideIndex === carousel.slides.length - 1}
-              className="p-2 min-h-[44px] min-w-[44px] rounded-xl bg-white/[0.05] border border-white/10 text-white disabled:opacity-25 active:bg-white/15 cursor-pointer flex items-center justify-center shrink-0 focus-visible:ring-2 focus-visible:ring-cyan-400"
-              aria-label="Next Slide"
-            >
-              <ChevronRight className="w-5 h-5" />
-            </button>
-          </>
-        )}
-
-        {activePostFormat === 'single' && (
-          <button
-            type="button"
-            onClick={() => setIsMobileSheetOpen(true)}
-            className="flex-1 min-h-[44px] flex items-center justify-center gap-1 text-xs font-mono text-slate-200 bg-white/[0.04] border border-white/10 rounded-xl px-2 cursor-pointer"
-            aria-label="Single-Slide Post. Tap to inspect."
-          >
-            <span>Single-Slide Post · {activeDimensionSpec.width}×{activeDimensionSpec.height}</span>
-            <span className="text-xs uppercase font-sans px-1.5 py-0.5 rounded bg-white/10 text-cyan-300 ml-1">Edit</span>
-          </button>
-        )}
-
-        {activePostFormat === 'reel' && (
-          <button
-            type="button"
-            onClick={() => setIsMobileSheetOpen(true)}
-            className="flex-1 min-h-[44px] flex items-center justify-center gap-1 text-xs font-mono text-slate-200 bg-white/[0.04] border border-white/10 rounded-xl px-2 cursor-pointer"
-            aria-label="Motion Reel. Tap to inspect."
-          >
-            <span>Motion Reel · {activeReelConfig.duration.toFixed(1)}s</span>
-            <span className="text-xs uppercase font-sans px-1.5 py-0.5 rounded bg-white/10 text-cyan-300 ml-1">Edit</span>
-          </button>
-        )}
-
-        {/* Mobile More Actions Menu */}
-        <div className="relative">
-          <button
-            type="button"
-            onClick={() => setIsMoreMenuOpen((prev) => !prev)}
-            className="p-2 min-h-[44px] min-w-[44px] rounded-xl bg-white/[0.05] border border-white/10 text-slate-300 active:bg-white/15 flex items-center justify-center cursor-pointer focus-visible:ring-2 focus-visible:ring-cyan-400"
-            aria-label="More slide actions"
-            aria-expanded={isMoreMenuOpen}
-          >
-            <MoreHorizontal className="w-5 h-5" />
-          </button>
+      {/* Docked Mobile Navigation & Inspector Sheet Launcher (WCAG 2.1 AAATouch Targets) */}
+      <div className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-[#080d11]/95 border-t border-white/10 px-2.5 py-2 backdrop-blur-md flex flex-col gap-1.5 shadow-2xl">
+        {/* Tier 1: Direct Step / Inspector Sheet Triggers */}
+        <div className="grid grid-cols-4 gap-1">
+          {[
+            {
+              id: 'copy' as const,
+              label: activePostFormat === 'reel' ? 'Motion' : 'Content',
+              icon: activePostFormat === 'reel' ? Film : Type,
+              active: isSheetOpen && inspectorTab === 'copy',
+              hidden: false,
+            },
+            {
+              id: 'visual' as const,
+              label: 'Design',
+              icon: Layers,
+              active: isSheetOpen && inspectorTab === 'visual',
+              hidden: activePostFormat === 'reel',
+            },
+            {
+              id: 'position' as const,
+              label: 'Adjust',
+              icon: Sliders,
+              active: isSheetOpen && inspectorTab === 'position',
+              hidden: activePostFormat === 'reel',
+            },
+            {
+              id: 'review' as const,
+              label: 'Publish',
+              icon: CheckCircle2,
+              active: isSheetOpen && (inspectorTab === 'review' || inspectorTab === 'caption'),
+              hidden: false,
+            },
+          ]
+            .filter((item) => !item.hidden)
+            .map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => {
+                    if (isSheetOpen && inspectorTab === item.id) {
+                      setIsMobileSheetOpen(false);
+                      setMobileStudioTab('canvas');
+                    } else {
+                      setInspectorTab(item.id);
+                      setIsMobileSheetOpen(true);
+                      setMobileStudioTab('editor');
+                    }
+                  }}
+                  className={`flex items-center justify-center gap-1 py-1.5 px-2 min-h-[36px] rounded-xl text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    item.active
+                      ? 'bg-white/15 text-white border border-white/20 shadow-sm'
+                      : 'bg-white/[0.03] text-slate-300 border border-white/[0.06] active:bg-white/10'
+                  }`}
+                  style={item.active ? { color: theme.accent } : undefined}
+                >
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  <span>{item.label}</span>
+                  {item.id === 'review' && (
+                    <span
+                      className={`text-[9px] font-mono tabular-nums px-1 rounded ${
+                        isBlocked
+                          ? 'bg-amber-500/20 text-amber-300'
+                          : 'bg-emerald-500/20 text-emerald-400'
+                      }`}
+                    >
+                      {isBlocked ? blockersCount : 'OK'}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
         </div>
 
-        {/* Primary Action Button (>= 44px touch target) */}
-        <button
-          type="button"
-          onClick={() => {
-            if (isBlocked) {
-              setInspectorTab('review');
-              setIsMobileSheetOpen(true);
-              onShowToast(`⚠️ ${blockersCount} item${blockersCount > 1 ? 's' : ''} need attention in Review before export`);
-              return;
-            }
-            if (activePostFormat === 'reel') {
-              setIsMotionExportOpen(true);
-            } else {
-              handleExportZip('all');
-            }
-          }}
-          disabled={isExportingZip}
-          className={`flex items-center gap-1.5 px-3.5 py-2 min-h-[44px] rounded-xl font-bold text-xs transition-all shadow-md cursor-pointer shrink-0 focus-visible:ring-2 focus-visible:ring-cyan-400 ${
-            isBlocked
-              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-              : 'text-slate-950 active:scale-95'
-          }`}
-          style={!isBlocked ? { backgroundColor: theme.accent } : undefined}
-          title={
-            isBlocked
-              ? `${blockersCount} item${blockersCount > 1 ? 's' : ''} need attention in Review`
-              : activePostFormat === 'reel'
-              ? 'Export Motion Reel Video'
-              : 'Export 5-in-1 Ready to Share ZIP (All 5 Social Formats)'
-          }
-          aria-label={
-            isBlocked
-              ? `${blockersCount} items need attention before publishing. Tap to review.`
-              : 'Export Post Bundle'
-          }
-        >
-          {isExportingZip ? (
-            <RefreshCw className="w-4 h-4 animate-spin" />
-          ) : isBlocked ? (
-            <AlertTriangle className="w-4 h-4 text-amber-400" />
-          ) : activePostFormat === 'reel' ? (
-            <Film className="w-4 h-4 stroke-[2.5]" />
-          ) : (
-            <Download className="w-4 h-4 stroke-[2.5]" />
+        {/* Tier 2: Slide Stepper + Working More Menu + Primary Export Action */}
+        <div className="flex items-center justify-between gap-1.5">
+          {activePostFormat === 'carousel' && (
+            <>
+              <button
+                type="button"
+                onClick={() => changeSlide((prev) => Math.max(0, prev - 1))}
+                disabled={currentSlideIndex === 0}
+                className="p-2 min-h-[42px] min-w-[42px] rounded-xl bg-white/[0.05] border border-white/10 text-white disabled:opacity-25 active:bg-white/15 cursor-pointer flex items-center justify-center shrink-0 focus-visible:ring-2 focus-visible:ring-cyan-400"
+                aria-label="Previous Slide"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMobileSheetOpen((prev) => !prev);
+                  setMobileStudioTab('editor');
+                }}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2 px-2 min-h-[42px] rounded-xl bg-white/[0.04] border border-white/10 text-xs font-mono font-bold text-slate-200 active:bg-white/10 cursor-pointer focus-visible:ring-2 focus-visible:ring-cyan-400"
+                aria-label={`Slide ${currentSlideIndex + 1} of ${carousel.slides.length}. Tap to open inspector`}
+              >
+                <span>Slide</span>
+                <span style={{ color: theme.accent }}>{currentSlideIndex + 1}</span>
+                <span className="text-slate-400">/ {carousel.slides.length}</span>
+                <span className="text-[10px] uppercase font-sans px-1.5 py-0.5 rounded bg-white/10 text-cyan-300 ml-0.5">
+                  {isSheetOpen ? 'Close' : 'Edit'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => changeSlide((prev) => Math.min(carousel.slides.length - 1, prev + 1))}
+                disabled={currentSlideIndex === carousel.slides.length - 1}
+                className="p-2 min-h-[42px] min-w-[42px] rounded-xl bg-white/[0.05] border border-white/10 text-white disabled:opacity-25 active:bg-white/15 cursor-pointer flex items-center justify-center shrink-0 focus-visible:ring-2 focus-visible:ring-cyan-400"
+                aria-label="Next Slide"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </>
           )}
-          <span>
-            {isBlocked
-              ? `${blockersCount} to fix`
-              : activePostFormat === 'reel'
-              ? 'Export Video'
-              : 'Export ZIP'}
-          </span>
-        </button>
+
+          {activePostFormat === 'single' && (
+            <button
+              type="button"
+              onClick={() => setIsMobileSheetOpen((prev) => !prev)}
+              className="flex-1 min-h-[42px] flex items-center justify-center gap-1.5 text-xs font-mono text-slate-200 bg-white/[0.04] border border-white/10 rounded-xl px-2 cursor-pointer"
+              aria-label="Single-Slide Post. Tap to inspect."
+            >
+              <span>1-Slide · {activeDimensionSpec.shortLabel}</span>
+              <span className="text-[10px] uppercase font-sans px-1.5 py-0.5 rounded bg-white/10 text-cyan-300">
+                {isSheetOpen ? 'Close' : 'Edit'}
+              </span>
+            </button>
+          )}
+
+          {activePostFormat === 'reel' && (
+            <button
+              type="button"
+              onClick={() => setIsMobileSheetOpen((prev) => !prev)}
+              className="flex-1 min-h-[42px] flex items-center justify-center gap-1.5 text-xs font-mono text-slate-200 bg-white/[0.04] border border-white/10 rounded-xl px-2 cursor-pointer"
+              aria-label="Motion Reel. Tap to inspect."
+            >
+              <span>Reel · {activeReelConfig.duration.toFixed(1)}s</span>
+              <span className="text-[10px] uppercase font-sans px-1.5 py-0.5 rounded bg-white/10 text-cyan-300">
+                {isSheetOpen ? 'Close' : 'Edit'}
+              </span>
+            </button>
+          )}
+
+          {/* Mobile More Actions Menu (Anchored above mobile bottom bar) */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setIsMoreMenuOpen((prev) => !prev)}
+              className="p-2 min-h-[42px] min-w-[42px] rounded-xl bg-white/[0.05] border border-white/10 text-slate-300 active:bg-white/15 flex items-center justify-center cursor-pointer focus-visible:ring-2 focus-visible:ring-cyan-400"
+              aria-label="More slide actions"
+              aria-expanded={isMoreMenuOpen}
+            >
+              <MoreHorizontal className="w-5 h-5" />
+            </button>
+
+            {isMoreMenuOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setIsMoreMenuOpen(false)}
+                />
+                <div className="absolute right-0 bottom-full mb-2 w-64 bg-[#0d151e] border border-white/15 rounded-2xl shadow-2xl p-2 z-50 flex flex-col gap-1 text-xs">
+                  {activePostFormat !== 'reel' && (
+                    <div className="px-2 py-1 border-b border-white/10 mb-0.5">
+                      <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400 block mb-1">
+                        Export Dimension Preset
+                      </span>
+                      <select
+                        value={activeDimensionSpec.id}
+                        onChange={(e) => {
+                          handleSelectDimensionPreset(e.target.value as CanvasDimensionPreset);
+                          setIsMoreMenuOpen(false);
+                        }}
+                        className="w-full px-2 py-1.5 rounded-lg bg-black/60 border border-white/15 text-xs font-mono text-white"
+                      >
+                        {CANVAS_DIMENSION_PRESET_LIST.map((preset) => (
+                          <option key={preset.id} value={preset.id} className="bg-[#080d11] text-slate-200">
+                            {preset.shortLabel} ({preset.width}×{preset.height})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {onOpenPublishScheduleModal && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        onOpenPublishScheduleModal('single');
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl hover:bg-white/10 text-slate-200 transition-colors text-left cursor-pointer"
+                    >
+                      <BookmarkCheck className="w-4 h-4" style={{ color: theme.accent }} />
+                      <span>Publish & Schedule Hub</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      downloadSingleSlidePng(
+                        carousel,
+                        currentSlideIndex,
+                        activePostFormat === 'single'
+                          ? `MARROK_Post_${activeDimensionSpec.width}x${activeDimensionSpec.height}.jpg`
+                          : `MARROK_Slide_${currentSlideIndex + 1}_${activeDimensionSpec.width}x${activeDimensionSpec.height}.jpg`,
+                        theme,
+                        carousel.visualOptions
+                      );
+                      setIsMoreMenuOpen(false);
+                      onShowToast(`Downloaded Slide ${currentSlideIndex + 1} (${activeDimensionSpec.width}×${activeDimensionSpec.height}) JPG`);
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl hover:bg-white/10 text-slate-200 transition-colors text-left cursor-pointer"
+                  >
+                    <Download className="w-4 h-4 text-cyan-400" />
+                    <span>Download Slide JPG ({activeDimensionSpec.shortLabel})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleCopySlide();
+                      setIsMoreMenuOpen(false);
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl hover:bg-white/10 text-slate-200 transition-colors text-left cursor-pointer"
+                  >
+                    <Copy className="w-4 h-4 text-slate-400" />
+                    <span>Copy Slide Image</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleCopyCaption();
+                      setIsMoreMenuOpen(false);
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl hover:bg-white/10 text-slate-200 transition-colors text-left cursor-pointer"
+                  >
+                    <FileText className="w-4 h-4 text-slate-400" />
+                    <span>Copy Caption Text</span>
+                  </button>
+
+                  {activePostFormat !== 'single' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onOpenContactSheet?.();
+                        setIsMoreMenuOpen(false);
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl hover:bg-white/10 text-slate-200 transition-colors text-left cursor-pointer"
+                    >
+                      <LayoutGrid className="w-4 h-4 text-indigo-400" />
+                      <span>All Slides Grid</span>
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Primary Action Button */}
+          <button
+            type="button"
+            onClick={() => {
+              if (isBlocked) {
+                setInspectorTab('review');
+                setIsMobileSheetOpen(true);
+                setMobileStudioTab('editor');
+                onShowToast(`⚠️ ${blockersCount} item${blockersCount > 1 ? 's' : ''} need attention in Publish before export`);
+                return;
+              }
+              if (activePostFormat === 'reel') {
+                setIsMotionExportOpen(true);
+              } else {
+                handleExportZip('all');
+              }
+            }}
+            disabled={isExportingZip}
+            className={`flex items-center gap-1.5 px-3 py-2 min-h-[42px] rounded-xl font-bold text-xs transition-all shadow-md cursor-pointer shrink-0 focus-visible:ring-2 focus-visible:ring-cyan-400 ${
+              isBlocked
+                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                : 'text-slate-950 active:scale-95'
+            }`}
+            style={!isBlocked ? { backgroundColor: theme.accent } : undefined}
+            title={
+              isBlocked
+                ? `${blockersCount} item${blockersCount > 1 ? 's' : ''} need attention in Publish`
+                : activePostFormat === 'reel'
+                ? 'Export Motion Reel Video'
+                : 'Export 5-in-1 Ready to Share ZIP (All 5 Social Formats)'
+            }
+            aria-label={
+              isBlocked
+                ? `${blockersCount} items need attention before publishing. Tap to review.`
+                : 'Export Post Bundle'
+            }
+          >
+            {isExportingZip ? (
+              <RefreshCw className="w-4 h-4 animate-spin" />
+            ) : isBlocked ? (
+              <AlertTriangle className="w-4 h-4 text-amber-400" />
+            ) : activePostFormat === 'reel' ? (
+              <Film className="w-4 h-4 stroke-[2.5]" />
+            ) : (
+              <Download className="w-4 h-4 stroke-[2.5]" />
+            )}
+            <span>
+              {isBlocked
+                ? `${blockersCount} Check${blockersCount > 1 ? 's' : ''}`
+                : activePostFormat === 'reel'
+                ? 'Export Video'
+                : 'Export ZIP'}
+            </span>
+          </button>
+        </div>
       </div>
 
       {/* Motion Reel Export Modal */}

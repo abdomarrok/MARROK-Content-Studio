@@ -74,6 +74,7 @@ interface ViewportCanvasProps {
   onUpdateLayoutOverride?: (id: GraphicalElementId, override: ElementLayoutOverride | null) => void;
   onDoubleClickElement?: (id: GraphicalElementId) => void;
   onUpdateSlideField?: <K extends keyof SlideData>(field: K, value: SlideData[K]) => void;
+  compactMobileStage?: boolean;
 }
 
 export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
@@ -90,6 +91,7 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
   onUpdateLayoutOverride,
   onDoubleClickElement,
   onUpdateSlideField,
+  compactMobileStage = false,
 }) => {
   const internalCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const activeCanvasRef = externalCanvasRef || internalCanvasRef;
@@ -533,7 +535,11 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
       data-testid="viewport-stage-container"
       data-dimension-preset={spec.id}
       style={{ aspectRatio: `${spec.width} / ${spec.height}` }}
-      className="relative rounded-2xl overflow-hidden border border-white/15 bg-black shadow-2xl w-auto max-w-[min(420px,92vw)] max-h-[min(540px,calc(100dvh-230px))] sm:max-h-[min(620px,calc(100vh-205px))] shrink-0 outline-none focus:ring-1 focus:ring-cyan-500/40 select-none group transition-all duration-200"
+      className={`relative rounded-2xl overflow-hidden border border-white/15 bg-black shadow-2xl w-auto max-w-[min(420px,92vw)] ${
+        compactMobileStage
+          ? 'max-h-[min(280px,32dvh)] sm:max-h-[min(330px,35dvh)] lg:max-h-[min(620px,calc(100vh-205px))]'
+          : 'max-h-[min(480px,calc(100dvh-265px))] sm:max-h-[min(620px,calc(100vh-205px))]'
+      } shrink-0 outline-none focus:ring-1 focus:ring-cyan-500/40 select-none group transition-all duration-200`}
     >
       <canvas
         ref={activeCanvasRef}

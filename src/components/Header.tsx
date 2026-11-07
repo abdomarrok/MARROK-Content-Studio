@@ -75,10 +75,10 @@ export const Header: React.FC<HeaderProps> = ({
   }, [isMobileMenuOpen]);
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-white/[0.07] bg-[#080d11]/95 backdrop-blur-md px-4 sm:px-6 py-2 transition-colors">
-      <div className="max-w-[1440px] mx-auto flex items-center justify-between gap-4 sm:gap-8">
+    <header className="sticky top-0 z-40 w-full border-b border-white/[0.07] bg-[#080d11]/95 backdrop-blur-md px-2.5 sm:px-6 py-2 transition-colors">
+      <div className="max-w-[1440px] mx-auto flex items-center justify-between gap-2 sm:gap-8">
         {/* Zone 1: Brand Wordmark + Studio/Publish Phase Switcher */}
-        <div className="flex items-center gap-4 shrink-0">
+        <div className="flex items-center gap-2 sm:gap-4 min-w-0 shrink-0">
           <a
             href="#"
             title="MARROK Content Studio"
@@ -87,7 +87,7 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="w-7 h-7 rounded-lg overflow-hidden border border-white/15 bg-[#0D0D0D] flex items-center justify-center group-hover:border-white/30 transition-colors shrink-0">
               <img src="/marrok-logo.svg" alt="M" className="w-full h-full object-contain" />
             </div>
-            <span className="text-base sm:text-lg font-extrabold tracking-tight text-white font-jakarta whitespace-nowrap">
+            <span className="hidden min-[400px]:inline text-base sm:text-lg font-extrabold tracking-tight text-white font-jakarta whitespace-nowrap">
               MARROK
             </span>
           </a>
@@ -96,31 +96,33 @@ export const Header: React.FC<HeaderProps> = ({
             <div
               role="group"
               aria-label="Workspace Phase"
-              className="flex items-center gap-1 p-1 rounded-lg border border-white/10 bg-black/50"
+              className="flex items-center gap-0.5 sm:gap-1 p-0.5 sm:p-1 rounded-lg border border-white/10 bg-black/50"
             >
               <button
                 type="button"
                 onClick={() => onPhaseChange('studio')}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded-md text-[11px] sm:text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                   activePhase === 'studio'
                     ? 'bg-white/15 text-white shadow-xs'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <Layers className="w-3.5 h-3.5" style={{ color: currentPalette.accent }} />
-                <span>1. Create Studio</span>
+                <Layers className="w-3.5 h-3.5 shrink-0" style={{ color: currentPalette.accent }} />
+                <span className="sm:hidden">Studio</span>
+                <span className="hidden sm:inline">1. Create Studio</span>
               </button>
               <button
                 type="button"
                 onClick={() => onPhaseChange('publish')}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded-md text-[11px] sm:text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                   activePhase === 'publish'
                     ? 'bg-emerald-500/20 text-emerald-200'
                     : 'text-slate-400 hover:text-emerald-300'
                 }`}
               >
-                <Send className="w-3.5 h-3.5 text-emerald-400" />
-                <span>2. Publish Hub</span>
+                <Send className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span className="sm:hidden">Publish</span>
+                <span className="hidden sm:inline">2. Publish Hub</span>
               </button>
             </div>
           )}
@@ -197,13 +199,13 @@ export const Header: React.FC<HeaderProps> = ({
         </nav>
 
         {/* Zone 3: Primary Vault Actions */}
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {onSaveToVault && (
             <button
               type="button"
               disabled={isSavingPost}
               onClick={onSaveToVault}
-              className={`flex items-center gap-1.5 px-3 py-1.5 min-h-[38px] text-xs font-semibold rounded-lg border transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50 ${
+              className={`flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 min-h-[36px] sm:min-h-[38px] text-[11px] sm:text-xs font-semibold rounded-lg border transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50 ${
                 deckStatus === 'posted'
                   ? 'border-emerald-400/35 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25'
                   : deckStatus === 'ready'
@@ -236,7 +238,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               type="button"
               onClick={onOpenSavedPostsDrawer}
-              className="flex items-center gap-1.5 px-3 py-1.5 min-h-[38px] text-xs font-semibold rounded-lg border border-white/10 bg-white/[0.04] text-slate-300 hover:bg-white/[0.08] hover:text-white transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 min-h-[36px] sm:min-h-[38px] text-[11px] sm:text-xs font-semibold rounded-lg border border-white/10 bg-white/[0.04] text-slate-300 hover:bg-white/[0.08] hover:text-white transition-colors cursor-pointer whitespace-nowrap shrink-0"
               title="Open Saved & Posted Carousels Vault"
               aria-label="Open Saved Posts Vault"
             >
@@ -315,7 +317,7 @@ export const Header: React.FC<HeaderProps> = ({
                     className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-slate-200 hover:text-white hover:bg-white/10 rounded-xl transition-colors text-left cursor-pointer"
                   >
                     <Grid className="w-4 h-4 text-cyan-400 shrink-0" />
-                    <span>Contact Sheet</span>
+                    <span>All Slides Grid</span>
                   </button>
                 )}
 
