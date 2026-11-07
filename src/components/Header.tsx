@@ -87,7 +87,7 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="w-7 h-7 rounded-lg overflow-hidden border border-white/15 bg-[#0D0D0D] flex items-center justify-center group-hover:border-white/30 transition-colors shrink-0">
               <img src="/marrok-logo.svg" alt="M" className="w-full h-full object-contain" />
             </div>
-            <span className="hidden min-[400px]:inline text-base sm:text-lg font-extrabold tracking-tight text-white font-jakarta whitespace-nowrap">
+            <span className="hidden md:inline text-base sm:text-lg font-extrabold tracking-tight text-white font-jakarta whitespace-nowrap">
               MARROK
             </span>
           </a>

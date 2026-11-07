@@ -535,10 +535,10 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
       data-testid="viewport-stage-container"
       data-dimension-preset={spec.id}
       style={{ aspectRatio: `${spec.width} / ${spec.height}` }}
-      className={`relative rounded-2xl overflow-hidden border border-white/15 bg-black shadow-2xl w-auto max-w-[min(420px,92vw)] ${
+      className={`relative mx-auto rounded-2xl overflow-hidden border border-white/15 bg-black shadow-2xl w-auto max-w-[min(420px,92vw)] ${
         compactMobileStage
-          ? 'max-h-[min(280px,32dvh)] sm:max-h-[min(330px,35dvh)] lg:max-h-[min(620px,calc(100vh-205px))]'
-          : 'max-h-[min(480px,calc(100dvh-265px))] sm:max-h-[min(620px,calc(100vh-205px))]'
+          ? 'max-h-[min(300px,35dvh)] sm:max-h-[min(340px,36dvh)] lg:max-h-[min(620px,calc(100vh-205px))]'
+          : 'max-h-[min(560px,calc(100dvh-230px))] sm:max-h-[min(620px,calc(100vh-205px))]'
       } shrink-0 outline-none focus:ring-1 focus:ring-cyan-500/40 select-none group transition-all duration-200`}
     >
       <canvas
@@ -839,9 +839,9 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
           }}
           title="Drag to reposition, drag corners to scale, or double-click to edit text"
         >
-          {/* Smart Floating Element HUD Badge */}
+          {/* Smart Floating Element HUD Badge (Desktop lg:+) */}
           <div
-            className={`absolute flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-mono uppercase tracking-wider text-black font-bold shadow-xl whitespace-nowrap z-20 ${
+            className={`hidden lg:flex absolute items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-mono uppercase tracking-wider text-black font-bold shadow-xl whitespace-nowrap z-20 ${
               isPillInside ? 'top-1.5 left-2' : '-top-7 left-1/2 -translate-x-1/2'
             }`}
             style={{ backgroundColor: theme.accent }}
@@ -906,12 +906,12 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
             title="Drag corner to scale element (60% - 150%)"
           />
 
-          {/* Floating Quick-Action Toolbar on Selected Element */}
+          {/* Floating Quick-Action Toolbar on Selected Element (Desktop lg:+) */}
           {!isDragging && !isResizing && (
             <div
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
-              className={`hidden sm:flex absolute left-1/2 -translate-x-1/2 items-center gap-0.5 bg-[#0b1118]/95 backdrop-blur-md border border-white/20 rounded-xl px-1.5 py-1 shadow-2xl z-30 whitespace-nowrap ${
+              className={`hidden lg:flex absolute left-1/2 -translate-x-1/2 items-center gap-0.5 bg-[#0b1118]/95 backdrop-blur-md border border-white/20 rounded-xl px-1.5 py-1 shadow-2xl z-30 whitespace-nowrap ${
                 isToolbarAbove ? '-top-14' : '-bottom-10'
               }`}
             >
@@ -1007,109 +1007,15 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
         </div>
       )}
 
-      {/* Top Floating Keyboard Shortcut Hint */}
+      {/* Top Floating Keyboard Shortcut Hint (Desktop lg:+) */}
       {selectedElementId && (
-        <div className="hidden sm:flex absolute top-2 right-2 bg-black/85 backdrop-blur-md border border-white/20 rounded-full px-2.5 py-0.5 text-[8px] font-mono text-slate-300 shadow-xl items-center gap-1.5 pointer-events-none whitespace-nowrap z-20">
+        <div className="hidden lg:flex absolute top-2 right-2 bg-black/85 backdrop-blur-md border border-white/20 rounded-full px-2.5 py-0.5 text-[8px] font-mono text-slate-300 shadow-xl items-center gap-1.5 pointer-events-none whitespace-nowrap z-20">
           <span className="w-1.5 h-1.5 rounded-full animate-ping" style={{ backgroundColor: theme.accent }} />
           <span>Drag corners: scale</span>
           <span className="text-slate-500">•</span>
           <span>Arrows: nudge</span>
           <span className="text-slate-500">•</span>
           <span>Dbl-click: edit</span>
-        </div>
-      )}
-
-      {/* Mobile Precision Nudge & Scale Bar */}
-      {selectedElementId && (
-        <div className="sm:hidden absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-black/90 backdrop-blur-md border border-white/25 rounded-2xl p-1 shadow-2xl z-30 touch-manipulation">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleNudge(-mobileNudgeStep, 0);
-            }}
-            className="w-7 h-7 rounded-xl bg-white/10 active:bg-white/30 text-white font-bold flex items-center justify-center text-xs cursor-pointer"
-            title="Nudge Left"
-          >
-            ◀
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleNudge(0, -mobileNudgeStep);
-            }}
-            className="w-7 h-7 rounded-xl bg-white/10 active:bg-white/30 text-white font-bold flex items-center justify-center text-xs cursor-pointer"
-            title="Nudge Up"
-          >
-            ▲
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleNudge(0, mobileNudgeStep);
-            }}
-            className="w-7 h-7 rounded-xl bg-white/10 active:bg-white/30 text-white font-bold flex items-center justify-center text-xs cursor-pointer"
-            title="Nudge Down"
-          >
-            ▼
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleNudge(mobileNudgeStep, 0);
-            }}
-            className="w-7 h-7 rounded-xl bg-white/10 active:bg-white/30 text-white font-bold flex items-center justify-center text-xs cursor-pointer"
-            title="Nudge Right"
-          >
-            ▶
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleQuickScale(-0.08);
-            }}
-            className="w-7 h-7 rounded-xl bg-white/10 active:bg-white/30 text-white font-bold flex items-center justify-center text-xs cursor-pointer"
-            title="Scale Down"
-          >
-            −
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleQuickScale(0.08);
-            }}
-            className="w-7 h-7 rounded-xl bg-white/10 active:bg-white/30 text-white font-bold flex items-center justify-center text-xs cursor-pointer"
-            title="Scale Up"
-          >
-            +
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setMobileNudgeStep((s) => (s === 2 ? 10 : s === 10 ? 25 : 2));
-            }}
-            className="px-1.5 h-7 rounded-xl bg-white/15 active:bg-white/30 text-[9px] font-mono text-cyan-300 font-bold flex items-center justify-center cursor-pointer"
-            title="Toggle nudge step (2px / 10px / 25px)"
-          >
-            {mobileNudgeStep}px
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onUpdateLayoutOverride?.(selectedElementId!, null);
-            }}
-            className="w-7 h-7 rounded-xl bg-rose-500/20 active:bg-rose-500/40 text-rose-300 font-bold flex items-center justify-center text-xs cursor-pointer"
-            title="Reset position"
-          >
-            ↺
-          </button>
         </div>
       )}
 
@@ -1303,12 +1209,12 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
         </div>
       )}
 
-      {/* Slide Navigation Hover Arrows */}
+      {/* Slide Navigation Hover Arrows (Desktop/Tablet sm:+ only; mobile uses Slide Strip & swipe) */}
       <button
         type="button"
         onClick={onPreviousSlide}
         disabled={currentSlideIndex === 0}
-        className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/60 hover:bg-black/80 border border-white/20 text-white flex items-center justify-center disabled:opacity-20 cursor-pointer transition-all"
+        className="hidden sm:flex absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/60 hover:bg-black/80 border border-white/20 text-white items-center justify-center disabled:opacity-20 cursor-pointer transition-all"
         title="Previous Slide"
       >
         <ChevronLeft className="w-5 h-5" />
@@ -1317,7 +1223,7 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
         type="button"
         onClick={onNextSlide}
         disabled={currentSlideIndex === carousel.slides.length - 1}
-        className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/60 hover:bg-black/80 border border-white/20 text-white flex items-center justify-center disabled:opacity-20 cursor-pointer transition-all"
+        className="hidden sm:flex absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/60 hover:bg-black/80 border border-white/20 text-white items-center justify-center disabled:opacity-20 cursor-pointer transition-all"
         title="Next Slide"
       >
         <ChevronRight className="w-5 h-5" />

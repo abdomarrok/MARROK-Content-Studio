@@ -178,9 +178,9 @@ const STARTER_TOPICS = [
 ];
 
 const INGEST_TABS = [
-  { id: 'text' as const, label: 'Notes / Blog / Code', icon: FileText },
-  { id: 'youtube' as const, label: 'YouTube Summary', icon: Youtube },
-  { id: 'upload' as const, label: 'Screenshot / Image OCR', icon: ImageIcon },
+  { id: 'text' as const, label: 'Notes / Blog / Code', shortLabel: 'Notes', icon: FileText },
+  { id: 'youtube' as const, label: 'YouTube Summary', shortLabel: 'YouTube', icon: Youtube },
+  { id: 'upload' as const, label: 'Screenshot / Image OCR', shortLabel: 'Image OCR', icon: ImageIcon },
 ];
 
 const DOMAIN_CATEGORIES = [
@@ -1751,99 +1751,26 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           </button>
         </form>
 
-        {/* Floating Overlay Ingestion Drawer (Expands over workspace without pushing layout) */}
+        {/* Floating Overlay Ingestion Drawer (Replaces top bar cleanly when expanded) */}
         {isExpanded && (
           <>
             <div
-              className="fixed inset-0 z-30 bg-black/50 backdrop-blur-[2px]"
+              className="fixed inset-0 z-30 bg-black/60 backdrop-blur-[2px]"
               onClick={() => setIsExpanded(false)}
             />
-            <div className="absolute inset-x-0 top-full mt-2 z-40 bg-[#0b1118] border border-white/20 rounded-2xl p-3.5 sm:p-5 shadow-2xl space-y-3.5 sm:space-y-4 animate-fade-in max-h-[80dvh] overflow-y-auto">
-              {/* Mobile Post Format Selector inside Collapsible Drawer */}
-              <div className="sm:hidden flex items-center justify-between gap-2 pb-3 border-b border-white/10">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
-                  Post Format
-                </span>
-                <div className="flex items-center bg-black/60 p-0.5 rounded-xl border border-white/10">
-                  <button
-                    type="button"
-                    onClick={() => handleSwitchPostFormat('carousel')}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                      activePostFormat === 'carousel'
-                        ? 'bg-white/15 text-white shadow-sm'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                    style={activePostFormat === 'carousel' ? { color: theme.accent } : undefined}
-                  >
-                    <Layers className="w-3 h-3" />
-                    <span>Carousel</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSwitchPostFormat('single')}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                      activePostFormat === 'single'
-                        ? 'bg-white/15 text-white shadow-sm'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                    style={activePostFormat === 'single' ? { color: theme.accent } : undefined}
-                  >
-                    <ImageIcon className="w-3 h-3" />
-                    <span>1-Slide</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSwitchPostFormat('reel')}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                      activePostFormat === 'reel'
-                        ? 'bg-white/15 text-white shadow-sm'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                    style={activePostFormat === 'reel' ? { color: theme.accent } : undefined}
-                  >
-                    <Film className="w-3 h-3" />
-                    <span>Reel</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Header with Ingestion Tabs and Collapse Toggle */}
-              <div className="flex flex-wrap items-center justify-between gap-2.5 pb-3 border-b border-white/10">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-white font-jakarta tracking-wide">
-                    Step 1 · Multimodal Source Ingestion
+            <div className="absolute inset-x-0 top-0 z-40 bg-[#0b1118] border border-white/20 rounded-2xl p-3 sm:p-5 shadow-2xl space-y-3 sm:space-y-3.5 animate-fade-in max-h-[82dvh] overflow-y-auto">
+              {/* Row 1: Single-line Header + Clear & Close */}
+              <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-white/10">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs font-bold text-white font-jakarta tracking-wide truncate">
+                    Step 1 · Source Ingestion
                   </span>
-                  <span className="text-[11px] text-slate-400 hidden sm:inline">
-                    · Paste long-form notes, YouTube transcripts, or architecture screenshots
+                  <span className="text-[11px] text-slate-400 hidden md:inline truncate">
+                    · Paste notes, YouTube transcripts, or screenshots
                   </span>
                 </div>
 
-                {/* Ingestion Mode Tabs */}
-                <div className="flex items-center gap-1 bg-black/60 p-1 rounded-xl border border-white/10">
-                  {INGEST_TABS.map((tab) => {
-                    const Icon = tab.icon;
-                    const isActive = activeTab === tab.id;
-                    return (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        onClick={() => setActiveTab(tab.id)}
-                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                          isActive
-                            ? 'bg-white/15 text-white shadow-sm'
-                            : 'text-slate-400 hover:text-white hover:bg-white/5'
-                        }`}
-                        style={{ color: isActive ? theme.accent : undefined }}
-                      >
-                        <Icon className="w-3.5 h-3.5" />
-                        <span>{tab.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Actions: Clear & Collapse */}
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 shrink-0">
                   {(promptInput || uploadedImage) && (
                     <button
                       type="button"
@@ -1859,7 +1786,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   <button
                     type="button"
                     onClick={() => setIsExpanded(false)}
-                    className="p-1.5 px-2.5 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer text-xs flex items-center gap-1"
+                    className="py-1 px-2.5 rounded-lg border border-white/15 bg-white/[0.04] text-slate-200 hover:text-white hover:bg-white/10 transition-colors cursor-pointer text-xs font-semibold flex items-center gap-1"
                     title="Close drawer"
                   >
                     <X className="w-3.5 h-3.5" />
@@ -1868,8 +1795,83 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 </div>
               </div>
 
+              {/* Row 2: Mode Switcher Tabs + Mobile Format Pill */}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="grid grid-cols-3 sm:flex items-center gap-1 bg-black/60 p-1 rounded-xl border border-white/10 w-full sm:w-auto">
+                  {INGEST_TABS.map((tab) => {
+                    const Icon = tab.icon;
+                    const isActive = activeTab === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setActiveTab(tab.id)}
+                        className={`flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                          isActive
+                            ? 'bg-white/15 text-white shadow-sm'
+                            : 'text-slate-400 hover:text-white hover:bg-white/5'
+                        }`}
+                        style={{ color: isActive ? theme.accent : undefined }}
+                      >
+                        <Icon className="w-3.5 h-3.5 shrink-0" />
+                        <span className="sm:hidden">{tab.shortLabel}</span>
+                        <span className="hidden sm:inline">{tab.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Mobile Post Format Selector */}
+                <div className="sm:hidden flex items-center justify-between w-full gap-2 pt-1">
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">
+                    Output Format:
+                  </span>
+                  <div className="flex items-center bg-black/60 p-0.5 rounded-xl border border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => handleSwitchPostFormat('carousel')}
+                      className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                        activePostFormat === 'carousel'
+                          ? 'bg-white/15 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                      style={activePostFormat === 'carousel' ? { color: theme.accent } : undefined}
+                    >
+                      <Layers className="w-3 h-3" />
+                      <span>Carousel</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSwitchPostFormat('single')}
+                      className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                        activePostFormat === 'single'
+                          ? 'bg-white/15 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                      style={activePostFormat === 'single' ? { color: theme.accent } : undefined}
+                    >
+                      <ImageIcon className="w-3 h-3" />
+                      <span>1-Slide</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSwitchPostFormat('reel')}
+                      className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                        activePostFormat === 'reel'
+                          ? 'bg-white/15 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                      style={activePostFormat === 'reel' ? { color: theme.accent } : undefined}
+                    >
+                      <Film className="w-3 h-3" />
+                      <span>Reel</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               {/* Starter Topics Row inside Expanded Drawer */}
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
                 <span className="text-[11px] text-slate-400 font-medium shrink-0">Starter Topics:</span>
                 {STARTER_TOPICS.map((topic) => (
                   <button
@@ -1890,7 +1892,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 <textarea
                   value={promptInput}
                   onChange={(e) => setPromptInput(e.target.value)}
-                  rows={5}
+                  rows={4}
                   disabled={isGenerating}
                   placeholder={
                     activeTab === 'youtube'
@@ -1899,7 +1901,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                       ? 'Additional context or guidance for analyzing the attached screenshot (e.g. highlight the microservice topology and CPU metrics)...'
                       : 'Paste engineering blog post, GitHub README, or system notes... e.g.:\nAnthropic announced Scion, an internal system designed to address Git scaling limitations when thousands of automated AI agents run around the clock...'
                   }
-                  className="w-full bg-black/70 border border-white/15 focus:border-cyan-400/50 rounded-xl p-3.5 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none transition-all shadow-inner resize-y leading-relaxed font-mono min-h-[110px]"
+                  className="w-full bg-black/70 border border-white/15 focus:border-cyan-400/50 rounded-xl p-3 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none transition-all shadow-inner resize-y leading-relaxed font-mono min-h-[96px]"
                 />
 
                 <div className="flex items-center justify-between px-3 py-1.5 bg-black/80 border-x border-b border-white/10 rounded-b-xl text-[11px] text-slate-400 font-mono tabular-nums -mt-1.5">
@@ -1907,7 +1909,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   {promptInput.length > 200 ? (
                     <span className="text-emerald-400 flex items-center gap-1">
                       <Zap className="w-3 h-3 text-emerald-400" />
-                      Direct AI Schema Mode (Search Grounding Bypassed)
+                      Direct AI Schema Mode
                     </span>
                   ) : promptInput.length > 0 ? (
                     <span className="text-cyan-400">Real-Time Grounding Mode</span>
@@ -2011,120 +2013,137 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 </div>
               )}
 
-              {/* Feed Cadence Status & Smart Next Theme Bar */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 px-3 py-2 rounded-xl bg-[#0a1217] border border-white/10 text-xs">
-                <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                  <span className="text-[10px] font-mono uppercase tracking-wider text-[#37E2C0] font-bold">
-                    Feed Cadence
-                  </span>
-                  <span aria-hidden="true" className="text-slate-600">·</span>
-                  {dockCadence.lastPostedThemeId ? (
-                    <div className="flex items-center gap-1.5 text-[11px] font-mono text-slate-400 shrink-0">
-                      <span>Last:</span>
-                      <span
-                        className="w-2.5 h-2.5 rounded-full inline-block border border-white/20"
-                        style={{
-                          backgroundColor:
-                            DEFAULT_PALETTES[dockCadence.lastPostedThemeId]?.accent || '#37E2C0',
-                        }}
-                      />
-                      <span className="text-slate-200 font-semibold">
-                        {DEFAULT_PALETTES[dockCadence.lastPostedThemeId]?.name.split(' ')[0]}
+              {/* Collapsible Advanced Options (Feed Cadence & Domain Classification) */}
+              <details className="group rounded-xl border border-white/10 bg-black/40 px-3 py-2">
+                <summary className="flex items-center justify-between gap-2 cursor-pointer list-none text-[11px] font-mono text-slate-300 select-none">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="uppercase tracking-wider text-[#37E2C0] font-bold">
+                      Options
+                    </span>
+                    <span className="text-slate-500">·</span>
+                    <span className="truncate">
+                      Next Theme: <strong className="text-white">{dockCadence.recommendedPalette.name.split(' ')[0]}</strong>
+                    </span>
+                    <span className="text-slate-500">·</span>
+                    <span className="truncate">
+                      Domain: <strong className="text-white">{DOMAIN_CATEGORIES.find((d) => d.id === categoryHint)?.label || 'Auto'}</strong>
+                    </span>
+                  </div>
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 transition-transform group-open:rotate-180 shrink-0" />
+                </summary>
+
+                <div className="pt-2.5 mt-2 border-t border-white/10 space-y-2.5">
+                  {/* Feed Cadence Status & Smart Next Theme Bar */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                      <span className="text-[10px] font-mono uppercase tracking-wider text-[#37E2C0] font-bold">
+                        Feed Cadence
                       </span>
-                      <span className="text-white/30 select-none">→</span>
+                      {dockCadence.lastPostedThemeId ? (
+                        <div className="flex items-center gap-1.5 text-[11px] font-mono text-slate-400 shrink-0">
+                          <span>Last:</span>
+                          <span
+                            className="w-2.5 h-2.5 rounded-full inline-block border border-white/20"
+                            style={{
+                              backgroundColor:
+                                DEFAULT_PALETTES[dockCadence.lastPostedThemeId]?.accent || '#37E2C0',
+                            }}
+                          />
+                          <span className="text-slate-200 font-semibold">
+                            {DEFAULT_PALETTES[dockCadence.lastPostedThemeId]?.name.split(' ')[0]}
+                          </span>
+                          <span className="text-white/30 select-none">→</span>
+                        </div>
+                      ) : null}
+                      <div className="flex items-center gap-1.5 text-[11px] min-w-0">
+                        <span className="text-slate-400 font-mono shrink-0">Next:</span>
+                        <span
+                          className="w-2.5 h-2.5 rounded-full inline-block border border-white/20 shrink-0"
+                          style={{ backgroundColor: dockCadence.recommendedPalette.accent }}
+                        />
+                        <span className="text-white font-bold truncate">
+                          {dockCadence.recommendedPalette.name.split(' ')[0]}
+                        </span>
+                      </div>
                     </div>
-                  ) : null}
-                  <div className="flex items-center gap-1.5 text-[11px] min-w-0">
-                    <span className="text-slate-400 font-mono shrink-0">Next:</span>
-                    <span
-                      className="w-2.5 h-2.5 rounded-full inline-block border border-white/20 shrink-0"
-                      style={{ backgroundColor: dockCadence.recommendedPalette.accent }}
-                    />
-                    <span className="text-white font-bold truncate">
-                      {dockCadence.recommendedPalette.name.split(' ')[0]}
-                    </span>
-                    <span className="text-slate-400 text-[10px] hidden md:inline truncate">
-                      ({dockCadence.reason})
-                    </span>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      {theme.id !== dockCadence.recommendedThemeId && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onSelectTheme(dockCadence.recommendedPalette);
+                            onShowToast(`Applied ${dockCadence.recommendedPalette.name} based on post history cadence`);
+                          }}
+                          className="px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all cursor-pointer border hover:opacity-90 active:scale-95"
+                          style={{
+                            borderColor: dockCadence.recommendedPalette.accent + '66',
+                            backgroundColor: dockCadence.recommendedPalette.accent + '20',
+                            color: dockCadence.recommendedPalette.accent,
+                          }}
+                          title="Apply recommended palette to ensure feed contrast"
+                        >
+                          Apply Smart Theme
+                        </button>
+                      )}
+                      {onOpenThemeCustomizer && (
+                        <button
+                          type="button"
+                          onClick={onOpenThemeCustomizer}
+                          className="text-[10px] font-mono text-slate-400 hover:text-white transition-colors cursor-pointer underline underline-offset-2"
+                        >
+                          Theme Studio
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Domain Classification Pills */}
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                    <span className="text-slate-400 font-medium text-[11px]">Domain:</span>
+                    <div className="flex flex-wrap items-center bg-black/60 p-1 rounded-xl border border-white/10 gap-1">
+                      {DOMAIN_CATEGORIES.map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => setCategoryHint(opt.id)}
+                          className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold transition-colors cursor-pointer ${
+                            categoryHint === opt.id
+                              ? 'bg-white/20 text-white font-bold'
+                              : 'text-slate-400 hover:text-white hover:bg-white/5'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
+              </details>
 
-                <div className="flex items-center gap-2 shrink-0">
-                  {theme.id !== dockCadence.recommendedThemeId && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onSelectTheme(dockCadence.recommendedPalette);
-                        onShowToast(`Applied ${dockCadence.recommendedPalette.name} based on post history cadence`);
-                      }}
-                      className="px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all cursor-pointer border hover:opacity-90 active:scale-95"
-                      style={{
-                        borderColor: dockCadence.recommendedPalette.accent + '66',
-                        backgroundColor: dockCadence.recommendedPalette.accent + '20',
-                        color: dockCadence.recommendedPalette.accent,
-                      }}
-                      title="Apply recommended palette to ensure feed contrast"
-                    >
-                      Apply Smart Theme
-                    </button>
-                  )}
-                  {onOpenThemeCustomizer && (
-                    <button
-                      type="button"
-                      onClick={onOpenThemeCustomizer}
-                      className="text-[10px] font-mono text-slate-400 hover:text-white transition-colors cursor-pointer underline underline-offset-2"
-                    >
-                      Theme Studio
-                    </button>
-                  )}
-                </div>
-              </div>
+              {/* Primary Drawer Footer Actions */}
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleInstantSynthesize}
+                  disabled={isGenerating}
+                  className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-white/10 hover:bg-white/5 text-slate-300 font-semibold text-xs tracking-wide transition-all cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                  title="Generate immediately using local MARROK engine (0ms latency)"
+                >
+                  <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>Instant Synthesize</span>
+                </button>
 
-              {/* Domain Classification Pills & Actions */}
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-white/10">
-                <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                  <span className="text-slate-400 font-medium text-[11px]">Domain:</span>
-                  <div className="flex flex-wrap items-center bg-black/60 p-1 rounded-xl border border-white/10 gap-1">
-                    {DOMAIN_CATEGORIES.map((opt) => (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => setCategoryHint(opt.id)}
-                        className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold transition-colors cursor-pointer ${
-                          categoryHint === opt.id
-                            ? 'bg-white/20 text-white font-bold'
-                            : 'text-slate-400 hover:text-white hover:bg-white/5'
-                        }`}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleInstantSynthesize}
-                    disabled={isGenerating}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-white/10 hover:bg-white/5 text-slate-300 font-semibold text-xs tracking-wide transition-all cursor-pointer disabled:opacity-50"
-                    title="Generate immediately using local MARROK engine (0ms latency)"
-                  >
-                    <Zap className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Instant Synthesize</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleRunAutonomousPipeline()}
-                    disabled={isGenerating}
-                    className="flex items-center gap-2 px-5 py-2 rounded-xl font-bold text-xs uppercase tracking-wider text-slate-950 transition-all shadow-md cursor-pointer disabled:opacity-75"
-                    style={{ backgroundColor: theme.accent }}
-                  >
-                    <Sparkles className="w-4 h-4 text-slate-950" />
-                    <span>Generate Carousel & Caption</span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => handleRunAutonomousPipeline()}
+                  disabled={isGenerating}
+                  className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 sm:px-5 py-2 rounded-xl font-bold text-xs uppercase tracking-wider text-slate-950 transition-all shadow-md cursor-pointer disabled:opacity-75 whitespace-nowrap"
+                  style={{ backgroundColor: theme.accent }}
+                >
+                  <Sparkles className="w-4 h-4 text-slate-950 shrink-0" />
+                  <span>Generate Carousel & Caption</span>
+                </button>
               </div>
             </div>
           </>
@@ -2595,11 +2614,11 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           aria-label="Slide Inspector and Content Editor"
           className={`lg:col-span-7 flex flex-col bg-[#0b1118]/98 border-white/15 overflow-hidden shadow-[0_-12px_36px_rgba(0,0,0,0.75)] transition-all duration-300 ${
             isSheetOpen
-              ? `fixed inset-x-0 bottom-[88px] z-40 ${
-                  isMobileEditorExpanded ? 'h-[66dvh]' : 'h-[43dvh]'
-                } rounded-t-2xl border-t translate-y-0`
-              : 'fixed inset-x-0 bottom-[88px] z-40 h-[43dvh] rounded-t-2xl border-t translate-y-[120%] pointer-events-none'
-          } lg:static lg:inset-auto lg:z-auto lg:h-full lg:min-h-0 lg:rounded-2xl lg:border lg:shadow-2xl lg:translate-y-0 lg:pointer-events-auto`}
+              ? `fixed inset-x-0 bottom-[58px] z-40 ${
+                  isMobileEditorExpanded ? 'h-[66dvh]' : 'h-[44dvh]'
+                } rounded-t-2xl border-t translate-y-0 visible pointer-events-auto`
+              : 'fixed inset-x-0 bottom-0 z-40 h-[44dvh] rounded-t-2xl border-t translate-y-full invisible pointer-events-none'
+          } lg:visible lg:static lg:inset-auto lg:z-auto lg:h-full lg:min-h-0 lg:rounded-2xl lg:border lg:shadow-2xl lg:translate-y-0 lg:pointer-events-auto`}
         >
           {/* Mobile Split-Screen Editor Compact Header Bar */}
           <div className="lg:hidden flex items-center justify-between px-3 py-1.5 border-b border-white/10 bg-black/60 shrink-0">
@@ -3178,10 +3197,10 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         </div>
       </div>
 
-      {/* Docked Mobile Navigation & Inspector Sheet Launcher (WCAG 2.1 AAATouch Targets) */}
-      <div className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-[#080d11]/95 border-t border-white/10 px-2.5 py-2 backdrop-blur-md flex flex-col gap-1.5 shadow-2xl">
-        {/* Tier 1: Direct Step / Inspector Sheet Triggers */}
-        <div className="grid grid-cols-4 gap-1">
+      {/* Docked Single-Row Mobile Navigation & Inspector Bar (58px height) */}
+      <div className="lg:hidden fixed bottom-0 inset-x-0 z-30 h-[58px] bg-[#080d11]/95 border-t border-white/10 px-2 backdrop-blur-md flex items-center justify-between gap-1 shadow-2xl">
+        {/* Direct Step / Inspector Sheet Triggers */}
+        <div className="flex items-center gap-1 flex-1 min-w-0">
           {[
             {
               id: 'copy' as const,
@@ -3229,7 +3248,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                       setMobileStudioTab('editor');
                     }
                   }}
-                  className={`flex items-center justify-center gap-1 py-1.5 px-2 min-h-[36px] rounded-xl text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                  className={`flex-1 flex items-center justify-center gap-1 py-2 px-1.5 min-h-[40px] rounded-xl text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap min-w-0 ${
                     item.active
                       ? 'bg-white/15 text-white border border-white/20 shadow-sm'
                       : 'bg-white/[0.03] text-slate-300 border border-white/[0.06] active:bg-white/10'
@@ -3237,10 +3256,10 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   style={item.active ? { color: theme.accent } : undefined}
                 >
                   <Icon className="w-3.5 h-3.5 shrink-0" />
-                  <span>{item.label}</span>
+                  <span className="truncate">{item.label}</span>
                   {item.id === 'review' && (
                     <span
-                      className={`text-[9px] font-mono tabular-nums px-1 rounded ${
+                      className={`text-[9px] font-mono tabular-nums px-1 rounded shrink-0 ${
                         isBlocked
                           ? 'bg-amber-500/20 text-amber-300'
                           : 'bg-emerald-500/20 text-emerald-400'
@@ -3254,87 +3273,17 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
             })}
         </div>
 
-        {/* Tier 2: Slide Stepper + Working More Menu + Primary Export Action */}
-        <div className="flex items-center justify-between gap-1.5">
-          {activePostFormat === 'carousel' && (
-            <>
-              <button
-                type="button"
-                onClick={() => changeSlide((prev) => Math.max(0, prev - 1))}
-                disabled={currentSlideIndex === 0}
-                className="p-2 min-h-[42px] min-w-[42px] rounded-xl bg-white/[0.05] border border-white/10 text-white disabled:opacity-25 active:bg-white/15 cursor-pointer flex items-center justify-center shrink-0 focus-visible:ring-2 focus-visible:ring-cyan-400"
-                aria-label="Previous Slide"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setIsMobileSheetOpen((prev) => !prev);
-                  setMobileStudioTab('editor');
-                }}
-                className="flex-1 flex items-center justify-center gap-1.5 py-2 px-2 min-h-[42px] rounded-xl bg-white/[0.04] border border-white/10 text-xs font-mono font-bold text-slate-200 active:bg-white/10 cursor-pointer focus-visible:ring-2 focus-visible:ring-cyan-400"
-                aria-label={`Slide ${currentSlideIndex + 1} of ${carousel.slides.length}. Tap to open inspector`}
-              >
-                <span>Slide</span>
-                <span style={{ color: theme.accent }}>{currentSlideIndex + 1}</span>
-                <span className="text-slate-400">/ {carousel.slides.length}</span>
-                <span className="text-[10px] uppercase font-sans px-1.5 py-0.5 rounded bg-white/10 text-cyan-300 ml-0.5">
-                  {isSheetOpen ? 'Close' : 'Edit'}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => changeSlide((prev) => Math.min(carousel.slides.length - 1, prev + 1))}
-                disabled={currentSlideIndex === carousel.slides.length - 1}
-                className="p-2 min-h-[42px] min-w-[42px] rounded-xl bg-white/[0.05] border border-white/10 text-white disabled:opacity-25 active:bg-white/15 cursor-pointer flex items-center justify-center shrink-0 focus-visible:ring-2 focus-visible:ring-cyan-400"
-                aria-label="Next Slide"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </>
-          )}
-
-          {activePostFormat === 'single' && (
-            <button
-              type="button"
-              onClick={() => setIsMobileSheetOpen((prev) => !prev)}
-              className="flex-1 min-h-[42px] flex items-center justify-center gap-1.5 text-xs font-mono text-slate-200 bg-white/[0.04] border border-white/10 rounded-xl px-2 cursor-pointer"
-              aria-label="Single-Slide Post. Tap to inspect."
-            >
-              <span>1-Slide · {activeDimensionSpec.shortLabel}</span>
-              <span className="text-[10px] uppercase font-sans px-1.5 py-0.5 rounded bg-white/10 text-cyan-300">
-                {isSheetOpen ? 'Close' : 'Edit'}
-              </span>
-            </button>
-          )}
-
-          {activePostFormat === 'reel' && (
-            <button
-              type="button"
-              onClick={() => setIsMobileSheetOpen((prev) => !prev)}
-              className="flex-1 min-h-[42px] flex items-center justify-center gap-1.5 text-xs font-mono text-slate-200 bg-white/[0.04] border border-white/10 rounded-xl px-2 cursor-pointer"
-              aria-label="Motion Reel. Tap to inspect."
-            >
-              <span>Reel · {activeReelConfig.duration.toFixed(1)}s</span>
-              <span className="text-[10px] uppercase font-sans px-1.5 py-0.5 rounded bg-white/10 text-cyan-300">
-                {isSheetOpen ? 'Close' : 'Edit'}
-              </span>
-            </button>
-          )}
-
-          {/* Mobile More Actions Menu (Anchored above mobile bottom bar) */}
+        {/* Mobile More Actions Menu + Primary Export Action */}
+        <div className="flex items-center gap-1 shrink-0">
           <div className="relative">
             <button
               type="button"
               onClick={() => setIsMoreMenuOpen((prev) => !prev)}
-              className="p-2 min-h-[42px] min-w-[42px] rounded-xl bg-white/[0.05] border border-white/10 text-slate-300 active:bg-white/15 flex items-center justify-center cursor-pointer focus-visible:ring-2 focus-visible:ring-cyan-400"
+              className="p-2 min-h-[40px] min-w-[38px] rounded-xl bg-white/[0.05] border border-white/10 text-slate-300 active:bg-white/15 flex items-center justify-center cursor-pointer focus-visible:ring-2 focus-visible:ring-cyan-400"
               aria-label="More slide actions"
               aria-expanded={isMoreMenuOpen}
             >
-              <MoreHorizontal className="w-5 h-5" />
+              <MoreHorizontal className="w-4 h-4" />
             </button>
 
             {isMoreMenuOpen && (
@@ -3443,7 +3392,6 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
             )}
           </div>
 
-          {/* Primary Action Button */}
           <button
             type="button"
             onClick={() => {
@@ -3461,7 +3409,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
               }
             }}
             disabled={isExportingZip}
-            className={`flex items-center gap-1.5 px-3 py-2 min-h-[42px] rounded-xl font-bold text-xs transition-all shadow-md cursor-pointer shrink-0 focus-visible:ring-2 focus-visible:ring-cyan-400 ${
+            className={`flex items-center gap-1 px-2.5 py-2 min-h-[40px] rounded-xl font-bold text-[11px] transition-all shadow-md cursor-pointer shrink-0 focus-visible:ring-2 focus-visible:ring-cyan-400 whitespace-nowrap ${
               isBlocked
                 ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                 : 'text-slate-950 active:scale-95'
@@ -3481,20 +3429,20 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
             }
           >
             {isExportingZip ? (
-              <RefreshCw className="w-4 h-4 animate-spin" />
+              <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
             ) : isBlocked ? (
-              <AlertTriangle className="w-4 h-4 text-amber-400" />
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
             ) : activePostFormat === 'reel' ? (
-              <Film className="w-4 h-4 stroke-[2.5]" />
+              <Film className="w-3.5 h-3.5 stroke-[2.5] shrink-0" />
             ) : (
-              <Download className="w-4 h-4 stroke-[2.5]" />
+              <Download className="w-3.5 h-3.5 stroke-[2.5] shrink-0" />
             )}
             <span>
               {isBlocked
                 ? `${blockersCount} Check${blockersCount > 1 ? 's' : ''}`
                 : activePostFormat === 'reel'
-                ? 'Export Video'
-                : 'Export ZIP'}
+                ? 'Video'
+                : 'Export'}
             </span>
           </button>
         </div>
