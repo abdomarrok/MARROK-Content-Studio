@@ -75,8 +75,8 @@ export const Header: React.FC<HeaderProps> = ({
   }, [isMobileMenuOpen]);
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-white/[0.08] bg-[#080d11]/95 backdrop-blur-md px-4 sm:px-6 py-2.5 transition-colors">
-      <div className="max-w-6xl mx-auto flex items-center justify-between gap-4 sm:gap-8">
+    <header className="sticky top-0 z-40 w-full border-b border-white/[0.07] bg-[#080d11]/95 backdrop-blur-md px-4 sm:px-6 py-2 transition-colors">
+      <div className="max-w-[1440px] mx-auto flex items-center justify-between gap-4 sm:gap-8">
         {/* Zone 1: Brand Wordmark + Studio/Publish Phase Switcher */}
         <div className="flex items-center gap-4 shrink-0">
           <a

@@ -223,7 +223,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   const [pipelineStatus, setPipelineStatus] = useState<string | null>(null);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(activeSlideIndex ?? 0);
   const [showSafeZones, setShowSafeZones] = useState(false);
-  const [stageOverlayMode, setStageOverlayMode] = useState<StageOverlayMode>('safe');
+  const [stageOverlayMode, setStageOverlayMode] = useState<StageOverlayMode>('clean');
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [isMobileSheetOpen, setIsMobileSheetOpen] = useState(false);
   const [copiedType, setCopiedType] = useState<'caption' | 'slide' | null>(null);
@@ -1565,9 +1565,13 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           }}
         />
 
-        {/* Unified Studio Command & Workflow Center */}
-        <div
-          className={`bg-[#0b1118]/95 border rounded-2xl p-2.5 shadow-xl backdrop-blur-xl transition-all duration-200 space-y-2 ${
+        {/* Single-Row Top Command & Ingestion Bar */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleRunAutonomousPipeline();
+          }}
+          className={`flex flex-wrap sm:flex-nowrap items-center gap-2 bg-[#0b1118]/95 border rounded-2xl p-2 shadow-xl backdrop-blur-xl transition-all duration-200 ${
             isDragOver
               ? 'border-cyan-400 bg-cyan-950/20 ring-2 ring-cyan-400/40'
               : isExpanded
@@ -1575,304 +1579,167 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
               : 'border-white/10'
           }`}
         >
-          {/* Tier 1: Guided Creation Wizard Steps + Format Switcher + Quick Actions */}
-          <div
-            data-testid="guided-wizard-bar"
-            aria-label="Guided Creation Steps"
-            className="flex items-center justify-between gap-2 border-b border-white/[0.06] pb-2 overflow-x-auto"
-          >
-            <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
-              {[
-                {
-                  step: 1,
-                  id: 'ingest',
-                  label: '1. Ingest',
-                  active: isExpanded,
-                  onSelect: () => setIsExpanded((prev) => !prev),
-                },
-                {
-                  step: 2,
-                  id: 'content',
-                  label: '2. Content',
-                  active: !isExpanded && inspectorTab === 'copy',
-                  onSelect: () => {
-                    setIsExpanded(false);
-                    setInspectorTab('copy');
-                  },
-                },
-                ...(activePostFormat !== 'reel'
-                  ? [
-                      {
-                        step: 3,
-                        id: 'design',
-                        label: '3. Design',
-                        active: !isExpanded && inspectorTab === 'visual',
-                        onSelect: () => {
-                          setIsExpanded(false);
-                          setInspectorTab('visual');
-                        },
-                      },
-                      {
-                        step: 4,
-                        id: 'adjust',
-                        label: '4. Adjust',
-                        active: !isExpanded && inspectorTab === 'position',
-                        onSelect: () => {
-                          setIsExpanded(false);
-                          setInspectorTab('position');
-                        },
-                      },
-                    ]
-                  : []),
-                {
-                  step: activePostFormat === 'reel' ? 3 : 5,
-                  id: 'publish',
-                  label: activePostFormat === 'reel' ? '3. Publish' : '5. Publish',
-                  active: !isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption'),
-                  onSelect: () => {
-                    setIsExpanded(false);
-                    setInspectorTab('review');
-                  },
-                },
-              ].map((item, idx, arr) => (
-                <React.Fragment key={item.id}>
-                  <button
-                    type="button"
-                    onClick={item.onSelect}
-                    className={`px-2 py-0.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                      item.active
-                        ? 'bg-white/15 text-white border border-white/15'
-                        : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
-                    }`}
-                    style={item.active ? { color: theme.accent } : undefined}
-                  >
-                    <span>{item.label}</span>
-                    {item.id === 'publish' && (
-                      <span
-                        className={`text-[10px] font-mono tabular-nums ${
-                          isBlocked ? 'text-amber-400' : 'text-emerald-400'
-                        }`}
-                      >
-                        · {isBlocked ? `${blockersCount}` : 'Ready'}
-                      </span>
-                    )}
-                  </button>
-                  {idx < arr.length - 1 && (
-                    <ChevronRight className="w-3 h-3 text-slate-600 shrink-0 hidden sm:inline" />
-                  )}
-                </React.Fragment>
-              ))}
-            </div>
+          {/* Topic / Notes Input */}
+          <div className="relative flex-1 min-w-[200px] flex items-center gap-1.5">
+            <Sparkles className="w-4 h-4 shrink-0 ml-1.5" style={{ color: theme.accent }} />
+            <input
+              type="text"
+              value={promptInput}
+              onChange={(e) => handlePromptChange(e.target.value)}
+              placeholder="Enter topic, paste notes, or drop a screenshot (e.g. Zero-Trust Mesh, Redis 8)..."
+              disabled={isGenerating}
+              className="w-full bg-transparent px-2 py-1 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none font-sans"
+            />
 
-            <div className="flex items-center gap-2 shrink-0">
-              {/* Post Format Segmented Toggle: Carousel vs Single Slide vs Motion Reel */}
-              <div
-                role="group"
-                aria-label="Post format selector"
-                className="flex items-center bg-black/60 p-0.5 rounded-lg border border-white/10 shrink-0"
-              >
+            {uploadedImage && (
+              <div className="flex items-center gap-1.5 bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-[11px] px-2 py-0.5 rounded-lg shrink-0">
+                <ImageIcon className="w-3 h-3" />
+                <span className="truncate max-w-[90px] font-mono text-[10px]">{uploadedImage.name}</span>
                 <button
                   type="button"
-                  data-testid="format-toggle-carousel"
-                  onClick={() => handleSwitchPostFormat('carousel')}
-                  className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
-                    activePostFormat === 'carousel'
-                      ? 'bg-white/15 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                  style={activePostFormat === 'carousel' ? { color: theme.accent } : undefined}
-                  title="Multi-Slide Carousel (8 slides, 1080×1920)"
+                  onClick={() => setUploadedImage(null)}
+                  className="hover:text-white cursor-pointer"
+                  title="Remove attachment"
                 >
-                  <Layers className="w-3 h-3" />
-                  <span>Carousel</span>
-                </button>
-
-                <button
-                  type="button"
-                  data-testid="format-toggle-single"
-                  onClick={() => handleSwitchPostFormat('single')}
-                  className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
-                    activePostFormat === 'single'
-                      ? 'bg-white/15 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                  style={activePostFormat === 'single' ? { color: theme.accent } : undefined}
-                  title="Standalone Single-Slide Post (1 slide, 1080×1920)"
-                >
-                  <ImageIcon className="w-3 h-3" />
-                  <span>Single Slide</span>
-                </button>
-
-                <button
-                  type="button"
-                  data-testid="format-toggle-reel"
-                  onClick={() => handleSwitchPostFormat('reel')}
-                  className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
-                    activePostFormat === 'reel'
-                      ? 'bg-white/15 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                  style={activePostFormat === 'reel' ? { color: theme.accent } : undefined}
-                  title="Animated 9:16 Motion Reel Video (1080×1920 + Procedural SFX)"
-                >
-                  <Film className="w-3 h-3" />
-                  <span>Motion Reel</span>
+                  <X className="w-3 h-3" />
                 </button>
               </div>
-
-              {/* Engine Provenance Status */}
-              <button
-                type="button"
-                onClick={() => setInspectorTab('review')}
-                className={`hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-mono font-bold transition-colors cursor-pointer shrink-0 ${engineBadge.cls}`}
-                title="Active synthesis engine & verification status (click to inspect in Publish tab)"
-              >
-                <span>{engineBadge.label}</span>
-              </button>
-
-              {/* Quick Step Advance Button */}
-              <button
-                type="button"
-                onClick={() => {
-                  if (isExpanded) {
-                    setIsExpanded(false);
-                    setInspectorTab('copy');
-                  } else if (inspectorTab === 'copy') {
-                    setInspectorTab(activePostFormat === 'reel' ? 'review' : 'visual');
-                  } else if (inspectorTab === 'visual') {
-                    setInspectorTab('position');
-                  } else if (inspectorTab === 'position') {
-                    setInspectorTab('review');
-                  } else {
-                    handleExportZip('all');
-                  }
-                }}
-                className="hidden lg:flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-white/[0.06] hover:bg-white/12 border border-white/10 text-[11px] font-semibold text-slate-200 hover:text-white transition-colors cursor-pointer whitespace-nowrap shrink-0"
-              >
-                <span>
-                  {isExpanded
-                    ? 'Next: Content →'
-                    : inspectorTab === 'copy'
-                    ? activePostFormat === 'reel'
-                      ? 'Next: Publish →'
-                      : 'Next: Design →'
-                    : inspectorTab === 'visual'
-                    ? 'Next: Adjust →'
-                    : inspectorTab === 'position'
-                    ? 'Next: Publish →'
-                    : isBlocked
-                    ? `Review ${blockersCount} Check(s)`
-                    : 'Export Ready →'}
-                </span>
-              </button>
-            </div>
+            )}
           </div>
 
-          {/* Tier 2: Form Row with Topic / Ingestion Input & Primary Actions */}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleRunAutonomousPipeline();
-            }}
-            className="flex flex-wrap sm:flex-nowrap items-center gap-2"
-          >
-            {/* Topic / Notes Input */}
-            <div className="relative flex-1 min-w-[200px] flex items-center gap-1.5">
-              <Sparkles className="w-4 h-4 shrink-0 ml-1.5" style={{ color: theme.accent }} />
-              <input
-                type="text"
-                value={promptInput}
-                onChange={(e) => handlePromptChange(e.target.value)}
-                placeholder="Enter topic, paste notes, or drop a screenshot (e.g. Zero-Trust Mesh, Redis 8)..."
-                disabled={isGenerating}
-                className="w-full bg-transparent px-2 py-1 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none font-sans"
-              />
-
-              {uploadedImage && (
-                <div className="flex items-center gap-1.5 bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-[11px] px-2 py-0.5 rounded-lg shrink-0">
-                  <ImageIcon className="w-3 h-3" />
-                  <span className="truncate max-w-[90px] font-mono text-[10px]">{uploadedImage.name}</span>
-                  <button
-                    type="button"
-                    onClick={() => setUploadedImage(null)}
-                    className="hover:text-white cursor-pointer"
-                    title="Remove attachment"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              )}
+          {/* Quick Starter Chips (Desktop XL) */}
+          {!promptInput && !uploadedImage && !pipelineStatus && (
+            <div className="hidden xl:flex items-center gap-1 shrink-0">
+              {STARTER_TOPICS.slice(0, 2).map((topic) => (
+                <button
+                  key={topic.name}
+                  type="button"
+                  onClick={() => handleTriggerStarterTopic(topic)}
+                  disabled={isGenerating}
+                  className="px-2 py-0.5 rounded-lg text-[11px] bg-white/[0.03] hover:bg-white/[0.08] border border-white/5 text-slate-400 hover:text-white transition-colors cursor-pointer whitespace-nowrap"
+                  title={topic.desc}
+                >
+                  {topic.name}
+                </button>
+              ))}
             </div>
+          )}
 
-            {/* Quick Starter Pills (Desktop XL) */}
-            {!promptInput && !uploadedImage && !pipelineStatus && (
-              <div className="hidden xl:flex items-center gap-1 shrink-0">
-                {STARTER_TOPICS.slice(0, 2).map((topic) => (
-                  <button
-                    key={topic.name}
-                    type="button"
-                    onClick={() => handleTriggerStarterTopic(topic)}
-                    disabled={isGenerating}
-                    className="px-2 py-0.5 rounded-lg text-[11px] bg-white/[0.03] hover:bg-white/[0.08] border border-white/5 text-slate-400 hover:text-white transition-colors cursor-pointer whitespace-nowrap"
-                    title={topic.desc}
-                  >
-                    {topic.name}
-                  </button>
-                ))}
-              </div>
-            )}
+          {/* Pipeline Status Indicator */}
+          {pipelineStatus && (
+            <div className="hidden md:flex items-center gap-1.5 text-[11px] font-mono px-2 shrink-0" style={{ color: theme.accent }}>
+              <RefreshCw className="w-3 h-3 animate-spin" />
+              <span className="truncate max-w-[180px]">{pipelineStatus}</span>
+            </div>
+          )}
 
-            {/* Pipeline Status Indicator */}
-            {pipelineStatus && (
-              <div className="hidden md:flex items-center gap-1.5 text-[11px] font-mono px-2 shrink-0" style={{ color: theme.accent }}>
-                <RefreshCw className="w-3 h-3 animate-spin" />
-                <span className="truncate max-w-[180px]">{pipelineStatus}</span>
-              </div>
-            )}
-
-            {/* Expand Ingestion Studio Button */}
+          {/* Post Format Segmented Toggle: Carousel vs Single Slide vs Motion Reel */}
+          <div
+            role="group"
+            aria-label="Post format selector"
+            className="flex items-center bg-black/60 p-0.5 rounded-xl border border-white/10 shrink-0"
+          >
             <button
               type="button"
-              onClick={() => setIsExpanded(!isExpanded)}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border text-xs font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                isExpanded
-                  ? 'border-cyan-400/50 bg-cyan-500/15 text-cyan-200'
-                  : 'border-white/10 bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 hover:text-white'
+              data-testid="format-toggle-carousel"
+              onClick={() => handleSwitchPostFormat('carousel')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                activePostFormat === 'carousel'
+                  ? 'bg-white/15 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
               }`}
-              title="Open Multimodal Ingestion Drawer (Notes, YouTube Transcript, Screenshot OCR)"
+              style={activePostFormat === 'carousel' ? { color: theme.accent } : undefined}
+              title="Multi-Slide Carousel (8 slides, 1080×1920)"
             >
-              <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400" />
-              <span className="hidden sm:inline">Source / OCR</span>
-              {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              <Layers className="w-3 h-3" />
+              <span>Carousel</span>
             </button>
 
-            {/* Primary Generate Button */}
             <button
-              type="submit"
-              disabled={isGenerating}
-              className="flex items-center justify-center gap-1.5 px-4 py-1.5 min-h-[32px] rounded-xl font-bold text-xs uppercase tracking-wider text-slate-950 transition-all shadow-md cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
-              style={{ backgroundColor: theme.accent }}
+              type="button"
+              data-testid="format-toggle-single"
+              onClick={() => handleSwitchPostFormat('single')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                activePostFormat === 'single'
+                  ? 'bg-white/15 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              style={activePostFormat === 'single' ? { color: theme.accent } : undefined}
+              title="Standalone Single-Slide Post (1 slide, 1080×1920)"
             >
-              {isGenerating ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Generating...</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-3.5 h-3.5 text-slate-950" />
-                  <span>
-                    {activePostFormat === 'single'
-                      ? 'Generate Slide'
-                      : activePostFormat === 'reel'
-                      ? 'Generate Reel'
-                      : 'Generate'}
-                  </span>
-                </>
-              )}
+              <ImageIcon className="w-3 h-3" />
+              <span>Single Slide</span>
             </button>
-          </form>
-        </div>
+
+            <button
+              type="button"
+              data-testid="format-toggle-reel"
+              onClick={() => handleSwitchPostFormat('reel')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                activePostFormat === 'reel'
+                  ? 'bg-white/15 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              style={activePostFormat === 'reel' ? { color: theme.accent } : undefined}
+              title="Animated 9:16 Motion Reel Video (1080×1920 + Procedural SFX)"
+            >
+              <Film className="w-3 h-3" />
+              <span>Motion Reel</span>
+            </button>
+          </div>
+
+          {/* Engine Provenance Status */}
+          <button
+            type="button"
+            onClick={() => setInspectorTab('review')}
+            className={`hidden md:inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] font-mono font-bold transition-colors cursor-pointer shrink-0 ${engineBadge.cls}`}
+            title="Active synthesis engine & verification status (click to inspect in Publish tab)"
+          >
+            <span>{engineBadge.label}</span>
+          </button>
+
+          {/* Expand Ingestion Studio Button */}
+          <button
+            type="button"
+            onClick={() => setIsExpanded(!isExpanded)}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+              isExpanded
+                ? 'border-cyan-400/50 bg-cyan-500/15 text-cyan-200'
+                : 'border-white/10 bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 hover:text-white'
+            }`}
+            title="Open Multimodal Ingestion Drawer (Notes, YouTube Transcript, Screenshot OCR)"
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden sm:inline">Source / OCR</span>
+            {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
+
+          {/* Primary Generate Button */}
+          <button
+            type="submit"
+            disabled={isGenerating}
+            className="flex items-center justify-center gap-1.5 px-4 py-1.5 min-h-[34px] rounded-xl font-bold text-xs uppercase tracking-wider text-slate-950 transition-all shadow-md cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
+            style={{ backgroundColor: theme.accent }}
+          >
+            {isGenerating ? (
+              <>
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Generating...</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-3.5 h-3.5 text-slate-950" />
+                <span>
+                  {activePostFormat === 'single'
+                    ? 'Generate Slide'
+                    : activePostFormat === 'reel'
+                    ? 'Generate Reel'
+                    : 'Generate'}
+                </span>
+              </>
+            )}
+          </button>
+        </form>
 
         {/* Floating Overlay Ingestion Drawer (Expands over workspace without pushing layout) */}
         {isExpanded && (
@@ -2301,31 +2168,34 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   onUpdateSlideField={handleUpdateCurrentSlide}
                 />
               </div>
-
-              <div className="w-full flex flex-col items-center gap-2 shrink-0">
-                <SlideNavigator
-                  carousel={carousel}
-                  currentSlideIndex={currentSlideIndex}
-                  showSafeZones={showSafeZones}
-                  stageOverlayMode={stageOverlayMode}
-                  onSetStageOverlayMode={setStageOverlayMode}
-                  onToggleSafeZones={() => setShowSafeZones(!showSafeZones)}
-                  onSelectDimensionPreset={handleSelectDimensionPreset}
-                  onSelectSlide={(idx) => changeSlide(idx)}
-                  onAddSlide={handleAddSlide}
-                  onDuplicateSlide={handleDuplicateSlide}
-                  onDeleteSlide={handleDeleteSlide}
-                  onMoveSlide={handleMoveSlide}
-                />
-              </div>
             </>
           )}
 
-          {/* SINGLE PERSISTENT AUTHORITATIVE DELIVERY BAR UNDER CANVAS */}
-          <div
-            data-testid="under-canvas-delivery-bar"
-            className="w-full px-3 py-2.5 bg-[#0b1118] border border-white/10 rounded-2xl flex items-center justify-between gap-2 shrink-0 flex-wrap shadow-xl"
-          >
+          {/* UNIFIED STAGE CONSOLE: Slide Strip + Single Persistent Delivery Bar */}
+          <div className="w-full px-3 py-2.5 bg-[#0b1118] border border-white/10 rounded-2xl space-y-2 shadow-xl shrink-0">
+            {activePostFormat !== 'reel' && (
+              <SlideNavigator
+                carousel={carousel}
+                currentSlideIndex={currentSlideIndex}
+                showSafeZones={showSafeZones}
+                stageOverlayMode={stageOverlayMode}
+                onSetStageOverlayMode={setStageOverlayMode}
+                onToggleSafeZones={() => setShowSafeZones(!showSafeZones)}
+                onSelectDimensionPreset={handleSelectDimensionPreset}
+                onSelectSlide={(idx) => changeSlide(idx)}
+                onAddSlide={handleAddSlide}
+                onDuplicateSlide={handleDuplicateSlide}
+                onDeleteSlide={handleDeleteSlide}
+                onMoveSlide={handleMoveSlide}
+              />
+            )}
+
+            <div
+              data-testid="under-canvas-delivery-bar"
+              className={`w-full flex items-center justify-between gap-2 flex-wrap ${
+                activePostFormat !== 'reel' ? 'pt-2 border-t border-white/[0.06]' : ''
+              }`}
+            >
             {/* Left: Readiness Status Badge & Social Dimension Selector */}
             <div className="flex items-center gap-2 text-xs font-mono text-slate-400 flex-wrap">
               <button
@@ -2690,6 +2560,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
               )}
             </div>
           </div>
+          </div>
         </div>
 
         {/* Mobile Backdrop for Bottom Sheet */}
@@ -2733,132 +2604,170 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
             </button>
           </div>
 
-          {/* Categorized Inspector Top Tab Bar: Content, Design, Adjust, Publish */}
-          <div className="flex items-center justify-between gap-2 px-3 pt-2.5 pb-2 border-b border-white/10 bg-black/40 shrink-0 overflow-x-auto">
-            {activePostFormat === 'reel' ? (
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  data-testid="tab-content"
-                  onClick={() => setInspectorTab('copy')}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                    inspectorTab === 'copy'
-                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                      : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
-                  }`}
-                >
-                  <Film className="w-3.5 h-3.5" style={inspectorTab === 'copy' ? { color: theme.accent } : undefined} />
-                  <span>Content & Motion</span>
-                  <span className="text-[10px] font-mono uppercase text-slate-400">
-                    · {activeReelConfig.templateId}
-                  </span>
-                </button>
+          {/* Unified Guided Wizard & Categorized Inspector Tab Bar */}
+          <div
+            data-testid="guided-wizard-bar"
+            aria-label="Guided Creation Steps"
+            className="flex items-center justify-between gap-2 px-3 pt-2.5 pb-2 border-b border-white/10 bg-black/40 shrink-0 overflow-x-auto"
+          >
+            <div className="flex items-center gap-1 sm:gap-1.5">
+              {/* Step 1: Ingest (Opens Source / OCR Drawer) */}
+              <button
+                type="button"
+                onClick={() => setIsExpanded((prev) => !prev)}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                  isExpanded
+                    ? 'bg-white/15 text-white shadow-sm border border-white/15'
+                    : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                }`}
+              >
+                <span className="text-[10px] font-mono tabular-nums text-slate-400">1.</span>
+                <span>Ingest</span>
+              </button>
 
-                <button
-                  type="button"
-                  data-testid="tab-review"
-                  onClick={() => setInspectorTab('review')}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                    inspectorTab === 'review' || inspectorTab === 'caption'
-                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                      : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
-                  }`}
-                >
-                  <CheckCircle2
-                    className="w-3.5 h-3.5"
-                    style={inspectorTab === 'review' || inspectorTab === 'caption' ? { color: theme.accent } : undefined}
-                  />
-                  <span>Publish</span>
-                  {blockersCount > 0 ? (
-                    <span className="text-xs font-mono tabular-nums px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                      {blockersCount}
+              {activePostFormat === 'reel' ? (
+                <>
+                  <button
+                    type="button"
+                    data-testid="tab-content"
+                    onClick={() => {
+                      setIsExpanded(false);
+                      setInspectorTab('copy');
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                      !isExpanded && inspectorTab === 'copy'
+                        ? 'bg-white/15 text-white shadow-sm border border-white/15'
+                        : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                    }`}
+                  >
+                    <Film className="w-3.5 h-3.5" style={!isExpanded && inspectorTab === 'copy' ? { color: theme.accent } : undefined} />
+                    <span>2. Content & Motion</span>
+                    <span className="text-[10px] font-mono uppercase text-slate-400">
+                      · {activeReelConfig.templateId}
                     </span>
-                  ) : (
-                    <span className="text-xs font-mono uppercase px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                      PASS
-                    </span>
-                  )}
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  data-testid="tab-content"
-                  onClick={() => setInspectorTab('copy')}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                    inspectorTab === 'copy'
-                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                      : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
-                  }`}
-                >
-                  <Type className="w-3.5 h-3.5" style={inspectorTab === 'copy' ? { color: theme.accent } : undefined} />
-                  <span>Content</span>
-                </button>
+                  </button>
 
-                <button
-                  type="button"
-                  data-testid="tab-design"
-                  onClick={() => setInspectorTab('visual')}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                    inspectorTab === 'visual'
-                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                      : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
-                  }`}
-                >
-                  <Layers className="w-3.5 h-3.5" style={inspectorTab === 'visual' ? { color: theme.accent } : undefined} />
-                  <span>Design</span>
-                  <span className="text-[10px] font-mono uppercase text-slate-400">
-                    · {currentSlide.type}
-                  </span>
-                </button>
+                  <button
+                    type="button"
+                    data-testid="tab-review"
+                    onClick={() => {
+                      setIsExpanded(false);
+                      setInspectorTab('review');
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                      !isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption')
+                        ? 'bg-white/15 text-white shadow-sm border border-white/15'
+                        : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                    }`}
+                  >
+                    <CheckCircle2
+                      className="w-3.5 h-3.5"
+                      style={!isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption') ? { color: theme.accent } : undefined}
+                    />
+                    <span>3. Publish</span>
+                    {blockersCount > 0 ? (
+                      <span className="text-xs font-mono tabular-nums px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        {blockersCount}
+                      </span>
+                    ) : (
+                      <span className="text-xs font-mono uppercase px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                        PASS
+                      </span>
+                    )}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    data-testid="tab-content"
+                    onClick={() => {
+                      setIsExpanded(false);
+                      setInspectorTab('copy');
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                      !isExpanded && inspectorTab === 'copy'
+                        ? 'bg-white/15 text-white shadow-sm border border-white/15'
+                        : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                    }`}
+                  >
+                    <Type className="w-3.5 h-3.5" style={!isExpanded && inspectorTab === 'copy' ? { color: theme.accent } : undefined} />
+                    <span>2. Content</span>
+                  </button>
 
-                <button
-                  type="button"
-                  data-testid="tab-adjust"
-                  onClick={() => setInspectorTab('position')}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                    inspectorTab === 'position'
-                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                      : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
-                  }`}
-                >
-                  <Sliders className="w-3.5 h-3.5" style={inspectorTab === 'position' ? { color: theme.accent } : undefined} />
-                  <span>Adjust</span>
-                  {activeOverridesCount > 0 && (
-                    <span className="text-[10px] font-mono tabular-nums text-cyan-300">
-                      · {activeOverridesCount}
+                  <button
+                    type="button"
+                    data-testid="tab-design"
+                    onClick={() => {
+                      setIsExpanded(false);
+                      setInspectorTab('visual');
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                      !isExpanded && inspectorTab === 'visual'
+                        ? 'bg-white/15 text-white shadow-sm border border-white/15'
+                        : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                    }`}
+                  >
+                    <Layers className="w-3.5 h-3.5" style={!isExpanded && inspectorTab === 'visual' ? { color: theme.accent } : undefined} />
+                    <span>3. Design</span>
+                    <span className="text-[10px] font-mono uppercase text-slate-400">
+                      · {currentSlide.type}
                     </span>
-                  )}
-                </button>
+                  </button>
 
-                <button
-                  type="button"
-                  data-testid="tab-review"
-                  onClick={() => setInspectorTab('review')}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                    inspectorTab === 'review' || inspectorTab === 'caption'
-                      ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                      : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
-                  }`}
-                >
-                  <CheckCircle2
-                    className="w-3.5 h-3.5"
-                    style={inspectorTab === 'review' || inspectorTab === 'caption' ? { color: theme.accent } : undefined}
-                  />
-                  <span>Publish</span>
-                  {blockersCount > 0 ? (
-                    <span className="text-xs font-mono tabular-nums px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                      {blockersCount}
-                    </span>
-                  ) : (
-                    <span className="text-xs font-mono uppercase px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                      PASS
-                    </span>
-                  )}
-                </button>
-              </div>
-            )}
+                  <button
+                    type="button"
+                    data-testid="tab-adjust"
+                    onClick={() => {
+                      setIsExpanded(false);
+                      setInspectorTab('position');
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                      !isExpanded && inspectorTab === 'position'
+                        ? 'bg-white/15 text-white shadow-sm border border-white/15'
+                        : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                    }`}
+                  >
+                    <Sliders className="w-3.5 h-3.5" style={!isExpanded && inspectorTab === 'position' ? { color: theme.accent } : undefined} />
+                    <span>4. Adjust</span>
+                    {activeOverridesCount > 0 && (
+                      <span className="text-[10px] font-mono tabular-nums text-cyan-300">
+                        · {activeOverridesCount}
+                      </span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="tab-review"
+                    onClick={() => {
+                      setIsExpanded(false);
+                      setInspectorTab('review');
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                      !isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption')
+                        ? 'bg-white/15 text-white shadow-sm border border-white/15'
+                        : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                    }`}
+                  >
+                    <CheckCircle2
+                      className="w-3.5 h-3.5"
+                      style={!isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption') ? { color: theme.accent } : undefined}
+                    />
+                    <span>5. Publish</span>
+                    {blockersCount > 0 ? (
+                      <span className="text-xs font-mono tabular-nums px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        {blockersCount}
+                      </span>
+                    ) : (
+                      <span className="text-xs font-mono uppercase px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                        PASS
+                      </span>
+                    )}
+                  </button>
+                </>
+              )}
+            </div>
 
             {/* Selected Layer Quick Badge */}
             {activePostFormat !== 'reel' && selectedElementId && inspectorTab !== 'position' && (
@@ -3012,7 +2921,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
             {/* TAB 4: PUBLISH (Unified Ready-to-Publish Checklist, Sources & Bilingual Social Caption) */}
             {(inspectorTab === 'review' || inspectorTab === 'caption') && (
-              <div className="space-y-4 max-w-2xl mx-auto w-full">
+              <div className="space-y-4 w-full">
                 <PublishChecklist
                   carousel={carousel}
                   currentSlideIndex={currentSlideIndex}

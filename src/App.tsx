@@ -425,7 +425,7 @@ export default function App() {
       />
 
       {/* Primary Viewport: Either Phase 1 (Creation Studio) or Phase 2 (Separated Full-Page Publishing Hub) */}
-      <main className="flex-1 lg:min-h-0 max-w-6xl w-full mx-auto px-4 sm:px-6 py-3 sm:py-4 pb-24 lg:pb-4 flex flex-col">
+      <main className="flex-1 lg:min-h-0 max-w-[1440px] w-full mx-auto px-4 sm:px-6 py-2.5 sm:py-3 pb-24 lg:pb-3 flex flex-col">
         {activePhase === 'publish' ? (
           <Suspense
             fallback={

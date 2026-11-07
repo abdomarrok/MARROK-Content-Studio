@@ -89,8 +89,8 @@ export const SlideNavigator: React.FC<SlideNavigatorProps> = ({
 
   if (isSinglePost) {
     return (
-      <div className="w-full max-w-[380px]">
-        <div className="w-full flex items-center justify-between gap-2 px-1 py-1 text-xs text-slate-300">
+      <div className="w-full">
+        <div className="w-full flex items-center justify-between gap-2 text-xs text-slate-300">
           <div className="flex items-center gap-2 font-mono text-xs">
             <span className="text-white font-bold">Single Slide</span>
             <span className="text-slate-500">·</span>
@@ -106,14 +106,14 @@ export const SlideNavigator: React.FC<SlideNavigatorProps> = ({
   }
 
   return (
-    <div className="w-full max-w-[380px] space-y-1">
+    <div className="w-full space-y-1.5">
       {/* Top Bar: Slide Count, Management Actions & Stage Mode Switcher */}
-      <div className="flex items-center justify-between gap-1 text-xs text-slate-400 px-0.5">
+      <div className="flex items-center justify-between gap-1 text-xs text-slate-400">
         <div className="flex items-center gap-1.5 font-mono tabular-nums min-w-0">
           <span className="text-[11px] whitespace-nowrap shrink-0">
             Slide <span className="text-white font-bold">{currentSlideIndex + 1}</span>/{carousel.slides.length}
           </span>
-          <div className="flex items-center gap-0.5 bg-white/[0.04] border border-white/10 rounded-lg p-0.5 shrink-0">
+          <div className="flex items-center gap-0.5 bg-white/[0.03] border border-white/10 rounded-lg p-0.5 shrink-0">
             <button
               type="button"
               onClick={onAddSlide}
@@ -167,21 +167,21 @@ export const SlideNavigator: React.FC<SlideNavigatorProps> = ({
       </div>
 
       {/* Storyboard Strip */}
-      <div className="flex items-center gap-1.5 overflow-x-auto py-1 px-0.5">
+      <div className="flex items-center gap-1 overflow-x-auto py-0.5">
         {carousel.slides.map((slide, idx) => (
           <button
             key={idx}
             type="button"
             onClick={() => onSelectSlide(idx)}
-            className={`h-8 px-3 rounded-lg text-xs font-mono tabular-nums font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${
+            className={`h-7 px-2.5 rounded-lg text-[11px] font-mono tabular-nums font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
               idx === currentSlideIndex
-                ? 'bg-emerald-500/20 text-white border border-emerald-400/50 shadow-sm'
-                : 'bg-white/[0.04] text-slate-400 hover:text-white border border-white/5 hover:border-white/15'
+                ? 'bg-emerald-500/20 text-white border border-emerald-400/50 shadow-xs'
+                : 'bg-white/[0.03] text-slate-400 hover:text-white border border-white/[0.06] hover:border-white/15'
             }`}
             title={slide.enTitle || `Slide ${idx + 1}`}
           >
             <span>#{idx + 1}</span>
-            <span className={`text-xs uppercase font-sans ${idx === currentSlideIndex ? 'text-emerald-300' : 'text-slate-500'}`}>
+            <span className={`text-[10px] uppercase font-sans ${idx === currentSlideIndex ? 'text-emerald-300' : 'text-slate-500'}`}>
               {slide.type}
             </span>
           </button>

@@ -141,16 +141,6 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
               <span>AI Polish</span>
             </button>
           )}
-
-          <button
-            type="button"
-            onClick={onToggleAdvancedCustomizer}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] text-xs font-semibold text-white transition-colors cursor-pointer whitespace-nowrap shrink-0"
-            title="Advance to Step 3: Design & Archetypes"
-          >
-            <Sliders className="w-3.5 h-3.5" style={{ color: theme.accent }} />
-            <span>Design & Archetypes →</span>
-          </button>
         </div>
       </div>
 
@@ -259,8 +249,8 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
         </div>
       )}
 
-      {/* English & Arabic Titles */}
-      <div className="grid grid-cols-1 gap-3.5">
+      {/* English & Arabic Titles (Side-by-Side on Desktop) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
         <div
           className={`space-y-1.5 rounded-xl transition-colors ${
             selectedElementId === 'titleBlock' ? 'ring-1 ring-cyan-400/50 bg-cyan-950/10 p-2.5 -mx-2.5' : ''
@@ -366,8 +356,8 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
         </div>
       )}
 
-      {/* English & Arabic Body Copy */}
-      <div className="grid grid-cols-1 gap-3.5 pt-2 border-t border-white/[0.06]">
+      {/* English & Arabic Body Copy (Side-by-Side on Desktop) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 pt-2.5 border-t border-white/[0.06]">
         <div
           className={`space-y-1.5 rounded-xl transition-colors ${
             selectedElementId === 'bodyBlock' ? 'ring-1 ring-cyan-400/50 bg-cyan-950/10 p-2.5 -mx-2.5' : ''

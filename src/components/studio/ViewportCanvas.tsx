@@ -533,7 +533,7 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
       data-testid="viewport-stage-container"
       data-dimension-preset={spec.id}
       style={{ aspectRatio: `${spec.width} / ${spec.height}` }}
-      className="relative rounded-2xl overflow-hidden border border-white/15 bg-black shadow-2xl w-auto max-w-[min(380px,92vw)] max-h-[min(450px,calc(100dvh-280px))] sm:max-h-[min(490px,calc(100vh-250px))] shrink-0 outline-none focus:ring-1 focus:ring-cyan-500/40 select-none group transition-all duration-200"
+      className="relative rounded-2xl overflow-hidden border border-white/15 bg-black shadow-2xl w-auto max-w-[min(420px,92vw)] max-h-[min(540px,calc(100dvh-230px))] sm:max-h-[min(620px,calc(100vh-205px))] shrink-0 outline-none focus:ring-1 focus:ring-cyan-500/40 select-none group transition-all duration-200"
     >
       <canvas
         ref={activeCanvasRef}

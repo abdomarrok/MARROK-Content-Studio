@@ -519,7 +519,7 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
       {/* ARCHETYPE: HUB (Central Hero Box & Orbital Satellite Nodes) */}
       {currentSlide.type === 'hub' && (
         <div className="pt-3 border-t border-white/[0.08] space-y-4 animate-fade-in">
-          <div className="p-3 bg-black/60 border border-white/10 rounded-xl space-y-2.5">
+          <div className="space-y-2.5">
             <div className="flex items-center justify-between">
               <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5" style={{ color: theme.accent }} />
@@ -874,7 +874,7 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
       {/* ARCHETYPE: NUMBER (Step Numeral, Top Kicker Label & Divider Emblem Icon) */}
       {currentSlide.type === 'number' && (
         <div className="pt-3 border-t border-white/[0.08] space-y-3.5 animate-fade-in">
-          <div className="p-3.5 rounded-xl bg-black/50 border border-white/10 space-y-3">
+          <div className="space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-white flex items-center gap-1.5">
                 <Hash className="w-3.5 h-3.5" style={{ color: theme.accent }} />
@@ -1008,7 +1008,7 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
       {/* ARCHETYPE: CODE DIFF */}
       {currentSlide.type === 'code' && (
         <div className="pt-3 border-t border-white/[0.08] animate-fade-in">
-          <div className="p-3.5 rounded-xl bg-black/50 border border-white/10 space-y-2.5">
+          <div className="space-y-2.5">
             <span className="text-xs font-bold text-white flex items-center gap-1.5">
               <Code className="w-3.5 h-3.5 text-cyan-400" />
               <span>Code Diff & Terminal Controls</span>
@@ -1049,7 +1049,7 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
       {/* ARCHETYPE: METRIC CARD */}
       {currentSlide.type === 'metric' && (
         <div className="pt-3 border-t border-white/[0.08] animate-fade-in">
-          <div className="p-3.5 rounded-xl bg-black/50 border border-white/10 space-y-3">
+          <div className="space-y-3">
             <span className="text-xs font-bold text-white flex items-center gap-1.5">
               <Gauge className="w-3.5 h-3.5 text-amber-400" />
               <span>Metric Benchmark Card</span>
@@ -1108,7 +1108,7 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
       {/* ARCHETYPE: COMPARE */}
       {currentSlide.type === 'compare' && (
         <div className="pt-3 border-t border-white/[0.08] animate-fade-in">
-          <div className="p-3.5 rounded-xl bg-black/50 border border-white/10 space-y-2.5">
+          <div className="space-y-2.5">
             <span className="text-xs font-bold text-white flex items-center gap-1.5">
               <Columns className="w-3.5 h-3.5 text-purple-400" />
               <span>Before vs After Architecture Comparison</span>
@@ -1152,7 +1152,7 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
       {/* ARCHETYPE: BRANDED MEME, VIDEO, HERO IMAGE & AI DIAGRAM STUDIO (Available on both Image & Single-Slide Poster) */}
       {(currentSlide.type === 'image' || currentSlide.type === 'poster') && (
         <div className="pt-3 border-t border-white/[0.08] animate-fade-in">
-          <div className="p-3.5 rounded-xl bg-black/50 border border-white/10 space-y-3.5">
+          <div className="space-y-3.5">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2">
                 {isVideoSlide(currentSlide) ? (
@@ -1758,7 +1758,7 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
       {/* ARCHETYPE: CTA (Isometric Emblem, Action Pill, Website URL & Verified Attribution Card) */}
       {currentSlide.type === 'cta' && (
         <div className="pt-3 border-t border-white/[0.08] animate-fade-in">
-          <div className="p-3.5 rounded-xl bg-black/50 border border-white/10 space-y-3">
+          <div className="space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-white flex items-center gap-1.5">
                 <ShieldCheck className="w-3.5 h-3.5" style={{ color: theme.accent }} />
