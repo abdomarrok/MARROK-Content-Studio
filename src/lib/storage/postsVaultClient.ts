@@ -459,6 +459,34 @@ export async function deleteSavedPost(id: string): Promise<SavedPostRecord[]> {
 }
 
 /**
+ * Synchronizes the local IndexedDB Vault after a post management action (reschedule, unschedule, or cancelAndDelete).
+ */
+export async function syncLocalVaultAfterManage(options: {
+  updatedPost?: SavedPostRecord | null;
+  deletedId?: string;
+}): Promise<SavedPostRecord[]> {
+  const { updatedPost, deletedId } = options;
+  const currentLocal = await readLocalVault();
+
+  if (deletedId) {
+    const deletedIds = readDeletedIds();
+    deletedIds.add(deletedId);
+    writeDeletedIds(deletedIds);
+    const remaining = currentLocal.filter((p) => p.id !== deletedId);
+    await writeLocalVault(remaining);
+    return remaining;
+  }
+
+  if (updatedPost) {
+    const nextList = [updatedPost, ...currentLocal.filter((p) => p.id !== updatedPost.id)];
+    await writeLocalVault(nextList);
+    return nextList;
+  }
+
+  return currentLocal;
+}
+
+/**
  * Downloads the entire Saved Posts Vault as a portable .json backup file.
  */
 export function exportVaultJson(posts: SavedPostRecord[]): void {

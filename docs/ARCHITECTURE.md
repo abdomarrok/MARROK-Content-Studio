@@ -7,19 +7,19 @@
 │                     Client SPA (React 19 + Vite 8)                         │
 │                                                                            │
 │  ┌──────────────────────────────────────────────────────────────────────┐  │
-│  │ Header Phase Switcher: [1. Create Studio]  <--->  [2. Publish Hub]   │  │
+│  │ Header Switcher: [1. Create Studio]  <--->  [2. Publish & Posts (N)] │  │
 │  └──────────────────┬───────────────────────────────────┬───────────────┘  │
 │                     ▼                                   ▼                  │
 │  ┌────────────────────────────────────┐  ┌──────────────────────────────┐  │
-│  │ Phase 1: AutonomousStudio.tsx      │  │ Phase 2: PublishingHub       │  │
+│  │ Phase 1: AutonomousStudio.tsx      │  │ Phase 2: Publish & Posts Hub │  │
 │  │  ├─ Carousel | 1-Slide | Reel      │  │  (PublishingHubWorkspace.tsx)│  │
-│  │  ├─ Standalone Meme & Video Slide  │  │  ├─ Active & Weekly Calendar │  │
-│  │  ├─ Feed Color Cadence Auto-Rotate │  │  ├─ 99-Col Metricool CSV     │  │
-│  │  └─ ViewportCanvas / ReelViewport  │  │  │   Interactive Preview     │  │
-│  └───────┬──────────────────┬─────────┘  │  ├─ Hybrid Channel Router    │  │
-│          │                  │            │  │   (Buffer API vs CSV)     │  │
-│          ▼                  ▼            │  └─ Quotas & Cloudinary Clean│  │
-│  ┌────────────────┐ ┌────────────────┐   └──────────────┬───────────────┘  │
+│  │  ├─ Standalone Meme & Video Slide  │  │  ├─ Tab 1: Publish Active    │  │
+│  │  ├─ Feed Color Cadence Auto-Rotate │  │  │   (Buffer + Zernio APIs + │  │
+│  │  └─ ViewportCanvas / ReelViewport  │  │  │    TikTok Trending Music) │  │
+│  └───────┬──────────────────┬─────────┘  │  └─ Tab 2: Posts & Calendar  │  │
+│          │                  │            │      (PostManagerPanel.tsx)  │  │
+│          ▼                  ▼            └──────────────┬───────────────┘  │
+│  ┌────────────────┐ ┌────────────────┐                  │                  │
 │  │ Static & Video │ │ Motion Reel    │                  │                  │
 │  │ Canvas Engine  │ │ Engine (9:16)  │                  │                  │
 │  │ (lib/canvas/*) │ │ (lib/motion/*) │                  │                  │
@@ -32,7 +32,7 @@
 ┌────────────────────────────────────────────────────────────────────────────┐
 │                Express Serverless API Gateway (api/index.ts)               │
 │                                                                            │
-│  ├─ api/config.ts (Multi-Key Pool, Cloudinary/Buffer Env, Rate Limiter)    │
+│  ├─ api/config.ts (Multi-Key Pool, Cloudinary/Buffer/Zernio Env, Limiter)  │
 │  ├─ POST /api/generate       -> api/controllers/generateController.ts      │
 │  │    ├─ Tier 1: Gemini Key Pool (Primary -> Backup #2 -> Pool Keys)       │
 │  │    ├─ Tier 2: Zero-Key Free AI Backup (Pollinations OpenAI-compatible)  │
@@ -41,9 +41,11 @@
 │  ├─ POST /api/generate-image -> api/controllers/imageController.ts         │
 │  ├─ GET/POST/PATCH/DELETE /api/posts -> api/controllers/postsController.ts │
 │  ├─ /api/publish/*           -> api/controllers/publishController.ts       │
-│  │    ├─ GET  /api/publish/status        (Quotas + Auto-Sweep Expired)     │
+│  │    ├─ GET  /api/publish/status        (Live Channels + Auto-Sweep)      │
+│  │    ├─ GET  /api/publish/tiktok-music  (Zernio TikTok Commercial Music)  │
 │  │    ├─ POST /api/publish/upload-media  (Signed SHA-1 Cloudinary Staging) │
-│  │    ├─ POST /api/publish/dispatch      (Buffer GraphQL API + Auto-Clean) │
+│  │    ├─ POST /api/publish/dispatch      (Buffer GraphQL + Zernio REST v1) │
+│  │    ├─ POST /api/publish/manage-post   (Reschedule/Unschedule/Delete)    │
 │  │    └─ POST /api/publish/cleanup-media (Cloudinary image/destroy Sweep)  │
 │  ├─ GET  /api/proxy-image    -> api/controllers/proxyController.ts         │
 │  └─ GET  /api/search-media   -> api/controllers/mediaController.ts         │
@@ -55,14 +57,15 @@
 | Path | Responsibility |
 |---|---|
 | `api/index.ts` | Express router, Vercel rewrite path restoration (`x-matched-path`), CORS, rate limiting, security headers |
-| `api/config.ts` | Startup env validation, `getGeminiKeyPool(req)` multi-key rotation, Cloudinary & Buffer credentials config, rate limiter |
+| `api/config.ts` | Startup env validation, `getGeminiKeyPool(req)` multi-key rotation, Cloudinary, Buffer & Zernio credentials config, rate limiter |
 | `api/freeAiFallback.ts` | Zero-key Pollinations AI text (`openai`/`mistral`) and 9:16 `flux` image fallback when Gemini keys are exhausted |
 | `api/controllers/generateController.ts` | Bilingual deck synthesis (Carousel & 1-Slide), Google Search `groundingSupports` fact mapping, multi-key & free AI cascade |
 | `api/controllers/postsController.ts` | Validated & Posted Vault persistence (`vercel-tmp` / `memory-fallback`), preserving schedule and Cloudinary metadata |
-| `api/controllers/publishController.ts` | Signed SHA-1 Cloudinary upload (`uploadSlideToCloudinary`), automatic post-publish asset destruction (`destroyCloudinaryAsset`, `sweepExpiredCloudinaryAssets`), Buffer GraphQL API dispatch (`https://api.buffer.com`), and free-tier quota tracking |
+| `api/controllers/publishController.ts` | Signed SHA-1 Cloudinary upload (`uploadSlideToCloudinary`), automatic post-publish asset destruction (`destroyCloudinaryAsset`, `sweepExpiredCloudinaryAssets`), Buffer GraphQL API dispatch (`https://api.buffer.com`), Zernio REST API v1 dispatch (`https://zernio.com/api/v1/posts`), and TikTok Commercial Music catalog (`fetchZernioTikTokCommercialMusic`) |
 | `api/controllers/proxyController.ts` | SSRF-hardened HTTPS image proxy with DNS resolution check, 2 MB cap, and SVG sanitization |
-| `src/components/studio/PublishingHubWorkspace.tsx` | Full-page Phase 2 Publishing & Scheduling Hub with Weekly Calendar Queue, Hybrid Buffer/Metricool Channel Router, Interactive 99-Column Metricool CSV Preview Table, and Cloudinary Cleanup Controls |
-| `src/lib/publish/publishClient.ts` | Official 99-column Metricool CSV generator (`OFFICIAL_METRICOOL_CSV_HEADERS`, `generateMetricoolBulkCsv`), auto-derived `TikTok Title` ($\le 90$c), `First Comment Text`, `Document title` ($\le 58$c), `Alt text picture 1..10`, and weekly slot calculator |
+| `src/components/studio/PublishingHubWorkspace.tsx` | Full-page Phase 2 Publish & Posts Hub with 2 tabs (`Publish Active Post` and `Posts & Calendar`), dual aspect-ratio staging (`4:5` + `9:16`), and TikTok Background Sound selector with audio preview |
+| `src/components/studio/PostManagerPanel.tsx` | Unified Post Lifecycle & Calendar Manager (`Posts List`, `7/14-Day Calendar`, `Bulk Schedule`) supporting inline rescheduling, unscheduling, and remote queue cancellation across Buffer and Zernio |
+| `src/lib/publish/publishClient.ts` | Client SDK for `/api/publish/*` endpoints, dual aspect-ratio slide renderer (`uploadDeckSlidesForPublishing`), TikTok Commercial Music fetcher (`fetchTikTokCommercialMusic`), local-timezone schedule helpers, and metadata auto-derivation |
 | `src/lib/theme/cadenceEngine.ts` | Posted history color cadence analyzer (`analyzePostHistoryCadence`, `resolveHarmoniousPaletteWithoutRepetition`) preventing consecutive same-color posts |
 | `src/lib/canvas/dimensions.ts` | Platform dimension presets (`tiktok-9:16`, `ig-4:5`, `ig-3:4`, `ig-1:1`, `ig-9:16`), safe zones, and TikTok Photo Mode 3:4 viewport bounds |
 | `src/lib/canvas/layoutAwareness.ts` | Pure mathematical layout engine enforcing vertical clearances, dynamic dimension scaling, `standaloneMeme` full-bleed layout, and anti-collision drag clamping |

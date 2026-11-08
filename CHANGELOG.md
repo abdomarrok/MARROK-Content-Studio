@@ -1,5 +1,19 @@
 # Changelog — MARROK Content Studio
 
+## [1.4.0] — Consolidated Publish & Posts Hub, Zernio Free API + TikTok Commercial Music Library & Buffer Instagram Fix
+
+### 1. Zernio Free REST API v1 + Hosted MCP Server & TikTok Commercial Music Library (`api/controllers/publishController.ts`, `src/lib/publish/publishClient.ts`)
+- **Direct 4-Channel API Publishing (`Buffer` + `Zernio`):** Integrated Zernio REST API v1 (`GET /v1/accounts`, `POST /v1/posts`, `DELETE /v1/posts/{id}`) alongside Buffer GraphQL API (`https://api.buffer.com`), enabling 1-click direct publishing and scheduling across **Instagram (`@marrok_org`)**, **Facebook (`Marrok (Algiers)`)**, **LinkedIn (`Marrok`)**, and **TikTok (`@marrokorg`)** with zero manual CSV steps.
+- **Buffer Instagram Carousel Fix:** Fixed Buffer GraphQL `CreatePostInput.metadata.instagram.type` to always send `'post'` (instead of `'carousel'`, which Buffer's GraphQL enum rejects), allowing multi-image Instagram carousels to publish and schedule cleanly.
+- **Dual Aspect-Ratio Auto-Staging:** Automatically renders and stages `ig-4:5` (`1080×1350`) slides for Instagram/Facebook/LinkedIn and native `tiktok-9:16` (`1080×1920`) slides for TikTok when publishing across both ecosystems simultaneously.
+- **TikTok Commercial Music Library (`GET /api/publish/tiktok-music`):** Queries `GET https://zernio.com/api/v1/accounts/{accountId}/tiktok/commercial-music` for the top 25 trending licensed tracks, passes camelCase `autoAddMusic: true` and `musicSoundInfo: { musicSoundId }` in `tiktokSettings`, and surfaces a **TikTok Background Sound** selector with **Auto-Pick #1 Trending Track**, **Shuffle**, and live **Audio Preview** in `PublishingHubWorkspace.tsx`.
+
+### 2. Consolidated 2-Tab Publish & Posts Hub (`src/components/studio/PublishingHubWorkspace.tsx`, `src/components/studio/PostManagerPanel.tsx`, `src/components/Header.tsx`)
+- **Single Home for All Posts (`2. Publish & Posts (N)`):** Removed the duplicate top-header `Saved Posts / Vault` drawer and consolidated all publishing and post management into two clean tabs: **Publish Active Post** and **Posts & Calendar**.
+- **Metricool UI Removal:** Removed legacy Metricool CSV download buttons, `TikTok CSV: X/20` counters, and CSV preview tables from the UI now that Buffer and Zernio handle all 4 channels via direct APIs.
+
+---
+
 ## [1.3.0] — Separated Publishing Hub, Official 99-Column Metricool CSV, Cloudinary Auto-Cleanup, Feed Color Cadence & Single-Slide Video
 
 ### 1. Separated Full-Page Publishing & Scheduling Hub (`src/components/studio/PublishingHubWorkspace.tsx`, `src/App.tsx`, `src/components/Header.tsx`)

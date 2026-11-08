@@ -77,23 +77,27 @@ MARROK guarantees that slide elements never collide or overlay each other across
   - `product-showcase` (**Architecture & Metrics**): Problem hook card, UI assembly, staggered mechanisms, and a 200x metric counter.
 - **48kHz Procedural SFX Synthesizer & Video Exporter:** Synthesizes mathematical sound effects (`click`, `pop`, `thump`, `whoosh`) synced to scene keyframes and exports muxed **1080×1920 WebM/MP4 Video**, **16-bit PCM WAV Audio**, or **Standalone HTML**.
 
-### 🚀 Separated Full-Page Publishing Hub, Buffer API & Official 99-Column Metricool CSV (`src/components/studio/PublishingHubWorkspace.tsx`)
-Switch between **`1. Create Studio`** and **`2. Publish Hub`** from the top header to access a dedicated full-page publishing command center:
-- **Hybrid Zero-Cost Channel Routing:**
-  - **Buffer Free GraphQL API (`https://api.buffer.com`):** Directly publishes or schedules carousels and single-slide posts to **Instagram (`@marrok_org`)**, **Facebook (`Marrok`)**, and **LinkedIn (`Marrok`)** (10-slot rolling queue per channel, zero monthly cap).
-  - **Official 99-Column Metricool CSV Template (`Mtr_calendar_template.csv`):** Generates the exact 99-column Metricool bulk import file (`Text` through `Brand name`) with auto-populated **`TikTok Title`** ($\le 90$ chars), **`First Comment Text`**, **`Document title`** ($\le 58$ chars for LinkedIn PDF Carousels), **`Alt text picture 1..10`**, **`LinkedIn Images as Carousel`** (`true`), and **`TikTok Auto Add Music`** (`true`).
-- **Interactive CSV Preview Table & Weekly Calendar Queue:** Inspect and inline-edit every row (`Date`, `Time`, `TikTok Title`, `First Comment`, `Networks`) or batch-schedule multiple Vault posts across a weekly cadence (*Mon/Wed/Fri*, *Tue/Thu/Sat*, *Weekdays*, *Daily*).
-- **Signed Cloudinary Staging & Post-Publish Auto-Cleanup (`api/controllers/publishController.ts`):** Uploads rendered slide JPEGs to Cloudinary (`marrok_staging/*`) using SHA-1 signatures and **automatically destroys (`image/destroy`) staged images** immediately after `Publish Now` or `+1 hour` after a scheduled post's `dueAt` timestamp so free storage never fills up.
+### 🚀 Consolidated Publish & Posts Hub — Direct Buffer + Zernio APIs (`src/components/studio/PublishingHubWorkspace.tsx`, `src/components/studio/PostManagerPanel.tsx`)
+Switch between **`1. Create Studio`** and **`2. Publish & Posts (N)`** from the top header to access a unified, 2-tab publishing and post lifecycle workspace:
+- **100% Direct 4-Channel API Routing:**
+  - **Buffer Free GraphQL API (`https://api.buffer.com`):** Directly publishes or schedules carousels and single-slide posts to **Instagram (`@marrok_org`)**, **Facebook (`Marrok (Algiers)`)**, and **LinkedIn (`Marrok`)** (10-slot rolling queue per channel, using `metadata.instagram.type: 'post'` for native multi-slide Instagram carousels).
+  - **Zernio Free REST API v1 (`https://zernio.com/api/v1`) & Hosted MCP Server (`https://mcp.zernio.com/mcp`):** Directly publishes or schedules **TikTok Photo Carousels (`@marrokorg`, up to 35 `9:16` slides)** and **Instagram (`@marrok_org`)** with unlimited posts on Zernio's 2-account Free Tier.
+- **TikTok Commercial Music Library Auto-Pick & Audio Preview (`GET /api/publish/tiktok-music`):**
+  - Automatically attaches a trending licensed track from Zernio's live TikTok Commercial Music catalog (`autoAddMusic: true` + `musicSoundInfo: { musicSoundId }`) by default, and provides an interactive **TikTok Background Sound** selector with **Preview / Stop** audio playback and **Shuffle** controls.
+- **Dual Aspect-Ratio Auto-Staging & Post-Publish Cleanup (`api/controllers/publishController.ts`):**
+  - Automatically renders and stages both `4:5` (`1080×1350` for IG/FB/LI) and `9:16` (`1080×1920` for TikTok) slide JPEGs to Cloudinary (`marrok_staging/*`) and sweeps/destroys staged assets `+1 hour` after publication so free storage never fills up.
+- **Unified Posts & Calendar Manager (`PostManagerPanel.tsx`):**
+  - Manage all **Drafts**, **Scheduled**, **Posted**, and **Needs Review** decks in one place with **List**, **7/14-Day Calendar**, and **Bulk Schedule** views, supporting 1-click **Edit in Studio**, **Reschedule**, **Unschedule to Drafts**, and **Delete** synced across Buffer, Zernio, and Vault.
 
 ### 📦 Complete Deliverables & 5-in-1 Ready-to-Share Bundle (100% JPG)
-1-click export packages everything needed to publish immediately on mobile or via social schedulers (Metricool, Buffer):
+1-click export packages everything needed to publish or archive offline:
 - `slide1.jpg` through `slideN.jpg` (multi-ratio 9:16, 4:5, 3:4, and 1:1 high-res JPG Q95 slides — never PNG, strictly TikTok & Safe-Zone compliant)
-- `caption-bilingual.txt` & `caption.txt` (Ready-to-paste Metricool copy with screen hooks, English + Arabic captions, and topic-derived hashtags)
+- `caption-bilingual.txt` & `caption.txt` (Ready-to-paste copy with screen hooks, English + Arabic captions, and topic-derived hashtags)
 - `first_comment.txt` (Pinned first comment to drive engagement, discussion points, and source links)
 - `carousel-manifest.json` & `post_metadata.json` (Full serialized `CarouselData` and grounding provenance for deck archival)
 - `claims_citations.txt` (Audit log of claims mapped strictly via Google Search `groundingSupports`)
 - `short_caption.txt` (Clean 2-line version for TikTok quick post)
-- `README.txt` (Creator publishing guide with step-by-step mobile & Metricool instructions)
+- `README.txt` (Creator publishing guide)
 
 ### 🛡️ Security, Grounding Provenance & Pre-Publish Safety Gate
 - **Authentic Grounding Provenance:** Decks are marked `verified_live` (`Grounded`) **only** when Google Search grounding returns actual web sources. Ungrounded LLM outputs are marked `unverified_draft` (`Ungrounded AI`) with `userReviewed = false`, and offline fallback decks are marked `Offline Synthesizer`. Only an explicit human click on **"I reviewed this draft"** sets `userReviewed = true`.
@@ -144,6 +148,7 @@ cp .env.example .env
 | `CLOUDINARY_API_KEY` | Optional | `""` | Cloudinary API key for signed uploads and post-publish auto-cleanup |
 | `CLOUDINARY_API_SECRET` | Optional | `""` | Cloudinary API secret for SHA-1 signed upload and `image/destroy` cleanup |
 | `BUFFER_API_KEY` | Optional | `""` | Buffer Developer API token (`https://api.buffer.com`) for direct IG/FB/LinkedIn publishing |
+| `ZERNIO_API_KEY` | Optional | `""` | Zernio API token (`https://zernio.com/api/v1` + `https://mcp.zernio.com/mcp`) for direct TikTok Photo Carousel (with Commercial Music) & Instagram publishing |
 | `ALLOWED_ORIGIN` | Optional | `*` | CORS `Access-Control-Allow-Origin` header value |
 | `API_SHARED_SECRET` | Optional | `""` | Shared secret (`x-api-secret`) required when relying on server `GEMINI_API_KEY` |
 | `RATE_LIMIT_RPM` | Optional | `30` | Per-IP requests per minute limit on AI endpoints |

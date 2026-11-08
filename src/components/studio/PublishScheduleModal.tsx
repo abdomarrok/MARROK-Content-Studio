@@ -24,12 +24,15 @@ import type {
 } from '../../types.ts';
 import { DEFAULT_PALETTES } from '../../types.ts';
 import {
+  buildLocalScheduledIso,
   cleanupPublishedCloudinaryMedia,
   computeWeeklyScheduleSlots,
   dispatchPostPublish,
   downloadMetricoolCsvFile,
   fetchPublishStatus,
   generateMetricoolBulkCsv,
+  getDefaultUpcomingTimeStr,
+  getLocalTodayDateStr,
   uploadDeckSlidesForPublishing,
   type MetricoolCsvRowInput,
   type PublishStatusResponse,
@@ -84,14 +87,6 @@ const PLATFORM_OPTIONS: {
   },
 ];
 
-function getDefaultScheduleDateStr(): string {
-  const tomorrow = new Date(Date.now() + 24 * 3600_000);
-  const yyyy = tomorrow.getFullYear();
-  const mm = String(tomorrow.getMonth() + 1).padStart(2, '0');
-  const dd = String(tomorrow.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
-
 export const PublishScheduleModal: React.FC<PublishScheduleModalProps> = ({
   isOpen,
   onClose,
@@ -106,15 +101,15 @@ export const PublishScheduleModal: React.FC<PublishScheduleModalProps> = ({
   const [statusData, setStatusData] = useState<PublishStatusResponse | null>(null);
   const [isLoadingStatus, setIsLoadingStatus] = useState(false);
 
-  // Single Post Publish / Schedule States
+  // Single Post Publish / Schedule States (Defaults to today in local timezone)
   const [selectedTargets, setSelectedTargets] = useState<PublishTargetPlatform[]>([
     'instagram',
     'facebook',
     'linkedin',
   ]);
   const [scheduleMode, setScheduleMode] = useState<PublishScheduleMode>('shareNow');
-  const [scheduleDate, setScheduleDate] = useState<string>(getDefaultScheduleDateStr);
-  const [scheduleTime, setScheduleTime] = useState<string>('18:00');
+  const [scheduleDate, setScheduleDate] = useState<string>(getLocalTodayDateStr);
+  const [scheduleTime, setScheduleTime] = useState<string>(getDefaultUpcomingTimeStr);
   const [renderPreset, setRenderPreset] = useState<CanvasDimensionPreset>(
     carousel.dimensionPreset || 'ig-4:5'
   );
@@ -122,11 +117,11 @@ export const PublishScheduleModal: React.FC<PublishScheduleModalProps> = ({
   const [isProcessingSingle, setIsProcessingSingle] = useState(false);
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
 
-  // Bulk Weekly Calendar Queue States
+  // Bulk Weekly Calendar Queue States (Defaults to today in local timezone)
   const [selectedPostIds, setSelectedPostIds] = useState<string[]>([]);
-  const [weeklyCadence, setWeeklyCadence] = useState<WeeklyCadencePreset>('mon-wed-fri');
-  const [bulkStartDate, setBulkStartDate] = useState<string>(getDefaultScheduleDateStr);
-  const [bulkTime, setBulkTime] = useState<string>('18:00');
+  const [weeklyCadence, setWeeklyCadence] = useState<WeeklyCadencePreset>('daily');
+  const [bulkStartDate, setBulkStartDate] = useState<string>(getLocalTodayDateStr);
+  const [bulkTime, setBulkTime] = useState<string>(getDefaultUpcomingTimeStr);
   const [bulkTargets, setBulkTargets] = useState<PublishTargetPlatform[]>([
     'instagram',
     'facebook',
@@ -218,10 +213,7 @@ export const PublishScheduleModal: React.FC<PublishScheduleModalProps> = ({
     if (scheduleMode === 'addToQueue') {
       return new Date(Date.now() + 4 * 3600_000).toISOString();
     }
-    const dt = new Date(`${scheduleDate}T${scheduleTime || '18:00'}:00`);
-    return Number.isNaN(dt.getTime())
-      ? new Date(Date.now() + 24 * 3600_000).toISOString()
-      : dt.toISOString();
+    return buildLocalScheduledIso(scheduleDate, scheduleTime || '18:00');
   };
 
   const handleSinglePublishOrSchedule = async (exportMetricoolCsvOnly = false) => {

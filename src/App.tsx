@@ -130,7 +130,8 @@ export default function App() {
 
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
   const [activePhase, setActivePhase] = useState<'studio' | 'publish'>('studio');
-  const [publishHubTab, setPublishHubTab] = useState<'single' | 'bulk' | 'storage'>('single');
+  const [publishHubTab, setPublishHubTab] = useState<'single' | 'posts' | 'bulk' | 'storage'>('single');
+  const [editingPostFromManagerId, setEditingPostFromManagerId] = useState<string | null>(null);
   const [isThemeCustomizerOpen, setIsThemeCustomizerOpen] = useState(false);
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
   const [isContactSheetOpen, setIsContactSheetOpen] = useState(false);
@@ -327,7 +328,10 @@ export default function App() {
   };
 
   const handleSelectSavedPost = (record: SavedPostRecord) => {
-    const cleanDeck = sanitizeFullCarousel(record.deck);
+    const cleanDeck = sanitizeFullCarousel({
+      ...record.deck,
+      id: record.id,
+    });
     handleUpdateCarousel(cleanDeck);
     if (cleanDeck.theme && DEFAULT_PALETTES[cleanDeck.theme]) {
       setCurrentPalette(DEFAULT_PALETTES[cleanDeck.theme]);
@@ -411,7 +415,8 @@ export default function App() {
         isSavingPost={isSavingPost}
         onOpenSavedPostsDrawer={() => {
           refreshVaultPosts(false);
-          setIsSavedPostsDrawerOpen(true);
+          setPublishHubTab('posts');
+          setActivePhase('publish');
         }}
         savedPostsCount={savedPosts.length}
         canUndo={pastHistory.length > 0}
@@ -442,35 +447,78 @@ export default function App() {
               onBackToStudio={() => setActivePhase('studio')}
               onSelectPostIntoStudio={(record) => {
                 handleSelectSavedPost(record);
+                setEditingPostFromManagerId(record.id);
                 setActivePhase('studio');
               }}
               onRefreshVault={() => refreshVaultPosts(false)}
               onShowToast={showToast}
+              onExportVaultJson={handleExportVault}
+              onImportVaultJson={handleImportVault}
             />
           </Suspense>
         ) : (
-          <AutonomousStudio
-            carousel={carousel}
-            theme={currentPalette}
-            activeSlideIndex={activeSlideIndex}
-            onSlideChange={setActiveSlideIndex}
-            onUpdateCarousel={handleUpdateCarousel}
-            onSelectTheme={handleSelectPalette}
-            onOpenThemeCustomizer={() => setIsThemeCustomizerOpen(true)}
-            onOpenContactSheet={() => setIsContactSheetOpen(true)}
-            onOpenSavedPostsDrawer={() => {
-              refreshVaultPosts(false);
-              setIsSavedPostsDrawerOpen(true);
-            }}
-            onSaveValidPost={handleSaveValidPost}
-            isSavingPost={isSavingPost}
-            onShowToast={showToast}
-            savedPosts={savedPosts}
-            onOpenPublishScheduleModal={(tab) => {
-              setPublishHubTab(tab || 'single');
-              setActivePhase('publish');
-            }}
-          />
+          <>
+            {editingPostFromManagerId && carousel.id === editingPostFromManagerId && (
+              <div className="mb-2 px-3 py-2 rounded-xl border border-emerald-400/35 bg-emerald-500/10 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-200 font-mono text-[10px] font-bold uppercase shrink-0">
+                    Editing Post
+                  </span>
+                  <span className="font-bold text-white truncate">
+                    {carousel.slides[0]?.enTitle || 'Saved Post'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    disabled={isSavingPost}
+                    onClick={async () => {
+                      const existing = savedPosts.find((p) => p.id === carousel.id);
+                      await handleSaveValidPost(existing?.postStatus || 'validated', true);
+                      setPublishHubTab('posts');
+                      setActivePhase('publish');
+                    }}
+                    className="px-3 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold cursor-pointer transition-colors"
+                  >
+                    {isSavingPost ? 'Saving...' : 'Save & Return to Posts Manager'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPublishHubTab('posts');
+                      setActivePhase('publish');
+                    }}
+                    className="px-2.5 py-1 rounded-lg border border-white/15 bg-white/[0.05] hover:bg-white/[0.1] text-slate-200 font-semibold cursor-pointer transition-colors"
+                  >
+                    Back to Posts
+                  </button>
+                </div>
+              </div>
+            )}
+            <AutonomousStudio
+              carousel={carousel}
+              theme={currentPalette}
+              activeSlideIndex={activeSlideIndex}
+              onSlideChange={setActiveSlideIndex}
+              onUpdateCarousel={handleUpdateCarousel}
+              onSelectTheme={handleSelectPalette}
+              onOpenThemeCustomizer={() => setIsThemeCustomizerOpen(true)}
+              onOpenContactSheet={() => setIsContactSheetOpen(true)}
+              onOpenSavedPostsDrawer={() => {
+                refreshVaultPosts(false);
+                setPublishHubTab('posts');
+                setActivePhase('publish');
+              }}
+              onSaveValidPost={handleSaveValidPost}
+              isSavingPost={isSavingPost}
+              onShowToast={showToast}
+              savedPosts={savedPosts}
+              onOpenPublishScheduleModal={(tab) => {
+                setPublishHubTab(tab || 'single');
+                setActivePhase('publish');
+              }}
+            />
+          </>
         )}
       </main>
 

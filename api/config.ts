@@ -18,6 +18,7 @@ export interface ServerConfig {
   cloudinaryApiKey: string;
   cloudinaryApiSecret: string;
   bufferApiKey: string;
+  zernioApiKey: string;
 }
 
 export interface CandidateGeminiKey {
@@ -198,6 +199,7 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
   const cloudinaryApiKey = (env.CLOUDINARY_API_KEY || '').trim();
   const cloudinaryApiSecret = (env.CLOUDINARY_API_SECRET || '').trim();
   const bufferApiKey = (env.BUFFER_API_KEY || '').trim();
+  const zernioApiKey = (env.ZERNIO_API_KEY || '').trim();
 
   return {
     geminiApiKey,
@@ -217,6 +219,7 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     cloudinaryApiKey,
     cloudinaryApiSecret,
     bufferApiKey,
+    zernioApiKey,
   };
 }
 

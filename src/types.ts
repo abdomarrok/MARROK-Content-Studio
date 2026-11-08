@@ -351,7 +351,7 @@ export interface BufferChannelInfo {
   handle: string;
   queuedCount: number;
   queueLimit: number;
-  provider: 'buffer' | 'metricool';
+  provider: 'buffer' | 'zernio' | 'metricool';
 }
 
 export interface SavedPostRecord {
@@ -371,9 +371,11 @@ export interface SavedPostRecord {
   scheduledFor?: string;
   publishTargets?: PublishTargetPlatform[];
   hostedSlideUrls?: string[];
+  tiktokHostedSlideUrls?: string[];
   cloudinaryPublicIds?: string[];
   cloudinaryCleanedAt?: string;
   bufferPostIds?: string[];
+  zernioPostIds?: string[];
   countedInMetricoolMonth?: string;
 }
 

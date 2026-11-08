@@ -6,15 +6,21 @@ import {
   signCloudinaryParams,
   computeFreePlanQuotaStats,
   sweepExpiredCloudinaryAssets,
+  handleDispatchPublish,
+  handleManagePublishedPost,
 } from '../../api/controllers/publishController.ts';
 import { saveStoredPosts } from '../../api/controllers/postsController.ts';
 import {
+  buildLocalScheduledIso,
   buildMetricoolCsvRowFromDeck,
   computeWeeklyScheduleSlots,
   deriveMetricoolAltTexts,
   deriveMetricoolDocumentTitle,
   deriveMetricoolTikTokTitle,
+  derivePostLifecycleStage,
+  formatLocalDateTimeParts,
   generateMetricoolBulkCsv,
+  getLocalTodayDateStr,
   OFFICIAL_METRICOOL_CSV_HEADERS,
 } from '../lib/publish/publishClient.ts';
 import { DEFAULT_STARTER_DECK } from '../lib/presets.ts';
@@ -33,6 +39,8 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
   afterEach(async () => {
     vi.restoreAllMocks();
     delete process.env.POSTS_STORAGE_FILE;
+    delete process.env.BUFFER_API_KEY;
+    delete process.env.ZERNIO_API_KEY;
     try {
       await fs.unlink(tmpFile);
     } catch {
@@ -112,9 +120,10 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
     expect(igChannel?.queuedCount).toBe(1);
   });
 
-  it('automatically sweeps and destroys Cloudinary assets for expired scheduled posts while keeping future scheduled posts intact', async () => {
+  it('automatically sweeps and destroys Cloudinary assets for expired scheduled posts while keeping future and recent shareNow posts intact', async () => {
     const pastScheduledIso = new Date(Date.now() - 3 * 3600_000).toISOString(); // 3 hours ago
     const futureScheduledIso = new Date(Date.now() + 24 * 3600_000).toISOString(); // tomorrow
+    const recentShareNowIso = new Date(Date.now() - 5 * 60_000).toISOString(); // 5 minutes ago
 
     const seedPosts: SavedPostRecord[] = [
       {
@@ -145,6 +154,20 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
         scheduledFor: futureScheduledIso,
         cloudinaryPublicIds: ['local_staging/fut_s1', 'local_staging/fut_s2'],
       },
+      {
+        id: 'post_recent_share_now',
+        title: 'Recent ShareNow Post',
+        category: 'AI',
+        postStatus: 'posted',
+        createdAt: recentShareNowIso,
+        updatedAt: recentShareNowIso,
+        postedAt: recentShareNowIso,
+        creatorHandle: '@MARROK',
+        slideCount: 1,
+        qaPassed: true,
+        deck: DEFAULT_STARTER_DECK,
+        cloudinaryPublicIds: ['local_staging/now_s1'],
+      },
     ];
 
     await saveStoredPosts(seedPosts);
@@ -152,12 +175,14 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
     const sweep = await sweepExpiredCloudinaryAssets();
     expect(sweep.cleanedPostIds).toEqual(['post_expired']);
     expect(sweep.cleanedPublicIds).toEqual(['local_staging/exp_s1', 'local_staging/exp_s2']);
-    expect(sweep.remainingStagedCount).toBe(2);
+    expect(sweep.remainingStagedCount).toBe(3);
 
     const expiredRecord = sweep.updatedPosts.find((p) => p.id === 'post_expired');
     const futureRecord = sweep.updatedPosts.find((p) => p.id === 'post_future');
+    const recentShareNowRecord = sweep.updatedPosts.find((p) => p.id === 'post_recent_share_now');
     expect(expiredRecord?.cloudinaryCleanedAt).toBeDefined();
     expect(futureRecord?.cloudinaryCleanedAt).toBeUndefined();
+    expect(recentShareNowRecord?.cloudinaryCleanedAt).toBeUndefined();
   });
 
   it('generates the exact 99-column Official Metricool CSV template with auto-filled TikTok Title, Alt Texts, First Comment, and LinkedIn PDF Carousel', () => {
@@ -211,4 +236,255 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
       expect([1, 3, 5]).toContain(day);
     }
   });
+
+  it('preserves same-day local calendar dates without shifting evening times to the next UTC day', () => {
+    const todayLocal = getLocalTodayDateStr(new Date(2026, 10, 7, 23, 15, 0));
+    expect(todayLocal).toBe('2026-11-07');
+
+    const iso = buildLocalScheduledIso('2026-11-07', '22:45');
+    const parts = formatLocalDateTimeParts(iso);
+    expect(parts.datePart).toBe('2026-11-07');
+    expect(parts.timePart).toBe('22:45:00');
+    expect(parts.timeShort).toBe('22:45');
+
+    // Verify daily cadence starts on the exact requested startDateStr without bumping to tomorrow
+    const dailySlots = computeWeeklyScheduleSlots(2, '2026-11-07', 'daily', '18:00');
+    expect(dailySlots[0]?.datePart).toBe('2026-11-07');
+    expect(dailySlots[0]?.timePart).toBe('18:00:00');
+    expect(dailySlots[1]?.datePart).toBe('2026-11-08');
+  });
+
+  it('classifies post lifecycle stages and supports reschedule, unschedule, and cancelAndDelete via handleManagePublishedPost', async () => {
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const futureIso = new Date(nowMs + 12 * 3600_000).toISOString();
+
+    const baseDraft: SavedPostRecord = {
+      id: 'post_manage_1',
+      title: 'Managed Carousel Post',
+      category: 'SYSTEMS',
+      postStatus: 'validated',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      creatorHandle: '@MARROK',
+      slideCount: 6,
+      qaPassed: true,
+      deck: DEFAULT_STARTER_DECK,
+      cloudinaryPublicIds: ['local_staging/mg_s1'],
+    };
+
+    expect(derivePostLifecycleStage(baseDraft, nowMs)).toBe('draft');
+    expect(derivePostLifecycleStage({ ...baseDraft, qaPassed: false }, nowMs)).toBe('attention');
+    expect(
+      derivePostLifecycleStage({ ...baseDraft, postStatus: 'posted', scheduledFor: futureIso }, nowMs)
+    ).toBe('scheduled');
+    expect(
+      derivePostLifecycleStage({ ...baseDraft, postStatus: 'posted', postedAt: nowIso }, nowMs)
+    ).toBe('posted');
+
+    await saveStoredPosts([baseDraft]);
+
+    const invokeManage = async (body: Record<string, unknown>) => {
+      let statusCode = 200;
+      let jsonBody: any = null;
+      const req = { body } as any;
+      const res = {
+        status(code: number) {
+          statusCode = code;
+          return this;
+        },
+        json(payload: unknown) {
+          jsonBody = payload;
+          return this;
+        },
+      } as any;
+      await handleManagePublishedPost(req, res);
+      return { statusCode, jsonBody };
+    };
+
+    // 1. Reschedule draft into a future slot
+    const rescheduleRes = await invokeManage({
+      postId: 'post_manage_1',
+      action: 'reschedule',
+      scheduledFor: futureIso,
+      publishTargets: ['instagram', 'linkedin'],
+    });
+    expect(rescheduleRes.statusCode).toBe(200);
+    expect(rescheduleRes.jsonBody.post.postStatus).toBe('posted');
+    expect(rescheduleRes.jsonBody.post.scheduledFor).toBe(futureIso);
+    expect(rescheduleRes.jsonBody.post.publishTargets).toEqual(['instagram', 'linkedin']);
+
+    // 2. Unschedule back to draft
+    const unscheduleRes = await invokeManage({
+      postId: 'post_manage_1',
+      action: 'unschedule',
+    });
+    expect(unscheduleRes.statusCode).toBe(200);
+    expect(unscheduleRes.jsonBody.post.postStatus).toBe('validated');
+    expect(unscheduleRes.jsonBody.post.scheduledFor).toBeUndefined();
+
+    // 3. Cancel & Delete from Vault
+    const deleteRes = await invokeManage({
+      postId: 'post_manage_1',
+      action: 'cancelAndDelete',
+    });
+    expect(deleteRes.statusCode).toBe(200);
+    expect(deleteRes.jsonBody.deletedId).toBe('post_manage_1');
+    expect(deleteRes.jsonBody.posts).toHaveLength(0);
+  });
+
+  it('sends metadata.instagram.type = "post" for multi-image carousels on Buffer and dispatches TikTok photo carousels via Zernio API v1', async () => {
+    process.env.BUFFER_API_KEY = 'buf_test_key_123';
+    process.env.ZERNIO_API_KEY = 'zernio_test_key_456';
+
+    const capturedBufferRequests: any[] = [];
+    const capturedZernioPostRequests: any[] = [];
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: any) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (url === 'https://api.buffer.com') {
+        const parsed = JSON.parse(String(init?.body || '{}'));
+        if (String(parsed.query || '').includes('GetMarrokChannels')) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                account: {
+                  organizations: [
+                    {
+                      id: 'org_1',
+                      channels: [
+                        { id: 'buf_ig_1', name: 'marrok_org', service: 'instagram' },
+                        { id: 'buf_li_1', name: 'Marrok', service: 'linkedin' },
+                      ],
+                    },
+                  ],
+                },
+              },
+            }),
+            { status: 200 }
+          );
+        }
+        capturedBufferRequests.push(parsed);
+        return new Response(
+          JSON.stringify({
+            data: {
+              createPost: {
+                post: { id: `buf_post_${capturedBufferRequests.length}` },
+              },
+            },
+          }),
+          { status: 200 }
+        );
+      }
+
+      if (url === 'https://zernio.com/api/v1/accounts') {
+        return new Response(
+          JSON.stringify({
+            accounts: [
+              {
+                _id: 'zernio_tt_acc_1',
+                platform: 'tiktok',
+                username: 'Marrok',
+                enabled: true,
+              },
+            ],
+          }),
+          { status: 200 }
+        );
+      }
+
+      if (url === 'https://zernio.com/api/v1/posts') {
+        const parsed = JSON.parse(String(init?.body || '{}'));
+        capturedZernioPostRequests.push(parsed);
+        return new Response(
+          JSON.stringify({
+            post: { _id: 'zernio_post_tt_99' },
+          }),
+          { status: 200 }
+        );
+      }
+
+      return new Response('{}', { status: 200 });
+    });
+
+    let statusCode = 200;
+    let jsonBody: any = null;
+    const req = {
+      body: {
+        postId: 'post_hybrid_1',
+        deck: DEFAULT_STARTER_DECK,
+        title: 'MCP vs UTCP',
+        caption: 'Bilingual EN + AR test caption #MARROK',
+        mode: 'shareNow',
+        targets: ['instagram', 'linkedin', 'tiktok'],
+        imageUrls: [
+          'https://cdn.example.com/ig_4x5_slide1.jpg',
+          'https://cdn.example.com/ig_4x5_slide2.jpg',
+        ],
+        tiktokImageUrls: [
+          'https://cdn.example.com/tt_9x16_slide1.jpg',
+          'https://cdn.example.com/tt_9x16_slide2.jpg',
+        ],
+        cloudinaryPublicIds: ['s1', 's2'],
+        tiktokSettings: {
+          privacyLevel: 'PUBLIC_TO_EVERYONE',
+          photoCoverIndex: 0,
+          autoAddMusic: true,
+          allowComment: true,
+          title: 'MCP vs UTCP Architecture',
+        },
+      },
+    } as any;
+    const res = {
+      status(code: number) {
+        statusCode = code;
+        return this;
+      },
+      json(payload: unknown) {
+        jsonBody = payload;
+        return this;
+      },
+    } as any;
+
+    await handleDispatchPublish(req, res);
+
+    expect(statusCode).toBe(200);
+    expect(jsonBody.ok).toBe(true);
+    expect(jsonBody.bufferFailedCount).toBe(0);
+
+    // Verify Instagram Buffer GraphQL payload uses type: 'post' (NEVER 'carousel') with 4:5 imageUrls
+    const igReq = capturedBufferRequests.find(
+      (r) => r.variables?.input?.metadata?.instagram
+    );
+    expect(igReq).toBeDefined();
+    expect(igReq.variables.input.metadata.instagram.type).toBe('post');
+    expect(igReq.variables.input.assets).toHaveLength(2);
+    expect(igReq.variables.input.assets[0].image.url).toBe(
+      'https://cdn.example.com/ig_4x5_slide1.jpg'
+    );
+
+    // Verify TikTok Zernio REST API v1 payload uses 9:16 tiktokImageUrls, camelCase autoAddMusic, and musicSoundInfo
+    expect(capturedZernioPostRequests).toHaveLength(1);
+    const ttReq = capturedZernioPostRequests[0];
+    expect(ttReq.publishNow).toBe(true);
+    expect(ttReq.platforms[0].platform).toBe('tiktok');
+    expect(ttReq.platforms[0].accountId).toBe('zernio_tt_acc_1');
+    expect(ttReq.mediaItems).toEqual([
+      { type: 'image', url: 'https://cdn.example.com/tt_9x16_slide1.jpg' },
+      { type: 'image', url: 'https://cdn.example.com/tt_9x16_slide2.jpg' },
+    ]);
+    expect(ttReq.tiktokSettings.mediaType).toBe('photo');
+    expect(ttReq.tiktokSettings.autoAddMusic).toBe(true);
+    expect(ttReq.tiktokSettings.musicSoundInfo?.musicSoundId).toBeDefined();
+    expect(ttReq.tiktokSettings.media_type).toBe('photo');
+    expect(ttReq.tiktokSettings.content_preview_confirmed).toBe(true);
+    expect(ttReq.tiktokSettings.express_consent_given).toBe(true);
+
+    // Verify channelResults report Buffer ✓ for IG/LI and Zernio ✓ for TikTok
+    const igResult = jsonBody.channelResults.find((c: any) => c.service === 'instagram');
+    const ttResult = jsonBody.channelResults.find((c: any) => c.service === 'tiktok');
+    expect(igResult).toMatchObject({ provider: 'buffer', ok: true });
+    expect(ttResult).toMatchObject({ provider: 'zernio', ok: true, zernioPostId: 'zernio_post_tt_99' });
+  });
 });
+

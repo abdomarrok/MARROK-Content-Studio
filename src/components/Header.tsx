@@ -114,7 +114,7 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 type="button"
                 onClick={() => onPhaseChange('publish')}
-                className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded-md text-[11px] sm:text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                className={`flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-md text-[11px] sm:text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                   activePhase === 'publish'
                     ? 'bg-emerald-500/20 text-emerald-200'
                     : 'text-slate-400 hover:text-emerald-300'
@@ -122,7 +122,12 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 <Send className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                 <span className="sm:hidden">Publish</span>
-                <span className="hidden sm:inline">2. Publish Hub</span>
+                <span className="hidden sm:inline">2. Publish & Posts</span>
+                {savedPostsCount > 0 && (
+                  <span className="px-1.5 py-0.5 rounded bg-white/10 text-[10px] font-mono tabular-nums text-white">
+                    {savedPostsCount}
+                  </span>
+                )}
               </button>
             </div>
           )}
@@ -231,21 +236,6 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="sm:hidden">
                 {deckStatus === 'posted' ? 'Posted' : 'Save'}
               </span>
-            </button>
-          )}
-
-          {onOpenSavedPostsDrawer && (
-            <button
-              type="button"
-              onClick={onOpenSavedPostsDrawer}
-              className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 min-h-[36px] sm:min-h-[38px] text-[11px] sm:text-xs font-semibold rounded-lg border border-white/10 bg-white/[0.04] text-slate-300 hover:bg-white/[0.08] hover:text-white transition-colors cursor-pointer whitespace-nowrap shrink-0"
-              title="Open Saved & Posted Carousels Vault"
-              aria-label="Open Saved Posts Vault"
-            >
-              <span className="hidden sm:inline">Saved Posts</span>
-              <span className="sm:hidden">Vault</span>
-              <span aria-hidden="true" className="text-slate-500">·</span>
-              <span className="font-mono tabular-nums text-white">{savedPostsCount}</span>
             </button>
           )}
 

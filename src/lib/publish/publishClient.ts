@@ -8,6 +8,7 @@ import type {
   ThemePalette,
 } from '../../types.ts';
 import { renderSlideToCanvas } from '../canvas/renderSlide.ts';
+import { syncLocalVaultAfterManage } from '../storage/postsVaultClient.ts';
 
 export type WeeklyCadencePreset = 'mon-wed-fri' | 'tue-thu-sat' | 'weekdays' | 'daily';
 
@@ -17,6 +18,8 @@ export interface PublishStatusResponse {
   cloudinaryConfigured: boolean;
   cloudinaryCloudName: string | null;
   bufferApiConfigured: boolean;
+  zernioApiConfigured?: boolean;
+  zernioMcpUrl?: string;
   autoCleanedPostIds: string[];
   currentMonthKey: string;
   metricoolUsedThisMonth: number;
@@ -34,6 +37,25 @@ export interface UploadPublishMediaResponse {
   provider: 'cloudinary' | 'local-staging';
 }
 
+export interface TikTokCommercialTrack {
+  musicSoundId: string;
+  trackId: string;
+  name: string;
+  artist: string;
+  genres: string[];
+  durationSec: number;
+  previewUrl: string;
+  thumbnailUrl?: string;
+  rank: number;
+}
+
+export interface TikTokMusicCatalogResponse {
+  configured: boolean;
+  accountId: string | null;
+  username?: string;
+  tracks: TikTokCommercialTrack[];
+}
+
 export interface DispatchPublishPayload {
   postId?: string;
   deck?: CarouselData;
@@ -41,10 +63,29 @@ export interface DispatchPublishPayload {
   caption?: string;
   mode: PublishScheduleMode;
   dueAt?: string;
+  timezone?: string;
   targets: PublishTargetPlatform[];
   imageUrls: string[];
+  tiktokImageUrls?: string[];
   cloudinaryPublicIds: string[];
   autoCleanupImmediate?: boolean;
+  tiktokSettings?: {
+    privacyLevel?: string;
+    photoCoverIndex?: number;
+    autoAddMusic?: boolean;
+    allowComment?: boolean;
+    title?: string;
+    musicSoundId?: string;
+  };
+}
+
+export interface ChannelDispatchResult {
+  service: PublishTargetPlatform;
+  provider: 'buffer' | 'zernio' | 'metricool-csv';
+  ok: boolean;
+  bufferPostId?: string;
+  zernioPostId?: string;
+  message?: string;
 }
 
 export interface DispatchPublishResponse {
@@ -54,9 +95,18 @@ export interface DispatchPublishResponse {
   cloudinaryCleaned: boolean;
   cleanedPublicIds: string[];
   post: SavedPostRecord | null;
+  bufferDispatchedCount?: number;
+  bufferFailedCount?: number;
+  channelResults?: ChannelDispatchResult[];
+  warnings?: string[];
   quotaStats: Omit<
     PublishStatusResponse,
-    'cloudinaryConfigured' | 'cloudinaryCloudName' | 'bufferApiConfigured' | 'autoCleanedPostIds'
+    | 'cloudinaryConfigured'
+    | 'cloudinaryCloudName'
+    | 'bufferApiConfigured'
+    | 'zernioApiConfigured'
+    | 'zernioMcpUrl'
+    | 'autoCleanedPostIds'
   >;
 }
 
@@ -428,6 +478,20 @@ export async function fetchPublishStatus(): Promise<PublishStatusResponse> {
 }
 
 /**
+ * Fetches trending licensed tracks from Zernio's TikTok Commercial Music Library.
+ */
+export async function fetchTikTokCommercialMusic(): Promise<TikTokMusicCatalogResponse> {
+  const res = await fetch('/api/publish/tiktok-music', {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch TikTok music catalog (${res.status})`);
+  }
+  return (await res.json()) as TikTokMusicCatalogResponse;
+}
+
+/**
  * Dispatches a post to Buffer GraphQL API / Vault schedule ledger.
  * When mode === 'shareNow', the server automatically destroys the staged Cloudinary assets after dispatch.
  */
@@ -446,6 +510,84 @@ export async function dispatchPostPublish(
   }
 
   return (await res.json()) as DispatchPublishResponse;
+}
+
+export type PostLifecycleStage = 'draft' | 'scheduled' | 'posted' | 'attention';
+
+export type PostManageAction = 'reschedule' | 'unschedule' | 'cancelAndDelete';
+
+export interface ManagePublishedPostPayload {
+  postId: string;
+  action: PostManageAction;
+  scheduledFor?: string;
+  publishTargets?: PublishTargetPlatform[];
+  requeueBuffer?: boolean;
+}
+
+export interface ManagePublishedPostResponse {
+  ok: boolean;
+  action: PostManageAction;
+  deletedId?: string;
+  cancelledBufferIds: string[];
+  cleanedPublicIds?: string[];
+  bufferPostIds?: string[];
+  post: SavedPostRecord | null;
+  posts: SavedPostRecord[];
+  warnings: string[];
+  quotaStats: Omit<
+    PublishStatusResponse,
+    'cloudinaryConfigured' | 'cloudinaryCloudName' | 'bufferApiConfigured' | 'autoCleanedPostIds'
+  >;
+}
+
+/**
+ * Classifies a SavedPostRecord into one of the 4 canonical Post Management lifecycle stages:
+ * - 'attention': QA failed (!qaPassed)
+ * - 'scheduled': scheduledFor is in the future (> nowMs)
+ * - 'posted': postStatus === 'posted' (and either immediate or scheduledFor <= nowMs)
+ * - 'draft': postStatus === 'validated' and not scheduled in the future
+ */
+export function derivePostLifecycleStage(
+  post: SavedPostRecord,
+  nowMs: number = Date.now()
+): PostLifecycleStage {
+  if (post.qaPassed === false) {
+    return 'attention';
+  }
+  const scheduledMs = post.scheduledFor ? Date.parse(post.scheduledFor) : NaN;
+  if (Number.isFinite(scheduledMs) && scheduledMs > nowMs) {
+    return 'scheduled';
+  }
+  if (post.postStatus === 'posted') {
+    return 'posted';
+  }
+  return 'draft';
+}
+
+/**
+ * Executes a post management lifecycle action (reschedule, unschedule, or cancelAndDelete)
+ * against /api/publish/manage-post and synchronizes the local IndexedDB Vault cache.
+ */
+export async function managePublishedPost(
+  payload: ManagePublishedPostPayload
+): Promise<ManagePublishedPostResponse> {
+  const res = await fetch('/api/publish/manage-post', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const errData = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(errData.error || `Post management action failed (${res.status})`);
+  }
+
+  const data = (await res.json()) as ManagePublishedPostResponse;
+  await syncLocalVaultAfterManage({
+    updatedPost: data.post,
+    deletedId: data.deletedId,
+  });
+  return data;
 }
 
 /**
@@ -476,7 +618,83 @@ export async function cleanupPublishedCloudinaryMedia(options?: {
 }
 
 /**
- * Computes weekly schedule slots for a batch of Vault posts.
+ * Returns today's date in the user's local timezone formatted as YYYY-MM-DD.
+ * Avoids .toISOString().slice(0, 10) which uses UTC and shifts evening times into the next day.
+ */
+export function getLocalTodayDateStr(now: Date = new Date()): string {
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+/**
+ * Returns the next upcoming slot time on the SAME local day (HH:mm),
+ * clamping late-night times to 23:55 so it never rolls over to tomorrow.
+ */
+export function getDefaultUpcomingTimeStr(now: Date = new Date()): string {
+  const h = now.getHours();
+  const m = now.getMinutes();
+  if (h >= 23) {
+    const safeMin = Math.min(59, Math.max(m + 5, 55));
+    return `23:${String(safeMin).padStart(2, '0')}`;
+  }
+  if (m < 30) {
+    return `${String(h).padStart(2, '0')}:30`;
+  }
+  return `${String(h + 1).padStart(2, '0')}:00`;
+}
+
+/**
+ * Builds an ISO timestamp from a local YYYY-MM-DD and HH:mm without shifting the local calendar date.
+ */
+export function buildLocalScheduledIso(dateStr: string, timeStr = '18:00'): string {
+  const cleanDate = (dateStr || getLocalTodayDateStr()).trim();
+  const cleanTime = (timeStr || '18:00').trim();
+  const [y, m, d] = cleanDate.split('-').map((n) => Number.parseInt(n, 10));
+  const [hh, mm] = cleanTime.split(':').map((n) => Number.parseInt(n, 10));
+
+  const fallback = new Date();
+  const dt = new Date(
+    Number.isFinite(y) ? y : fallback.getFullYear(),
+    Number.isFinite(m) ? m - 1 : fallback.getMonth(),
+    Number.isFinite(d) ? d : fallback.getDate(),
+    Number.isFinite(hh) ? hh : 18,
+    Number.isFinite(mm) ? mm : 0,
+    0,
+    0
+  );
+  return Number.isNaN(dt.getTime()) ? fallback.toISOString() : dt.toISOString();
+}
+
+/**
+ * Extracts local YYYY-MM-DD and HH:mm(:ss) parts from an ISO date string or Date object.
+ */
+export function formatLocalDateTimeParts(
+  isoOrDate: string | Date,
+  fallbackDateStr?: string,
+  fallbackTimeStr = '18:00'
+): { datePart: string; timePart: string; timeShort: string } {
+  const dt = typeof isoOrDate === 'string' ? new Date(isoOrDate) : isoOrDate;
+  if (Number.isNaN(dt.getTime())) {
+    const safeDate = fallbackDateStr || getLocalTodayDateStr();
+    const safeTime = (fallbackTimeStr || '18:00').slice(0, 5);
+    return { datePart: safeDate, timePart: `${safeTime}:00`, timeShort: safeTime };
+  }
+  const yyyy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  const hh = String(dt.getHours()).padStart(2, '0');
+  const min = String(dt.getMinutes()).padStart(2, '0');
+  return {
+    datePart: `${yyyy}-${mm}-${dd}`,
+    timePart: `${hh}:${min}:00`,
+    timeShort: `${hh}:${min}`,
+  };
+}
+
+/**
+ * Computes weekly schedule slots for a batch of Vault posts starting from the exact user-selected startDateStr.
  */
 export function computeWeeklyScheduleSlots(
   count: number,
@@ -493,24 +711,30 @@ export function computeWeeklyScheduleSlots(
       ? [1, 2, 3, 4, 5]
       : [0, 1, 2, 3, 4, 5, 6]; // Daily
 
-  const [hoursRaw, minutesRaw] = timeStr.split(':').map((n) => Number.parseInt(n, 10));
+  const [hoursRaw, minutesRaw] = (timeStr || '18:00')
+    .split(':')
+    .map((n) => Number.parseInt(n, 10));
   const hours = Number.isFinite(hoursRaw) ? hoursRaw : 18;
   const minutes = Number.isFinite(minutesRaw) ? minutesRaw : 0;
 
-  const baseDate = startDateStr ? new Date(`${startDateStr}T00:00:00`) : new Date();
-  if (Number.isNaN(baseDate.getTime())) {
-    baseDate.setTime(Date.now());
+  let cursor: Date;
+  if (startDateStr && /^\d{4}-\d{2}-\d{2}$/.test(startDateStr.trim())) {
+    const [y, m, d] = startDateStr
+      .trim()
+      .split('-')
+      .map((n) => Number.parseInt(n, 10));
+    cursor = new Date(y, m - 1, d, hours, minutes, 0, 0);
+  } else {
+    cursor = new Date();
+    cursor.setHours(hours, minutes, 0, 0);
+  }
+
+  if (Number.isNaN(cursor.getTime())) {
+    cursor = new Date();
+    cursor.setHours(hours, minutes, 0, 0);
   }
 
   const slots: ScheduledSlotAssignment[] = [];
-  const cursor = new Date(baseDate.getTime());
-  cursor.setHours(hours, minutes, 0, 0);
-
-  // Ensure first slot is in the future
-  if (cursor.getTime() <= Date.now()) {
-    cursor.setDate(cursor.getDate() + 1);
-  }
-
   let guard = 0;
   while (slots.length < count && guard < 366) {
     guard++;
