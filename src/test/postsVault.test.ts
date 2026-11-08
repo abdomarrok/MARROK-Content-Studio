@@ -152,4 +152,28 @@ describe('Gemini Model Deprecation Upgrade & Vercel Persistence Vault', () => {
     expect(coldStartLoaded.posts.length).toBeGreaterThanOrEqual(1);
     expect(coldStartLoaded.posts.some((p) => p.title === 'Is Your Voice Still Yours?')).toBe(true);
   });
+
+  it('deduplicates repeated drafts with different UUIDs that share the same normalized title and format', () => {
+    const first = validateAndBuildPostRecord({
+      id: 'post_dup_old',
+      deck: { ...DEFAULT_STARTER_DECK, id: 'post_dup_old' },
+      postStatus: 'validated',
+      allowOverride: true,
+    });
+    const second = validateAndBuildPostRecord({
+      id: 'post_dup_new',
+      deck: { ...DEFAULT_STARTER_DECK, id: 'post_dup_new' },
+      postStatus: 'validated',
+      allowOverride: true,
+    });
+    expect(first.ok && second.ok).toBe(true);
+    if (!first.ok || !second.ok) return;
+
+    const olderRecord = { ...first.record, updatedAt: '2026-10-29T13:36:14.000Z' };
+    const newerRecord = { ...second.record, updatedAt: '2026-10-29T14:03:02.000Z' };
+
+    const merged = mergePostLists([olderRecord], [newerRecord]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].id).toBe('post_dup_new');
+  });
 });

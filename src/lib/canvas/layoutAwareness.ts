@@ -328,15 +328,17 @@ export function computeSlideLayoutAwareness(
 
   // 1. Header Badge Layout (clamped to safe zone)
   const headerOverride = overrides.headerBadge;
+  const headerLeftX = spec.headerMarginLeft ?? spec.safeMarginLeft;
+  const headerRightX = spec.headerMarginRight ?? spec.safeMarginRight;
+  const headerBaseW = headerRightX - headerLeftX;
   const headerTopY = Math.max(40, spec.headerY - 12);
-  const headerBaseW = spec.safeContentWidth;
   const headerScale = Math.max(0.6, Math.min(1, headerOverride?.scale ?? 1));
-  const clampedHeaderDx = clampBoxDx(spec.safeMarginLeft, headerBaseW * headerScale, headerOverride?.dx || 0);
+  const clampedHeaderDx = clampBoxDx(headerLeftX, headerBaseW * headerScale, headerOverride?.dx || 0);
   const minHeaderDy = Math.max(-24, spec.headerY - 24 - headerTopY);
   const maxHeaderDy = Math.max(0, spec.safeFooterCeilingY - 72 - headerTopY);
   const clampedHeaderDy = Math.max(minHeaderDy, Math.min(maxHeaderDy, headerOverride?.dy || 0));
   const headerBadge = {
-    x: spec.safeMarginLeft + clampedHeaderDx,
+    x: headerLeftX + clampedHeaderDx,
     y: headerTopY + clampedHeaderDy,
     width: headerBaseW,
     height: 72,
@@ -1562,9 +1564,11 @@ export function clampElementDrag(
   let maxDx = spec.safeMarginRight - spec.safeTextCenterX;
 
   if (elementId === 'headerBadge') {
+    const leftLimit = spec.headerMarginLeft ?? spec.safeMarginLeft;
+    const rightLimit = spec.headerMarginRight ?? spec.safeMarginRight;
     const w = layout.headerBadge.width * layout.headerBadge.scale;
-    minDx = spec.safeMarginLeft - layout.headerBadge.x;
-    maxDx = spec.safeMarginRight - (layout.headerBadge.x + w);
+    minDx = leftLimit - layout.headerBadge.x;
+    maxDx = rightLimit - (layout.headerBadge.x + w);
   } else if (elementId === 'graphicCard' && layout.graphicCard) {
     const scaledW = layout.graphicCard.width * (layout.graphicCard.scale ?? 1);
     const leftEdge = layout.graphicCard.x + (layout.graphicCard.width - scaledW) / 2;

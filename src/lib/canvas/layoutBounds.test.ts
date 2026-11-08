@@ -21,8 +21,8 @@ describe('computeSlideElementBounds & findSlideElementAtPoint', () => {
     expect(bounds.bodyBlock).toBeDefined();
     expect(bounds.arabicBodyBlock).toBeDefined();
 
-    // Graphic card on Hub ends at y=980, so titleBlock baseline is at y>=980 with cap-height offset
-    expect(bounds.graphicCard.y).toBe(190);
+    // Graphic card on Hub starts below the safe header (y=266, height=790), so titleBlock baseline is at y>=1050 with cap-height offset
+    expect(bounds.graphicCard.y).toBe(266);
     expect(bounds.graphicCard.height).toBe(790);
     expect(bounds.titleBlock.y).toBeGreaterThan(900);
     expect(bounds.arabicTitleBlock.y).toBeGreaterThan(bounds.titleBlock.y);
@@ -42,10 +42,10 @@ describe('computeSlideElementBounds & findSlideElementAtPoint', () => {
 
     const bounds = computeSlideElementBounds(rowSlide);
 
-    // Graphic card on Row starts at y=240, height=490 (ends at y=730)
-    expect(bounds.graphicCard.y).toBe(240);
+    // Graphic card on Row starts at y=266, height=490 (ends at y=756)
+    expect(bounds.graphicCard.y).toBe(266);
     expect(bounds.graphicCard.height).toBe(490);
-    expect(bounds.titleBlock.y).toBeGreaterThanOrEqual(730);
+    expect(bounds.titleBlock.y).toBeGreaterThanOrEqual(756);
   });
 
   it('correctly computes bounds on a CTA slide', () => {
@@ -90,8 +90,8 @@ describe('computeSlideElementBounds & findSlideElementAtPoint', () => {
     const hitCard = findSlideElementAtPoint(cardMidX, cardMidY, bounds);
     expect(hitCard).toBe('graphicCard');
 
-    // Point in top header
-    const hitHeader = findSlideElementAtPoint(200, 130, bounds);
+    // Point in top header (inside y=206 safe header zone)
+    const hitHeader = findSlideElementAtPoint(200, 220, bounds);
     expect(hitHeader).toBe('headerBadge');
 
     // Point in bottom margin outside all elements should return null

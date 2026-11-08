@@ -17,12 +17,14 @@ import {
   deriveMetricoolAltTexts,
   deriveMetricoolDocumentTitle,
   deriveMetricoolTikTokTitle,
+  stripLeadingDuplicateTikTokTitle,
   derivePostLifecycleStage,
   formatLocalDateTimeParts,
   generateMetricoolBulkCsv,
   getLocalTodayDateStr,
   OFFICIAL_METRICOOL_CSV_HEADERS,
 } from '../lib/publish/publishClient.ts';
+import { CANVAS_DIMENSION_PRESETS, getArchetypeGraphicTransform } from '../lib/canvas/constants.ts';
 import { DEFAULT_STARTER_DECK } from '../lib/presets.ts';
 import type { SavedPostRecord } from '../types.ts';
 
@@ -485,6 +487,31 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
     const ttResult = jsonBody.channelResults.find((c: any) => c.service === 'tiktok');
     expect(igResult).toMatchObject({ provider: 'buffer', ok: true });
     expect(ttResult).toMatchObject({ provider: 'zernio', ok: true, zernioPostId: 'zernio_post_tt_99' });
+  });
+
+  it('strips redundant leading headline from TikTok caption when it duplicates the title', () => {
+    const fullCaption =
+      '⚡ مستقبل Java في عصر الذكاء الاصطناعي: كيف تتطور اللغة؟\n\nتنتقل Java من كونها لغة تعتمد على المعالج المركزي (CPU) إلى منصة تدعم الحوسبة غير المتجانسة.\n\n#Java #AI';
+    const ttTitle = 'The future of Java in AI. | مستقبل Java في عصر الذكاء الاصطناعي';
+
+    const cleaned = stripLeadingDuplicateTikTokTitle(fullCaption, ttTitle);
+    expect(cleaned.startsWith('تنتقل Java من كونها لغة تعتمد')).toBe(true);
+    expect(cleaned.includes('⚡ مستقبل Java')).toBe(false);
+
+    // If title does not duplicate the first line, preserve the caption intact
+    const uniqueCaption = 'Architecture overview of Java FFM.\n\nKey takeaways:';
+    expect(stripLeadingDuplicateTikTokTitle(uniqueCaption, 'Something Else Entirely')).toBe(uniqueCaption);
+  });
+
+  it('configures TikTok 9:16 safe-zone header at y=206 and insets margins to clear TikTok Photo Mode buttons', () => {
+    const ttSpec = CANVAS_DIMENSION_PRESETS['tiktok-9:16'];
+    expect(ttSpec.headerY).toBe(206);
+    expect(ttSpec.headerMarginLeft).toBe(136);
+    expect(ttSpec.headerMarginRight).toBe(920);
+
+    const transform = getArchetypeGraphicTransform(ttSpec, 'row');
+    expect(transform.cardY).toBe(266);
+    expect(transform.translateY).toBe(26);
   });
 });
 

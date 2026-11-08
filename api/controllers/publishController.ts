@@ -12,6 +12,7 @@ import {
   saveStoredPosts,
   validateAndBuildPostRecord,
 } from './postsController.ts';
+import { stripLeadingDuplicateTikTokTitle } from '../../src/lib/publish/publishClient.ts';
 
 const LOCAL_MEDIA_CACHE = new Map<string, { buffer: Buffer; createdAt: number }>();
 const MAX_LOCAL_CACHE_ITEMS = 60;
@@ -988,6 +989,10 @@ async function dispatchToZernioApi(params: {
     const allowComment = tiktokSettings?.allowComment ?? true;
     const photoCoverIndex = tiktokSettings?.photoCoverIndex ?? 0;
     const cleanTitle = tiktokSettings?.title ? tiktokSettings.title.slice(0, 90) : undefined;
+    const sanitizedDescription =
+      service === 'tiktok'
+        ? stripLeadingDuplicateTikTokTitle(text, cleanTitle).slice(0, 4000)
+        : text.slice(0, 4000);
 
     const ttSettingsObj: Record<string, unknown> = {
       // Official Zernio OpenAPI camelCase properties (`#/components/schemas/TikTokPlatformData`)
@@ -995,7 +1000,7 @@ async function dispatchToZernioApi(params: {
       allowComment,
       mediaType: 'photo',
       photoCoverIndex,
-      description: text.slice(0, 4000),
+      description: sanitizedDescription,
       ...(cleanTitle ? { title: cleanTitle } : {}),
       autoAddMusic: shouldAddMusic,
       contentPreviewConfirmed: true,
@@ -1018,7 +1023,7 @@ async function dispatchToZernioApi(params: {
     };
 
     return {
-      content: text,
+      content: service === 'tiktok' ? sanitizedDescription : text,
       mediaItems: imageUrls.map((url) => ({
         type: 'image',
         url,

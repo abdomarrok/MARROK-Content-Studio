@@ -20,7 +20,7 @@ export const SAFE_TEXT_WIDTH_TITLE = 840;
 export const SAFE_TEXT_WIDTH_BODY = 810;
 export const SAFE_TEXT_CENTER_X = 507;
 
-export const SAFE_HEADER_Y = 120;
+export const SAFE_HEADER_Y = 206;
 export const SAFE_FOOTER_CEILING_Y = 1555;
 export const SAFE_MAX_Y = 1650;
 export const PAGINATION_DOT_Y = 1605;
@@ -49,6 +49,8 @@ export interface CanvasDimensionSpec {
   safeTextWidthTitle: number;
   safeTextWidthBody: number;
   headerY: number;
+  headerMarginLeft?: number;
+  headerMarginRight?: number;
   graphicScale: number;
   graphicOffsetX: number;
   graphicOffsetY: number;
@@ -83,6 +85,8 @@ export const CANVAS_DIMENSION_PRESETS: Record<CanvasDimensionPreset, CanvasDimen
     safeTextWidthTitle: SAFE_TEXT_WIDTH_TITLE,
     safeTextWidthBody: SAFE_TEXT_WIDTH_BODY,
     headerY: SAFE_HEADER_Y,
+    headerMarginLeft: 136,
+    headerMarginRight: 920,
     graphicScale: 1,
     graphicOffsetX: 0,
     graphicOffsetY: 0,
@@ -435,14 +439,15 @@ export function getArchetypeGraphicTransform(
     nativeCenterX = 518;
   }
 
-  // Native 1:1 path for default TikTok 9:16 preset
+  // Native 1:1 path for default TikTok 9:16 preset (shifted down 26px to align below the y=206 safe header)
   if (spec.id === 'tiktok-9:16') {
+    const shiftY = 26;
     return {
       scale: 1,
       translateX: 0,
-      translateY: 0,
+      translateY: shiftY,
       cardX: SAFE_MARGIN_LEFT,
-      cardY: baseCardY,
+      cardY: baseCardY + shiftY,
       cardW: SAFE_CONTENT_WIDTH,
       cardH: baseCardH,
     };

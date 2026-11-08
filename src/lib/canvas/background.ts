@@ -124,7 +124,7 @@ export function drawCadReticles(
   const resolved = spec || getCanvasDimensionSpec();
   const leftX = resolved.safeMarginLeft;
   const rightX = resolved.safeMarginRight;
-  const topY = resolved.headerY + (resolved.height < 1920 ? 58 : 66);
+  const topY = Math.min(resolved.headerY + (resolved.height < 1920 ? 58 : 44), 256);
   const midY = Math.round(resolved.height * 0.48);
   const botY = resolved.safeFooterCeilingY + 8;
 
@@ -182,7 +182,7 @@ export function drawHeader(
 
   // Crisp compact authentic MARROK vector logo badge (32x32px)
   const logoBadgeSize = 32;
-  const logoBadgeX = resolved.safeMarginLeft;
+  const logoBadgeX = resolved.headerMarginLeft ?? resolved.safeMarginLeft;
   const logoBadgeY = resolved.headerY;
 
   // Ambient badge glow matching studio header
@@ -222,11 +222,12 @@ export function drawHeader(
   ctx.shadowBlur = 0;
   ctx.shadowColor = 'transparent';
 
-  // Top-Right Category Tag (aligned to right safe boundary)
+  // Top-Right Category Tag (aligned to right safe boundary or TikTok safe header right margin)
+  const headerRightX = resolved.headerMarginRight ?? resolved.safeMarginRight;
   ctx.font = '400 28px "Plus Jakarta Sans", sans-serif';
   ctx.fillStyle = theme.categoryTag;
   ctx.textAlign = 'right';
-  ctx.fillText(categoryTag, resolved.safeMarginRight, logoBadgeY + 28);
+  ctx.fillText(categoryTag, headerRightX, logoBadgeY + 28);
   ctx.restore();
 }
 
@@ -297,6 +298,46 @@ export function drawPaginationFooter(
     return;
   }
 
+  // Multi-Slide Footer:
+  // 1. Left segment: Persistent MARROK vector logo badge + @MARROK signature
+  const rawBrand = (carousel?.brand || 'MARROK').trim() || 'MARROK';
+  const handleText = `@${rawBrand.replace(/^@/, '')}`;
+  const badgeSize = 22;
+  const badgeX = resolved.safeMarginLeft;
+  const badgeY = dotY - badgeSize / 2;
+
+  ctx.save();
+  ctx.shadowColor = theme.accent;
+  ctx.shadowBlur = 6;
+  drawRoundRect(ctx, badgeX, badgeY, badgeSize, badgeSize, 6, '#0D0D0D', `${theme.accent}66`, 1);
+  ctx.restore();
+
+  drawMarrokVectorBadge(
+    ctx,
+    badgeX + badgeSize / 2,
+    badgeY + badgeSize / 2,
+    badgeSize - 4,
+    theme.accent,
+    'transparent'
+  );
+
+  ctx.save();
+  ctx.font = '700 20px "JetBrains Mono", "Plus Jakarta Sans", monospace';
+  ctx.fillStyle = '#FFFFFF';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(handleText, badgeX + badgeSize + 8, dotY);
+
+  // 2. Right segment: Technical slide counter (e.g. 03 / 08)
+  const slideNumText = `${String(slideIndex + 1).padStart(2, '0')} / ${String(totalSlides).padStart(2, '0')}`;
+  ctx.font = '600 20px "JetBrains Mono", monospace';
+  ctx.fillStyle = theme.textMuted || 'rgba(255, 255, 255, 0.45)';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(slideNumText, resolved.safeMarginRight, dotY);
+  ctx.restore();
+
+  // 3. Center segment: Pagination dots
   const dotRadius = 8;
   const dotDiameter = 16;
   const dotGap = 16;

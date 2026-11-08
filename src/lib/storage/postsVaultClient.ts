@@ -124,24 +124,77 @@ async function writeLocalVault(posts: SavedPostRecord[]): Promise<void> {
   }
 }
 
+function normalizeClientPostSignature(post: SavedPostRecord): string {
+  const rawTitle = (post.title || post.deck?.slides?.[0]?.enTitle || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?]+$/, '');
+  const format = post.deck?.postFormat || (post.slideCount === 1 ? 'single' : 'carousel');
+  return rawTitle ? `${rawTitle}::${format}` : `id::${post.id}`;
+}
+
+function isPreferredClientRecord(candidate: SavedPostRecord, current: SavedPostRecord): boolean {
+  if (candidate.postStatus === 'posted' && current.postStatus !== 'posted') return true;
+  if (current.postStatus === 'posted' && candidate.postStatus !== 'posted') return false;
+
+  const candHasRemote =
+    Boolean(candidate.zernioPostIds?.length) ||
+    Boolean(candidate.bufferPostIds?.length) ||
+    Boolean(candidate.scheduledFor);
+  const currHasRemote =
+    Boolean(current.zernioPostIds?.length) ||
+    Boolean(current.bufferPostIds?.length) ||
+    Boolean(current.scheduledFor);
+  if (candHasRemote && !currHasRemote) return true;
+  if (currHasRemote && !candHasRemote) return false;
+
+  return new Date(candidate.updatedAt).getTime() >= new Date(current.updatedAt).getTime();
+}
+
 function mergeRecords(
   serverPosts: SavedPostRecord[],
   localPosts: SavedPostRecord[]
 ): SavedPostRecord[] {
-  const map = new Map<string, SavedPostRecord>();
-  for (const post of localPosts) {
-    if (post && typeof post.id === 'string') {
-      map.set(post.id, post);
-    }
-  }
-  for (const post of serverPosts) {
+  const byId = new Map<string, SavedPostRecord>();
+  for (const post of [...localPosts, ...serverPosts]) {
     if (!post || typeof post.id !== 'string') continue;
-    const prev = map.get(post.id);
-    if (!prev || new Date(post.updatedAt).getTime() >= new Date(prev.updatedAt).getTime()) {
-      map.set(post.id, post);
+    const prev = byId.get(post.id);
+    if (!prev || isPreferredClientRecord(post, prev)) {
+      byId.set(post.id, post);
     }
   }
-  return Array.from(map.values()).sort(
+
+  const bySignature = new Map<string, SavedPostRecord>();
+  const supersededDuplicateIds: string[] = [];
+
+  for (const post of byId.values()) {
+    const sig = normalizeClientPostSignature(post);
+    const prev = bySignature.get(sig);
+    if (!prev) {
+      bySignature.set(sig, post);
+    } else if (isPreferredClientRecord(post, prev)) {
+      if (prev.id !== post.id) supersededDuplicateIds.push(prev.id);
+      bySignature.set(sig, post);
+    } else {
+      if (post.id !== prev.id) supersededDuplicateIds.push(post.id);
+    }
+  }
+
+  if (supersededDuplicateIds.length > 0) {
+    const deleted = readDeletedIds();
+    let changed = false;
+    for (const dupId of supersededDuplicateIds) {
+      if (!deleted.has(dupId)) {
+        deleted.add(dupId);
+        changed = true;
+      }
+    }
+    if (changed) {
+      writeDeletedIds(deleted);
+    }
+  }
+
+  return Array.from(bySignature.values()).sort(
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
   );
 }
@@ -305,7 +358,7 @@ export async function saveValidPost(params: SaveValidPostParams): Promise<SavedP
       writeDeletedIds(deletedIds);
     }
     const currentLocal = await readLocalVault();
-    const updatedLocal = [savedPost, ...currentLocal.filter((p) => p.id !== savedPost.id)];
+    const updatedLocal = mergeRecords([savedPost], currentLocal);
     await writeLocalVault(updatedLocal);
 
     const remoteOrigin = getRemoteVaultOrigin();
@@ -355,7 +408,7 @@ export async function saveValidPost(params: SaveValidPostParams): Promise<SavedP
       writeDeletedIds(deletedIds);
     }
     const currentLocal = await readLocalVault();
-    const updatedLocal = [localRecord, ...currentLocal.filter((p) => p.id !== id)];
+    const updatedLocal = mergeRecords([localRecord], currentLocal);
     await writeLocalVault(updatedLocal);
     return localRecord;
   }

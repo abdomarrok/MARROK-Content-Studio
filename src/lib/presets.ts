@@ -5,6 +5,7 @@ import { CarouselData } from '../types';
  * and when the user clicks "Reset Draft" in the Header.
  */
 export const DEFAULT_STARTER_DECK: CarouselData = {
+  id: 'post_26488150-bb6',
   theme: 'amber',
   category: 'AI + ENGINEERING',
   caption: `Why did Anthropic move beyond Git? A deeper look at Scion 🚀

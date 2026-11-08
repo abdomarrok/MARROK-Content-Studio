@@ -228,7 +228,7 @@ export async function loadStoredPosts(env: NodeJS.ProcessEnv = process.env): Pro
   if (config.kvRestUrl && config.kvRestToken) {
     const kvPosts = await readFromKv(config.kvRestUrl, config.kvRestToken);
     if (kvPosts !== null) {
-      const seeded = kvPosts.length > 0 ? kvPosts : getBundledSeedPosts();
+      const seeded = deduplicateSavedPosts(kvPosts.length > 0 ? kvPosts : getBundledSeedPosts());
       return {
         posts: seeded,
         storageEngine: 'cloud-kv',
@@ -237,7 +237,11 @@ export async function loadStoredPosts(env: NodeJS.ProcessEnv = process.env): Pro
     }
   }
 
-  const { posts: localPosts, engine } = await readFromFileStore(env);
+  const { posts: rawLocalPosts, engine } = await readFromFileStore(env);
+  const localPosts = deduplicateSavedPosts(rawLocalPosts);
+  if (localPosts.length !== rawLocalPosts.length) {
+    await writeToFileStore(localPosts, env);
+  }
   const remoteOrigin = shouldSyncWithRemoteVault(env);
   if (remoteOrigin) {
     const remotePosts = await fetchRemoteVaultPosts(remoteOrigin);
@@ -246,7 +250,7 @@ export async function loadStoredPosts(env: NodeJS.ProcessEnv = process.env): Pro
       if (merged.length !== localPosts.length) {
         await writeToFileStore(merged, env);
       }
-      if (merged.length > remotePosts.length) {
+      if (merged.length !== remotePosts.length) {
         void pushPostsToRemoteVault(remoteOrigin, merged);
       }
       return {
@@ -268,7 +272,8 @@ export async function saveStoredPosts(
   posts: SavedPostRecord[],
   env: NodeJS.ProcessEnv = process.env
 ): Promise<SavedPostStorageEngine> {
-  const sorted = [...posts]
+  const deduped = deduplicateSavedPosts(posts);
+  const sorted = [...deduped]
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
     .slice(0, MAX_SAVED_POSTS);
 
@@ -288,34 +293,81 @@ export async function saveStoredPosts(
   return engine;
 }
 
+function normalizePostTitleSignature(post: SavedPostRecord): string {
+  const rawTitle = (post.title || post.deck?.slides?.[0]?.enTitle || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?]+$/, '');
+  const format = post.deck?.postFormat || (post.slideCount === 1 ? 'single' : 'carousel');
+  return rawTitle ? `${rawTitle}::${format}` : `id::${post.id}`;
+}
+
+function isIncomingPostPreferred(candidate: SavedPostRecord, current: SavedPostRecord): boolean {
+  // Prefer 'posted' over 'validated'
+  if (candidate.postStatus === 'posted' && current.postStatus !== 'posted') return true;
+  if (current.postStatus === 'posted' && candidate.postStatus !== 'posted') return false;
+
+  // Prefer records that have live Buffer/Zernio IDs or scheduledFor
+  const candHasRemote =
+    Boolean(candidate.zernioPostIds?.length) ||
+    Boolean(candidate.bufferPostIds?.length) ||
+    Boolean(candidate.scheduledFor);
+  const currHasRemote =
+    Boolean(current.zernioPostIds?.length) ||
+    Boolean(current.bufferPostIds?.length) ||
+    Boolean(current.scheduledFor);
+  if (candHasRemote && !currHasRemote) return true;
+  if (currHasRemote && !candHasRemote) return false;
+
+  return new Date(candidate.updatedAt).getTime() >= new Date(current.updatedAt).getTime();
+}
+
 /**
- * Merges two lists of SavedPostRecords by ID, keeping the most recently updated version.
+ * Deduplicates a list of SavedPostRecords by ID and by normalized (title + postFormat) signature,
+ * keeping the most recently updated or published record so repeated saves of the same draft never multiply.
+ */
+export function deduplicateSavedPosts(posts: SavedPostRecord[]): SavedPostRecord[] {
+  const byId = new Map<string, SavedPostRecord>();
+  for (const post of posts) {
+    if (!post || typeof post.id !== 'string') continue;
+    const prev = byId.get(post.id);
+    if (!prev || isIncomingPostPreferred(post, prev)) {
+      byId.set(post.id, post);
+    }
+  }
+
+  const bySignature = new Map<string, SavedPostRecord>();
+  for (const post of byId.values()) {
+    const sig = normalizePostTitleSignature(post);
+    const prev = bySignature.get(sig);
+    if (!prev || isIncomingPostPreferred(post, prev)) {
+      bySignature.set(sig, post);
+    }
+  }
+
+  return Array.from(bySignature.values())
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    .slice(0, MAX_SAVED_POSTS);
+}
+
+/**
+ * Merges two lists of SavedPostRecords by ID and normalized title signature, keeping the most recently updated version.
  */
 export function mergePostLists(
   existing: SavedPostRecord[],
   incoming: SavedPostRecord[]
 ): SavedPostRecord[] {
-  const map = new Map<string, SavedPostRecord>();
-  for (const post of existing) {
-    if (post && typeof post.id === 'string') {
-      map.set(post.id, post);
-    }
-  }
+  const validIncoming: SavedPostRecord[] = [];
   for (const post of incoming) {
     if (!post || typeof post.id !== 'string') continue;
     const parsedDeck = parseCarouselData(post.deck, { minSlides: 3, requireSlideContent: true });
     if (!parsedDeck) continue;
-    const prev = map.get(post.id);
-    if (!prev || new Date(post.updatedAt).getTime() >= new Date(prev.updatedAt).getTime()) {
-      map.set(post.id, {
-        ...post,
-        deck: sanitizeFullCarousel(parsedDeck),
-      });
-    }
+    validIncoming.push({
+      ...post,
+      deck: sanitizeFullCarousel(parsedDeck),
+    });
   }
-  return Array.from(map.values())
-    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-    .slice(0, MAX_SAVED_POSTS);
+  return deduplicateSavedPosts([...existing, ...validIncoming]);
 }
 
 export interface ValidatePostInput {
@@ -482,10 +534,24 @@ export async function handleSavePost(req: Request, res: Response) {
       (typeof body.id === 'string' && body.id.trim()) ||
       (typeof body.deck?.id === 'string' && body.deck.id.trim()) ||
       undefined;
-    const existingRecord = incomingId ? existing.find((p) => p.id === incomingId) : undefined;
+    const candidateTitle = (
+      (typeof body.title === 'string' && body.title.trim()) ||
+      body.deck?.slides?.[0]?.enTitle ||
+      ''
+    )
+      .trim()
+      .toLowerCase()
+      .replace(/[.!?]+$/, '');
+    const candidateFormat =
+      body.deck?.postFormat || (body.deck?.slides?.length === 1 ? 'single' : 'carousel');
+    const candidateSig = candidateTitle ? `${candidateTitle}::${candidateFormat}` : '';
+
+    const existingRecord =
+      (incomingId ? existing.find((p) => p.id === incomingId) : undefined) ||
+      (candidateSig ? existing.find((p) => normalizePostTitleSignature(p) === candidateSig) : undefined);
 
     const validation = validateAndBuildPostRecord({
-      id: incomingId,
+      id: existingRecord?.id || incomingId,
       deck: body.deck,
       title: body.title,
       postStatus: body.postStatus === 'posted' ? 'posted' : 'validated',
