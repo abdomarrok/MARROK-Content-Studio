@@ -369,6 +369,7 @@ export interface SaveValidPostParams {
   postStatus?: SavedPostStatus;
   title?: string;
   allowOverride?: boolean;
+  userReviewed?: boolean;
 }
 
 /**
@@ -381,7 +382,7 @@ export async function saveValidPost(params: SaveValidPostParams): Promise<SavedP
     ...params.deck,
     sourceMeta: {
       ...params.deck.sourceMeta,
-      userReviewed: true,
+      userReviewed: params.userReviewed ?? true,
     },
   };
 

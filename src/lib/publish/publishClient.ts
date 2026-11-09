@@ -807,13 +807,103 @@ export function formatLocalDateTimeParts(
 }
 
 /**
- * Computes weekly schedule slots for a batch of Vault posts starting from the exact user-selected startDateStr.
+ * Returns tomorrow's date in the user's local timezone formatted as YYYY-MM-DD.
+ */
+export function getLocalTomorrowDateStr(now: Date = new Date()): string {
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return getLocalTodayDateStr(tomorrow);
+}
+
+/**
+ * Returns true ONLY if the local (datePart, timeShort) is strictly in the future
+ * (at least 1 minute after `now`). Never allows scheduling in the past.
+ */
+export function isLocalSlotInFuture(
+  datePart: string,
+  timeShort: string,
+  now: Date = new Date()
+): boolean {
+  const iso = buildLocalScheduledIso(datePart, timeShort);
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return false;
+  return ms > now.getTime() + 60_000;
+}
+
+/**
+ * Given a preferred datePart (YYYY-MM-DD) and a target timeShort (HH:mm),
+ * ensures the resulting slot is strictly in the future.
+ * - If preferredDatePart is in the past (< today), clamps to today first.
+ * - If preferredDatePart is today and `timeShort` has already passed today,
+ *   automatically advances `datePart` to tomorrow (`rolledToTomorrow: true`).
+ */
+export function resolveNextFutureSlotForTime(
+  preferredDatePart: string,
+  timeShort: string,
+  now: Date = new Date()
+): { datePart: string; timeShort: string; rolledToTomorrow: boolean; isoDate: string } {
+  const cleanTime = (timeShort || '18:00').slice(0, 5);
+  const todayStr = getLocalTodayDateStr(now);
+  const tomorrowStr = getLocalTomorrowDateStr(now);
+
+  let targetDate =
+    preferredDatePart && /^\d{4}-\d{2}-\d{2}$/.test(preferredDatePart.trim())
+      ? preferredDatePart.trim()
+      : todayStr;
+
+  if (targetDate < todayStr) {
+    targetDate = todayStr;
+  }
+
+  let rolledToTomorrow = false;
+  if (!isLocalSlotInFuture(targetDate, cleanTime, now)) {
+    targetDate = tomorrowStr;
+    rolledToTomorrow = true;
+  }
+
+  return {
+    datePart: targetDate,
+    timeShort: cleanTime,
+    rolledToTomorrow,
+    isoDate: buildLocalScheduledIso(targetDate, cleanTime),
+  };
+}
+
+/**
+ * Returns the very next upcoming future peak slot (`10:00`, `12:00`, or `18:00`).
+ * If all 3 peak windows have passed today, returns Tomorrow at `10:00`.
+ */
+export function getNextUpcomingPeakSlot(
+  now: Date = new Date()
+): { datePart: string; timeShort: PeakTimeSlot; readableLabel: string } {
+  const todayStr = getLocalTodayDateStr(now);
+  for (const slot of DAILY_PEAK_TIME_SLOTS) {
+    if (isLocalSlotInFuture(todayStr, slot, now)) {
+      return {
+        datePart: todayStr,
+        timeShort: slot,
+        readableLabel: `Today · ${slot}`,
+      };
+    }
+  }
+  const tomorrowStr = getLocalTomorrowDateStr(now);
+  return {
+    datePart: tomorrowStr,
+    timeShort: '10:00',
+    readableLabel: 'Tomorrow · 10:00',
+  };
+}
+
+/**
+ * Computes weekly schedule slots for a batch of Vault posts starting from the user-selected startDateStr,
+ * strictly skipping any date/time slot that is already in the past.
  */
 export function computeWeeklyScheduleSlots(
   count: number,
   startDateStr: string,
   cadence: WeeklyCadencePreset = 'mon-wed-fri',
-  timeStr = '18:00'
+  timeStr = '18:00',
+  now: Date = new Date()
 ): ScheduledSlotAssignment[] {
   const allowedDays: number[] =
     cadence === 'mon-wed-fri'
@@ -838,21 +928,23 @@ export function computeWeeklyScheduleSlots(
       .map((n) => Number.parseInt(n, 10));
     cursor = new Date(y, m - 1, d, hours, minutes, 0, 0);
   } else {
-    cursor = new Date();
+    cursor = new Date(now);
     cursor.setHours(hours, minutes, 0, 0);
   }
 
   if (Number.isNaN(cursor.getTime())) {
-    cursor = new Date();
+    cursor = new Date(now);
     cursor.setHours(hours, minutes, 0, 0);
   }
 
+  const nowMs = now.getTime();
   const slots: ScheduledSlotAssignment[] = [];
   let guard = 0;
   while (slots.length < count && guard < 366) {
     guard++;
     const dayOfWeek = cursor.getDay();
-    if (allowedDays.includes(dayOfWeek)) {
+    // Never schedule in the past: cursor must be strictly > now + 1 minute
+    if (allowedDays.includes(dayOfWeek) && cursor.getTime() > nowMs + 60_000) {
       const yyyy = cursor.getFullYear();
       const mm = String(cursor.getMonth() + 1).padStart(2, '0');
       const dd = String(cursor.getDate()).padStart(2, '0');
@@ -877,6 +969,126 @@ export function computeWeeklyScheduleSlots(
       });
     }
     cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return slots;
+}
+
+export const DAILY_PEAK_TIME_SLOTS = ['10:00', '12:00', '18:00'] as const;
+export type PeakTimeSlot = (typeof DAILY_PEAK_TIME_SLOTS)[number];
+
+export type PeakProgramDensity =
+  | '3x-daily' // 10:00, 12:00, 18:00
+  | '2x-daily' // 12:00, 18:00
+  | '1x-18'    // 18:00 daily
+  | '1x-12'    // 12:00 daily
+  | '1x-10';   // 10:00 daily
+
+export const PEAK_SLOT_META: Record<
+  PeakTimeSlot,
+  { time: PeakTimeSlot; label: string; shortLabel: string; windowDesc: string }
+> = {
+  '10:00': {
+    time: '10:00',
+    label: '10:00 AM · Morning Peak',
+    shortLabel: '10:00 AM',
+    windowDesc: 'Morning Commute & Tech Brief Window',
+  },
+  '12:00': {
+    time: '12:00',
+    label: '12:00 PM · Midday Peak',
+    shortLabel: '12:00 PM',
+    windowDesc: 'Lunch Break High-Retention Window',
+  },
+  '18:00': {
+    time: '18:00',
+    label: '18:00 PM · Evening Prime',
+    shortLabel: '18:00 PM',
+    windowDesc: 'Evening Prime TikTok & IG Carousel Window',
+  },
+};
+
+/**
+ * Computes a multi-slot Weekly Posting Program across the canonical TikTok/IG peak windows
+ * (`10:00`, `12:00`, `18:00`), strictly skipping any past slot (`<= now + 1 min`) and any
+ * already-occupied `(datePart, timeShort)` slot.
+ */
+export function computePeakProgramScheduleSlots(
+  count: number,
+  startDateStr: string,
+  density: PeakProgramDensity = '3x-daily',
+  occupiedSlotKeys: Set<string> = new Set(),
+  now: Date = new Date()
+): ScheduledSlotAssignment[] {
+  const dailyTimes: PeakTimeSlot[] =
+    density === '3x-daily'
+      ? ['10:00', '12:00', '18:00']
+      : density === '2x-daily'
+      ? ['12:00', '18:00']
+      : density === '1x-10'
+      ? ['10:00']
+      : density === '1x-12'
+      ? ['12:00']
+      : ['18:00'];
+
+  const todayMidnight = new Date(now);
+  todayMidnight.setHours(0, 0, 0, 0);
+
+  let baseDate: Date;
+  if (startDateStr && /^\d{4}-\d{2}-\d{2}$/.test(startDateStr.trim())) {
+    const [y, m, d] = startDateStr
+      .trim()
+      .split('-')
+      .map((n) => Number.parseInt(n, 10));
+    baseDate = new Date(y, m - 1, d, 0, 0, 0, 0);
+  } else {
+    baseDate = new Date(todayMidnight);
+  }
+
+  if (Number.isNaN(baseDate.getTime()) || baseDate.getTime() < todayMidnight.getTime()) {
+    baseDate = new Date(todayMidnight);
+  }
+
+  const slots: ScheduledSlotAssignment[] = [];
+  const usedKeys = new Set(occupiedSlotKeys);
+  const nowMs = now.getTime();
+
+  for (let dayOffset = 0; slots.length < count && dayOffset < 120; dayOffset++) {
+    const dayDate = new Date(baseDate);
+    dayDate.setDate(baseDate.getDate() + dayOffset);
+    const yyyy = dayDate.getFullYear();
+    const mm = String(dayDate.getMonth() + 1).padStart(2, '0');
+    const dd = String(dayDate.getDate()).padStart(2, '0');
+    const datePart = `${yyyy}-${mm}-${dd}`;
+
+    for (const peakTime of dailyTimes) {
+      if (slots.length >= count) break;
+      const slotKey = `${datePart}|${peakTime}`;
+      if (usedKeys.has(slotKey)) continue;
+
+      const [hh, min] = peakTime.split(':').map((n) => Number.parseInt(n, 10));
+      const slotDate = new Date(yyyy, dayDate.getMonth(), dayDate.getDate(), hh, min, 0, 0);
+      // STRICT FUTURE-ONLY GUARD: Never offer or assign a slot that has already passed
+      if (slotDate.getTime() <= nowMs + 60_000) {
+        continue;
+      }
+
+      usedKeys.add(slotKey);
+      const readableLabel =
+        slotDate.toLocaleDateString('en-US', {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+        }) + ` · ${peakTime}`;
+
+      slots.push({
+        index: slots.length,
+        isoDate: slotDate.toISOString(),
+        datePart,
+        timePart: `${peakTime}:00`,
+        readableLabel,
+      });
+    }
   }
 
   return slots;

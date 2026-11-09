@@ -28,7 +28,14 @@ import {
   Film,
   Volume2,
   Code,
+  Radar,
+  Globe,
 } from 'lucide-react';
+import {
+  extractArticleFromUrl,
+  fetchTopicRadar,
+  type GatheredTopicItem,
+} from '../lib/gather/gatherClient.ts';
 import {
   CarouselData,
   PostFormat,
@@ -179,6 +186,7 @@ const STARTER_TOPICS = [
 
 const INGEST_TABS = [
   { id: 'text' as const, label: 'Notes / Blog / Code', shortLabel: 'Notes', icon: FileText },
+  { id: 'radar' as const, label: 'Topic Radar & URL Gather', shortLabel: 'Radar', icon: Radar },
   { id: 'youtube' as const, label: 'YouTube Summary', shortLabel: 'YouTube', icon: Youtube },
   { id: 'upload' as const, label: 'Screenshot / Image OCR', shortLabel: 'Image OCR', icon: ImageIcon },
 ];
@@ -265,7 +273,11 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
   // Unified Smart Dock States
   const [isExpanded, setIsExpanded] = useState(false);
-  const [activeTab, setActiveTab] = useState<'text' | 'youtube' | 'upload'>('text');
+  const [activeTab, setActiveTab] = useState<'text' | 'radar' | 'youtube' | 'upload'>('text');
+  const [studioRadarTopics, setStudioRadarTopics] = useState<GatheredTopicItem[]>([]);
+  const [isStudioRadarLoading, setIsStudioRadarLoading] = useState(false);
+  const [studioCustomUrl, setStudioCustomUrl] = useState('');
+  const [isExtractingStudioUrl, setIsExtractingStudioUrl] = useState(false);
   const [uploadedImage, setUploadedImage] = useState<{
     base64: string;
     mimeType: string;
@@ -1797,7 +1809,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
               {/* Row 2: Mode Switcher Tabs + Mobile Format Pill */}
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="grid grid-cols-3 sm:flex items-center gap-1 bg-black/60 p-1 rounded-xl border border-white/10 w-full sm:w-auto">
+                <div className="grid grid-cols-2 sm:flex items-center gap-1 bg-black/60 p-1 rounded-xl border border-white/10 w-full sm:w-auto">
                   {INGEST_TABS.map((tab) => {
                     const Icon = tab.icon;
                     const isActive = activeTab === tab.id;
@@ -1805,7 +1817,16 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                       <button
                         key={tab.id}
                         type="button"
-                        onClick={() => setActiveTab(tab.id)}
+                        onClick={() => {
+                          setActiveTab(tab.id);
+                          if (tab.id === 'radar' && studioRadarTopics.length === 0 && !isStudioRadarLoading) {
+                            setIsStudioRadarLoading(true);
+                            fetchTopicRadar()
+                              .then((r) => setStudioRadarTopics(r.topics || []))
+                              .catch(() => {})
+                              .finally(() => setIsStudioRadarLoading(false));
+                          }
+                        }}
                         className={`flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
                           isActive
                             ? 'bg-white/15 text-white shadow-sm'
@@ -1869,6 +1890,114 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* Automated Topic Radar & Direct URL Extractor Panel */}
+              {activeTab === 'radar' && (
+                <div className="rounded-xl border border-cyan-500/30 bg-black/60 p-3 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <Radar className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Live Engineering Topic Radar & URL Extractor</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        disabled={isStudioRadarLoading}
+                        onClick={() => {
+                          setIsStudioRadarLoading(true);
+                          fetchTopicRadar({ refresh: true })
+                            .then((r) => setStudioRadarTopics(r.topics || []))
+                            .catch(() => {})
+                            .finally(() => setIsStudioRadarLoading(false));
+                        }}
+                        className="px-2 py-1 rounded-lg border border-white/15 bg-white/[0.04] hover:bg-white/10 text-[11px] font-semibold text-slate-200 cursor-pointer flex items-center gap-1"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${isStudioRadarLoading ? 'animate-spin' : ''}`} />
+                        <span>Refresh</span>
+                      </button>
+                      {onOpenPublishScheduleModal && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsExpanded(false);
+                            onOpenPublishScheduleModal('bulk');
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-emerald-200 text-[11px] font-bold cursor-pointer"
+                        >
+                          Weekly Program & 10/12/18 Review →
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Direct URL Extractor Bar */}
+                  <div className="flex items-center gap-2 bg-black/70 p-2 rounded-lg border border-white/15">
+                    <Globe className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                    <input
+                      type="url"
+                      value={studioCustomUrl}
+                      onChange={(e) => setStudioCustomUrl(e.target.value)}
+                      placeholder="Paste any https:// engineering blog, GitHub repo, or article URL to extract..."
+                      className="w-full bg-transparent text-xs text-white placeholder:text-slate-500 focus:outline-none font-mono"
+                    />
+                    <button
+                      type="button"
+                      disabled={isExtractingStudioUrl || !studioCustomUrl.trim()}
+                      onClick={async () => {
+                        setIsExtractingStudioUrl(true);
+                        try {
+                          const res = await extractArticleFromUrl(studioCustomUrl.trim());
+                          if (res.topic) {
+                            setPromptInput(res.topic.synthesisPrompt);
+                            setCategoryHint(res.topic.domainCategory);
+                            setStudioCustomUrl('');
+                            onShowToast(`✓ Extracted "${res.topic.title.slice(0, 38)}..." into prompt`);
+                          }
+                        } catch (err) {
+                          onShowToast(`⚠️ ${err instanceof Error ? err.message : 'Failed to extract URL'}`);
+                        } finally {
+                          setIsExtractingStudioUrl(false);
+                        }
+                      }}
+                      className="px-3 py-1 rounded bg-cyan-400 text-slate-950 text-[11px] font-extrabold cursor-pointer disabled:opacity-40 shrink-0"
+                    >
+                      {isExtractingStudioUrl ? 'Extracting...' : 'Extract URL'}
+                    </button>
+                  </div>
+
+                  {/* Top Radar Items */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+                    {studioRadarTopics.slice(0, 6).map((item) => (
+                      <div
+                        key={item.id}
+                        className="p-2.5 rounded-lg border border-white/10 bg-white/[0.02] hover:bg-white/[0.05] flex flex-col justify-between gap-1.5"
+                      >
+                        <div>
+                          <div className="text-[10px] font-mono text-cyan-300 tabular-nums">
+                            {item.sourceName} · {item.domainCategory} · Rec: {item.recommendedFormat}
+                          </div>
+                          <div className="text-xs font-bold text-white line-clamp-1">
+                            {item.title}
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-end gap-1.5 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPromptInput(item.synthesisPrompt);
+                              setCategoryHint(item.domainCategory);
+                              onShowToast(`Loaded "${item.title.slice(0, 32)}..." into prompt`);
+                            }}
+                            className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[10px] font-bold text-white cursor-pointer"
+                          >
+                            Load into Prompt
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Starter Topics Row inside Expanded Drawer */}
               <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">

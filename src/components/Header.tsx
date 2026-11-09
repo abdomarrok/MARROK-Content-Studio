@@ -11,6 +11,7 @@ import {
   FileEdit,
   Send,
   Layers,
+  Radar,
 } from 'lucide-react';
 import { ThemePalette } from '../types.ts';
 
@@ -21,6 +22,7 @@ interface HeaderProps {
   onOpenContactSheet?: () => void;
   onOpenSavedPostsDrawer?: () => void;
   savedPostsCount?: number;
+  pendingReviewCount?: number;
   canUndo?: boolean;
   canRedo?: boolean;
   onUndo?: () => void;
@@ -31,7 +33,9 @@ interface HeaderProps {
   onSaveToVault?: () => void;
   isSavingPost?: boolean;
   activePhase?: 'studio' | 'publish';
+  isPeakProgramActive?: boolean;
   onPhaseChange?: (phase: 'studio' | 'publish') => void;
+  onOpenPeakProgram?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -40,6 +44,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenContactSheet,
   onOpenSavedPostsDrawer,
   savedPostsCount = 0,
+  pendingReviewCount = 0,
   canUndo = false,
   canRedo = false,
   onUndo,
@@ -50,7 +55,9 @@ export const Header: React.FC<HeaderProps> = ({
   onSaveToVault,
   isSavingPost = false,
   activePhase = 'studio',
+  isPeakProgramActive = false,
   onPhaseChange,
+  onOpenPeakProgram,
 }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -77,7 +84,7 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="sticky top-0 z-40 w-full border-b border-white/[0.07] bg-[#080d11]/95 backdrop-blur-md px-2.5 sm:px-6 py-2 transition-colors">
       <div className="max-w-[1440px] mx-auto flex items-center justify-between gap-2 sm:gap-8">
-        {/* Zone 1: Brand Wordmark + Studio/Publish Phase Switcher */}
+        {/* Zone 1: Brand Wordmark + Studio/Publish/Peak Program Switcher */}
         <div className="flex items-center gap-2 sm:gap-4 min-w-0 shrink-0">
           <a
             href="#"
@@ -115,7 +122,7 @@ export const Header: React.FC<HeaderProps> = ({
                 type="button"
                 onClick={() => onPhaseChange('publish')}
                 className={`flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-md text-[11px] sm:text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                  activePhase === 'publish'
+                  activePhase === 'publish' && !isPeakProgramActive
                     ? 'bg-emerald-500/20 text-emerald-200'
                     : 'text-slate-400 hover:text-emerald-300'
                 }`}
@@ -129,6 +136,27 @@ export const Header: React.FC<HeaderProps> = ({
                   </span>
                 )}
               </button>
+              {onOpenPeakProgram && (
+                <button
+                  type="button"
+                  onClick={onOpenPeakProgram}
+                  className={`flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-md text-[11px] sm:text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                    activePhase === 'publish' && isPeakProgramActive
+                      ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/40'
+                      : 'text-slate-300 hover:text-cyan-300'
+                  }`}
+                  title="Open Daily Peak-Hour (10 · 12 · 18) Schedule Review, Weekly Program Approval & Topic Radar"
+                >
+                  <Radar className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                  <span className="sm:hidden">Peak & Gather</span>
+                  <span className="hidden sm:inline">3. Gather & Peak (10·12·18)</span>
+                  {pendingReviewCount > 0 && (
+                    <span className="px-1.5 py-0.5 rounded bg-amber-500/30 border border-amber-400/40 text-[10px] font-mono tabular-nums text-amber-200">
+                      {pendingReviewCount} review
+                    </span>
+                  )}
+                </button>
+              )}
             </div>
           )}
         </div>

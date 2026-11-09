@@ -26,14 +26,17 @@ import type {
 import {
   buildLocalScheduledIso,
   computeWeeklyScheduleSlots,
+  DAILY_PEAK_TIME_SLOTS,
   derivePostLifecycleStage,
   formatLocalDateTimeParts,
   getDefaultUpcomingTimeStr,
   getLocalTodayDateStr,
   managePublishedPost,
   PostLifecycleStage,
+  resolveNextFutureSlotForTime,
   WeeklyCadencePreset,
 } from '../../lib/publish/publishClient.ts';
+import { WeeklyProgramReviewPanel } from './WeeklyProgramReviewPanel.tsx';
 
 interface PostManagerPanelProps {
   savedPosts: SavedPostRecord[];
@@ -48,7 +51,7 @@ interface PostManagerPanelProps {
 }
 
 type StatusFilterTab = 'all' | 'draft' | 'scheduled' | 'posted' | 'attention';
-type ManagerViewMode = 'list' | 'calendar' | 'bulk';
+type ManagerViewMode = 'list' | 'program-peak' | 'calendar' | 'bulk';
 
 const PLATFORM_BADGES: Record<
   PublishTargetPlatform,
@@ -70,6 +73,7 @@ const ALL_PLATFORMS: PublishTargetPlatform[] = [
 export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
   savedPosts,
   activeCarouselId,
+  theme,
   onEditInStudio,
   onRefreshVault,
   onRefreshStatus,
@@ -401,8 +405,8 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
       {/* Unified Control Bar: View Switcher (List | Calendar | Bulk) + Status Filter Pills + Search */}
       <div className="rounded-2xl border border-white/10 bg-[#0b1218]/95 p-3 sm:p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2.5">
-          {/* Segmented View Switcher: List vs Calendar vs Bulk Schedule */}
-          <div className="flex items-center gap-1 bg-black/40 p-1 rounded-xl border border-white/10">
+          {/* Segmented View Switcher: List vs Peak 10·12·18 & Program vs Calendar vs Bulk Schedule */}
+          <div className="flex flex-wrap items-center gap-1 bg-black/40 p-1 rounded-xl border border-white/10">
             <button
               type="button"
               onClick={() => setViewMode('list')}
@@ -414,6 +418,18 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
             >
               <List className="w-3.5 h-3.5" />
               <span>Posts List</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('program-peak')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                viewMode === 'program-peak'
+                  ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-400/40'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Peak 10 · 12 · 18 & Program</span>
             </button>
             <button
               type="button"
@@ -548,6 +564,19 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
           </div>
         )}
       </div>
+
+      {/* VIEW 0: PEAK (10 · 12 · 18) SCHEDULE REVIEW, WEEKLY PROGRAM & AUTO-GATHER */}
+      {viewMode === 'program-peak' && (
+        <WeeklyProgramReviewPanel
+          savedPosts={savedPosts}
+          activeCarouselId={activeCarouselId}
+          theme={theme}
+          onEditInStudio={onEditInStudio}
+          onRefreshVault={onRefreshVault}
+          onRefreshStatus={onRefreshStatus}
+          onShowToast={onShowToast}
+        />
+      )}
 
       {/* VIEW 1: CALENDAR VIEW */}
       {viewMode === 'calendar' && (
@@ -1032,19 +1061,57 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                             </label>
                             <input
                               type="date"
+                              min={getLocalTodayDateStr()}
                               value={editDateStr}
                               onChange={(e) => setEditDateStr(e.target.value)}
                               className="w-full px-3 py-1.5 rounded-lg bg-black/60 border border-white/15 text-xs text-white focus:outline-none focus:border-cyan-400"
                             />
                           </div>
                           <div>
-                            <label className="block text-[10px] font-mono uppercase text-slate-400 mb-1">
-                              Time (24h)
-                            </label>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="block text-[10px] font-mono uppercase text-slate-400">
+                                Time (24h)
+                              </label>
+                              <div className="flex items-center gap-1">
+                                {DAILY_PEAK_TIME_SLOTS.map((pt) => (
+                                  <button
+                                    key={pt}
+                                    type="button"
+                                    onClick={() => {
+                                      const nextSlot = resolveNextFutureSlotForTime(
+                                        editDateStr,
+                                        pt
+                                      );
+                                      setEditDateStr(nextSlot.datePart);
+                                      setEditTimeStr(nextSlot.timeShort);
+                                      if (nextSlot.rolledToTomorrow) {
+                                        onShowToast(
+                                          `${pt} has passed today — set to Tomorrow (${nextSlot.datePart}) at ${pt}`
+                                        );
+                                      }
+                                    }}
+                                    className={`px-1.5 py-0.2 rounded text-[10px] font-mono font-bold tabular-nums cursor-pointer ${
+                                      editTimeStr === pt
+                                        ? 'bg-cyan-400 text-slate-950'
+                                        : 'bg-white/10 text-slate-300 hover:text-white'
+                                    }`}
+                                  >
+                                    {pt}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
                             <input
                               type="time"
                               value={editTimeStr}
-                              onChange={(e) => setEditTimeStr(e.target.value)}
+                              onChange={(e) => {
+                                const nextSlot = resolveNextFutureSlotForTime(
+                                  editDateStr,
+                                  e.target.value
+                                );
+                                setEditDateStr(nextSlot.datePart);
+                                setEditTimeStr(nextSlot.timeShort);
+                              }}
                               className="w-full px-3 py-1.5 rounded-lg bg-black/60 border border-white/15 text-xs text-white focus:outline-none focus:border-cyan-400"
                             />
                           </div>

@@ -13,6 +13,7 @@ import {
   Square,
   Shuffle,
   Database,
+  Radar,
 } from 'lucide-react';
 import {
   CarouselData,
@@ -39,13 +40,15 @@ import {
   getLocalTodayDateStr,
   MetricoolTemplateOptions,
   PublishStatusResponse,
+  resolveNextFutureSlotForTime,
   TikTokCommercialTrack,
   uploadDeckSlidesForPublishing,
 } from '../../lib/publish/publishClient.ts';
 import { PostManagerPanel } from './PostManagerPanel.tsx';
+import { WeeklyProgramReviewPanel } from './WeeklyProgramReviewPanel.tsx';
 
 interface PublishingHubWorkspaceProps {
-  initialTab?: 'single' | 'posts' | 'bulk' | 'storage';
+  initialTab?: 'single' | 'program' | 'posts' | 'bulk' | 'storage';
   carousel: CarouselData;
   theme: ThemePalette;
   savedPosts: SavedPostRecord[];
@@ -101,9 +104,13 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
   onExportVaultJson,
   onImportVaultJson,
 }) => {
-  const normalizedInitial =
-    initialTab === 'bulk' || initialTab === 'posts' ? 'posts' : 'single';
-  const [hubMode, setHubMode] = useState<'single' | 'posts'>(normalizedInitial);
+  const normalizedInitial: 'single' | 'program' | 'posts' =
+    initialTab === 'program'
+      ? 'program'
+      : initialTab === 'bulk' || initialTab === 'posts'
+      ? 'posts'
+      : 'single';
+  const [hubMode, setHubMode] = useState<'single' | 'program' | 'posts'>(normalizedInitial);
   const [status, setStatus] = useState<PublishStatusResponse | null>(null);
 
   // Channel Selection
@@ -202,7 +209,13 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
   }, []);
 
   useEffect(() => {
-    setHubMode(initialTab === 'bulk' || initialTab === 'posts' ? 'posts' : 'single');
+    setHubMode(
+      initialTab === 'program'
+        ? 'program'
+        : initialTab === 'bulk' || initialTab === 'posts'
+        ? 'posts'
+        : 'single'
+    );
   }, [initialTab]);
 
   // Sync active deck fields when carousel changes
@@ -506,10 +519,10 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
 
   return (
     <div className="flex-1 flex flex-col min-h-0 gap-3 text-slate-200">
-      {/* Streamlined 2-Tab Navigation Bar */}
+      {/* Streamlined 3-Tab Navigation Bar */}
       <div className="rounded-2xl border border-white/10 bg-[#0b1218]/95 px-3 sm:px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 shadow-lg">
-        {/* Primary 2-Tab Segmented Switcher */}
-        <div className="flex items-center gap-1.5 bg-black/40 p-1 rounded-xl border border-white/10">
+        {/* Primary 3-Tab Segmented Switcher */}
+        <div className="flex flex-wrap items-center gap-1.5 bg-black/40 p-1 rounded-xl border border-white/10">
           <button
             type="button"
             onClick={() => setHubMode('single')}
@@ -521,6 +534,26 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
           >
             <Send className="w-3.5 h-3.5" />
             <span>Publish Active Post</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setHubMode('program')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              hubMode === 'program'
+                ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-400/40 shadow-xs'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Radar className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Gather & Peak (10 · 12 · 18) Program</span>
+            <span className="px-1.5 py-0.5 rounded bg-black/40 text-[10px] font-mono text-cyan-200 tabular-nums">
+              {
+                savedPosts.filter(
+                  (p) => p.postStatus !== 'posted' && p.deck?.sourceMeta?.userReviewed === false
+                ).length
+              }{' '}
+              review
+            </span>
           </button>
           <button
             type="button"
@@ -604,8 +637,27 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
         </div>
       </div>
 
-      {/* TAB 2: UNIFIED POSTS & CALENDAR MANAGER */}
-      {hubMode === 'posts' ? (
+      {/* TAB 2: GATHER, REVIEW QUEUE & PEAK (10 · 12 · 18) WEEKLY PROGRAM */}
+      {hubMode === 'program' ? (
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <WeeklyProgramReviewPanel
+            savedPosts={savedPosts}
+            activeCarouselId={carousel.id}
+            theme={theme}
+            onEditInStudio={(post) => {
+              if (onSelectPostIntoStudio) {
+                onSelectPostIntoStudio(post);
+              } else {
+                onBackToStudio();
+              }
+            }}
+            onRefreshVault={onRefreshVault}
+            onRefreshStatus={() => void loadStatus()}
+            onShowToast={onShowToast}
+          />
+        </div>
+      ) : hubMode === 'posts' ? (
+        /* TAB 3: UNIFIED POSTS & CALENDAR MANAGER */
         <PostManagerPanel
           savedPosts={savedPosts}
           activeCarouselId={carousel.id}
@@ -822,28 +874,71 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
                 </div>
 
                 {scheduleMode === 'customScheduled' && (
-                  <div className="grid grid-cols-2 gap-2.5 pt-1">
-                    <div>
-                      <label className="block text-[10px] font-mono uppercase text-slate-400 mb-1">
-                        Date (Local)
-                      </label>
-                      <input
-                        type="date"
-                        value={scheduledDate}
-                        onChange={(e) => setScheduledDate(e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/15 text-xs text-white font-mono focus:outline-none focus:border-emerald-400"
-                      />
+                  <div className="space-y-2 pt-1">
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block text-[10px] font-mono uppercase text-slate-400 mb-1">
+                          Date (Local)
+                        </label>
+                        <input
+                          type="date"
+                          min={getLocalTodayDateStr()}
+                          value={scheduledDate}
+                          onChange={(e) => setScheduledDate(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/15 text-xs text-white font-mono focus:outline-none focus:border-emerald-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-mono uppercase text-slate-400 mb-1">
+                          Time (24h)
+                        </label>
+                        <input
+                          type="time"
+                          value={scheduledTime}
+                          onChange={(e) => {
+                            const nextSlot = resolveNextFutureSlotForTime(
+                              scheduledDate,
+                              e.target.value
+                            );
+                            setScheduledDate(nextSlot.datePart);
+                            setScheduledTime(nextSlot.timeShort);
+                          }}
+                          className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/15 text-xs text-white font-mono focus:outline-none focus:border-emerald-400"
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-[10px] font-mono uppercase text-slate-400 mb-1">
-                        Time (24h)
-                      </label>
-                      <input
-                        type="time"
-                        value={scheduledTime}
-                        onChange={(e) => setScheduledTime(e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/15 text-xs text-white font-mono focus:outline-none focus:border-emerald-400"
-                      />
+                    <div className="flex items-center justify-between gap-2 px-1">
+                      <span className="text-[10px] font-mono text-slate-400">
+                        TikTok & IG Best Times (Future Only):
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {(['10:00', '12:00', '18:00'] as const).map((peakTime) => (
+                          <button
+                            key={peakTime}
+                            type="button"
+                            onClick={() => {
+                              const nextSlot = resolveNextFutureSlotForTime(
+                                scheduledDate,
+                                peakTime
+                              );
+                              setScheduledDate(nextSlot.datePart);
+                              setScheduledTime(nextSlot.timeShort);
+                              if (nextSlot.rolledToTomorrow) {
+                                onShowToast(
+                                  `${peakTime} has passed today — set to Tomorrow (${nextSlot.datePart}) at ${peakTime}`
+                                );
+                              }
+                            }}
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold tabular-nums cursor-pointer transition-colors ${
+                              scheduledTime === peakTime
+                                ? 'bg-emerald-400 text-slate-950'
+                                : 'bg-white/10 text-slate-300 hover:text-white'
+                            }`}
+                          >
+                            {peakTime}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 )}

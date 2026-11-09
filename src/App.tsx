@@ -130,7 +130,7 @@ export default function App() {
 
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
   const [activePhase, setActivePhase] = useState<'studio' | 'publish'>('studio');
-  const [publishHubTab, setPublishHubTab] = useState<'single' | 'posts' | 'bulk' | 'storage'>('single');
+  const [publishHubTab, setPublishHubTab] = useState<'single' | 'program' | 'posts' | 'bulk' | 'storage'>('single');
   const [editingPostFromManagerId, setEditingPostFromManagerId] = useState<string | null>(null);
   const [isThemeCustomizerOpen, setIsThemeCustomizerOpen] = useState(false);
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
@@ -419,6 +419,11 @@ export default function App() {
           setActivePhase('publish');
         }}
         savedPostsCount={savedPosts.length}
+        pendingReviewCount={
+          savedPosts.filter(
+            (p) => p.postStatus !== 'posted' && p.deck?.sourceMeta?.userReviewed === false
+          ).length
+        }
         canUndo={pastHistory.length > 0}
         canRedo={futureHistory.length > 0}
         onUndo={handleUndo}
@@ -426,7 +431,18 @@ export default function App() {
         lastSavedTime={lastSavedTime}
         onResetDraft={handleResetDraft}
         activePhase={activePhase}
-        onPhaseChange={(phase) => setActivePhase(phase)}
+        isPeakProgramActive={activePhase === 'publish' && publishHubTab === 'program'}
+        onPhaseChange={(phase) => {
+          if (phase === 'publish' && publishHubTab === 'program') {
+            setPublishHubTab('single');
+          }
+          setActivePhase(phase);
+        }}
+        onOpenPeakProgram={() => {
+          refreshVaultPosts(false);
+          setPublishHubTab('program');
+          setActivePhase('publish');
+        }}
       />
 
       {/* Primary Viewport: Either Phase 1 (Creation Studio) or Phase 2 (Separated Full-Page Publishing Hub) */}

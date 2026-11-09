@@ -20,6 +20,10 @@ import {
   handleManagePublishedPost,
   handleServeStagedMedia,
 } from './controllers/publishController.ts';
+import {
+  handleGetTopicRadar,
+  handleExtractUrlContent,
+} from './controllers/gatherController.ts';
 import { getServerConfig, createRateLimiter, securityHeadersMiddleware } from './config.ts';
 
 dotenv.config();
@@ -88,6 +92,10 @@ app.get(['/api/search-media', '/search-media'], handleSearchMedia);
 app.post(['/api/generate-image', '/generate-image'], generationLimiter, handleGenerateImage);
 app.post(['/api/generate', '/generate'], generationLimiter, handleGenerateCarousel);
 app.post(['/api/refine-slide', '/refine-slide'], generationLimiter, handleRefineSlide);
+
+// Automated Post Gathering & URL Extraction Endpoints
+app.get(['/api/gather/radar', '/gather/radar'], handleGetTopicRadar);
+app.post(['/api/gather/extract-url', '/gather/extract-url'], generationLimiter, handleExtractUrlContent);
 
 // Validated & Posted Carousels Vault Endpoints
 app.get(['/api/posts', '/posts'], handleListPosts);
