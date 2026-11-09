@@ -1,7 +1,11 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import { handleProxyImage } from './controllers/proxyController.ts';
-import { handleSearchMedia } from './controllers/mediaController.ts';
+import {
+  handleSearchMedia,
+  handleGetTopicRadar,
+  handleExtractUrlContent,
+} from './controllers/mediaController.ts';
 import { handleGenerateImage } from './controllers/imageController.ts';
 import { handleGenerateCarousel, handleRefineSlide } from './controllers/generateController.ts';
 import {
@@ -20,10 +24,6 @@ import {
   handleManagePublishedPost,
   handleServeStagedMedia,
 } from './controllers/publishController.ts';
-import {
-  handleGetTopicRadar,
-  handleExtractUrlContent,
-} from './controllers/gatherController.ts';
 import { getServerConfig, createRateLimiter, securityHeadersMiddleware } from './config.ts';
 
 dotenv.config();

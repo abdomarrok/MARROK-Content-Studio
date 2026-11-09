@@ -13,8 +13,8 @@ import { getServerConfig, resolveRequestGeminiKeys } from '../config.ts';
 import {
   MARROK_SYSTEM_PROMPT,
   buildUserCarouselPrompt,
+  CAROUSEL_RESPONSE_SCHEMA,
 } from '../prompts/systemPrompt.ts';
-import { CAROUSEL_RESPONSE_SCHEMA } from '../prompts/responseSchema.ts';
 import { parseCarouselData } from '../../src/lib/validation/carousel.ts';
 import { parseImageDataUrl, parseRawBase64Image } from '../../src/lib/validation/image.ts';
 

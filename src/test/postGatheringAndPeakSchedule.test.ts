@@ -10,7 +10,7 @@ import {
   handleGetTopicRadar,
   recommendPostFormat,
   stripHtmlToCleanText,
-} from '../../api/controllers/gatherController.ts';
+} from '../../api/controllers/mediaController.ts';
 import {
   computePeakProgramScheduleSlots,
   DAILY_PEAK_TIME_SLOTS,
