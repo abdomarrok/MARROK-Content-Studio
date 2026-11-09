@@ -522,5 +522,36 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
     expect(transform.cardY).toBe(266);
     expect(transform.translateY).toBe(26);
   });
+
+  it('auto-promotes due scheduled posts (scheduledFor <= now) to postStatus="posted" during sweep while retaining staged Cloudinary assets until +1h', async () => {
+    const tenMinutesAgoIso = new Date(Date.now() - 10 * 60_000).toISOString();
+    const seedPosts: SavedPostRecord[] = [
+      {
+        id: 'post_due_just_now',
+        title: 'Due Scheduled Post',
+        category: 'AI',
+        postStatus: 'validated',
+        createdAt: tenMinutesAgoIso,
+        updatedAt: tenMinutesAgoIso,
+        creatorHandle: '@MARROK',
+        slideCount: 2,
+        qaPassed: true,
+        deck: DEFAULT_STARTER_DECK,
+        scheduledFor: tenMinutesAgoIso,
+        cloudinaryPublicIds: ['local_staging/due_s1', 'local_staging/due_s2'],
+      },
+    ];
+
+    await saveStoredPosts(seedPosts);
+    const sweep = await sweepExpiredCloudinaryAssets();
+    const promoted = sweep.updatedPosts.find((p) => p.id === 'post_due_just_now');
+    expect(promoted?.postStatus).toBe('posted');
+    expect(promoted?.postedAt).toBe(tenMinutesAgoIso);
+    expect(promoted?.scheduledFor).toBeUndefined();
+    // Staged Cloudinary images must still be retained because only 10 minutes (< 1 hour) have elapsed since scheduledFor
+    expect(sweep.cleanedPostIds).toEqual([]);
+    expect(promoted?.cloudinaryPublicIds).toEqual(['local_staging/due_s1', 'local_staging/due_s2']);
+  });
 });
+
 

@@ -214,6 +214,9 @@ export async function downloadAllSlidesZip(
   const cleanBilingualCaption = metricoolCaption.replace(/\u00A0/g, ' ').trim();
   zip.file('caption-bilingual.txt', cleanBilingualCaption);
 
+  const sharedCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : undefined;
+  const renderedBlobCache = new Map<string, Blob>();
+
   for (let pIdx = 0; pIdx < targetPresets.length; pIdx++) {
     const presetId = targetPresets[pIdx];
     const presetSpec = getCanvasDimensionSpec(presetId);
@@ -226,11 +229,23 @@ export async function downloadAllSlidesZip(
     for (let i = 0; i < total; i++) {
       stepCounter += 1;
       if (onProgress) onProgress(stepCounter, totalSteps);
-      // Microtask yielding to keep browser UI responsive and allow progress re-renders
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      // Reuse 1080x1920 (9:16) rendered slide blob across tiktok-9:16 and ig-9:16 in 5-in-1 'all' bundle mode
+      const dimensionCacheKey =
+        exportMode === 'all' && presetSpec.width === 1080 && presetSpec.height === 1920
+          ? `9x16:${i}`
+          : `${presetSpec.id}:${i}`;
 
-      const canvas = await renderSlideToCanvas(presetCarousel, i, undefined, customPalette, visualOptions);
-      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.95));
+      let blob: Blob | null = renderedBlobCache.get(dimensionCacheKey) || null;
+      if (!blob) {
+        // Microtask yielding to keep browser UI responsive and allow progress re-renders
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const canvas = await renderSlideToCanvas(presetCarousel, i, sharedCanvas, customPalette, visualOptions);
+        blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.95));
+        if (blob) {
+          renderedBlobCache.set(dimensionCacheKey, blob);
+        }
+      }
+
       if (blob) {
         if (pIdx === 0) {
           zip.file(`slide${i + 1}.jpg`, blob);

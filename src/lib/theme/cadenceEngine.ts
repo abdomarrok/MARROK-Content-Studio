@@ -166,6 +166,21 @@ export function normalizeThemeId(themeKey?: string): string {
 }
 
 /**
+ * Determines whether a post is effectively published (either explicitly marked 'posted'
+ * or scheduled with a `scheduledFor` timestamp that has already passed).
+ */
+export function isPostPublishedOrDue(post: SavedPostRecord, nowMs: number = Date.now()): boolean {
+  if (post.postStatus === 'posted') return true;
+  if (post.scheduledFor) {
+    const scheduledMs = Date.parse(post.scheduledFor);
+    if (Number.isFinite(scheduledMs) && scheduledMs <= nowMs) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Core Feed Cadence Analyzer:
  * Evaluates chronological post history, applies recency decay, enforces strict
  * consecutive duplicate prevention, and resolves topic-color conflicts using harmonious alternatives.
@@ -175,14 +190,15 @@ export function analyzePostHistoryCadence(
   activeThemeId?: string,
   topicContext?: { prompt?: string; category?: string }
 ): ThemeCadenceAnalysis {
-  // 1. Filter posts: Prefer 'posted' status; fallback to all saved posts if no posts are marked as posted yet
-  const postedOnly = posts.filter((p) => p.postStatus === 'posted');
+  const nowMs = Date.now();
+  // 1. Filter posts: Prefer 'posted' or due scheduled posts; fallback to all saved posts if none are posted yet
+  const postedOnly = posts.filter((p) => isPostPublishedOrDue(p, nowMs));
   const sourcePosts = postedOnly.length > 0 ? postedOnly : posts;
 
   // 2. Sort descending chronologically
   const sortedPosts = [...sourcePosts].sort((a, b) => {
-    const timeA = new Date(a.postedAt || a.updatedAt || a.createdAt || 0).getTime();
-    const timeB = new Date(b.postedAt || b.updatedAt || b.createdAt || 0).getTime();
+    const timeA = new Date(a.postedAt || a.scheduledFor || a.updatedAt || a.createdAt || 0).getTime();
+    const timeB = new Date(b.postedAt || b.scheduledFor || b.updatedAt || b.createdAt || 0).getTime();
     return timeB - timeA;
   });
 
@@ -191,14 +207,15 @@ export function analyzePostHistoryCadence(
     const rawTheme = p.deck?.theme || 'teal';
     const normId = normalizeThemeId(rawTheme);
     const palette = DEFAULT_PALETTES[normId] || BASE_PALETTES.teal;
+    const effectiveDate = p.postedAt || p.scheduledFor || p.updatedAt || p.createdAt;
     return {
       id: p.id,
       title: p.title || p.deck?.slides?.[0]?.enTitle || 'Untitled Post',
       themeId: palette.id,
       themeName: palette.name.split(' ')[0],
       accentColor: palette.accent,
-      dateStr: formatDateLabel(p.postedAt || p.updatedAt || p.createdAt),
-      isPosted: p.postStatus === 'posted',
+      dateStr: formatDateLabel(effectiveDate),
+      isPosted: isPostPublishedOrDue(p, nowMs),
     };
   });
 

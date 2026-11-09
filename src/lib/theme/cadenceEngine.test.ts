@@ -141,4 +141,36 @@ describe('cadenceEngine', () => {
     expect(palette.accent).toBeDefined();
     expect(palette.baseBg).toBeDefined();
   });
+
+  it('auto-promotes due scheduled posts (scheduledFor <= now) for feed color cadence while ignoring future unposted schedules', () => {
+    const pastIso = new Date(Date.now() - 2 * 3600_000).toISOString();
+    const olderPostedIso = new Date(Date.now() - 24 * 3600_000).toISOString();
+    const futureIso = new Date(Date.now() + 24 * 3600_000).toISOString();
+
+    const dueScheduledPost: SavedPostRecord = {
+      ...createMockPost('p_due', 'violet', olderPostedIso, 'validated', 'Due Scheduled Post'),
+      scheduledFor: pastIso,
+      postedAt: undefined,
+    };
+    const olderPosted: SavedPostRecord = createMockPost(
+      'p_older',
+      'teal',
+      olderPostedIso,
+      'posted',
+      'Older Posted'
+    );
+    const futureDraft: SavedPostRecord = {
+      ...createMockPost('p_future', 'amber', olderPostedIso, 'validated', 'Future Scheduled Post'),
+      scheduledFor: futureIso,
+      postedAt: undefined,
+    };
+
+    const analysis = analyzePostHistoryCadence([olderPosted, dueScheduledPost, futureDraft]);
+    // Due scheduled post ('violet') is the most recent effectively published post, while futureDraft ('amber') is ignored
+    expect(analysis.lastPostedThemeId).toBe('violet');
+    expect(analysis.recommendedThemeId).not.toBe('violet');
+    expect(analysis.recentCadence.map((c) => c.id)).toEqual(['p_due', 'p_older']);
+    expect(analysis.recentCadence[0].isPosted).toBe(true);
+  });
 });
+

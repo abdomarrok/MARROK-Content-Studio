@@ -388,29 +388,50 @@ export async function drawCtaSlide(
     const enCredit = slide.enCredit || defaultEnCredit;
     const arCredit = slide.arCredit || defaultArCredit;
 
-    const creditMaxWidth = Math.max(200, cardX + cardW - textStartX - 20);
+    const creditMaxWidth = Math.max(200, cardX + cardW - textStartX - 24);
+    const fitSingleLineCredit = (
+      rawText: string,
+      maxWidth: number,
+      startSize: number,
+      minSize: number,
+      fontFamily: string
+    ): { text: string; fontSize: number } => {
+      const clean = (rawText || '').replace(/\s+/g, ' ').trim();
+      if (!clean) return { text: '', fontSize: startSize };
+      for (let size = startSize; size >= minSize; size -= 1) {
+        ctx.font = `600 ${size}px ${fontFamily}`;
+        if (ctx.measureText(clean).width <= maxWidth) {
+          return { text: clean, fontSize: size };
+        }
+      }
+      ctx.font = `600 ${minSize}px ${fontFamily}`;
+      let truncated = clean;
+      while (truncated.length > 4 && ctx.measureText(`${truncated}…`).width > maxWidth) {
+        truncated = truncated.slice(0, -1).trimEnd();
+      }
+      return { text: `${truncated}…`, fontSize: minSize };
+    };
 
     ctx.save();
-    const fitEnCredit = fitTextInBox(ctx, enCredit, creditMaxWidth, 23, '"Plus Jakarta Sans", sans-serif', '600', {
-      minFontSize: 14,
-    });
+    const fitEnCredit = fitSingleLineCredit(enCredit, creditMaxWidth, 23, 13, '"Plus Jakarta Sans", sans-serif');
     ctx.font = `600 ${fitEnCredit.fontSize}px "Plus Jakarta Sans", sans-serif`;
     ctx.fillStyle = '#CBD5E1';
     ctx.textAlign = 'left';
+    ctx.direction = 'ltr';
     ctx.textBaseline = 'alphabetic';
-    ctx.fillText(fitEnCredit.lines[0] || enCredit, textStartX, cardY + Math.round(cardH * 0.43));
+    ctx.fillText(fitEnCredit.text, textStartX, cardY + Math.round(cardH * 0.43));
     ctx.restore();
 
     ctx.save();
-    const fitArCredit = fitTextInBox(ctx, arCredit, creditMaxWidth, 23, '"Cairo", sans-serif', '600', {
-      minFontSize: 14,
-    });
+    const fitArCredit = fitSingleLineCredit(arCredit, creditMaxWidth, 23, 13, '"Cairo", sans-serif');
+    const isRtlCredit = /[\u0600-\u06FF]/.test(fitArCredit.text);
     ctx.font = `600 ${fitArCredit.fontSize}px "Cairo", sans-serif`;
     ctx.fillStyle = theme.accent;
-    ctx.textAlign = 'left';
-    ctx.direction = 'rtl';
+    ctx.textAlign = isRtlCredit ? 'right' : 'left';
+    ctx.direction = isRtlCredit ? 'rtl' : 'ltr';
     ctx.textBaseline = 'alphabetic';
-    ctx.fillText(fitArCredit.lines[0] || arCredit, textStartX, cardY + Math.round(cardH * 0.8));
+    const arCreditX = isRtlCredit ? cardX + cardW - 24 : textStartX;
+    ctx.fillText(fitArCredit.text, arCreditX, cardY + Math.round(cardH * 0.8));
     ctx.restore();
 
     ctx.restore();
