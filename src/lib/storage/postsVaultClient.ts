@@ -134,6 +134,15 @@ function normalizeClientPostSignature(post: SavedPostRecord): string {
 }
 
 function isPreferredClientRecord(candidate: SavedPostRecord, current: SavedPostRecord): boolean {
+  const candTime = Date.parse(candidate.updatedAt || candidate.createdAt || '');
+  const currTime = Date.parse(current.updatedAt || current.createdAt || '');
+  if (Number.isFinite(candTime) && Number.isFinite(currTime) && candTime !== currTime) {
+    return candTime > currTime;
+  }
+
+  if (candidate.cloudinaryCleanedAt && !current.cloudinaryCleanedAt) return true;
+  if (current.cloudinaryCleanedAt && !candidate.cloudinaryCleanedAt) return false;
+
   if (candidate.postStatus === 'posted' && current.postStatus !== 'posted') return true;
   if (current.postStatus === 'posted' && candidate.postStatus !== 'posted') return false;
 
@@ -148,7 +157,7 @@ function isPreferredClientRecord(candidate: SavedPostRecord, current: SavedPostR
   if (candHasRemote && !currHasRemote) return true;
   if (currHasRemote && !candHasRemote) return false;
 
-  return new Date(candidate.updatedAt).getTime() >= new Date(current.updatedAt).getTime();
+  return true;
 }
 
 function mergeRecords(

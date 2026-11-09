@@ -32,6 +32,7 @@ describe('Neon PostgreSQL Vault Persistence & Safe Fallbacks', () => {
     expect(mockQuery).toHaveBeenCalledTimes(1);
     const sql = mockQuery.mock.calls[0][0];
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS saved_posts');
+    expect(sql).toContain('ALTER TABLE saved_posts ADD COLUMN IF NOT EXISTS cloudinary_cleaned_at TIMESTAMPTZ');
     expect(sql).toContain('idx_saved_posts_status');
     expect(sql).toContain('idx_saved_posts_updated_at');
 
@@ -40,7 +41,7 @@ describe('Neon PostgreSQL Vault Persistence & Safe Fallbacks', () => {
     expect(mockQuery).toHaveBeenCalledTimes(1);
   });
 
-  it('upserts a saved post record with serialized JSONB deck and parses it on query', async () => {
+  it('upserts a saved post record with serialized JSONB deck and cloudinaryCleanedAt and parses it on query', async () => {
     const nowIso = new Date().toISOString();
     const mockRow = {
       id: 'post_test_neon_1',
@@ -55,7 +56,8 @@ describe('Neon PostgreSQL Vault Persistence & Safe Fallbacks', () => {
       publish_targets: ['instagram', 'tiktok'],
       hosted_slide_urls: ['https://res.cloudinary.com/test/image/upload/slide1.jpg'],
       tiktok_hosted_slide_urls: ['https://res.cloudinary.com/test/image/upload/slide1_tiktok.jpg'],
-      cloudinary_public_ids: ['marrok_staging/slide1'],
+      cloudinary_public_ids: [],
+      cloudinary_cleaned_at: new Date(nowIso),
       buffer_post_ids: ['buf_123'],
       zernio_post_ids: ['zern_456'],
       deck: DEFAULT_STARTER_DECK,
@@ -86,6 +88,8 @@ describe('Neon PostgreSQL Vault Persistence & Safe Fallbacks', () => {
       qaPassed: true,
       publishTargets: ['instagram', 'tiktok'],
       hostedSlideUrls: ['https://res.cloudinary.com/test/image/upload/slide1.jpg'],
+      cloudinaryPublicIds: [],
+      cloudinaryCleanedAt: nowIso,
       deck: DEFAULT_STARTER_DECK,
     };
 
@@ -93,11 +97,13 @@ describe('Neon PostgreSQL Vault Persistence & Safe Fallbacks', () => {
     expect(saved.id).toBe('post_test_neon_1');
     expect(saved.storageEngine).toBe('neon-postgres');
     expect(saved.title).toBe('Distributed Consensus Architecture');
+    expect(saved.cloudinaryCleanedAt).toBe(nowIso);
     expect(saved.deck.theme).toBe(DEFAULT_STARTER_DECK.theme);
 
     const queried = await queryPostgresPosts(mockPool);
     expect(queried).toHaveLength(1);
     expect(queried[0].id).toBe('post_test_neon_1');
+    expect(queried[0].cloudinaryCleanedAt).toBe(nowIso);
     expect(queried[0].storageEngine).toBe('neon-postgres');
   });
 

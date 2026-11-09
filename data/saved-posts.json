@@ -27,16 +27,7 @@
       "https://h.uguu.se/fFYvDdNe.jpg"
     ],
     "tiktokHostedSlideUrls": [],
-    "cloudinaryPublicIds": [
-      "ephemeral_staging/post_1794138557468_s1_1794138559",
-      "ephemeral_staging/post_1794138557468_s2_1794138559",
-      "ephemeral_staging/post_1794138557468_s3_1794138559",
-      "ephemeral_staging/post_1794138557468_s4_1794138559",
-      "ephemeral_staging/post_1794138557468_s5_1794138559",
-      "ephemeral_staging/post_1794138557468_s6_1794138559",
-      "ephemeral_staging/post_1794138557468_s7_1794138559",
-      "ephemeral_staging/post_1794138557468_s8_1794138559"
-    ],
+    "cloudinaryPublicIds": [],
     "bufferPostIds": [
       "6af061c0562f2e6de9b64cb9",
       "6af061ca51492b796e35fc03"
@@ -251,7 +242,8 @@
         "terminalScanlines": true
       }
     },
-    "storageEngine": "neon-postgres"
+    "storageEngine": "neon-postgres",
+    "cloudinaryCleanedAt": "2026-11-08T14:00:00.000Z"
   },
   {
     "id": "post_004f0244-968",
@@ -264,7 +256,6 @@
     "creatorHandle": "Ashish Bhadouria",
     "slideCount": 8,
     "qaPassed": true,
-    "scheduledFor": "2026-11-07T17:00:00.000Z",
     "publishTargets": [
       "tiktok",
       "instagram"
@@ -280,16 +271,7 @@
       "https://ais-dev-xqzhacf27evscikmh75wdh-146114288177.europe-west3.run.app/api/publish/media/post_1793991325015_s8_1793991327.jpg"
     ],
     "tiktokHostedSlideUrls": [],
-    "cloudinaryPublicIds": [
-      "local_staging/post_1793991325015_s1_1793991327",
-      "local_staging/post_1793991325015_s2_1793991327",
-      "local_staging/post_1793991325015_s3_1793991327",
-      "local_staging/post_1793991325015_s4_1793991327",
-      "local_staging/post_1793991325015_s5_1793991327",
-      "local_staging/post_1793991325015_s6_1793991327",
-      "local_staging/post_1793991325015_s7_1793991327",
-      "local_staging/post_1793991325015_s8_1793991327"
-    ],
+    "cloudinaryPublicIds": [],
     "bufferPostIds": [],
     "zernioPostIds": [],
     "deck": {
@@ -477,7 +459,8 @@
         }
       ]
     },
-    "storageEngine": "neon-postgres"
+    "storageEngine": "neon-postgres",
+    "cloudinaryCleanedAt": "2026-11-08T14:00:00.000Z"
   },
   {
     "id": "post_fc946187-e1a",
@@ -514,24 +497,7 @@
       "https://d.uguu.se/sKtaNNfb.jpg",
       "https://d.uguu.se/KjCrYBdt.jpg"
     ],
-    "cloudinaryPublicIds": [
-      "ephemeral_staging/post_1794141454932_s1_1794141456",
-      "ephemeral_staging/post_1794141454932_s2_1794141456",
-      "ephemeral_staging/post_1794141454932_s3_1794141456",
-      "ephemeral_staging/post_1794141454932_s4_1794141456",
-      "ephemeral_staging/post_1794141454932_s5_1794141456",
-      "ephemeral_staging/post_1794141454932_s6_1794141456",
-      "ephemeral_staging/post_1794141454932_s7_1794141456",
-      "ephemeral_staging/post_1794141454932_s8_1794141456",
-      "ephemeral_staging/post_1794141456285_s1_1794141458",
-      "ephemeral_staging/post_1794141456285_s2_1794141458",
-      "ephemeral_staging/post_1794141456285_s3_1794141458",
-      "ephemeral_staging/post_1794141456285_s4_1794141458",
-      "ephemeral_staging/post_1794141456285_s5_1794141458",
-      "ephemeral_staging/post_1794141456285_s6_1794141458",
-      "ephemeral_staging/post_1794141456285_s7_1794141458",
-      "ephemeral_staging/post_1794141456285_s8_1794141458"
-    ],
+    "cloudinaryPublicIds": [],
     "bufferPostIds": [
       "6af06d13562f2e6de9ba4ae8"
     ],
@@ -750,7 +716,8 @@
         }
       ]
     },
-    "storageEngine": "neon-postgres"
+    "storageEngine": "neon-postgres",
+    "cloudinaryCleanedAt": "2026-11-08T14:00:00.000Z"
   },
   {
     "id": "post_787318fd-8c1",

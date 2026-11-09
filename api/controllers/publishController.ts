@@ -290,6 +290,9 @@ export async function sweepExpiredCloudinaryAssets(options?: {
         didMutate = true;
         return {
           ...post,
+          postStatus: isScheduleExpired ? 'posted' : post.postStatus,
+          postedAt: isScheduleExpired ? post.postedAt || post.scheduledFor : post.postedAt,
+          cloudinaryPublicIds: [],
           cloudinaryCleanedAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
@@ -1301,6 +1304,8 @@ export async function handleDispatchPublish(req: Request, res: Response) {
     const { posts: existingPosts } = await loadStoredPosts();
     const existingRecord = postId ? existingPosts.find((p) => p.id === postId) : undefined;
 
+    const isImmediate = mode === 'shareNow';
+
     // Build or update the SavedPostRecord in the Vault
     let targetRecord: SavedPostRecord | undefined = existingRecord;
     if (deck) {
@@ -1308,7 +1313,7 @@ export async function handleDispatchPublish(req: Request, res: Response) {
         id: postId,
         deck,
         title,
-        postStatus: 'posted',
+        postStatus: isImmediate ? 'posted' : 'validated',
         allowOverride: true,
         existingRecord,
       });
@@ -1556,17 +1561,20 @@ export async function handleDispatchPublish(req: Request, res: Response) {
     let nextPosts = existingPosts;
 
     if (targetRecord) {
+      const resolvedScheduledFor =
+        mode === 'customScheduled' && typeof dueAt === 'string' && dueAt.trim()
+          ? dueAt.trim()
+          : mode === 'addToQueue'
+          ? (typeof dueAt === 'string' && dueAt.trim()) ||
+            new Date(Date.now() + 4 * 3600_000).toISOString()
+          : undefined;
+
       savedRecord = {
         ...targetRecord,
-        postStatus: 'posted',
+        postStatus: isImmediate ? 'posted' : 'validated',
         updatedAt: nowIso,
-        postedAt: mode === 'shareNow' ? nowIso : targetRecord.postedAt || nowIso,
-        scheduledFor:
-          mode === 'customScheduled' && typeof dueAt === 'string'
-            ? dueAt
-            : mode === 'addToQueue'
-            ? dueAt || new Date(Date.now() + 4 * 3600_000).toISOString()
-            : undefined,
+        postedAt: isImmediate ? nowIso : undefined,
+        scheduledFor: resolvedScheduledFor,
         publishTargets: validTargets,
         hostedSlideUrls: Array.isArray(imageUrls) ? imageUrls : targetRecord.hostedSlideUrls,
         tiktokHostedSlideUrls:
@@ -1576,7 +1584,10 @@ export async function handleDispatchPublish(req: Request, res: Response) {
         cloudinaryPublicIds: Array.isArray(cloudinaryPublicIds)
           ? cloudinaryPublicIds
           : targetRecord.cloudinaryPublicIds,
-        cloudinaryCleanedAt: cloudinaryCleanedAt || targetRecord.cloudinaryCleanedAt,
+        cloudinaryCleanedAt:
+          Array.isArray(cloudinaryPublicIds) && cloudinaryPublicIds.length > 0
+            ? undefined
+            : cloudinaryCleanedAt || targetRecord.cloudinaryCleanedAt,
         bufferPostIds: bufferPostIds.length > 0 ? bufferPostIds : targetRecord.bufferPostIds,
         zernioPostIds: zernioPostIds.length > 0 ? zernioPostIds : targetRecord.zernioPostIds,
         countedInMetricoolMonth:
@@ -1782,6 +1793,7 @@ export async function handleManagePublishedPost(req: Request, res: Response) {
       const updatedRecord: SavedPostRecord = {
         ...existing,
         postStatus: 'validated',
+        postedAt: undefined,
         scheduledFor: undefined,
         bufferPostIds: undefined,
         zernioPostIds: undefined,
@@ -1881,7 +1893,8 @@ export async function handleManagePublishedPost(req: Request, res: Response) {
       const nowIso = new Date().toISOString();
       const updatedRecord: SavedPostRecord = {
         ...existing,
-        postStatus: 'posted',
+        postStatus: 'validated',
+        postedAt: undefined,
         scheduledFor,
         publishTargets: nextTargets,
         bufferPostIds: newBufferIds.length > 0 ? newBufferIds : existing.bufferPostIds,

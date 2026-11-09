@@ -122,6 +122,8 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
   const [lastDispatchSummary, setLastDispatchSummary] = useState<{
     channelResults: ChannelDispatchResult[];
     warnings: string[];
+    mode?: PublishScheduleMode;
+    scheduledFor?: string | null;
   } | null>(null);
 
   // Platform Options
@@ -166,15 +168,13 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
       const data = await fetchPublishStatus();
       setStatus(data);
       if (data.autoCleanedPostIds && data.autoCleanedPostIds.length > 0) {
-        onShowToast(
-          `Auto-cleaned ${data.autoCleanedPostIds.length} published post(s) from Cloudinary`
-        );
+        // Silently refresh vault in background without showing a popup toast
         onRefreshVault();
       }
     } catch (err) {
       console.warn('Failed to fetch publish status:', err);
     }
-  }, [onRefreshVault, onShowToast]);
+  }, [onRefreshVault]);
 
   const loadTikTokMusic = useCallback(async () => {
     try {
@@ -420,6 +420,8 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
       setLastDispatchSummary({
         channelResults: results,
         warnings: dispatchRes.warnings || [],
+        mode: scheduleMode,
+        scheduledFor: dispatchRes.scheduledFor,
       });
 
       const apiSentCount = dispatchRes.bufferDispatchedCount ?? 0;
@@ -867,6 +869,20 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
                         • {w}
                       </div>
                     ))}
+                    {lastDispatchSummary.mode && lastDispatchSummary.mode !== 'shareNow' && (
+                      <div className="pt-1 flex items-center justify-between gap-2 border-t border-white/10">
+                        <span className="text-[10px] font-mono text-cyan-200">
+                          Scheduled (not posted yet)
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setHubMode('posts')}
+                          className="px-2.5 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-200 text-[10px] font-bold cursor-pointer"
+                        >
+                          View / Cancel Schedule in Posts & Calendar →
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
 

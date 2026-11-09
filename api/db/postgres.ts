@@ -54,6 +54,7 @@ export async function initPostgresSchema(pool: pg.Pool): Promise<void> {
       hosted_slide_urls JSONB,
       tiktok_hosted_slide_urls JSONB,
       cloudinary_public_ids JSONB,
+      cloudinary_cleaned_at TIMESTAMPTZ,
       buffer_post_ids JSONB,
       zernio_post_ids JSONB,
       deck JSONB NOT NULL,
@@ -61,6 +62,8 @@ export async function initPostgresSchema(pool: pg.Pool): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       posted_at TIMESTAMPTZ
     );
+
+    ALTER TABLE saved_posts ADD COLUMN IF NOT EXISTS cloudinary_cleaned_at TIMESTAMPTZ;
 
     CREATE INDEX IF NOT EXISTS idx_saved_posts_status ON saved_posts(post_status);
     CREATE INDEX IF NOT EXISTS idx_saved_posts_scheduled_for ON saved_posts(scheduled_for);
@@ -101,6 +104,11 @@ function rowToSavedPostRecord(row: Record<string, unknown>): SavedPostRecord {
     cloudinaryPublicIds: Array.isArray(row.cloudinary_public_ids)
       ? (row.cloudinary_public_ids as string[])
       : undefined,
+    cloudinaryCleanedAt: row.cloudinary_cleaned_at
+      ? row.cloudinary_cleaned_at instanceof Date
+        ? row.cloudinary_cleaned_at.toISOString()
+        : String(row.cloudinary_cleaned_at)
+      : undefined,
     bufferPostIds: Array.isArray(row.buffer_post_ids) ? (row.buffer_post_ids as string[]) : undefined,
     zernioPostIds: Array.isArray(row.zernio_post_ids) ? (row.zernio_post_ids as string[]) : undefined,
     deck: (typeof row.deck === 'object' && row.deck !== null ? row.deck : JSON.parse(String(row.deck))) as any,
@@ -133,13 +141,13 @@ export async function upsertPostgresPost(
     INSERT INTO saved_posts (
       id, title, category, post_status, title_signature, creator_handle,
       slide_count, qa_passed, scheduled_for, publish_targets, hosted_slide_urls,
-      tiktok_hosted_slide_urls, cloudinary_public_ids, buffer_post_ids, zernio_post_ids,
-      deck, created_at, updated_at, posted_at
+      tiktok_hosted_slide_urls, cloudinary_public_ids, cloudinary_cleaned_at,
+      buffer_post_ids, zernio_post_ids, deck, created_at, updated_at, posted_at
     ) VALUES (
       $1, $2, $3, $4, $5, $6,
       $7, $8, $9, $10, $11,
-      $12, $13, $14, $15,
-      $16, $17, $18, $19
+      $12, $13, $14,
+      $15, $16, $17, $18, $19, $20
     )
     ON CONFLICT (id) DO UPDATE SET
       title = EXCLUDED.title,
@@ -154,11 +162,15 @@ export async function upsertPostgresPost(
       hosted_slide_urls = EXCLUDED.hosted_slide_urls,
       tiktok_hosted_slide_urls = EXCLUDED.tiktok_hosted_slide_urls,
       cloudinary_public_ids = EXCLUDED.cloudinary_public_ids,
+      cloudinary_cleaned_at = COALESCE(EXCLUDED.cloudinary_cleaned_at, saved_posts.cloudinary_cleaned_at),
       buffer_post_ids = EXCLUDED.buffer_post_ids,
       zernio_post_ids = EXCLUDED.zernio_post_ids,
       deck = EXCLUDED.deck,
       updated_at = EXCLUDED.updated_at,
-      posted_at = COALESCE(EXCLUDED.posted_at, saved_posts.posted_at)
+      posted_at = CASE
+        WHEN EXCLUDED.post_status = 'posted' THEN COALESCE(EXCLUDED.posted_at, saved_posts.posted_at)
+        ELSE NULL
+      END
     RETURNING *;
   `;
 
@@ -176,6 +188,7 @@ export async function upsertPostgresPost(
     JSON.stringify(post.hostedSlideUrls || []),
     JSON.stringify(post.tiktokHostedSlideUrls || []),
     JSON.stringify(post.cloudinaryPublicIds || []),
+    post.cloudinaryCleanedAt ? new Date(post.cloudinaryCleanedAt) : null,
     JSON.stringify(post.bufferPostIds || []),
     JSON.stringify(post.zernioPostIds || []),
     JSON.stringify(post.deck),

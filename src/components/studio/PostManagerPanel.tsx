@@ -295,8 +295,8 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
       onRefreshStatus();
       onShowToast(
         res.cancelledBufferIds.length > 0
-          ? `✓ Unscheduled & removed ${res.cancelledBufferIds.length} queued slot(s) from Buffer`
-          : `✓ Moved "${post.title.slice(0, 28)}" back to Drafts`
+          ? `✓ Schedule cancelled (${res.cancelledBufferIds.length} queued slot(s) removed) — moved to Drafts`
+          : `✓ Schedule cancelled — "${post.title.slice(0, 28)}" moved to Drafts`
       );
     } catch (err) {
       onShowToast(`⚠️ ${err instanceof Error ? err.message : 'Failed to unschedule post'}`);
@@ -632,6 +632,20 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                           <div className="font-semibold truncate" title={post.title}>
                             {post.title}
                           </div>
+                          {stage === 'scheduled' && (
+                            <button
+                              type="button"
+                              disabled={busyPostId === post.id}
+                              onClick={() => handleUnscheduleToDraft(post)}
+                              title="Cancel schedule on Buffer & Zernio and move to Drafts"
+                              className="w-full mt-1 flex items-center justify-center gap-1 py-1 px-2 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 text-[10px] font-bold transition-colors cursor-pointer"
+                            >
+                              <RotateCcw className="w-2.5 h-2.5" />
+                              <span>
+                                {busyPostId === post.id ? 'Cancelling...' : 'Cancel Schedule'}
+                              </span>
+                            </button>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -850,10 +864,13 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                       <div className="space-y-1 min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           {/* Pill 1: Lifecycle Status */}
-                          {stage === 'scheduled' && scheduleParts && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-200 border border-cyan-400/30">
+                          {stage === 'scheduled' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold tabular-nums bg-amber-500/20 text-amber-200 border border-amber-400/40">
                               <Clock className="w-2.5 h-2.5" />
-                              {scheduleParts.datePart} · {scheduleParts.timeShort}
+                              Scheduled
+                              {scheduleParts
+                                ? ` · ${scheduleParts.datePart} · ${scheduleParts.timeShort}`
+                                : ''}
                             </span>
                           )}
                           {stage === 'posted' && (
@@ -936,15 +953,16 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                           <span>{stage === 'scheduled' ? 'Reschedule' : 'Schedule'}</span>
                         </button>
 
-                        {(stage === 'scheduled' || Boolean(post.scheduledFor)) && (
+                        {stage === 'scheduled' && (
                           <button
                             type="button"
                             disabled={isPostBusy}
                             onClick={() => handleUnscheduleToDraft(post)}
-                            title="Unschedule and move to Drafts"
-                            className="p-1.5 rounded-lg border border-amber-400/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-200 transition-colors cursor-pointer"
+                            title="Cancel scheduled post on Buffer & Zernio and move to Drafts"
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-amber-400/40 bg-amber-500/15 hover:bg-amber-500/25 text-amber-200 text-xs font-bold transition-colors cursor-pointer whitespace-nowrap"
                           >
                             <RotateCcw className="w-3.5 h-3.5" />
+                            <span>{isPostBusy ? 'Cancelling...' : 'Cancel Schedule'}</span>
                           </button>
                         )}
 
@@ -1054,9 +1072,9 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                                 type="button"
                                 disabled={isPostBusy}
                                 onClick={() => handleUnscheduleToDraft(post)}
-                                className="px-3 py-1.5 rounded-lg border border-amber-400/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-200 text-xs font-bold cursor-pointer"
+                                className="px-3 py-1.5 rounded-lg border border-amber-400/40 bg-amber-500/15 hover:bg-amber-500/25 text-amber-200 text-xs font-bold cursor-pointer"
                               >
-                                Unschedule to Drafts
+                                Cancel Schedule (Move to Drafts)
                               </button>
                             )}
                             <button

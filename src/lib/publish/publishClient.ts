@@ -588,7 +588,11 @@ export async function dispatchPostPublish(
     throw new Error(errData.error || `Publish dispatch failed (${res.status})`);
   }
 
-  return (await res.json()) as DispatchPublishResponse;
+  const data = (await res.json()) as DispatchPublishResponse;
+  if (data.post) {
+    await syncLocalVaultAfterManage({ updatedPost: data.post });
+  }
+  return data;
 }
 
 export type PostLifecycleStage = 'draft' | 'scheduled' | 'posted' | 'attention';
@@ -622,9 +626,9 @@ export interface ManagePublishedPostResponse {
 /**
  * Classifies a SavedPostRecord into one of the 4 canonical Post Management lifecycle stages:
  * - 'attention': QA failed (!qaPassed)
- * - 'scheduled': scheduledFor is in the future (> nowMs)
+ * - 'scheduled': scheduledFor is in the future (> nowMs) OR postStatus !== 'posted' with scheduledFor set
  * - 'posted': postStatus === 'posted' (and either immediate or scheduledFor <= nowMs)
- * - 'draft': postStatus === 'validated' and not scheduled in the future
+ * - 'draft': postStatus === 'validated' and not scheduled
  */
 export function derivePostLifecycleStage(
   post: SavedPostRecord,
@@ -634,8 +638,10 @@ export function derivePostLifecycleStage(
     return 'attention';
   }
   const scheduledMs = post.scheduledFor ? Date.parse(post.scheduledFor) : NaN;
-  if (Number.isFinite(scheduledMs) && scheduledMs > nowMs) {
-    return 'scheduled';
+  if (Number.isFinite(scheduledMs)) {
+    if (scheduledMs > nowMs || post.postStatus !== 'posted') {
+      return 'scheduled';
+    }
   }
   if (post.postStatus === 'posted') {
     return 'posted';

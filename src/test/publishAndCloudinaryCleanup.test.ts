@@ -183,8 +183,14 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
     const futureRecord = sweep.updatedPosts.find((p) => p.id === 'post_future');
     const recentShareNowRecord = sweep.updatedPosts.find((p) => p.id === 'post_recent_share_now');
     expect(expiredRecord?.cloudinaryCleanedAt).toBeDefined();
+    expect(expiredRecord?.cloudinaryPublicIds).toEqual([]);
     expect(futureRecord?.cloudinaryCleanedAt).toBeUndefined();
     expect(recentShareNowRecord?.cloudinaryCleanedAt).toBeUndefined();
+
+    // A second sweep should be a complete no-op and never re-clean post_expired
+    const secondSweep = await sweepExpiredCloudinaryAssets();
+    expect(secondSweep.cleanedPostIds).toEqual([]);
+    expect(secondSweep.cleanedPublicIds).toEqual([]);
   });
 
   it('generates the exact 99-column Official Metricool CSV template with auto-filled TikTok Title, Alt Texts, First Comment, and LinkedIn PDF Carousel', () => {
@@ -304,7 +310,7 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
       return { statusCode, jsonBody };
     };
 
-    // 1. Reschedule draft into a future slot
+    // 1. Reschedule draft into a future slot (stays 'validated' + 'scheduled' stage, NOT 'posted')
     const rescheduleRes = await invokeManage({
       postId: 'post_manage_1',
       action: 'reschedule',
@@ -312,11 +318,13 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
       publishTargets: ['instagram', 'linkedin'],
     });
     expect(rescheduleRes.statusCode).toBe(200);
-    expect(rescheduleRes.jsonBody.post.postStatus).toBe('posted');
+    expect(rescheduleRes.jsonBody.post.postStatus).toBe('validated');
+    expect(rescheduleRes.jsonBody.post.postedAt).toBeUndefined();
     expect(rescheduleRes.jsonBody.post.scheduledFor).toBe(futureIso);
     expect(rescheduleRes.jsonBody.post.publishTargets).toEqual(['instagram', 'linkedin']);
+    expect(derivePostLifecycleStage(rescheduleRes.jsonBody.post, nowMs)).toBe('scheduled');
 
-    // 2. Unschedule back to draft
+    // 2. Unschedule (Cancel Schedule) back to draft
     const unscheduleRes = await invokeManage({
       postId: 'post_manage_1',
       action: 'unschedule',
@@ -324,6 +332,7 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
     expect(unscheduleRes.statusCode).toBe(200);
     expect(unscheduleRes.jsonBody.post.postStatus).toBe('validated');
     expect(unscheduleRes.jsonBody.post.scheduledFor).toBeUndefined();
+    expect(derivePostLifecycleStage(unscheduleRes.jsonBody.post, nowMs)).toBe('draft');
 
     // 3. Cancel & Delete from Vault
     const deleteRes = await invokeManage({
