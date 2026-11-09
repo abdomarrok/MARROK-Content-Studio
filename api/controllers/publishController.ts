@@ -13,7 +13,7 @@ import {
   saveStoredPosts,
   validateAndBuildPostRecord,
 } from './postsController.ts';
-import { stripLeadingDuplicateTikTokTitle } from '../../src/lib/publish/publishClient.ts';
+import { stripLeadingDuplicateTikTokTitle } from '../../src/lib/publish/tiktokTitle.ts';
 
 const LOCAL_MEDIA_CACHE = new Map<string, { buffer: Buffer; createdAt: number }>();
 const MAX_LOCAL_CACHE_ITEMS = 60;
