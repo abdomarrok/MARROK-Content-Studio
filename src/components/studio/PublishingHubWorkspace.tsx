@@ -12,6 +12,7 @@ import {
   Play,
   Square,
   Shuffle,
+  Database,
 } from 'lucide-react';
 import {
   CarouselData,
@@ -19,6 +20,7 @@ import {
   PublishScheduleMode,
   PublishTargetPlatform,
   SavedPostRecord,
+  SavedPostStorageEngine,
   ThemePalette,
 } from '../../types.ts';
 import {
@@ -47,6 +49,7 @@ interface PublishingHubWorkspaceProps {
   carousel: CarouselData;
   theme: ThemePalette;
   savedPosts: SavedPostRecord[];
+  storageEngine?: SavedPostStorageEngine;
   onBackToStudio: () => void;
   onSelectPostIntoStudio?: (post: SavedPostRecord) => void;
   onRefreshVault: () => void;
@@ -90,6 +93,7 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
   carousel,
   theme,
   savedPosts,
+  storageEngine,
   onBackToStudio,
   onSelectPostIntoStudio,
   onRefreshVault,
@@ -497,8 +501,33 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
           </button>
         </div>
 
-        {/* Right: Direct API Connection Badges (Buffer + Zernio) */}
+        {/* Right: Direct API Connection Badges (Database + Buffer + Zernio) */}
         <div className="hidden sm:flex items-center gap-2 text-[11px] font-mono">
+          <span
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border ${
+              storageEngine === 'neon-postgres'
+                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                : storageEngine === 'cloud-kv'
+                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                : storageEngine === 'local-disk'
+                ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300'
+                : 'border-white/10 bg-white/[0.03] text-slate-400'
+            }`}
+            title={
+              storageEngine === 'neon-postgres'
+                ? 'Durable Neon PostgreSQL cloud pooler connected across all devices'
+                : 'Local vault storage'
+            }
+          >
+            <Database className="w-3 h-3" />
+            {storageEngine === 'neon-postgres'
+              ? 'Neon Postgres'
+              : storageEngine === 'cloud-kv'
+              ? 'Vercel KV'
+              : storageEngine === 'local-disk'
+              ? 'Local Disk'
+              : 'Local Vault'}
+          </span>
           <span
             className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border ${
               status?.bufferApiConfigured

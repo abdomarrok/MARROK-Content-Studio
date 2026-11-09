@@ -444,6 +444,7 @@ export default function App() {
               carousel={carousel}
               theme={currentPalette}
               savedPosts={savedPosts}
+              storageEngine={storageEngine}
               onBackToStudio={() => setActivePhase('studio')}
               onSelectPostIntoStudio={(record) => {
                 handleSelectSavedPost(record);

@@ -338,7 +338,12 @@ export type ThemeConfig = ThemePalette;
 
 export type SavedPostStatus = 'validated' | 'posted';
 
-export type SavedPostStorageEngine = 'cloud-kv' | 'vercel-tmp' | 'local-disk' | 'browser-vault';
+export type SavedPostStorageEngine =
+  | 'neon-postgres'
+  | 'cloud-kv'
+  | 'vercel-tmp'
+  | 'local-disk'
+  | 'browser-vault';
 
 export type PublishTargetPlatform = 'instagram' | 'facebook' | 'linkedin' | 'tiktok';
 

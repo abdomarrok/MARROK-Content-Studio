@@ -11,6 +11,7 @@ import {
   Upload,
   Cloud,
   HardDrive,
+  Database,
   Sparkles,
 } from 'lucide-react';
 import type {
@@ -79,7 +80,14 @@ export const SavedPostsDrawer: React.FC<SavedPostsDrawerProps> = ({
   });
 
   const storageBadge =
-    storageEngine === 'cloud-kv'
+    storageEngine === 'neon-postgres'
+      ? {
+          label: 'Neon Postgres Cloud Active',
+          desc: 'Synced permanently across all devices via Neon Serverless PostgreSQL Connection Pooler',
+          cls: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300',
+          icon: Database,
+        }
+      : storageEngine === 'cloud-kv'
       ? {
           label: 'Vercel KV Cloud Active',
           desc: 'Synced permanently across all devices via Upstash/Vercel KV + IndexedDB Vault',

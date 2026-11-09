@@ -89,6 +89,12 @@ Switch between **`1. Create Studio`** and **`2. Publish & Posts (N)`** from the 
 - **Unified Posts & Calendar Manager (`PostManagerPanel.tsx`):**
   - Manage all **Drafts**, **Scheduled**, **Posted**, and **Needs Review** decks in one place with **List**, **7/14-Day Calendar**, and **Bulk Schedule** views, supporting 1-click **Edit in Studio**, **Reschedule**, **Unschedule to Drafts**, and **Delete** synced across Buffer, Zernio, and Vault.
 
+### 🗄️ Neon Serverless PostgreSQL Content Vault (`api/db/postgres.ts`)
+- **Durable Cross-Device Cloud Sync:** Real-time persistence powered by Neon Serverless PostgreSQL with SSL connection pooling (`DATABASE_URL`), keeping draft decks, scheduled slots, and published history identical across desktop computers, tablets, and mobile phones.
+- **Atomic Upsert & Zero Duplicates:** Uses `ON CONFLICT (id) DO UPDATE` and normalized title signatures to eliminate duplicate starter drafts across Vercel serverless cold starts.
+- **Full Slide Fidelity with JSONB:** Complete bilingual slide typography, diagrams, archetypes, and layout overrides are preserved without rigid table migration friction.
+- **Fail-Safe Offline Fallback:** Gracefully falls back to local JSON file storage (`data/saved-posts.json` or `/tmp`) and Browser IndexedDB if the network drops or Neon is temporarily unreachable.
+
 ### 📦 Complete Deliverables & 5-in-1 Ready-to-Share Bundle (100% JPG)
 1-click export packages everything needed to publish or archive offline:
 - `slide1.jpg` through `slideN.jpg` (multi-ratio 9:16, 4:5, 3:4, and 1:1 high-res JPG Q95 slides — never PNG, strictly TikTok & Safe-Zone compliant)
@@ -149,6 +155,7 @@ cp .env.example .env
 | `CLOUDINARY_API_SECRET` | Optional | `""` | Cloudinary API secret for SHA-1 signed upload and `image/destroy` cleanup |
 | `BUFFER_API_KEY` | Optional | `""` | Buffer Developer API token (`https://api.buffer.com`) for direct IG/FB/LinkedIn publishing |
 | `ZERNIO_API_KEY` | Optional | `""` | Zernio API token (`https://zernio.com/api/v1` + `https://mcp.zernio.com/mcp`) for direct TikTok Photo Carousel (with Commercial Music) & Instagram publishing |
+| `DATABASE_URL` | Optional | `""` | Neon PostgreSQL connection string (`postgresql://...`) for durable cross-device post sync |
 | `ALLOWED_ORIGIN` | Optional | `*` | CORS `Access-Control-Allow-Origin` header value |
 | `API_SHARED_SECRET` | Optional | `""` | Shared secret (`x-api-secret`) required when relying on server `GEMINI_API_KEY` |
 | `RATE_LIMIT_RPM` | Optional | `30` | Per-IP requests per minute limit on AI endpoints |

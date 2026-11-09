@@ -40,6 +40,9 @@
 │  ├─ POST /api/refine-slide   -> api/controllers/refineSlideController.ts   │
 │  ├─ POST /api/generate-image -> api/controllers/imageController.ts         │
 │  ├─ GET/POST/PATCH/DELETE /api/posts -> api/controllers/postsController.ts │
+│  │    ├─ Primary: Neon Serverless PostgreSQL (api/db/postgres.ts)          │
+│  │    ├─ Tier 2: Vercel KV / Upstash Redis                                 │
+│  │    └─ Tier 3: Local Disk / Vercel /tmp + Browser IndexedDB Fallback     │
 │  ├─ /api/publish/*           -> api/controllers/publishController.ts       │
 │  │    ├─ GET  /api/publish/status        (Live Channels + Auto-Sweep)      │
 │  │    ├─ GET  /api/publish/tiktok-music  (Zernio TikTok Commercial Music)  │
@@ -57,10 +60,11 @@
 | Path | Responsibility |
 |---|---|
 | `api/index.ts` | Express router, Vercel rewrite path restoration (`x-matched-path`), CORS, rate limiting, security headers |
-| `api/config.ts` | Startup env validation, `getGeminiKeyPool(req)` multi-key rotation, Cloudinary, Buffer & Zernio credentials config, rate limiter |
+| `api/config.ts` | Startup env validation, `getGeminiKeyPool(req)` multi-key rotation, Cloudinary, Buffer, Zernio & Neon PostgreSQL credentials config, rate limiter |
+| `api/db/postgres.ts` | Serverless PostgreSQL layer (`pg.Pool`, SSL enabled, connection pooler) storing posts in `saved_posts` with `JSONB` slide decks, relational indexing (`post_status`, `scheduled_for`, `updated_at`, `title_signature`), idempotent schema init, and atomic upserts (`ON CONFLICT (id) DO UPDATE`) eliminating duplicate drafts across multi-device sessions and serverless restarts |
 | `api/freeAiFallback.ts` | Zero-key Pollinations AI text (`openai`/`mistral`) and 9:16 `flux` image fallback when Gemini keys are exhausted |
 | `api/controllers/generateController.ts` | Bilingual deck synthesis (Carousel & 1-Slide), Google Search `groundingSupports` fact mapping, multi-key & free AI cascade |
-| `api/controllers/postsController.ts` | Validated & Posted Vault persistence (`vercel-tmp` / `memory-fallback`), preserving schedule and Cloudinary metadata |
+| `api/controllers/postsController.ts` | Content Vault persistence prioritizing Neon PostgreSQL (`neon-postgres`), with automatic seed migration and graceful fallbacks (`cloud-kv`, `local-disk`, `vercel-tmp`) |
 | `api/controllers/publishController.ts` | Signed SHA-1 Cloudinary upload (`uploadSlideToCloudinary`), automatic post-publish asset destruction (`destroyCloudinaryAsset`, `sweepExpiredCloudinaryAssets`), Buffer GraphQL API dispatch (`https://api.buffer.com`), Zernio REST API v1 dispatch (`https://zernio.com/api/v1/posts`), and TikTok Commercial Music catalog (`fetchZernioTikTokCommercialMusic`) |
 | `api/controllers/proxyController.ts` | SSRF-hardened HTTPS image proxy with DNS resolution check, 2 MB cap, and SVG sanitization |
 | `src/components/studio/PublishingHubWorkspace.tsx` | Full-page Phase 2 Publish & Posts Hub with 2 tabs (`Publish Active Post` and `Posts & Calendar`), dual aspect-ratio staging (`4:5` + `9:16`), and TikTok Background Sound selector with audio preview |

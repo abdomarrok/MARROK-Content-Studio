@@ -1,5 +1,24 @@
 # Changelog — MARROK Content Studio
 
+## [1.5.0] — Neon Serverless PostgreSQL Persistence Vault, TikTok Photo Mode Safe-Zone Re-Anchoring & Caption Polish
+
+### 1. Neon Serverless PostgreSQL Content Vault (`api/db/postgres.ts`, `api/controllers/postsController.ts`)
+- **Durable Cross-Device Cloud Sync:** Configured Neon Serverless PostgreSQL via connection pooler (`DATABASE_URL`), enabling real-time synchronization of draft decks, scheduled slots, and published history across desktop, mobile, and serverless instances.
+- **Idempotent Schema & JSONB Slide Deck Storage:** Automatic startup table creation (`saved_posts`) storing the full bilingual slide deck as `JSONB` alongside indexed relational metadata (`id`, `title`, `post_status`, `scheduled_for`, `title_signature`, `updated_at`).
+- **Atomic Upsert & Zero-Duplicates Guarantee:** Implemented `ON CONFLICT (id) DO UPDATE` to completely eliminate the duplicate starter draft copies previously caused by ephemeral `/tmp` resets on serverless cold starts.
+- **Hands-Off Auto-Seeding & Offline Fallback:** On first connection, automatically migrates existing seed posts into PostgreSQL. If network connectivity drops or the database URL is unset, the app gracefully falls back to local disk and IndexedDB without crashing.
+- **Connection Badges:** Added live `● Neon Postgres` status badges in the `2. Publish & Posts` workspace header and `SavedPostsDrawer`.
+
+### 2. TikTok Photo Mode Safe-Zone Re-Anchoring (`src/lib/canvas/constants.ts`, `src/lib/canvas/background.ts`, `src/lib/canvas/layoutAwareness.ts`)
+- **Top Header Re-Anchoring:** Shifted top header floor down to `SAFE_HEADER_Y = 206px` with horizontal safe margins (`136px` left, `920px` right) clearing TikTok's native `←` Back arrow (`x = 48..116`) and `🔍` Search icon (`x = 960..1032`).
+- **Visual Card Ceiling Adjustment:** Shifted visual schematic cards to `cardY = 266px` (`translateY = 26px`) on `tiktok-9:16`, preventing visual collision with top header chrome.
+- **Pagination Footer MARROK Badge:** Relocated the glowing vector MARROK badge (`22×22px`) + `@MARROK` handle to the left of the pagination dots, with technical slide numbering (`03 / 08`) on the right.
+
+### 3. TikTok Caption Deduplication (`src/lib/publish/publishClient.ts`, `api/controllers/publishController.ts`)
+- **Headline Stripping in Dispatch:** Added `stripLeadingDuplicateTikTokTitle()` to strip redundant leading headline copy from the caption body when dispatched to TikTok, preventing TikTok Photo Mode's native headline overlay from displaying the hook line twice.
+
+---
+
 ## [1.4.0] — Consolidated Publish & Posts Hub, Zernio Free API + TikTok Commercial Music Library & Buffer Instagram Fix
 
 ### 1. Zernio Free REST API v1 + Hosted MCP Server & TikTok Commercial Music Library (`api/controllers/publishController.ts`, `src/lib/publish/publishClient.ts`)

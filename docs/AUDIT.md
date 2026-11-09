@@ -106,3 +106,11 @@
 4. **[MEDIUM — Serverless Timeout & Cascade Latency]** Chaining multiple 12s–45s model attempts across multiple keys in `generateController.ts` can exceed Vercel's 60-second function timeout before the local fallback triggers.
 5. **[MEDIUM — Product Safety & Pre-Publish Gate]** No dedicated platform risk checker (`PASS`/`WARN`/`BLOCK`) for originality, unverified numeric claims, or cover readability; QA failures currently only show a toast without a structured gate/override.
 6. **[LOW — Constants Drift & Hardcoded Hashtags]** `README.md` cites 110 chars for body copy while `CHAR_LIMITS` uses 140/150; `AutonomousStudio.tsx` appends hardcoded hashtags instead of topic-derived hashtags.
+
+---
+
+## 6. Phase 7 Audit & Hardening — Cloud Persistence & TikTok Safe Zones (2026-11-09)
+
+- **Neon PostgreSQL Cloud Content Vault**: Migrated post persistence from ephemeral `/tmp` files to Neon Serverless PostgreSQL with SSL connection pooling (`api/db/postgres.ts`). Idempotent schema initialization, `JSONB` deck storage, and atomic upserts (`ON CONFLICT (id) DO UPDATE`) completely eliminated duplicate starter drafts and enabled true cross-device synchronization.
+- **TikTok Photo Mode Safe-Zone Re-Anchoring**: Re-anchored the top header safe-zone floor to `SAFE_HEADER_Y = 206px` with horizontal margins (`136px` left, `920px` right) clearing TikTok's native `←` Back arrow and `🔍` Search icon. Shifted graphic cards to `cardY = 266px` (`translateY = 26px`), and moved the MARROK badge to the pagination footer.
+- **TikTok Caption Deduplication**: Added `stripLeadingDuplicateTikTokTitle` to prevent TikTok's Photo Mode headline overlay from duplicating the caption's first line.

@@ -15,6 +15,15 @@ import { sanitizeFullCarousel } from '../../src/lib/textSanitizer.ts';
 import { runQAChecks } from '../../src/lib/qaChecks.ts';
 import { runPlatformRiskChecks } from '../../src/lib/riskChecks.ts';
 import { BUNDLED_SAVED_POSTS } from '../../src/lib/storage/bundledSavedPosts.ts';
+import {
+  getPostgresPool,
+  initPostgresSchema,
+  queryPostgresPosts,
+  countPostgresPosts,
+  upsertPostgresPost,
+  updatePostgresPostStatus,
+  deletePostgresPost,
+} from '../db/postgres.ts';
 
 const KV_STORAGE_KEY = 'marrok:saved_posts:v1';
 const MAX_SAVED_POSTS = 100;
@@ -225,6 +234,37 @@ export async function loadStoredPosts(env: NodeJS.ProcessEnv = process.env): Pro
   isCloudPersistent: boolean;
 }> {
   const config = getServerConfig(env);
+
+  // 1. Neon Serverless PostgreSQL Cloud Persistence
+  if (config.databaseUrl) {
+    try {
+      const pool = getPostgresPool(config.databaseUrl);
+      if (pool) {
+        const count = await countPostgresPosts(pool);
+        if (count === 0) {
+          console.log('[PostsStore] Neon PostgreSQL empty, auto-migrating seed posts...');
+          const { posts: localPosts } = await readFromFileStore(env);
+          const initialSeeds = localPosts.length > 0 ? localPosts : getBundledSeedPosts();
+          for (const seed of initialSeeds) {
+            const sig = normalizePostTitleSignature(seed);
+            await upsertPostgresPost(pool, seed, sig);
+          }
+        }
+        const pgPosts = await queryPostgresPosts(pool);
+        if (pgPosts.length > 0) {
+          return {
+            posts: deduplicateSavedPosts(pgPosts),
+            storageEngine: 'neon-postgres',
+            isCloudPersistent: true,
+          };
+        }
+      }
+    } catch (pgErr) {
+      console.warn('[PostsStore] Neon PostgreSQL query failed, falling back to local file store:', pgErr);
+    }
+  }
+
+  // 2. Vercel KV / Upstash Redis
   if (config.kvRestUrl && config.kvRestToken) {
     const kvPosts = await readFromKv(config.kvRestUrl, config.kvRestToken);
     if (kvPosts !== null) {
@@ -278,6 +318,26 @@ export async function saveStoredPosts(
     .slice(0, MAX_SAVED_POSTS);
 
   const config = getServerConfig(env);
+
+  // 1. Neon Serverless PostgreSQL Cloud Persistence
+  if (config.databaseUrl) {
+    try {
+      const pool = getPostgresPool(config.databaseUrl);
+      if (pool) {
+        for (const post of sorted) {
+          const sig = normalizePostTitleSignature(post);
+          await upsertPostgresPost(pool, post, sig);
+        }
+        // Mirror to local disk backup in background
+        void writeToFileStore(sorted, env);
+        return 'neon-postgres';
+      }
+    } catch (pgErr) {
+      console.warn('[PostsStore] Neon PostgreSQL save failed, falling back to file store:', pgErr);
+    }
+  }
+
+  // 2. Vercel KV / Upstash Redis
   if (config.kvRestUrl && config.kvRestToken) {
     const ok = await writeToKv(config.kvRestUrl, config.kvRestToken, sorted);
     if (ok) {
@@ -640,6 +700,17 @@ export async function handleDeletePost(req: Request, res: Response) {
         });
       } catch {
         // Non-fatal if remote is unreachable
+      }
+    }
+    const config = getServerConfig();
+    if (config.databaseUrl) {
+      try {
+        const pool = getPostgresPool(config.databaseUrl);
+        if (pool) {
+          await deletePostgresPost(pool, id);
+        }
+      } catch (pgErr) {
+        console.warn('[PostsController] Failed to delete post from Postgres:', pgErr);
       }
     }
     const { posts } = await loadStoredPosts();
