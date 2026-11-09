@@ -505,19 +505,40 @@ export async function uploadDeckSlidesForPublishing(
     (cur, tot) => onProgress?.(`Rendering slide ${cur}/${tot} (${preset})...`)
   );
 
-  onProgress?.(`Uploading ${slides.length} slide(s) to Cloudinary staging...`);
-  const res = await fetch('/api/publish/upload-media', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ postId, slides }),
-  });
+  const CHUNK_SIZE = 2;
+  const allUrls: string[] = [];
+  const allPublicIds: string[] = [];
+  let provider: 'cloudinary' | 'local-staging' = 'cloudinary';
 
-  if (!res.ok) {
-    const errData = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(errData.error || `Media upload failed (${res.status})`);
+  for (let i = 0; i < slides.length; i += CHUNK_SIZE) {
+    const chunk = slides.slice(i, i + CHUNK_SIZE);
+    const startIdx = i + 1;
+    const endIdx = Math.min(i + CHUNK_SIZE, slides.length);
+    onProgress?.(`Uploading slides ${startIdx}${endIdx > startIdx ? `–${endIdx}` : ''} of ${slides.length} (${preset})...`);
+
+    const res = await fetch('/api/publish/upload-media', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ postId, slides: chunk }),
+    });
+
+    if (!res.ok) {
+      const errData = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(errData.error || `Media upload failed on slide ${startIdx} (${res.status})`);
+    }
+
+    const data = (await res.json()) as UploadPublishMediaResponse;
+    allUrls.push(...(data.urls || []));
+    allPublicIds.push(...(data.publicIds || []));
+    if (data.provider) provider = data.provider;
   }
 
-  return (await res.json()) as UploadPublishMediaResponse;
+  return {
+    postId,
+    urls: allUrls,
+    publicIds: allPublicIds,
+    provider,
+  };
 }
 
 /**

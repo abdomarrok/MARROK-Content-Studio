@@ -342,6 +342,12 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
       const userTimezone =
         Intl.DateTimeFormat().resolvedOptions().timeZone || 'Africa/Algiers';
 
+      if (!status?.cloudinaryConfigured) {
+        onShowToast(
+          '⚠️ Notice: Cloudinary keys are missing on Vercel. Add CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in Vercel settings for direct public hosting.'
+        );
+      }
+
       let urls = stagedUrlsByPostId[activePostKey];
       let pubIds = stagedPublicIdsByPostId[activePostKey] || [];
       let tiktokUrls: string[] | undefined = undefined;
@@ -545,6 +551,23 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
             }`}
           >
             {status?.zernioApiConfigured ? 'Zernio Connected' : 'Zernio: Off'}
+          </span>
+          <span
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border ${
+              status?.cloudinaryConfigured
+                ? 'border-purple-500/30 bg-purple-500/10 text-purple-300'
+                : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+            }`}
+            title={
+              status?.cloudinaryConfigured
+                ? `Cloudinary connected (${status.cloudinaryCloudName})`
+                : 'Cloudinary environment variables missing on Vercel'
+            }
+          >
+            <Cloud className="w-3 h-3" />
+            {status?.cloudinaryConfigured
+              ? `Cloudinary: ${status.cloudinaryCloudName || 'Ready'}`
+              : 'Cloudinary: Missing Env'}
           </span>
         </div>
       </div>
