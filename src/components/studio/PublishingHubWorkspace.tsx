@@ -322,8 +322,17 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
   };
 
   // Dispatch to Buffer GraphQL + Zernio REST API v1 + Save Schedule to Vault
-  const handleDispatchPublishAndSchedule = async () => {
-    if (selectedTargets.length === 0) {
+  const handleDispatchPublishAndSchedule = async (options?: {
+    targetSubset?: PublishTargetPlatform[];
+    mergeRemoteIds?: boolean;
+    cancelExistingBeforeDispatch?: boolean;
+  }) => {
+    const activeTargets =
+      options?.targetSubset && options.targetSubset.length > 0
+        ? options.targetSubset
+        : selectedTargets;
+
+    if (activeTargets.length === 0) {
       onShowToast('⚠️ Select at least one target platform');
       return;
     }
@@ -335,8 +344,8 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
 
     setIsBusy(true);
     try {
-      const hasTikTokTarget = selectedTargets.includes('tiktok');
-      const hasMetaOrLinkedInTarget = selectedTargets.some((t) => t !== 'tiktok');
+      const hasTikTokTarget = activeTargets.includes('tiktok');
+      const hasMetaOrLinkedInTarget = activeTargets.some((t) => t !== 'tiktok');
       const renderPreset =
         hasTikTokTarget && !hasMetaOrLinkedInTarget ? 'tiktok-9:16' : 'ig-4:5';
       const userTimezone =
@@ -375,7 +384,7 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
           (stage) => setProgressLabel(`TikTok 9:16: ${stage}`)
         );
         tiktokUrls = uploadedTikTok.urls;
-        pubIds = [...pubIds, ...uploadedTikTok.publicIds];
+        pubIds = Array.from(new Set([...pubIds, ...uploadedTikTok.publicIds]));
       }
 
       const dueAtIso =
@@ -392,7 +401,13 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
           ? activeTikTokTrack?.musicSoundId || 'auto'
           : selectedMusicSoundId;
 
-      setProgressLabel('Dispatching to Buffer & Zernio APIs...');
+      setProgressLabel(
+        options?.mergeRemoteIds
+          ? `Retrying ${activeTargets.join(', ')}...`
+          : options?.cancelExistingBeforeDispatch
+          ? 'Cancelling prior queues & re-dispatching all channels...'
+          : 'Dispatching to Buffer & Zernio APIs...'
+      );
       const dispatchRes = await dispatchPostPublish({
         postId: carousel.id,
         deck: { ...carousel, caption: customCaption },
@@ -401,11 +416,13 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
         mode: scheduleMode,
         dueAt: dueAtIso,
         timezone: userTimezone,
-        targets: selectedTargets,
+        targets: activeTargets,
         imageUrls: urls,
         tiktokImageUrls: tiktokUrls,
         cloudinaryPublicIds: pubIds,
         autoCleanupImmediate: scheduleMode === 'shareNow' && autoCleanupImmediate,
+        mergeRemoteIds: Boolean(options?.mergeRemoteIds),
+        cancelExistingBeforeDispatch: Boolean(options?.cancelExistingBeforeDispatch),
         tiktokSettings: {
           privacyLevel: templateOpts.tiktokPostPrivacy,
           photoCoverIndex: templateOpts.tiktokPhotoCoverIndex,
@@ -417,11 +434,24 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
       });
 
       const results = dispatchRes.channelResults || [];
-      setLastDispatchSummary({
-        channelResults: results,
-        warnings: dispatchRes.warnings || [],
-        mode: scheduleMode,
-        scheduledFor: dispatchRes.scheduledFor,
+      setLastDispatchSummary((prev) => {
+        if (options?.mergeRemoteIds && prev) {
+          const keptResults = prev.channelResults.filter(
+            (r) => !results.some((nr) => nr.service === r.service)
+          );
+          return {
+            channelResults: [...keptResults, ...results],
+            warnings: dispatchRes.warnings || [],
+            mode: scheduleMode,
+            scheduledFor: dispatchRes.scheduledFor,
+          };
+        }
+        return {
+          channelResults: results,
+          warnings: dispatchRes.warnings || [],
+          mode: scheduleMode,
+          scheduledFor: dispatchRes.scheduledFor,
+        };
       });
 
       const apiSentCount = dispatchRes.bufferDispatchedCount ?? 0;
@@ -825,7 +855,7 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
               {lastDispatchSummary &&
                 (lastDispatchSummary.warnings.length > 0 ||
                   lastDispatchSummary.channelResults.length > 0) && (
-                  <div className="p-3 rounded-xl border border-white/10 bg-black/50 space-y-1.5 text-[11px]">
+                  <div className="p-3 rounded-xl border border-white/10 bg-black/50 space-y-2 text-[11px]">
                     <div className="flex items-center justify-between">
                       <span className="font-mono uppercase tracking-wider text-slate-300 font-bold text-[10px]">
                         Last Dispatch Status
@@ -869,6 +899,47 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
                         • {w}
                       </div>
                     ))}
+                    {(() => {
+                      const failedChannels = lastDispatchSummary.channelResults.filter(
+                        (ch) => !ch.ok && (ch.provider === 'buffer' || ch.provider === 'zernio')
+                      );
+                      if (failedChannels.length === 0) return null;
+                      const failedTargets = failedChannels.map((ch) => ch.service);
+                      return (
+                        <div className="pt-1.5 border-t border-amber-500/25 space-y-1.5">
+                          <div className="text-[10px] font-mono text-amber-200">
+                            Partial dispatch detected ({failedTargets.join(', ')} failed). Choose how to recover:
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() =>
+                                void handleDispatchPublishAndSchedule({
+                                  targetSubset: failedTargets,
+                                  mergeRemoteIds: true,
+                                })
+                              }
+                              className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-emerald-200 text-[10px] font-bold cursor-pointer disabled:opacity-50"
+                            >
+                              Retry Failed Channels Only ({failedTargets.join(', ')})
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() =>
+                                void handleDispatchPublishAndSchedule({
+                                  cancelExistingBeforeDispatch: true,
+                                })
+                              }
+                              className="px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/35 text-amber-200 text-[10px] font-bold cursor-pointer disabled:opacity-50"
+                            >
+                              Cancel & Re-Dispatch All
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })()}
                     {lastDispatchSummary.mode && lastDispatchSummary.mode !== 'shareNow' && (
                       <div className="pt-1 flex items-center justify-between gap-2 border-t border-white/10">
                         <span className="text-[10px] font-mono text-cyan-200">
@@ -896,7 +967,7 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
               <button
                 type="button"
                 disabled={isBusy || selectedTargets.length === 0}
-                onClick={handleDispatchPublishAndSchedule}
+                onClick={() => void handleDispatchPublishAndSchedule()}
                 className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl font-extrabold text-xs text-slate-950 shadow-lg transition-all cursor-pointer disabled:opacity-50"
                 style={{ backgroundColor: theme.accent }}
               >

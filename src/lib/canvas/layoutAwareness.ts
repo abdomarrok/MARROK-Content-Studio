@@ -251,14 +251,18 @@ function cloneComputedLayout(layout: ComputedSlideLayout): ComputedSlideLayout {
 function buildSlideLayoutCacheKey(
   slide: SlideData,
   hasCtx: boolean,
-  preset: CanvasDimensionPreset
+  preset: CanvasDimensionPreset,
+  creatorHandle: string
 ): string {
-  const takeawaysCount = slide.takeaways ? slide.takeaways.length : 0;
+  const takeawaysKey = slide.takeaways
+    ? slide.takeaways.map((t) => `${t.en || ''}:${t.ar || ''}:${t.icon || ''}`).join(';')
+    : '';
   const overridesKey = slide.layoutOverrides ? JSON.stringify(slide.layoutOverrides) : '';
   const compPreset = slide.compositionPreset || 'standard';
   const freeMove = slide.freeMoveLayout ? 1 : 0;
   const heroFrame = isFullMemeSlide(slide) ? 'full' : isHeroImageSlide(slide) ? 'hero' : 'std';
-  return `${hasCtx ? 1 : 0}|${preset}|${compPreset}|${freeMove}|${heroFrame}|${slide.type || ''}|${slide.enTitle || ''}|${slide.arTitle || ''}|${slide.enBody || ''}|${slide.arBody || ''}|${takeawaysCount}|${overridesKey}`;
+  const ctaAndCreditKey = `${slide.ctaText || ''}|${slide.enCredit || ''}|${slide.arCredit || ''}|${slide.url || ''}|${creatorHandle}`;
+  return `${hasCtx ? 1 : 0}|${preset}|${compPreset}|${freeMove}|${heroFrame}|${slide.type || ''}|${slide.enTitle || ''}|${slide.arTitle || ''}|${slide.enBody || ''}|${slide.arBody || ''}|${takeawaysKey}|${ctaAndCreditKey}|${overridesKey}`;
 }
 
 function storeComputedLayout(key: string, layout: ComputedSlideLayout): ComputedSlideLayout {
@@ -290,7 +294,13 @@ export function computeSlideLayoutAwareness(
 ): ComputedSlideLayout {
   const ctx = getMeasureContext();
   const spec = getCanvasDimensionSpec(carousel?.dimensionPreset);
-  const cacheKey = buildSlideLayoutCacheKey(slide, Boolean(ctx), spec.id);
+  const creatorHandle =
+    carousel?.sourceMeta?.creator ||
+    carousel?.sourceMeta?.channel ||
+    carousel?.channel ||
+    carousel?.brand ||
+    '';
+  const cacheKey = buildSlideLayoutCacheKey(slide, Boolean(ctx), spec.id, creatorHandle);
   const cached = slideLayoutCache.get(cacheKey);
   if (cached) {
     return cloneComputedLayout(cached);

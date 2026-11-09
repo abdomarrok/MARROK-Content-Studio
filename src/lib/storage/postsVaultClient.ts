@@ -6,7 +6,6 @@ import type {
 } from '../../types.ts';
 import { parseCarouselData } from '../validation/carousel.ts';
 import { sanitizeFullCarousel } from '../textSanitizer.ts';
-import { BUNDLED_SAVED_POSTS } from './bundledSavedPosts.ts';
 
 const IDB_NAME = 'marrok_posts_vault_v1';
 const IDB_STORE = 'saved_posts';
@@ -14,12 +13,21 @@ const IDB_VERSION = 1;
 const FALLBACK_LS_KEY = 'marrok_posts_vault_fallback_v1';
 const DELETED_IDS_LS_KEY = 'marrok_posts_deleted_ids_v1';
 
-function getBundledClientSeedPosts(): SavedPostRecord[] {
-  if (!Array.isArray(BUNDLED_SAVED_POSTS)) return [];
-  return BUNDLED_SAVED_POSTS;
+let cachedBundledPosts: SavedPostRecord[] | null = null;
+
+async function loadBundledClientSeedPostsLazy(): Promise<SavedPostRecord[]> {
+  if (cachedBundledPosts !== null) return cachedBundledPosts;
+  try {
+    const mod = await import('./bundledSavedPosts.ts');
+    cachedBundledPosts = Array.isArray(mod.BUNDLED_SAVED_POSTS) ? mod.BUNDLED_SAVED_POSTS : [];
+    return cachedBundledPosts;
+  } catch {
+    cachedBundledPosts = [];
+    return [];
+  }
 }
 
-function readDeletedIds(): Set<string> {
+export function readDeletedIds(): Set<string> {
   if (typeof window === 'undefined' || !window.localStorage) return new Set();
   try {
     const raw = window.localStorage.getItem(DELETED_IDS_LS_KEY);
@@ -31,13 +39,29 @@ function readDeletedIds(): Set<string> {
   }
 }
 
-function writeDeletedIds(ids: Set<string>): void {
+export function writeDeletedIds(ids: Set<string>): void {
   if (typeof window === 'undefined' || !window.localStorage) return;
   try {
     window.localStorage.setItem(DELETED_IDS_LS_KEY, JSON.stringify(Array.from(ids)));
   } catch {
     // Ignore storage quota errors
   }
+}
+
+export function mergeServerDeletedIds(serverDeletedIds?: unknown): Set<string> {
+  const localDeleted = readDeletedIds();
+  if (!Array.isArray(serverDeletedIds)) return localDeleted;
+  let changed = false;
+  for (const rawId of serverDeletedIds) {
+    if (typeof rawId === 'string' && rawId.trim() && !localDeleted.has(rawId.trim())) {
+      localDeleted.add(rawId.trim());
+      changed = true;
+    }
+  }
+  if (changed) {
+    writeDeletedIds(localDeleted);
+  }
+  return localDeleted;
 }
 
 function openVaultDb(): Promise<IDBDatabase | null> {
@@ -61,37 +85,45 @@ function openVaultDb(): Promise<IDBDatabase | null> {
   });
 }
 
-async function readLocalVault(): Promise<SavedPostRecord[]> {
+async function readLocalVault(options?: { includeOfflineSeed?: boolean }): Promise<SavedPostRecord[]> {
   const deletedIds = readDeletedIds();
-  const bundled = getBundledClientSeedPosts().filter((p) => !deletedIds.has(p.id));
   const db = await openVaultDb();
+  let storedItems: SavedPostRecord[] = [];
+
   if (db) {
-    return new Promise((resolve) => {
+    storedItems = await new Promise<SavedPostRecord[]>((resolve) => {
       try {
         const tx = db.transaction(IDB_STORE, 'readonly');
         const store = tx.objectStore(IDB_STORE);
         const req = store.getAll();
         req.onsuccess = () => {
           const items = Array.isArray(req.result) ? (req.result as SavedPostRecord[]) : [];
-          const merged = mergeRecords(items, bundled).filter((p) => !deletedIds.has(p.id));
-          resolve(merged);
+          resolve(items.filter((p) => p && !deletedIds.has(p.id)));
         };
-        req.onerror = () => resolve(bundled);
+        req.onerror = () => resolve([]);
       } catch {
-        resolve(bundled);
+        resolve([]);
       }
     });
+  } else {
+    try {
+      const raw = localStorage.getItem(FALLBACK_LS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const localItems = Array.isArray(parsed) ? (parsed as SavedPostRecord[]) : [];
+        storedItems = localItems.filter((p) => p && !deletedIds.has(p.id));
+      }
+    } catch {
+      storedItems = [];
+    }
   }
 
-  try {
-    const raw = localStorage.getItem(FALLBACK_LS_KEY);
-    if (!raw) return bundled;
-    const parsed = JSON.parse(raw);
-    const localItems = Array.isArray(parsed) ? (parsed as SavedPostRecord[]) : [];
-    return mergeRecords(localItems, bundled).filter((p) => !deletedIds.has(p.id));
-  } catch {
-    return bundled;
+  if (storedItems.length === 0 && options?.includeOfflineSeed) {
+    const bundled = (await loadBundledClientSeedPostsLazy()).filter((p) => !deletedIds.has(p.id));
+    return mergeRecords(storedItems, bundled).filter((p) => !deletedIds.has(p.id));
   }
+
+  return storedItems;
 }
 
 async function writeLocalVault(posts: SavedPostRecord[]): Promise<void> {
@@ -234,7 +266,7 @@ export interface VaultLoadResult {
  * from the browser's IndexedDB + bundled Vault.
  */
 export async function loadVaultPosts(): Promise<VaultLoadResult> {
-  const deletedIds = readDeletedIds();
+  let deletedIds = readDeletedIds();
   const localPosts = await readLocalVault();
   const remoteOrigin = getRemoteVaultOrigin();
 
@@ -255,7 +287,11 @@ export async function loadVaultPosts(): Promise<VaultLoadResult> {
     let remotePosts: SavedPostRecord[] = [];
     if (remoteRes && remoteRes.ok) {
       try {
-        const remoteData = (await remoteRes.json()) as { posts?: SavedPostRecord[] };
+        const remoteData = (await remoteRes.json()) as {
+          posts?: SavedPostRecord[];
+          deletedIds?: string[];
+        };
+        deletedIds = mergeServerDeletedIds(remoteData.deletedIds);
         remotePosts = (Array.isArray(remoteData.posts) ? remoteData.posts : []).filter(
           (p) => !deletedIds.has(p.id)
         );
@@ -267,26 +303,31 @@ export async function loadVaultPosts(): Promise<VaultLoadResult> {
     if (res.ok) {
       const data = (await res.json()) as {
         posts?: SavedPostRecord[];
+        deletedIds?: string[];
         storageEngine?: SavedPostStorageEngine;
         isCloudPersistent?: boolean;
       };
+      deletedIds = mergeServerDeletedIds(data.deletedIds);
       const serverPosts = (Array.isArray(data.posts) ? data.posts : []).filter(
         (p) => !deletedIds.has(p.id)
       );
+      const filteredLocalPosts = localPosts.filter((p) => !deletedIds.has(p.id));
       const mergedServerAndRemote = mergeRecords(remotePosts, serverPosts);
-      const merged = mergeRecords(mergedServerAndRemote, localPosts).filter(
+      const merged = mergeRecords(mergedServerAndRemote, filteredLocalPosts).filter(
         (p) => !deletedIds.has(p.id)
       );
 
       // Persist reconciled set locally
       await writeLocalVault(merged);
 
-      // If client IndexedDB/remote/bundled seed had posts missing from local server, push them up
+      const deletedIdsArray = Array.from(deletedIds);
+
+      // If client IndexedDB/remote had posts missing from local server, push them up with deletedIds
       if (merged.length > serverPosts.length) {
         fetch('/api/posts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ syncPosts: merged }),
+          body: JSON.stringify({ syncPosts: merged, deletedIds: deletedIdsArray }),
         }).catch(() => {
           // Non-blocking background sync
         });
@@ -297,7 +338,7 @@ export async function loadVaultPosts(): Promise<VaultLoadResult> {
         fetch(`${remoteOrigin}/api/posts`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ syncPosts: merged }),
+          body: JSON.stringify({ syncPosts: merged, deletedIds: deletedIdsArray }),
         }).catch(() => {
           // Non-blocking background sync
         });
@@ -313,8 +354,11 @@ export async function loadVaultPosts(): Promise<VaultLoadResult> {
     console.warn('[PostsVaultClient] Backend unreachable, serving from IndexedDB Vault:', err);
   }
 
+  const offlinePosts =
+    localPosts.length > 0 ? localPosts : await readLocalVault({ includeOfflineSeed: true });
+
   return {
-    posts: localPosts,
+    posts: offlinePosts,
     storageEngine: 'browser-vault',
     isCloudPersistent: false,
   };
@@ -375,7 +419,10 @@ export async function saveValidPost(params: SaveValidPostParams): Promise<SavedP
       fetch(`${remoteOrigin}/api/posts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ syncPosts: updatedLocal }),
+        body: JSON.stringify({
+          syncPosts: updatedLocal,
+          deletedIds: Array.from(readDeletedIds()),
+        }),
       }).catch(() => {});
     }
 
@@ -449,7 +496,10 @@ export async function updateSavedPostStatus(
         fetch(`${remoteOrigin}/api/posts`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ syncPosts: updatedList }),
+          body: JSON.stringify({
+            syncPosts: updatedList,
+            deletedIds: Array.from(readDeletedIds()),
+          }),
         }).catch(() => {});
       }
       return data.post;
@@ -472,18 +522,20 @@ export async function updateSavedPostStatus(
   const updatedList = [updatedRecord, ...currentLocal.filter((p) => p.id !== id)];
   await writeLocalVault(updatedList);
 
+  const deletedIdsArray = Array.from(readDeletedIds());
+
   // Sync updated record back to server
   fetch('/api/posts', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ syncPosts: updatedList }),
+    body: JSON.stringify({ syncPosts: updatedList, deletedIds: deletedIdsArray }),
   }).catch(() => {});
 
   if (remoteOrigin) {
     fetch(`${remoteOrigin}/api/posts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ syncPosts: updatedList }),
+      body: JSON.stringify({ syncPosts: updatedList, deletedIds: deletedIdsArray }),
     }).catch(() => {});
   }
 
@@ -574,8 +626,14 @@ export async function importVaultJson(jsonText: string): Promise<SavedPostRecord
 
   for (const item of candidates) {
     if (!item || typeof item !== 'object') continue;
-    const parsedDeck = parseCarouselData(item.deck || item, {
-      minSlides: 3,
+    const rawDeck = item.deck || item;
+    const isSingleSlideDeck =
+      item.slideCount === 1 ||
+      rawDeck?.postFormat === 'single' ||
+      rawDeck?.postFormat === 'reel' ||
+      (Array.isArray(rawDeck?.slides) && rawDeck.slides.length === 1);
+    const parsedDeck = parseCarouselData(rawDeck, {
+      minSlides: isSingleSlideDeck ? 1 : 3,
       requireSlideContent: true,
     });
     if (!parsedDeck) continue;
@@ -604,7 +662,7 @@ export async function importVaultJson(jsonText: string): Promise<SavedPostRecord
   }
 
   if (validRecords.length === 0) {
-    throw new Error('No valid 3+ slide carousels found in imported JSON file');
+    throw new Error('No valid posts found in imported JSON file');
   }
 
   const currentLocal = await readLocalVault();
@@ -615,7 +673,10 @@ export async function importVaultJson(jsonText: string): Promise<SavedPostRecord
     await fetch('/api/posts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ syncPosts: merged }),
+      body: JSON.stringify({
+        syncPosts: merged,
+        deletedIds: Array.from(readDeletedIds()),
+      }),
     });
   } catch {
     // Non-fatal if offline

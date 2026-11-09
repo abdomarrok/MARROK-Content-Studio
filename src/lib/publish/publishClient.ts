@@ -69,6 +69,8 @@ export interface DispatchPublishPayload {
   tiktokImageUrls?: string[];
   cloudinaryPublicIds: string[];
   autoCleanupImmediate?: boolean;
+  mergeRemoteIds?: boolean;
+  cancelExistingBeforeDispatch?: boolean;
   tiktokSettings?: {
     privacyLevel?: string;
     photoCoverIndex?: number;
@@ -516,15 +518,40 @@ export async function uploadDeckSlidesForPublishing(
     const endIdx = Math.min(i + CHUNK_SIZE, slides.length);
     onProgress?.(`Uploading slides ${startIdx}${endIdx > startIdx ? `–${endIdx}` : ''} of ${slides.length} (${preset})...`);
 
-    const res = await fetch('/api/publish/upload-media', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ postId, slides: chunk }),
-    });
+    let res: Response | null = null;
+    let lastChunkErr: Error | null = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) {
+        onProgress?.(`Retrying upload for slides ${startIdx}${endIdx > startIdx ? `–${endIdx}` : ''} (${preset})...`);
+        await new Promise((r) => setTimeout(r, 600 * attempt));
+      }
+      try {
+        res = await fetch('/api/publish/upload-media', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ postId, slides: chunk }),
+        });
+        if (res.ok) {
+          lastChunkErr = null;
+          break;
+        }
+        const errData = (await res.json().catch(() => ({}))) as { error?: string };
+        lastChunkErr = new Error(
+          errData.error || `Media upload failed on slide ${startIdx} (${res.status})`
+        );
+        if (res.status < 500 && res.status !== 429) {
+          break;
+        }
+      } catch (err) {
+        lastChunkErr =
+          err instanceof Error
+            ? err
+            : new Error(`Network error uploading slide ${startIdx}`);
+      }
+    }
 
-    if (!res.ok) {
-      const errData = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new Error(errData.error || `Media upload failed on slide ${startIdx} (${res.status})`);
+    if (lastChunkErr || !res || !res.ok) {
+      throw lastChunkErr || new Error(`Media upload failed on slide ${startIdx}`);
     }
 
     const data = (await res.json()) as UploadPublishMediaResponse;

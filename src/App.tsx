@@ -515,6 +515,8 @@ export default function App() {
               onShowToast={showToast}
               savedPosts={savedPosts}
               onOpenPublishScheduleModal={(tab) => {
+                const existing = savedPosts.find((p) => p.id === carousel.id);
+                void handleSaveValidPost(existing?.postStatus || 'validated', true);
                 setPublishHubTab(tab || 'single');
                 setActivePhase('publish');
               }}

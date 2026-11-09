@@ -3169,7 +3169,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 </button>
               )}
 
-              {inspectorTab !== 'review' && inspectorTab !== 'caption' && (
+              {inspectorTab !== 'review' && inspectorTab !== 'caption' ? (
                 <button
                   type="button"
                   onClick={() => {
@@ -3191,6 +3191,17 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                     ? 'Next: Adjust →'
                     : 'Next: Publish →'}
                 </button>
+              ) : (
+                onOpenPublishScheduleModal && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenPublishScheduleModal('single')}
+                    className="px-3.5 py-1.5 rounded-xl text-xs font-extrabold text-slate-950 transition-all cursor-pointer whitespace-nowrap shadow-sm"
+                    style={{ backgroundColor: theme.accent }}
+                  >
+                    Send to Publish Hub →
+                  </button>
+                )
               )}
             </div>
           </div>

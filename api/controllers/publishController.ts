@@ -9,6 +9,7 @@ import type {
 import { getServerConfig, type ServerConfig } from '../config.ts';
 import {
   loadStoredPosts,
+  recordServerDeletedPostId,
   saveStoredPosts,
   validateAndBuildPostRecord,
 } from './postsController.ts';
@@ -95,53 +96,81 @@ export async function uploadSlideToCloudinary(
   publicId: string,
   config: ServerConfig = getServerConfig()
 ): Promise<{ secureUrl: string; publicId: string; provider: 'cloudinary' }> {
-  const timestamp = Math.floor(Date.now() / 1000);
   const folder = 'marrok_staging';
-  const signParams: Record<string, string | number> = {
-    folder,
-    overwrite: 'true',
-    public_id: publicId,
-    timestamp,
-  };
-
-  const signature = signCloudinaryParams(signParams, config.cloudinaryApiSecret);
   const endpoint = `https://api.cloudinary.com/v1_1/${encodeURIComponent(
     config.cloudinaryCloudName
   )}/image/upload`;
 
-  const body = new URLSearchParams({
-    file: dataUrl,
-    api_key: config.cloudinaryApiKey,
-    timestamp: String(timestamp),
-    folder,
-    public_id: publicId,
-    overwrite: 'true',
-    signature,
-  });
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) {
+      await new Promise((r) => setTimeout(r, 500 * attempt));
+    }
 
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-    signal: AbortSignal.timeout(20_000),
-  });
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signParams: Record<string, string | number> = {
+      folder,
+      overwrite: 'true',
+      public_id: publicId,
+      timestamp,
+    };
+    const signature = signCloudinaryParams(signParams, config.cloudinaryApiSecret);
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`Cloudinary upload failed (${res.status}): ${errText.slice(0, 200)}`);
+    const body = new URLSearchParams({
+      file: dataUrl,
+      api_key: config.cloudinaryApiKey,
+      timestamp: String(timestamp),
+      folder,
+      public_id: publicId,
+      overwrite: 'true',
+      signature,
+    });
+
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+        signal: AbortSignal.timeout(20_000),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '');
+        const err = new Error(
+          `Cloudinary upload failed (${res.status}): ${errText.slice(0, 200)}`
+        );
+        if (attempt === 0 && (res.status === 429 || res.status >= 500)) {
+          lastErr = err;
+          continue;
+        }
+        throw err;
+      }
+
+      const data = (await res.json()) as {
+        secure_url?: string;
+        url?: string;
+        public_id?: string;
+      };
+      const secureUrl = data.secure_url || data.url;
+      if (!secureUrl) {
+        throw new Error('Cloudinary response did not contain a secure_url');
+      }
+
+      return {
+        secureUrl,
+        publicId: data.public_id || `${folder}/${publicId}`,
+        provider: 'cloudinary',
+      };
+    } catch (err) {
+      lastErr = err;
+      if (attempt === 0) {
+        continue;
+      }
+      throw err;
+    }
   }
 
-  const data = (await res.json()) as { secure_url?: string; url?: string; public_id?: string };
-  const secureUrl = data.secure_url || data.url;
-  if (!secureUrl) {
-    throw new Error('Cloudinary response did not contain a secure_url');
-  }
-
-  return {
-    secureUrl,
-    publicId: data.public_id || `${folder}/${publicId}`,
-    provider: 'cloudinary',
-  };
+  throw lastErr instanceof Error ? lastErr : new Error('Cloudinary upload failed');
 }
 
 /**
@@ -1306,6 +1335,8 @@ export async function handleDispatchPublish(req: Request, res: Response) {
       tiktokImageUrls = [],
       cloudinaryPublicIds = [],
       tiktokSettings,
+      mergeRemoteIds = false,
+      cancelExistingBeforeDispatch = false,
     } = body;
 
     const validTargets: PublishTargetPlatform[] = Array.isArray(targets)
@@ -1318,6 +1349,23 @@ export async function handleDispatchPublish(req: Request, res: Response) {
     const existingRecord = postId ? existingPosts.find((p) => p.id === postId) : undefined;
 
     const isImmediate = mode === 'shareNow';
+    const warnings: string[] = [];
+
+    // If user chose "Cancel & Re-Dispatch All", cancel any existing Buffer & Zernio queue IDs first
+    if (cancelExistingBeforeDispatch && existingRecord) {
+      const priorBufferIds = existingRecord.bufferPostIds || [];
+      if (priorBufferIds.length > 0 && config.bufferApiKey) {
+        for (const bid of priorBufferIds) {
+          await deleteBufferPostGraphQl(config.bufferApiKey, bid).catch(() => null);
+        }
+      }
+      const priorZernioIds = existingRecord.zernioPostIds || [];
+      if (priorZernioIds.length > 0 && config.zernioApiKey) {
+        for (const zid of priorZernioIds) {
+          await deleteZernioPostApi(config.zernioApiKey, zid).catch(() => null);
+        }
+      }
+    }
 
     // Build or update the SavedPostRecord in the Vault
     let targetRecord: SavedPostRecord | undefined = existingRecord;
@@ -1339,7 +1387,6 @@ export async function handleDispatchPublish(req: Request, res: Response) {
     const currentMonthKey = nowIso.slice(0, 7);
     const bufferPostIds: string[] = [];
     const zernioPostIds: string[] = [];
-    const warnings: string[] = [];
     const channelResults: Array<{
       service: PublishTargetPlatform;
       provider: 'buffer' | 'zernio' | 'metricool-csv';
@@ -1582,29 +1629,59 @@ export async function handleDispatchPublish(req: Request, res: Response) {
             new Date(Date.now() + 4 * 3600_000).toISOString()
           : undefined;
 
+      const mergedPublishTargets: PublishTargetPlatform[] = mergeRemoteIds
+        ? Array.from(
+            new Set<PublishTargetPlatform>([
+              ...(targetRecord.publishTargets || []),
+              ...validTargets,
+            ])
+          )
+        : validTargets;
+
+      const mergedBufferPostIds = cancelExistingBeforeDispatch
+        ? bufferPostIds
+        : mergeRemoteIds
+        ? Array.from(new Set([...(targetRecord.bufferPostIds || []), ...bufferPostIds]))
+        : bufferPostIds.length > 0
+        ? bufferPostIds
+        : targetRecord.bufferPostIds;
+
+      const mergedZernioPostIds = cancelExistingBeforeDispatch
+        ? zernioPostIds
+        : mergeRemoteIds
+        ? Array.from(new Set([...(targetRecord.zernioPostIds || []), ...zernioPostIds]))
+        : zernioPostIds.length > 0
+        ? zernioPostIds
+        : targetRecord.zernioPostIds;
+
       savedRecord = {
         ...targetRecord,
         postStatus: isImmediate ? 'posted' : 'validated',
         updatedAt: nowIso,
         postedAt: isImmediate ? nowIso : undefined,
         scheduledFor: resolvedScheduledFor,
-        publishTargets: validTargets,
-        hostedSlideUrls: Array.isArray(imageUrls) ? imageUrls : targetRecord.hostedSlideUrls,
+        publishTargets: mergedPublishTargets,
+        hostedSlideUrls:
+          Array.isArray(imageUrls) && imageUrls.length > 0
+            ? imageUrls
+            : targetRecord.hostedSlideUrls,
         tiktokHostedSlideUrls:
           effectiveTikTokUrls.length > 0
             ? effectiveTikTokUrls
             : targetRecord.tiktokHostedSlideUrls,
-        cloudinaryPublicIds: Array.isArray(cloudinaryPublicIds)
-          ? cloudinaryPublicIds
-          : targetRecord.cloudinaryPublicIds,
+        cloudinaryPublicIds:
+          Array.isArray(cloudinaryPublicIds) && cloudinaryPublicIds.length > 0
+            ? cloudinaryPublicIds
+            : targetRecord.cloudinaryPublicIds,
         cloudinaryCleanedAt:
           Array.isArray(cloudinaryPublicIds) && cloudinaryPublicIds.length > 0
             ? undefined
             : cloudinaryCleanedAt || targetRecord.cloudinaryCleanedAt,
-        bufferPostIds: bufferPostIds.length > 0 ? bufferPostIds : targetRecord.bufferPostIds,
-        zernioPostIds: zernioPostIds.length > 0 ? zernioPostIds : targetRecord.zernioPostIds,
+        bufferPostIds: mergedBufferPostIds,
+        zernioPostIds: mergedZernioPostIds,
         countedInMetricoolMonth:
-          validTargets.includes('tiktok') && zernioPostIds.length === 0
+          mergedPublishTargets.includes('tiktok') &&
+          (!mergedZernioPostIds || mergedZernioPostIds.length === 0)
             ? currentMonthKey
             : targetRecord.countedInMetricoolMonth,
       };
@@ -1781,6 +1858,8 @@ export async function handleManagePublishedPost(req: Request, res: Response) {
           if (r.deleted) cleanedPublicIds.push(r.publicId);
         }
       }
+
+      await recordServerDeletedPostId(cleanId);
 
       const remainingPosts = posts.filter((p) => p.id !== cleanId);
       await saveStoredPosts(remainingPosts);

@@ -1,22 +1,48 @@
 import type {
+  CanvasDimensionPreset,
   CaptionVariant,
   CarouselData,
   DiagramNode,
   DiagramVariant,
+  ElementLayoutOverride,
   ExtractedFact,
+  GraphicalElementId,
   GroundingSource,
   HookVariant,
   IconLabelPair,
+  MotionReelData,
   PostFormat,
   PostSourceMeta,
+  SlideCompositionPreset,
   SlideData,
+  SlideTakeawayItem,
   SlideType,
+  TextAlignment,
   VisualSystemOptions,
 } from '../../types.ts';
 
-const POST_FORMATS: PostFormat[] = ['carousel', 'single'];
+const POST_FORMATS: PostFormat[] = ['carousel', 'single', 'reel'];
 
-const SLIDE_TYPES: SlideType[] = ['hub', 'row', 'number', 'metric', 'code', 'compare', 'image', 'cta'];
+const DIMENSION_PRESETS: CanvasDimensionPreset[] = [
+  'tiktok-9:16',
+  'ig-4:5',
+  'ig-3:4',
+  'ig-1:1',
+  'ig-9:16',
+];
+
+const SLIDE_TYPES: SlideType[] = [
+  'hub',
+  'row',
+  'number',
+  'metric',
+  'code',
+  'compare',
+  'image',
+  'cta',
+  'poster',
+];
+
 const DIAGRAM_VARIANTS: DiagramVariant[] = [
   'topology',
   'stack',
@@ -28,8 +54,38 @@ const DIAGRAM_VARIANTS: DiagramVariant[] = [
   'split',
   'features',
 ];
+
 const IMAGE_FITS: Array<NonNullable<SlideData['imageFit']>> = ['contain', 'cover'];
 const IMAGE_FILTERS: Array<NonNullable<SlideData['imageFilter']>> = ['hud', 'invert', 'tint', 'clean'];
+const IMAGE_FRAME_MODES: Array<NonNullable<SlideData['imageFrameMode']>> = ['full', 'hero', 'standard'];
+const IMAGE_BG_STYLES: Array<NonNullable<SlideData['imageBgStyle']>> = ['theme', 'white', 'obsidian'];
+const BRAND_WATERMARKS: Array<NonNullable<SlideData['brandWatermark']>> = [
+  'none',
+  'bottom-right',
+  'top-right',
+  'bottom-left',
+];
+const MEDIA_TYPES: Array<NonNullable<SlideData['mediaType']>> = ['image', 'video'];
+const COMPOSITION_PRESETS: SlideCompositionPreset[] = [
+  'standard',
+  'headline-first',
+  'split-balanced',
+  'visual-hero',
+  'compact-editorial',
+];
+const GRAPHICAL_ELEMENT_IDS: GraphicalElementId[] = [
+  'headerBadge',
+  'graphicCard',
+  'titleBlock',
+  'arabicTitleBlock',
+  'bodyBlock',
+  'arabicBodyBlock',
+  'takeawaysBlock',
+  'ctaButton',
+  'attributionCard',
+];
+const TEXT_ALIGNMENTS: TextAlignment[] = ['left', 'center', 'right'];
+
 const FACT_TYPES: ExtractedFact['type'][] = ['number', 'date', 'name', 'quote', 'claim'];
 const FACT_STATUSES: ExtractedFact['verified'][] = [
   'verified',
@@ -51,6 +107,20 @@ function readString(
 ): string | undefined {
   const value = record[key];
   return typeof value === 'string' ? value.slice(0, maxLength) : undefined;
+}
+
+function readNumber(
+  record: Record<string, unknown>,
+  key: string,
+  min?: number,
+  max?: number
+): number | undefined {
+  const value = record[key];
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  let clamped = value;
+  if (min !== undefined) clamped = Math.max(min, clamped);
+  if (max !== undefined) clamped = Math.min(max, clamped);
+  return clamped;
 }
 
 function readBoolean(record: Record<string, unknown>, key: string): boolean | undefined {
@@ -108,6 +178,61 @@ function parseDiagramNodes(value: unknown): DiagramNode[] | undefined {
   return nodes.length > 0 ? nodes.slice(0, 12) : undefined;
 }
 
+function parseTakeaways(value: unknown): SlideTakeawayItem[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items: SlideTakeawayItem[] = [];
+  for (const raw of value) {
+    if (!isRecord(raw)) continue;
+    const en = readString(raw, 'en', 400);
+    const ar = readString(raw, 'ar', 400);
+    if (!en && !ar) continue;
+    const item: SlideTakeawayItem = {
+      en: en || '',
+      ar: ar || '',
+    };
+    const icon = readString(raw, 'icon', 200);
+    if (icon) item.icon = icon;
+    items.push(item);
+  }
+  return items.length > 0 ? items.slice(0, 6) : undefined;
+}
+
+function parseLayoutOverrides(
+  value: unknown
+): Partial<Record<GraphicalElementId, ElementLayoutOverride>> | undefined {
+  if (!isRecord(value)) return undefined;
+  const result: Partial<Record<GraphicalElementId, ElementLayoutOverride>> = {};
+  for (const elId of GRAPHICAL_ELEMENT_IDS) {
+    const rawOv = value[elId];
+    if (!isRecord(rawOv)) continue;
+    const ov: ElementLayoutOverride = {};
+    const dx = readNumber(rawOv, 'dx', -1000, 1000);
+    const dy = readNumber(rawOv, 'dy', -1500, 1500);
+    const scale = readNumber(rawOv, 'scale', 0.25, 3.0);
+    const opacity = readNumber(rawOv, 'opacity', 0, 1);
+    const align = readEnum(rawOv.align, TEXT_ALIGNMENTS);
+    const hidden = readBoolean(rawOv, 'hidden');
+
+    if (dx !== undefined) ov.dx = dx;
+    if (dy !== undefined) ov.dy = dy;
+    if (scale !== undefined) ov.scale = scale;
+    if (opacity !== undefined) ov.opacity = opacity;
+    if (align !== undefined) ov.align = align;
+    if (hidden !== undefined) ov.hidden = hidden;
+
+    if (Object.keys(ov).length > 0) {
+      result[elId] = ov;
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function parseMotionReelConfig(value: unknown): MotionReelData | undefined {
+  if (!isRecord(value)) return undefined;
+  if (!isRecord(value.brand) || !Array.isArray(value.scenes)) return undefined;
+  return value as unknown as MotionReelData;
+}
+
 function parseSlide(
   value: unknown,
   index: number,
@@ -143,6 +268,9 @@ function parseSlide(
     ['compareRightTitle', 'compareRightTitle', 100],
     ['compareRightBody', 'compareRightBody', 800],
     ['imageUrl', 'imageUrl', 2_500_000],
+    ['videoUrl', 'videoUrl', 15_000_000],
+    ['videoMimeType', 'videoMimeType', 80],
+    ['videoFileName', 'videoFileName', 240],
     ['imageCaption', 'imageCaption', 160],
     ['imagePrompt', 'imagePrompt', 4000],
     ['imageModel', 'imageModel', 120],
@@ -169,8 +297,23 @@ function parseSlide(
   const icons = parseIconPairs(value.icons);
   const diagramNodes = parseDiagramNodes(value.diagramNodes);
   const diagramVariant = readEnum(value.diagramVariant, DIAGRAM_VARIANTS);
+  const mediaType = readEnum(value.mediaType, MEDIA_TYPES);
   const imageFit = readEnum(value.imageFit, IMAGE_FITS);
   const imageFilter = readEnum(value.imageFilter, IMAGE_FILTERS);
+  const imageFrameMode = readEnum(value.imageFrameMode, IMAGE_FRAME_MODES);
+  const imageBgStyle = readEnum(value.imageBgStyle, IMAGE_BG_STYLES);
+  const brandWatermark = readEnum(value.brandWatermark, BRAND_WATERMARKS);
+  const compositionPreset = readEnum(value.compositionPreset, COMPOSITION_PRESETS);
+  const freeMoveLayout = readBoolean(value, 'freeMoveLayout');
+  const videoMuted = readBoolean(value, 'videoMuted');
+  const videoPlaying = readBoolean(value, 'videoPlaying');
+  const videoDuration = readNumber(value, 'videoDuration', 0, 600);
+  const videoBorderRadius = readNumber(value, 'videoBorderRadius', 0, 120);
+  const imageZoom = readNumber(value, 'imageZoom', 0.5, 4.0);
+  const imagePanX = readNumber(value, 'imagePanX', -100, 100);
+  const imagePanY = readNumber(value, 'imagePanY', -100, 100);
+  const takeaways = parseTakeaways(value.takeaways);
+  const layoutOverrides = parseLayoutOverrides(value.layoutOverrides);
 
   if (satIcons) slide.satIcons = satIcons;
   if (satLabels) slide.satLabels = satLabels;
@@ -178,8 +321,23 @@ function parseSlide(
   if (icons) slide.icons = icons;
   if (diagramNodes) slide.diagramNodes = diagramNodes;
   if (diagramVariant) slide.diagramVariant = diagramVariant;
+  if (mediaType) slide.mediaType = mediaType;
   if (imageFit) slide.imageFit = imageFit;
   if (imageFilter) slide.imageFilter = imageFilter;
+  if (imageFrameMode) slide.imageFrameMode = imageFrameMode;
+  if (imageBgStyle) slide.imageBgStyle = imageBgStyle;
+  if (brandWatermark) slide.brandWatermark = brandWatermark;
+  if (compositionPreset) slide.compositionPreset = compositionPreset;
+  if (freeMoveLayout !== undefined) slide.freeMoveLayout = freeMoveLayout;
+  if (videoMuted !== undefined) slide.videoMuted = videoMuted;
+  if (videoPlaying !== undefined) slide.videoPlaying = videoPlaying;
+  if (videoDuration !== undefined) slide.videoDuration = videoDuration;
+  if (videoBorderRadius !== undefined) slide.videoBorderRadius = videoBorderRadius;
+  if (imageZoom !== undefined) slide.imageZoom = imageZoom;
+  if (imagePanX !== undefined) slide.imagePanX = imagePanX;
+  if (imagePanY !== undefined) slide.imagePanY = imagePanY;
+  if (takeaways) slide.takeaways = takeaways;
+  if (layoutOverrides) slide.layoutOverrides = layoutOverrides;
 
   if (requireContent) {
     const hasText = [
@@ -192,10 +350,14 @@ function parseSlide(
       slide.compareLeftTitle,
       slide.compareRightTitle,
       slide.imageUrl,
+      slide.videoUrl,
       slide.ctaText,
       slide.diagramFooter,
     ].some((text) => typeof text === 'string' && text.trim().length > 0);
-    const hasNodes = (slide.diagramNodes?.length ?? 0) > 0 || (slide.icons?.length ?? 0) > 0;
+    const hasNodes =
+      (slide.diagramNodes?.length ?? 0) > 0 ||
+      (slide.icons?.length ?? 0) > 0 ||
+      (slide.takeaways?.length ?? 0) > 0;
     if (!hasText && !hasNodes) return null;
   }
 
@@ -234,6 +396,7 @@ function parseSourceMeta(value: unknown): PostSourceMeta | undefined {
   const url = readString(value, 'url', 1000);
   const published = readString(value, 'published', 100);
   const model = readString(value, 'model', 120);
+  const inputMode = readString(value, 'inputMode', 100);
   const groundingQueries = readStringArray(value.groundingQueries, 20, 300);
   const groundingSources = parseGroundingSources(value.groundingSources);
   const isSearchGrounded = readBoolean(value, 'isSearchGrounded');
@@ -241,6 +404,7 @@ function parseSourceMeta(value: unknown): PostSourceMeta | undefined {
   const userReviewed = readBoolean(value, 'userReviewed');
 
   if (type) meta.type = type;
+  if (inputMode) meta.inputMode = inputMode;
   if (title) meta.title = title;
   if (creator) meta.creator = creator;
   if (channel) meta.channel = channel;
@@ -343,8 +507,17 @@ export function parseCarouselData(
   if (!Array.isArray(value.slides)) return null;
 
   const explicitFormat = readEnum(value.postFormat, POST_FORMATS);
-  const isSingleFormat = explicitFormat === 'single';
-  const minSlides = isSingleFormat ? 1 : Math.max(1, options.minSlides ?? 1);
+  const firstSlideRecord = isRecord(value.slides[0]) ? value.slides[0] : null;
+  const isPosterOrSingleArchetype =
+    firstSlideRecord?.type === 'poster' ||
+    Array.isArray(firstSlideRecord?.takeaways) ||
+    firstSlideRecord?.imageFrameMode === 'full' ||
+    firstSlideRecord?.imageFrameMode === 'hero';
+  const isSingleOrReelFormat =
+    explicitFormat === 'single' ||
+    explicitFormat === 'reel' ||
+    (value.slides.length === 1 && isPosterOrSingleArchetype);
+  const minSlides = isSingleOrReelFormat ? 1 : Math.max(1, options.minSlides ?? 1);
   const maxSlides = Math.max(minSlides, options.maxSlides ?? DEFAULT_MAX_SLIDES);
 
   if (value.slides.length < minSlides || value.slides.length > maxSlides) return null;
@@ -374,6 +547,7 @@ export function parseCarouselData(
     carousel.postFormat = 'single';
   }
 
+  const dimensionPreset = readEnum(value.dimensionPreset, DIMENSION_PRESETS);
   const id = readString(value, 'id', 200);
   const brand = readString(value, 'brand', 100);
   const brandUrl = readString(value, 'brandUrl', 500);
@@ -388,7 +562,9 @@ export function parseCarouselData(
   const captionVariants = parseCaptionVariants(value.captionVariants);
   const hookVariants = parseHookVariants(value.hookVariants);
   const visualOptions = parseVisualOptions(value.visualOptions);
+  const reelConfig = parseMotionReelConfig(value.reelConfig);
 
+  if (dimensionPreset) carousel.dimensionPreset = dimensionPreset;
   if (id) carousel.id = id;
   if (brand) carousel.brand = brand;
   if (brandUrl) carousel.brandUrl = brandUrl;
@@ -403,6 +579,8 @@ export function parseCarouselData(
   if (captionVariants) carousel.captionVariants = captionVariants;
   if (hookVariants) carousel.hookVariants = hookVariants;
   if (visualOptions) carousel.visualOptions = visualOptions;
+  if (reelConfig) carousel.reelConfig = reelConfig;
 
   return carousel;
 }
+

@@ -17,17 +17,129 @@ import { runPlatformRiskChecks } from '../../src/lib/riskChecks.ts';
 import { BUNDLED_SAVED_POSTS } from '../../src/lib/storage/bundledSavedPosts.ts';
 import {
   getPostgresPool,
-  initPostgresSchema,
   queryPostgresPosts,
+  queryPostgresDeletedIds,
   countPostgresPosts,
   upsertPostgresPost,
-  updatePostgresPostStatus,
   deletePostgresPost,
+  clearPostgresDeletedTombstone,
 } from '../db/postgres.ts';
 
 const KV_STORAGE_KEY = 'marrok:saved_posts:v1';
 const MAX_SAVED_POSTS = 100;
 const DEFAULT_REMOTE_VAULT_ORIGIN = 'https://marrok-tik-tok-carousel-studio.vercel.app';
+
+const serverDeletedIdsMemory = new Set<string>();
+
+function resolveDeletedIdsFilePath(env: NodeJS.ProcessEnv = process.env): string {
+  const { filePath } = resolveStorageFilePath(env);
+  return `${filePath}.deleted.json`;
+}
+
+async function readDeletedIdsFromDisk(env: NodeJS.ProcessEnv = process.env): Promise<string[]> {
+  const target = resolveDeletedIdsFilePath(env);
+  try {
+    const raw = await fs.readFile(target, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
+    }
+  } catch {
+    // Ignore if file does not exist yet
+  }
+  return [];
+}
+
+async function writeDeletedIdsToDisk(
+  ids: Iterable<string>,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<void> {
+  const target = resolveDeletedIdsFilePath(env);
+  const list = Array.from(new Set(ids)).slice(0, 500);
+  try {
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, JSON.stringify(list, null, 2), 'utf-8');
+  } catch {
+    // Non-fatal if read-only
+  }
+}
+
+export async function loadServerDeletedPostIds(
+  env: NodeJS.ProcessEnv = process.env
+): Promise<Set<string>> {
+  const combined = new Set<string>();
+  const isCustomTestStore = Boolean(env.POSTS_STORAGE_FILE && env.POSTS_STORAGE_FILE.trim());
+  if (!isCustomTestStore) {
+    for (const id of serverDeletedIdsMemory) combined.add(id);
+  }
+
+  const diskIds = await readDeletedIdsFromDisk(env);
+  for (const id of diskIds) combined.add(id);
+
+  const config = getServerConfig(env);
+  if (config.databaseUrl) {
+    try {
+      const pool = getPostgresPool(config.databaseUrl);
+      if (pool) {
+        const pgDeleted = await queryPostgresDeletedIds(pool);
+        for (const id of pgDeleted) combined.add(id);
+      }
+    } catch {
+      // Ignore Postgres tombstone read errors
+    }
+  }
+
+  return combined;
+}
+
+export async function recordServerDeletedPostId(
+  id: string,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<void> {
+  const clean = String(id || '').trim();
+  if (!clean) return;
+  serverDeletedIdsMemory.add(clean);
+  const current = await loadServerDeletedPostIds(env);
+  current.add(clean);
+  await writeDeletedIdsToDisk(current, env);
+
+  const config = getServerConfig(env);
+  if (config.databaseUrl) {
+    try {
+      const pool = getPostgresPool(config.databaseUrl);
+      if (pool) {
+        await deletePostgresPost(pool, clean);
+      }
+    } catch (pgErr) {
+      console.warn('[PostsController] Failed to record tombstone in Postgres:', pgErr);
+    }
+  }
+}
+
+export async function clearServerDeletedPostId(
+  id: string,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<void> {
+  const clean = String(id || '').trim();
+  if (!clean) return;
+  serverDeletedIdsMemory.delete(clean);
+  const current = await loadServerDeletedPostIds(env);
+  if (current.has(clean)) {
+    current.delete(clean);
+    await writeDeletedIdsToDisk(current, env);
+  }
+  const config = getServerConfig(env);
+  if (config.databaseUrl) {
+    try {
+      const pool = getPostgresPool(config.databaseUrl);
+      if (pool) {
+        await clearPostgresDeletedTombstone(pool, clean);
+      }
+    } catch {
+      // Ignore
+    }
+  }
+}
 
 function shouldSyncWithRemoteVault(env: NodeJS.ProcessEnv = process.env): string | null {
   const isVercel = Boolean(env.VERCEL || env.VERCEL_ENV);
@@ -200,9 +312,9 @@ async function writeToFileStore(
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, JSON.stringify(posts, null, 2), 'utf-8');
 
-    // When saving locally in dev/studio, also mirror into src/lib/storage/bundledSavedPosts.ts
-    // so git pushes to Vercel automatically include the latest saved posts in the bundle.
-    if (engine === 'local-disk' && !env.POSTS_STORAGE_FILE) {
+    // Only rewrite src/lib/storage/bundledSavedPosts.ts when explicitly requested via SYNC_BUNDLED_SEED=true
+    // so runtime saves never bloat the source tree with multi-megabyte base64 payloads.
+    if (engine === 'local-disk' && !env.POSTS_STORAGE_FILE && env.SYNC_BUNDLED_SEED === 'true') {
       try {
         const bundledModulePath = path.join(
           process.cwd(),
@@ -232,8 +344,10 @@ export async function loadStoredPosts(env: NodeJS.ProcessEnv = process.env): Pro
   posts: SavedPostRecord[];
   storageEngine: SavedPostStorageEngine;
   isCloudPersistent: boolean;
+  deletedIds?: string[];
 }> {
   const config = getServerConfig(env);
+  const deletedIds = await loadServerDeletedPostIds(env);
 
   // 1. Neon Serverless PostgreSQL Cloud Persistence
   if (config.databaseUrl) {
@@ -244,13 +358,15 @@ export async function loadStoredPosts(env: NodeJS.ProcessEnv = process.env): Pro
         if (count === 0) {
           console.log('[PostsStore] Neon PostgreSQL empty, auto-migrating seed posts...');
           const { posts: localPosts } = await readFromFileStore(env);
-          const initialSeeds = localPosts.length > 0 ? localPosts : getBundledSeedPosts();
+          const initialSeeds = (localPosts.length > 0 ? localPosts : getBundledSeedPosts()).filter(
+            (s) => !deletedIds.has(s.id)
+          );
           for (const seed of initialSeeds) {
             const sig = normalizePostTitleSignature(seed);
             await upsertPostgresPost(pool, seed, sig);
           }
         }
-        const pgPosts = await queryPostgresPosts(pool);
+        const pgPosts = (await queryPostgresPosts(pool)).filter((p) => !deletedIds.has(p.id));
         if (pgPosts.length > 0) {
           const nowMs = Date.now();
           const nowIso = new Date(nowMs).toISOString();
@@ -276,6 +392,7 @@ export async function loadStoredPosts(env: NodeJS.ProcessEnv = process.env): Pro
             posts: deduplicateSavedPosts(promotedPosts),
             storageEngine: 'neon-postgres',
             isCloudPersistent: true,
+            deletedIds: Array.from(deletedIds),
           };
         }
       }
@@ -288,17 +405,20 @@ export async function loadStoredPosts(env: NodeJS.ProcessEnv = process.env): Pro
   if (config.kvRestUrl && config.kvRestToken) {
     const kvPosts = await readFromKv(config.kvRestUrl, config.kvRestToken);
     if (kvPosts !== null) {
-      const seeded = deduplicateSavedPosts(kvPosts.length > 0 ? kvPosts : getBundledSeedPosts());
+      const seeded = deduplicateSavedPosts(
+        (kvPosts.length > 0 ? kvPosts : getBundledSeedPosts()).filter((p) => !deletedIds.has(p.id))
+      );
       return {
         posts: seeded,
         storageEngine: 'cloud-kv',
         isCloudPersistent: true,
+        deletedIds: Array.from(deletedIds),
       };
     }
   }
 
   const { posts: rawLocalPosts, engine } = await readFromFileStore(env);
-  const localPosts = deduplicateSavedPosts(rawLocalPosts);
+  const localPosts = deduplicateSavedPosts(rawLocalPosts.filter((p) => !deletedIds.has(p.id)));
   if (localPosts.length !== rawLocalPosts.length) {
     await writeToFileStore(localPosts, env);
   }
@@ -306,7 +426,7 @@ export async function loadStoredPosts(env: NodeJS.ProcessEnv = process.env): Pro
   if (remoteOrigin) {
     const remotePosts = await fetchRemoteVaultPosts(remoteOrigin);
     if (remotePosts && remotePosts.length > 0) {
-      const merged = mergePostLists(localPosts, remotePosts);
+      const merged = mergePostLists(localPosts, remotePosts, deletedIds);
       if (merged.length !== localPosts.length) {
         await writeToFileStore(merged, env);
       }
@@ -317,6 +437,7 @@ export async function loadStoredPosts(env: NodeJS.ProcessEnv = process.env): Pro
         posts: merged,
         storageEngine: engine,
         isCloudPersistent: true,
+        deletedIds: Array.from(deletedIds),
       };
     }
   }
@@ -325,6 +446,7 @@ export async function loadStoredPosts(env: NodeJS.ProcessEnv = process.env): Pro
     posts: localPosts,
     storageEngine: engine,
     isCloudPersistent: engine === 'local-disk',
+    deletedIds: Array.from(deletedIds),
   };
 }
 
@@ -441,23 +563,38 @@ export function deduplicateSavedPosts(posts: SavedPostRecord[]): SavedPostRecord
 }
 
 /**
- * Merges two lists of SavedPostRecords by ID and normalized title signature, keeping the most recently updated version.
+ * Merges two lists of SavedPostRecords by ID and normalized title signature, keeping the most recently updated version,
+ * and pruning any IDs present in the server deletedIds tombstone set.
  */
 export function mergePostLists(
   existing: SavedPostRecord[],
-  incoming: SavedPostRecord[]
+  incoming: SavedPostRecord[],
+  deletedIds?: Set<string>
 ): SavedPostRecord[] {
+  const filteredExisting = deletedIds
+    ? existing.filter((p) => p && typeof p.id === 'string' && !deletedIds.has(p.id))
+    : existing;
+
   const validIncoming: SavedPostRecord[] = [];
   for (const post of incoming) {
     if (!post || typeof post.id !== 'string') continue;
-    const parsedDeck = parseCarouselData(post.deck, { minSlides: 3, requireSlideContent: true });
+    if (deletedIds && deletedIds.has(post.id)) continue;
+    const isSingleSlideCandidate =
+      post.slideCount === 1 ||
+      post.deck?.postFormat === 'single' ||
+      post.deck?.postFormat === 'reel' ||
+      (Array.isArray(post.deck?.slides) && post.deck.slides.length === 1);
+    const parsedDeck = parseCarouselData(post.deck, {
+      minSlides: isSingleSlideCandidate ? 1 : 3,
+      requireSlideContent: true,
+    });
     if (!parsedDeck) continue;
     validIncoming.push({
       ...post,
       deck: sanitizeFullCarousel(parsedDeck),
     });
   }
-  return deduplicateSavedPosts([...existing, ...validIncoming]);
+  return deduplicateSavedPosts([...filteredExisting, ...validIncoming]);
 }
 
 export interface ValidatePostInput {
@@ -554,9 +691,11 @@ export function validateAndBuildPostRecord(
     scheduledFor: input.existingRecord?.scheduledFor,
     publishTargets: input.existingRecord?.publishTargets,
     hostedSlideUrls: input.existingRecord?.hostedSlideUrls,
+    tiktokHostedSlideUrls: input.existingRecord?.tiktokHostedSlideUrls,
     cloudinaryPublicIds: input.existingRecord?.cloudinaryPublicIds,
     cloudinaryCleanedAt: input.existingRecord?.cloudinaryCleanedAt,
     bufferPostIds: input.existingRecord?.bufferPostIds,
+    zernioPostIds: input.existingRecord?.zernioPostIds,
     countedInMetricoolMonth: input.existingRecord?.countedInMetricoolMonth,
   };
 
@@ -565,15 +704,16 @@ export function validateAndBuildPostRecord(
 
 /**
  * GET /api/posts
- * Lists all saved validated/posted carousels along with active storage engine metadata.
+ * Lists all saved validated/posted carousels along with active storage engine metadata and deletion tombstones.
  */
 export async function handleListPosts(_req: Request, res: Response) {
   try {
-    const { posts, storageEngine, isCloudPersistent } = await loadStoredPosts();
+    const { posts, storageEngine, isCloudPersistent, deletedIds } = await loadStoredPosts();
     return res.json({
       posts,
       storageEngine,
       isCloudPersistent,
+      deletedIds: deletedIds || [],
     });
   } catch (err) {
     console.error('[PostsController] Failed to list posts:', err);
@@ -608,13 +748,26 @@ export async function handleSavePost(req: Request, res: Response) {
 
     // Mode 1: Batch reconciliation from client IndexedDB Vault (e.g. after Vercel cold start)
     if (Array.isArray(body.syncPosts)) {
+      const deletedIds = await loadServerDeletedPostIds();
+      if (Array.isArray(body.deletedIds)) {
+        for (const rawDelId of body.deletedIds) {
+          if (typeof rawDelId === 'string' && rawDelId.trim()) {
+            await recordServerDeletedPostId(rawDelId.trim());
+            deletedIds.add(rawDelId.trim());
+          }
+        }
+      }
       const { posts: existing } = await loadStoredPosts();
-      const merged = mergePostLists(existing, body.syncPosts as SavedPostRecord[]);
+      const merged = mergePostLists(existing, body.syncPosts as SavedPostRecord[], deletedIds);
       const storageEngine = await saveStoredPosts(merged);
       return res.json({
         posts: merged,
         storageEngine,
-        isCloudPersistent: storageEngine === 'cloud-kv' || storageEngine === 'local-disk',
+        isCloudPersistent:
+          storageEngine === 'neon-postgres' ||
+          storageEngine === 'cloud-kv' ||
+          storageEngine === 'local-disk',
+        deletedIds: Array.from(deletedIds),
       });
     }
 
@@ -655,6 +808,9 @@ export async function handleSavePost(req: Request, res: Response) {
         details: validation.details,
       });
     }
+
+    // Explicitly saving a post clears any prior deletion tombstone for its ID
+    await clearServerDeletedPostId(validation.record.id);
 
     const updatedList = [
       validation.record,
@@ -716,7 +872,7 @@ export async function handleUpdatePostStatus(req: Request, res: Response) {
 
 /**
  * DELETE /api/posts/:id
- * Deletes a saved post from the backend store.
+ * Deletes a saved post from the backend store and records a deletion tombstone.
  */
 export async function handleDeletePost(req: Request, res: Response) {
   try {
@@ -732,16 +888,8 @@ export async function handleDeletePost(req: Request, res: Response) {
         // Non-fatal if remote is unreachable
       }
     }
-    const config = getServerConfig();
-    if (config.databaseUrl) {
-      try {
-        const pool = getPostgresPool(config.databaseUrl);
-        if (pool) {
-          await deletePostgresPost(pool, id);
-        }
-      } catch (pgErr) {
-        console.warn('[PostsController] Failed to delete post from Postgres:', pgErr);
-      }
+    if (id) {
+      await recordServerDeletedPostId(id);
     }
     const { posts } = await loadStoredPosts();
     const filtered = posts.filter((p) => p.id !== id);
@@ -756,3 +904,4 @@ export async function handleDeletePost(req: Request, res: Response) {
     return res.status(500).json({ error: 'Failed to delete saved post' });
   }
 }
+

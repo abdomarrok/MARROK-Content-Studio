@@ -176,4 +176,80 @@ describe('Gemini Model Deprecation Upgrade & Vercel Persistence Vault', () => {
     expect(merged).toHaveLength(1);
     expect(merged[0].id).toBe('post_dup_new');
   });
+
+  it('preserves zernioPostIds, tiktokHostedSlideUrls, poster takeaways, and layoutOverrides when updating an existing record', () => {
+    const existingBuild = validateAndBuildPostRecord({
+      id: 'post_scheduled_tt',
+      deck: DEFAULT_STARTER_DECK,
+      postStatus: 'validated',
+      allowOverride: true,
+    });
+    expect(existingBuild.ok).toBe(true);
+    if (!existingBuild.ok) return;
+
+    const existingWithZernio = {
+      ...existingBuild.record,
+      scheduledFor: '2026-12-01T18:00:00.000Z',
+      publishTargets: ['instagram' as const, 'tiktok' as const],
+      hostedSlideUrls: ['https://res.cloudinary.com/demo/slide1_4x5.jpg'],
+      tiktokHostedSlideUrls: ['https://res.cloudinary.com/demo/slide1_9x16.jpg'],
+      bufferPostIds: ['buf_123'],
+      zernioPostIds: ['zer_999'],
+    };
+
+    const editedPosterDeck = {
+      ...DEFAULT_STARTER_DECK,
+      id: 'post_scheduled_tt',
+      postFormat: 'single' as const,
+      dimensionPreset: 'tiktok-9:16' as const,
+      slides: [
+        {
+          ...DEFAULT_STARTER_DECK.slides[0],
+          type: 'poster' as const,
+          enCredit: 'Source: MARROK',
+          arCredit: 'المصدر: MARROK',
+          takeaways: [
+            { en: 'Zero Trust', ar: 'انعدام الثقة', icon: 'shield' },
+          ],
+          layoutOverrides: {
+            titleBlock: { dx: 10, dy: -20, scale: 1.1 },
+          },
+        },
+      ],
+    };
+
+    const updated = validateAndBuildPostRecord({
+      id: 'post_scheduled_tt',
+      deck: editedPosterDeck,
+      postStatus: 'validated',
+      allowOverride: true,
+      existingRecord: existingWithZernio,
+    });
+    expect(updated.ok).toBe(true);
+    if (!updated.ok) return;
+
+    expect(updated.record.zernioPostIds).toEqual(['zer_999']);
+    expect(updated.record.tiktokHostedSlideUrls).toEqual([
+      'https://res.cloudinary.com/demo/slide1_9x16.jpg',
+    ]);
+    expect(updated.record.bufferPostIds).toEqual(['buf_123']);
+    expect(updated.record.deck.slides[0].type).toBe('poster');
+    expect(updated.record.deck.slides[0].takeaways).toHaveLength(1);
+    expect(updated.record.deck.slides[0].layoutOverrides?.titleBlock?.dy).toBe(-20);
+  });
+
+  it('prevents deleted post resurrection across devices via deletedIds tombstones in mergePostLists', () => {
+    const built = validateAndBuildPostRecord({
+      id: 'post_to_delete',
+      deck: DEFAULT_STARTER_DECK,
+      postStatus: 'validated',
+      allowOverride: true,
+    });
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+
+    const deletedSet = new Set(['post_to_delete']);
+    const merged = mergePostLists([], [built.record], deletedSet);
+    expect(merged).toHaveLength(0);
+  });
 });

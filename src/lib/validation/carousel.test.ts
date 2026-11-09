@@ -110,4 +110,102 @@ describe('parseCarouselData', () => {
     expect(parsed?.sourceMeta?.groundingSources).toHaveLength(1);
     expect(parsed?.facts?.[0]).toMatchObject({ type: 'claim', verified: 'unverified' });
   });
+
+  it('preserves poster archetype, takeaways, layoutOverrides, video fields, dimensionPreset, and reelConfig', () => {
+    const posterDeck = {
+      id: 'poster-1',
+      postFormat: 'single',
+      dimensionPreset: 'ig-4:5',
+      reelConfig: {
+        templateId: 'marrok-slides',
+        duration: 8,
+        sfxEnabled: true,
+        brand: {
+          name: 'MARROK',
+          accentColor: '#00f5d4',
+          bgColor: '#080d11',
+          textColor: '#ffffff',
+          font: 'Plus Jakarta Sans',
+          direction: 'ltr',
+        },
+        scenes: [
+          {
+            id: 'scene-1',
+            label: 'Hook',
+            text: 'Zero Trust Mesh',
+            from: 0,
+            to: 4,
+            springK: 180,
+            springD: 18,
+          },
+        ],
+      },
+      slides: [
+        {
+          type: 'poster',
+          enTitle: 'Zero-Trust Service Mesh',
+          arTitle: 'شبكة انعدام الثقة',
+          enBody: 'Isolate east-west traffic with mTLS.',
+          arBody: 'عزل حركة المرور الداخلية.',
+          compositionPreset: 'headline-first',
+          freeMoveLayout: true,
+          imageFrameMode: 'hero',
+          imageBgStyle: 'white',
+          brandWatermark: 'bottom-right',
+          imageZoom: 1.25,
+          imagePanX: 12,
+          imagePanY: -8,
+          mediaType: 'video',
+          videoUrl: 'https://example.com/demo.mp4',
+          videoMimeType: 'video/mp4',
+          videoFileName: 'demo.mp4',
+          videoDuration: 14.5,
+          videoMuted: false,
+          videoPlaying: true,
+          videoBorderRadius: 36,
+          takeaways: [
+            {
+              en: 'mTLS Everywhere — Automatic cert rotation',
+              ar: 'تشفير شامل — تدوير تلقائي للشهادات',
+              icon: 'lock',
+            },
+          ],
+          layoutOverrides: {
+            titleBlock: { dx: 15, dy: -24, scale: 1.15, align: 'center', opacity: 0.95 },
+            graphicCard: { dx: 0, dy: 30, scale: 0.9, hidden: false },
+          },
+        },
+      ],
+    };
+
+    const parsed = parseCarouselData(posterDeck, { minSlides: 3, requireSlideContent: true });
+    expect(parsed).not.toBeNull();
+    expect(parsed?.postFormat).toBe('single');
+    expect(parsed?.dimensionPreset).toBe('ig-4:5');
+    expect(parsed?.reelConfig?.templateId).toBe('marrok-slides');
+    expect(parsed?.reelConfig?.duration).toBe(8);
+
+    const slide = parsed!.slides[0];
+    expect(slide.type).toBe('poster');
+    expect(slide.compositionPreset).toBe('headline-first');
+    expect(slide.freeMoveLayout).toBe(true);
+    expect(slide.imageFrameMode).toBe('hero');
+    expect(slide.imageBgStyle).toBe('white');
+    expect(slide.brandWatermark).toBe('bottom-right');
+    expect(slide.imageZoom).toBe(1.25);
+    expect(slide.imagePanX).toBe(12);
+    expect(slide.imagePanY).toBe(-8);
+    expect(slide.mediaType).toBe('video');
+    expect(slide.videoUrl).toBe('https://example.com/demo.mp4');
+    expect(slide.videoDuration).toBe(14.5);
+    expect(slide.takeaways).toHaveLength(1);
+    expect(slide.takeaways?.[0].en).toContain('mTLS Everywhere');
+    expect(slide.layoutOverrides?.titleBlock).toMatchObject({
+      dx: 15,
+      dy: -24,
+      scale: 1.15,
+      align: 'center',
+      opacity: 0.95,
+    });
+  });
 });
