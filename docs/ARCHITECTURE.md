@@ -49,9 +49,10 @@
 │  │    ├─ POST /api/publish/upload-media  (Signed SHA-1 Cloudinary Staging) │
 │  │    ├─ POST /api/publish/dispatch      (Buffer GraphQL + Zernio REST v1) │
 │  │    ├─ POST /api/publish/manage-post   (Reschedule/Unschedule/Delete)    │
-│  │    └─ POST /api/publish/cleanup-media (Cloudinary image/destroy Sweep)  │
 │  ├─ GET  /api/proxy-image    -> api/controllers/proxyController.ts         │
 │  └─ GET  /api/search-media   -> api/controllers/mediaController.ts         │
+│     GET  /api/gather/radar   -> api/controllers/mediaController.ts         │
+│     POST /api/gather/extract -> api/controllers/mediaController.ts         │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -67,8 +68,12 @@
 | `api/controllers/postsController.ts` | Content Vault persistence prioritizing Neon PostgreSQL (`neon-postgres`), with automatic seed migration and graceful fallbacks (`cloud-kv`, `local-disk`, `vercel-tmp`) |
 | `api/controllers/publishController.ts` | Signed SHA-1 Cloudinary upload (`uploadSlideToCloudinary`), automatic post-publish asset destruction (`destroyCloudinaryAsset`, `sweepExpiredCloudinaryAssets`), Buffer GraphQL API dispatch (`https://api.buffer.com`), Zernio REST API v1 dispatch (`https://zernio.com/api/v1/posts`), and TikTok Commercial Music catalog (`fetchZernioTikTokCommercialMusic`) |
 | `api/controllers/proxyController.ts` | SSRF-hardened HTTPS image proxy with DNS resolution check, 2 MB cap, and SVG sanitization |
+| `api/controllers/mediaController.ts` | Subject-based tech icon & Wikimedia search (`/api/search-media`), automated technical trend radar (`/api/gather/radar` across HN, Lobsters, Reddit, Cloudflare RSS, custom RSS, and curated stories), and SSRF-hardened web article reader extraction (`/api/gather/extract-url`) |
 | `src/components/studio/PublishingHubWorkspace.tsx` | Full-page Phase 2 Publish & Posts Hub with 2 tabs (`Publish Active Post` and `Posts & Calendar`), dual aspect-ratio staging (`4:5` + `9:16`), and TikTok Background Sound selector with audio preview |
-| `src/components/studio/PostManagerPanel.tsx` | Unified Post Lifecycle & Calendar Manager (`Posts List`, `7/14-Day Calendar`, `Bulk Schedule`) supporting inline rescheduling, unscheduling, and remote queue cancellation across Buffer and Zernio |
+| `src/components/studio/PostManagerPanel.tsx` | Unified Post Lifecycle & Calendar Manager (`Posts List`, `7/14-Day Calendar`, `Bulk Schedule`, and `Weekly Program Review` modal trigger) supporting inline rescheduling, unscheduling, and remote queue cancellation across Buffer and Zernio |
+| `src/components/studio/WeeklyProgramReviewPanel.tsx` | Modal interface for scanning trend radar topics, background bilingual deck synthesis, human review/editing of slide outlines, and batch scheduling to TikTok/Instagram peak hours (10:00, 12:00, 18:00 DZ local time) |
+| `src/lib/gather/gatherClient.ts` | Client SDK for `/api/gather/*`, managing topic radar queries, background candidate generation with vault deduplication (`isTopicAlreadyInVault`), and topic-to-post conversions |
+| `src/lib/publish/tiktokTitle.ts` | Pure standalone string utility (`stripLeadingDuplicateTikTokTitle`) decoupled from browser DOM/Canvas and IndexedDB to guarantee clean Vercel Node.js Serverless function bundling |
 | `src/lib/publish/publishClient.ts` | Client SDK for `/api/publish/*` endpoints, dual aspect-ratio slide renderer (`uploadDeckSlidesForPublishing`), TikTok Commercial Music fetcher (`fetchTikTokCommercialMusic`), local-timezone schedule helpers, and metadata auto-derivation |
 | `src/lib/theme/cadenceEngine.ts` | Posted history color cadence analyzer (`analyzePostHistoryCadence`, `resolveHarmoniousPaletteWithoutRepetition`) preventing consecutive same-color posts |
 | `src/lib/canvas/dimensions.ts` | Platform dimension presets (`tiktok-9:16`, `ig-4:5`, `ig-3:4`, `ig-1:1`, `ig-9:16`), safe zones, and TikTok Photo Mode 3:4 viewport bounds |
@@ -84,3 +89,23 @@
 | `src/lib/motion/videoExporter.ts` | Browser `MediaRecorder` + Web Audio muxed video exporter (`.webm`/`.mp4`), `.wav` export, and standalone `.html` export |
 | `src/lib/qaChecks.ts` | Single source of truth for `CHAR_LIMITS`, `SINGLE_SLIDE_CHAR_LIMITS`, and pre-export QA checks |
 | `src/lib/riskChecks.ts` | Platform safety gate (`PASS` / `WARN` / `BLOCK`) for originality, copyright, cover quality, numbers, and repetition |
+
+---
+
+## 3. Vercel Serverless Architecture & File-Count Rules
+
+- **Hobby Plan 12-Function Cap**: Vercel treats each `.ts` file in `/api` as a standalone Serverless Function and strictly limits Hobby deployments to a maximum of 12 functions. The `/api` directory is architected to remain strictly at **11 files**:
+  - `api/index.ts` (router, middleware, path recovery)
+  - `api/config.ts` (configuration, multi-key rotation)
+  - `api/constants.ts` (tech logos, mime types)
+  - `api/db/postgres.ts` (Neon Postgres pooler)
+  - `api/prompts/systemPrompt.ts` (system prompt + response schema)
+  - `api/controllers/generateController.ts`
+  - `api/controllers/imageController.ts`
+  - `api/controllers/postsController.ts`
+  - `api/controllers/publishController.ts`
+  - `api/controllers/proxyController.ts`
+  - `api/controllers/mediaController.ts`
+- **Regression Guard**: `src/lib/network/apiRouting.test.ts` validates that the recursive file count in `api/` is $\le 12$.
+- **Serverless/Client Decoupling**: API controllers must never import modules with DOM, Canvas, or browser `import.meta.env` dependencies. All shared string utilities (such as `tiktokTitle.ts`) must remain pure Node/universal modules.
+

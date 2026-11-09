@@ -105,6 +105,12 @@ Switch between **`1. Create Studio`** and **`2. Publish & Posts (N)`** from the 
 - `short_caption.txt` (Clean 2-line version for TikTok quick post)
 - `README.txt` (Creator publishing guide)
 
+### 📡 Automated Content Gatherer & Weekly Peak-Hour Program Review (`src/components/studio/WeeklyProgramReviewPanel.tsx`, `src/lib/gather/gatherClient.ts`)
+- **Live Engineering Trend Radar (`GET /api/gather/radar`):** Continuously scans and aggregates breaking technical breakthroughs from Hacker News, Lobste.rs, Reddit tech communities (`r/programming`, `r/LocalLLaMA`, `r/devops`), Cloudflare Engineering RSS, custom RSS/Atom feeds, and curated architectural deep-dives.
+- **SSRF-Hardened URL Reader (`POST /api/gather/extract-url`):** Extracts clean articles, technical metrics, and architectural summaries from any public engineering blog, preventing loopback or private IP access.
+- **Peak-Hour Cadence Engine (10:00 · 12:00 · 18:00 DZ):** Auto-schedules approved posts to peak engagement windows while intelligently skipping slots that have already passed in the creator's current local day (`skipPast: true`).
+- **Human-in-the-Loop Batch Review:** Lets creators preview candidate titles, trigger background AI draft synthesis with vault deduplication (`isTopicAlreadyInVault`), inspect/edit slide outlines, and approve multi-post weekly schedules into Buffer and Zernio with 1 click.
+
 ### 🛡️ Security, Grounding Provenance & Pre-Publish Safety Gate
 - **Authentic Grounding Provenance:** Decks are marked `verified_live` (`Grounded`) **only** when Google Search grounding returns actual web sources. Ungrounded LLM outputs are marked `unverified_draft` (`Ungrounded AI`) with `userReviewed = false`, and offline fallback decks are marked `Offline Synthesizer`. Only an explicit human click on **"I reviewed this draft"** sets `userReviewed = true`.
 - **Platform Risk & QA Gate (`src/lib/riskChecks.ts` & `src/lib/qaChecks.ts`):** Evaluates Originality, Copyrighted IP/Audio, First-Frame Cover Quality, Unverified Numeric Claims, and Slide Repetition (`PASS` / `WARN` / `BLOCK`), plus placeholder text, Arabic line-ending punctuation, and $y \le 1760$ safe-zone clearance. Blocks export on `BLOCK` / `FAIL` unless explicitly overridden.
@@ -115,8 +121,12 @@ Switch between **`1. Create Studio`** and **`2. Publish & Posts (N)`** from the 
 ## 📂 Documentation Index
 
 - 📋 [**`docs/AUDIT.md`**](docs/AUDIT.md) — Phase 0 Staff Engineering Audit, data flow trace, and risk register.
-- 🏗️ [**`docs/ARCHITECTURE.md`**](docs/ARCHITECTURE.md) — System architecture diagram, module boundaries, and pipeline contracts.
-- 🧭 [**`docs/ADR/`**](docs/ADR/) — Architecture Decision Records (Server-Side Gemini Gateway, Deterministic Canvas Export).
+- 🏗️ [**`docs/ARCHITECTURE.md`**](docs/ARCHITECTURE.md) — System architecture diagram, module boundaries, Vercel Serverless Function limits, and pipeline contracts.
+- 🧭 [**`docs/ADR/`**](docs/ADR/) — Architecture Decision Records:
+  - [ADR 001: Server-Side Gemini Gateway](docs/ADR/001-server-side-gemini-gateway.md)
+  - [ADR 002: Deterministic Canvas Export](docs/ADR/002-deterministic-canvas-export.md)
+  - [ADR 003: Neon PostgreSQL Persistence Vault](docs/ADR/003-neon-postgresql-persistence-vault.md)
+  - [ADR 004: Content Gathering, Peak-Hour Review & Vercel Serverless Consolidation](docs/ADR/004-content-gathering-and-vercel-serverless-consolidation.md)
 - 🔒 [**`SECURITY.md`**](SECURITY.md) — SSRF defenses, SVG sanitization, rate limiting, and secret management.
 - 🤝 [**`CONTRIBUTING.md`**](CONTRIBUTING.md) — Development workflow, testing rules, and PR checklist.
 - 📝 [**`CHANGELOG.md`**](CHANGELOG.md) — Production handoff changelog and behavior changes.

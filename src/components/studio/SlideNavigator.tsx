@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, Copy, Trash2, ArrowLeft, ArrowRight } from 'lucide-react';
+import { Plus, Copy, Trash2, ArrowLeft, ArrowRight, LayoutGrid } from 'lucide-react';
 import { CanvasDimensionPreset, CarouselData, HookVariant } from '../../types.ts';
 import { CANVAS_DIMENSION_PRESET_LIST, getCanvasDimensionSpec } from '../../lib/canvas/constants.ts';
 import { StageOverlayMode } from './ViewportCanvas.tsx';
@@ -18,6 +18,7 @@ interface SlideNavigatorProps {
   onDeleteSlide: () => void;
   onMoveSlide: (direction: 'left' | 'right') => void;
   onApplyHookVariant?: (variant: HookVariant) => void;
+  onOpenContactSheet?: () => void;
 }
 
 export const SlideNavigator: React.FC<SlideNavigatorProps> = ({
@@ -33,6 +34,7 @@ export const SlideNavigator: React.FC<SlideNavigatorProps> = ({
   onDuplicateSlide,
   onDeleteSlide,
   onMoveSlide,
+  onOpenContactSheet,
 }) => {
   const isSinglePost = carousel.postFormat === 'single' || carousel.slides.length === 1;
   const activeSlide = carousel.slides[currentSlideIndex] || carousel.slides[0];
@@ -99,7 +101,20 @@ export const SlideNavigator: React.FC<SlideNavigatorProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5">{renderStageToggle()}</div>
+          <div className="flex items-center gap-1.5">
+            {onOpenContactSheet && (
+              <button
+                type="button"
+                onClick={onOpenContactSheet}
+                className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white/[0.04] hover:bg-white/10 border border-white/10 text-[11px] font-sans font-semibold text-slate-300 hover:text-white transition-colors cursor-pointer whitespace-nowrap"
+                title="View in All Slides Grid"
+              >
+                <LayoutGrid className="w-3 h-3 text-cyan-400" />
+                <span>Grid</span>
+              </button>
+            )}
+            {renderStageToggle()}
+          </div>
         </div>
       </div>
     );
@@ -163,7 +178,21 @@ export const SlideNavigator: React.FC<SlideNavigatorProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-1 shrink-0">{renderStageToggle()}</div>
+        <div className="flex items-center gap-1 shrink-0">
+          {onOpenContactSheet && (
+            <button
+              type="button"
+              onClick={onOpenContactSheet}
+              className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white/[0.04] hover:bg-white/10 border border-white/10 text-[11px] font-sans font-semibold text-slate-300 hover:text-white transition-colors cursor-pointer whitespace-nowrap"
+              title="View all slides in Contact Sheet grid"
+            >
+              <LayoutGrid className="w-3 h-3 text-cyan-400" />
+              <span className="hidden sm:inline">All Slides Grid</span>
+              <span className="sm:hidden">Grid</span>
+            </button>
+          )}
+          {renderStageToggle()}
+        </div>
       </div>
 
       {/* Storyboard Strip */}

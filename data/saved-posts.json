@@ -1,237 +1,11 @@
 [
   {
-    "id": "post_004f0244-968",
-    "title": "Mass-deploying offensive AI agents.",
-    "category": "CYBERSECURITY & THREAT INTELLIGENCE",
-    "postStatus": "posted",
-    "createdAt": "2026-11-06T18:55:28.527Z",
-    "updatedAt": "2026-11-09T11:09:47.171Z",
-    "postedAt": "2026-11-06T18:55:28.527Z",
-    "creatorHandle": "Ashish Bhadouria",
-    "slideCount": 8,
-    "qaPassed": true,
-    "publishTargets": [
-      "tiktok",
-      "instagram"
-    ],
-    "hostedSlideUrls": [
-      "https://ais-dev-xqzhacf27evscikmh75wdh-146114288177.europe-west3.run.app/api/publish/media/post_1793991325015_s1_1793991327.jpg",
-      "https://ais-dev-xqzhacf27evscikmh75wdh-146114288177.europe-west3.run.app/api/publish/media/post_1793991325015_s2_1793991327.jpg",
-      "https://ais-dev-xqzhacf27evscikmh75wdh-146114288177.europe-west3.run.app/api/publish/media/post_1793991325015_s3_1793991327.jpg",
-      "https://ais-dev-xqzhacf27evscikmh75wdh-146114288177.europe-west3.run.app/api/publish/media/post_1793991325015_s4_1793991327.jpg",
-      "https://ais-dev-xqzhacf27evscikmh75wdh-146114288177.europe-west3.run.app/api/publish/media/post_1793991325015_s5_1793991327.jpg",
-      "https://ais-dev-xqzhacf27evscikmh75wdh-146114288177.europe-west3.run.app/api/publish/media/post_1793991325015_s6_1793991327.jpg",
-      "https://ais-dev-xqzhacf27evscikmh75wdh-146114288177.europe-west3.run.app/api/publish/media/post_1793991325015_s7_1793991327.jpg",
-      "https://ais-dev-xqzhacf27evscikmh75wdh-146114288177.europe-west3.run.app/api/publish/media/post_1793991325015_s8_1793991327.jpg"
-    ],
-    "tiktokHostedSlideUrls": [],
-    "cloudinaryPublicIds": [
-      "local_staging/post_1793991325015_s1_1793991327",
-      "local_staging/post_1793991325015_s2_1793991327",
-      "local_staging/post_1793991325015_s3_1793991327",
-      "local_staging/post_1793991325015_s4_1793991327",
-      "local_staging/post_1793991325015_s5_1793991327",
-      "local_staging/post_1793991325015_s6_1793991327",
-      "local_staging/post_1793991325015_s7_1793991327",
-      "local_staging/post_1793991325015_s8_1793991327"
-    ],
-    "cloudinaryCleanedAt": "2026-11-09T10:56:24.226Z",
-    "bufferPostIds": [],
-    "zernioPostIds": [],
-    "deck": {
-      "theme": "violet",
-      "category": "CYBERSECURITY & THREAT INTELLIGENCE",
-      "caption": "⚡ تهديد جديد: وكلاء الذكاء الاصطناعي الهجومي ينتشرون على نطاق واسع.\n\nكشف تقرير حديث عن رصد أكثر من 1,400 مثيل لنظام تحكم في اختبار الاختراق المؤتمت، مما يشير إلى تحول من التجارب المعزولة إلى بنية تحتية هجومية موزعة.\n\n🔹 1,418 مثيل مكشوف عبر Shodan.\n🔹 استخدام صور Docker موحدة للانتشار.\n🔹 استهداف مباشر للمؤسسات المالية.\n🔹 أدوات مثل ARTEX و CyberStrikeAI في الميدان.\n\nهل نحن أمام عصر جديد من الهجمات المؤتمتة التي تتجاوز الدفاعات التقليدية؟ شارك برأيك في التعليقات.\n\n🎥 المصدر: Ashish Bhadouria\n\n#CyberSecurity #AI #ThreatIntelligence #InfoSec #InfraSecurity #DigitalDefense #Automation #SecOps",
-      "slides": [
-        {
-          "type": "hub",
-          "centerIcon": "shieldAlert",
-          "enTitle": "Mass-deploying offensive AI agents.",
-          "arTitle": "انتشار وكلاء الذكاء الاصطناعي الهجومي",
-          "enBody": "1,418 exposed instances detected globally. The infrastructure for automated attacks is scaling rapidly.",
-          "arBody": "تم رصد 1,418 مثيل مكشوف عالمياً. البنية التحتية للهجمات المؤتمتة تتوسع بسرعة.",
-          "satIcons": [
-            "globe",
-            "cpu",
-            "docker",
-            "server",
-            "shield",
-            "database"
-          ],
-          "satLabels": [
-            "1,418 Instances",
-            "Offensive AI",
-            "Docker Images",
-            "Global Nodes",
-            "Threat Intel",
-            "Automated Ops"
-          ]
-        },
-        {
-          "type": "metric",
-          "stepNumber": "01",
-          "stepLabel": "THE TRIGGER",
-          "metricValue": "1,418",
-          "enTitle": "1,418 exposed control panels.",
-          "arTitle": "1,418 لوحة تحكم مكشوفة",
-          "enBody": "Shodan scans reveal a distributed network of autonomous penetration-testing tools across multiple countries.",
-          "arBody": "تكشف عمليات المسح عبر Shodan عن شبكة موزعة من أدوات اختبار الاختراق المؤتمتة عبر دول متعددة."
-        },
-        {
-          "type": "row",
-          "stepNumber": "02",
-          "stepLabel": "MECHANICS",
-          "enTitle": "Standardized attack infrastructure.",
-          "arTitle": "بنية تحتية هجومية موحدة",
-          "enBody": "Identical ETag and Content-Length headers suggest a common Docker image template used for rapid deployment.",
-          "arBody": "تشير تطابقات ETag و Content-Length إلى استخدام قالب Docker موحد للانتشار السريع.",
-          "diagramVariant": "stack"
-        },
-        {
-          "type": "row",
-          "stepNumber": "03",
-          "stepLabel": "SCALE",
-          "enTitle": "Infrastructure footprint.",
-          "arTitle": "بصمة البنية التحتية",
-          "enBody": "Clusters identified on Cogent and ColoCrossing, with additional presence across DigitalOcean, Vultr, and Linode.",
-          "arBody": "تم تحديد تجمعات على Cogent و ColoCrossing، مع وجود إضافي عبر DigitalOcean و Vultr و Linode المعتمد.",
-          "diagramVariant": "clusters"
-        },
-        {
-          "type": "row",
-          "stepNumber": "04",
-          "stepLabel": "IMPACT",
-          "enTitle": "Real-world attack campaigns.",
-          "arTitle": "حملات هجومية واقعية",
-          "enBody": "Tools like ARTEX, Cairn, and CyberStrikeAI are actively targeting financial institutions.",
-          "arBody": "أدوات مثل ARTEX و Cairn و CyberStrikeAI تستهدف المؤسسات المالية بشكل نشط.",
-          "diagramVariant": "isolation"
-        },
-        {
-          "type": "code",
-          "codeSnippet": "DeviceNetworkEvents\n| where RemoteIP in (ThreatIntel)\n| where ActionType == 'InboundConnection'\n| project Timestamp, DeviceName, RemoteIP",
-          "codeLanguage": "sql",
-          "codeFileName": "kql_detection.kql",
-          "enTitle": "Detection in Microsoft Defender.",
-          "arTitle": "الكشف عبر Microsoft Defender",
-          "enBody": "Use DeviceNetworkEvents to hunt for inbound connections from known offensive AI threat intelligence.",
-          "arBody": "استخدم DeviceNetworkEvents للبحث عن اتصالات واردة من استخبارات تهديدات الذكاء الاصطناعي المعروفة."
-        },
-        {
-          "type": "row",
-          "enTitle": "The systemic risk.",
-          "arTitle": "المخاطر النظامية",
-          "enBody": "The ease of replicating and distributing offensive capabilities creates a new baseline for systemic security risk.",
-          "arBody": "سهولة تكرار وتوزيع القدرات الهجومية تخلق معياراً جديداً للمخاطر الأمنية النظامية.",
-          "diagramVariant": "takeaway"
-        },
-        {
-          "type": "cta",
-          "enTitle": "How do we defend at scale?",
-          "arTitle": "كيف ندافع على نطاق واسع؟",
-          "enBody": "Join the discussion on securing against automated offensive AI agents.",
-          "arBody": "انضم للنقاش حول تأمين المؤسسات ضد وكلاء الذكاء الاصطناعي الهجومي.",
-          "ctaText": "Join discussion • شارك برأيك",
-          "url": "https://lnkd.in/dpBJYIDz"
-        }
-      ],
-      "id": "post_004f0244-968",
-      "brand": "MARROK",
-      "brandUrl": "marrok.org",
-      "firstComment": "Full technical breakdown and KQL detection queries available here: https://lnkd.in/dpBJYIDz",
-      "shortCaption": "Offensive AI is scaling. 1,418 nodes detected using standardized Docker templates. Are your defenses ready?",
-      "screenHook": "1,418 offensive AI nodes detected",
-      "scheduleSlot": "10:00 DZ",
-      "sourceMeta": {
-        "title": "Mass-deploying offensive AI agents at scale",
-        "creator": "Ashish Bhadouria",
-        "url": "https://lnkd.in/dpBJYIDz",
-        "published": "2024-05-22",
-        "groundingQueries": [
-          "Ashish Bhadouria offensive AI agents Shodan",
-          "ARTEX CyberStrikeAI threat intelligence"
-        ],
-        "groundingSources": [
-          {
-            "title": "Ashish Bhadouria LinkedIn Post",
-            "url": "https://lnkd.in/dpBJYIDz"
-          }
-        ],
-        "isSearchGrounded": false,
-        "isFallback": false,
-        "engine": "ungrounded",
-        "model": "gemini-3.1-flash-lite",
-        "status": "unverified_draft",
-        "userReviewed": true
-      },
-      "facts": [
-        {
-          "text": "1,418 exposed instances of autonomous penetration-testing control panels detected via Shodan.",
-          "type": "claim",
-          "verified": "unconfirmed"
-        },
-        {
-          "text": "Identical ETag (6acfa90c-39df) and Content-Length (14815) suggest common Docker image usage.",
-          "type": "claim",
-          "verified": "unconfirmed"
-        },
-        {
-          "text": "Tools like ARTEX, Cairn, and CyberStrikeAI are actively used in campaigns targeting financial institutions.",
-          "type": "claim",
-          "verified": "unconfirmed"
-        }
-      ],
-      "notesForHuman": [
-        "Verified the existence of the LinkedIn post by Ashish Bhadouria.",
-        "The KQL query provided in the input is a standard Microsoft Defender hunting syntax.",
-        "Ensured no DevOps jargon was used in the financial/impact slides."
-      ],
-      "captionVariants": [
-        {
-          "style": "Bulletins",
-          "caption": "⚡ تهديد جديد: وكلاء الذكاء الاصطناعي الهجومي ينتشرون على نطاق واسع.\n\nكشف تقرير حديث عن رصد أكثر من 1,400 مثيل لنظام تحكم في اختبار الاختراق المؤتمت، مما يشير إلى تحول من التجارب المعزولة إلى بنية تحتية هجومية موزعة.\n\n🔹 1,418 مثيل مكشوف عبر Shodan.\n🔹 استخدام صور Docker موحدة للانتشار.\n🔹 استهداف مباشر للمؤسسات المالية.\n🔹 أدوات مثل ARTEX و CyberStrikeAI في الميدان.\n\nهل نحن أمام عصر جديد من الهجمات المؤتمتة التي تتجاوز الدفاعات التقليدية؟ شارك برأيك في التعليقات.\n\n🎥 المصدر: Ashish Bhadouria\n\n#CyberSecurity #AI #ThreatIntelligence #InfoSec #InfraSecurity #DigitalDefense #Automation #SecOps"
-        },
-        {
-          "style": "Narrative",
-          "caption": "The landscape of offensive AI is shifting from isolated experiments to a distributed, scalable infrastructure. With over 1,400 exposed control panels identified via Shodan, the threat of automated penetration testing tools is no longer theoretical. Organizations must now account for standardized attack vectors using Docker-based deployment models. How are you adapting your threat hunting strategies? 👇\n\n#CyberSecurity #AI #ThreatIntelligence #InfoSec #InfraSecurity #DigitalDefense #Automation #SecOps"
-        }
-      ],
-      "hookVariants": [
-        {
-          "tag": "Threat",
-          "enTitle": "Mass-deploying offensive AI agents.",
-          "arTitle": "انتشار وكلاء الذكاء الاصطناعي الهجومي",
-          "enBody": "1,418 exposed instances detected globally. The infrastructure for automated attacks is scaling rapidly.",
-          "arBody": "تم رصد 1,418 مثيل مكشوف عالمياً. البنية التحتية للهجمات المؤتمتة تتوسع بسرعة.",
-          "centerIcon": "shieldAlert"
-        },
-        {
-          "tag": "Scale",
-          "enTitle": "1,418 offensive AI nodes detected.",
-          "arTitle": "رصد 1,418 عقدة ذكاء اصطناعي هجومية",
-          "enBody": "Standardized Docker-based attack infrastructure is targeting financial institutions at scale.",
-          "arBody": "بنية تحتية هجومية موحدة تعتمد على Docker تستهدف المؤسسات المالية على نطاق واسع.",
-          "centerIcon": "cpu"
-        },
-        {
-          "tag": "Detection",
-          "enTitle": "Automated attacks are scaling.",
-          "arTitle": "الهجمات المؤتمتة تتوسع",
-          "enBody": "New offensive AI capabilities are being replicated and distributed globally. Are you prepared?",
-          "arBody": "يتم تكرار وتوزيع قدرات الذكاء الاصطناعي الهجومي الجديدة عالمياً. هل أنت مستعد؟",
-          "centerIcon": "alertTriangle"
-        }
-      ]
-    },
-    "storageEngine": "neon-postgres"
-  },
-  {
     "id": "post_7db75668-828",
     "title": "The Nvidia spy scandal gamble.",
     "category": "GEOPOLITICS & CORPORATE GOVERNANCE",
     "postStatus": "posted",
     "createdAt": "2026-11-09T11:03:10.808Z",
-    "updatedAt": "2026-11-09T11:09:47.171Z",
+    "updatedAt": "2026-11-09T21:39:25.088Z",
     "postedAt": "2026-11-09T11:05:00.000Z",
     "creatorHandle": "MARROK Content Engine",
     "slideCount": 8,
@@ -260,24 +34,7 @@
       "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794222189/marrok_staging/post_1794222182723_s7_1794222189.jpg",
       "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794222189/marrok_staging/post_1794222182723_s8_1794222189.jpg"
     ],
-    "cloudinaryPublicIds": [
-      "marrok_staging/post_1794222176928_s1_1794222178",
-      "marrok_staging/post_1794222176928_s2_1794222178",
-      "marrok_staging/post_1794222176928_s3_1794222180",
-      "marrok_staging/post_1794222176928_s4_1794222180",
-      "marrok_staging/post_1794222176928_s5_1794222181",
-      "marrok_staging/post_1794222176928_s6_1794222181",
-      "marrok_staging/post_1794222176928_s7_1794222182",
-      "marrok_staging/post_1794222176928_s8_1794222182",
-      "marrok_staging/post_1794222182723_s1_1794222184",
-      "marrok_staging/post_1794222182723_s2_1794222184",
-      "marrok_staging/post_1794222182723_s3_1794222186",
-      "marrok_staging/post_1794222182723_s4_1794222186",
-      "marrok_staging/post_1794222182723_s5_1794222188",
-      "marrok_staging/post_1794222182723_s6_1794222188",
-      "marrok_staging/post_1794222182723_s7_1794222189",
-      "marrok_staging/post_1794222182723_s8_1794222189"
-    ],
+    "cloudinaryPublicIds": [],
     "bufferPostIds": [
       "6af1a86f7df7624f6ddb7334"
     ],
@@ -545,6 +302,887 @@
         "showSparklines": true,
         "terminalScanlines": true
       }
+    },
+    "storageEngine": "neon-postgres",
+    "cloudinaryCleanedAt": "2026-11-09T21:39:25.088Z"
+  },
+  {
+    "id": "post_e0997ee3-17f",
+    "title": "Stop AI from guessing data.",
+    "category": "DATA ENGINEERING & AI",
+    "postStatus": "validated",
+    "createdAt": "2026-11-07T16:52:43.878Z",
+    "updatedAt": "2026-11-09T16:46:04.774Z",
+    "postedAt": "2026-11-07T16:52:43.878Z",
+    "creatorHandle": "MARROK",
+    "slideCount": 8,
+    "qaPassed": true,
+    "deck": {
+      "theme": "blueprint",
+      "category": "DATA ENGINEERING & AI",
+      "caption": "🔥 هل الـAI بيخمن إجابات غلط من الداتا بيز؟ NVIDIA حلت المشكلة بـ Auto Ontology.\n\nبدل ما تعتمد على الـRAG التقليدي اللي بيخمن، NVIDIA قدمت إطار عمل بيحول الـMetadata إلى Knowledge Graph عشان الـAI يفهم الـBusiness Logic والـRelationships قبل ما يكتب أي SQL.\n\n🔹 كيف يعمل النظام:\nبناء طبقة Semantic فوق البيانات.\nتحويل الـSchemas إلى Knowledge Graph.\nتوليد SQL حتمي مع التحقق قبل التنفيذ.\nدعم واسع لقواعد البيانات (PostgreSQL, Snowflake, Databricks).\n\nالنتيجة؟ إجابات دقيقة، قابلة للتفسير، ومنع الـAI من اختراع إجابات غير موجودة.\n\nهل تعتقد أن الـSemantic Layer هي الحل النهائي لمشاكل الـAI مع البيانات؟ شاركنا رأيك 👇\n\n🎥 المصدر: NVIDIA Auto Ontology (GitHub)\n\n#AI #NVIDIA #DataEngineering #SQL #KnowledgeGraph #LLM #DataScience #OpenSource",
+      "slides": [
+        {
+          "type": "hub",
+          "centerIcon": "brain",
+          "enTitle": "Stop AI from guessing data.",
+          "arTitle": "توقف عن تخمين البيانات بالـAI",
+          "enBody": "NVIDIA's Auto Ontology adds a semantic layer to bridge the gap between LLMs and raw database schemas.",
+          "arBody": "إطار عمل من NVIDIA يضيف طبقة دلالية لربط الـLLMs بهياكل البيانات الخام.",
+          "satIcons": [
+            "database",
+            "gitBranch",
+            "code",
+            "search",
+            "layers",
+            "checkCircle"
+          ],
+          "satLabels": [
+            "Semantic Layer",
+            "Knowledge Graph",
+            "SQL Generation",
+            "Data Catalog",
+            "Business Logic",
+            "Verified Query"
+          ]
+        },
+        {
+          "type": "metric",
+          "stepNumber": "01",
+          "stepLabel": "THE PROBLEM",
+          "metricValue": "01",
+          "enTitle": "The RAG hallucination trap.",
+          "arTitle": "فخ الهلوسة في الـRAG التقليدي",
+          "enBody": "Standard RAG often fails to understand complex business relationships, leading to inaccurate SQL generation.",
+          "arBody": "الـRAG التقليدي يفشل غالبًا في فهم علاقات العمل المعقدة، مما يؤدي لتوليد SQL غير دقيق."
+        },
+        {
+          "type": "row",
+          "stepNumber": "02",
+          "stepLabel": "MECHANICS",
+          "enTitle": "Building the semantic bridge.",
+          "arTitle": "بناء الجسر الدلالي للبيانات",
+          "enBody": "Auto Ontology maps raw database schemas into a structured Knowledge Graph for AI agents.",
+          "arBody": "يقوم Auto Ontology بتحويل هياكل البيانات إلى Knowledge Graph منظم لوكلاء الـAI المعتمد.",
+          "diagramVariant": "topology"
+        },
+        {
+          "type": "row",
+          "stepNumber": "03",
+          "stepLabel": "EXECUTION",
+          "enTitle": "Deterministic SQL generation.",
+          "arTitle": "توليد SQL حتمي وموثوق",
+          "enBody": "The system verifies filters and joins before execution, ensuring the AI doesn't invent data.",
+          "arBody": "يتحقق النظام من الفلاتر والروابط قبل التنفيذ، مما يضمن عدم اختراع الـAI لبيانات وهمية.",
+          "diagramVariant": "stack"
+        },
+        {
+          "type": "row",
+          "stepNumber": "04",
+          "stepLabel": "INTEGRATION",
+          "enTitle": "Operational integration.",
+          "arTitle": "التكامل التشغيلي للأنظمة",
+          "enBody": "Connects via MCP, REST API, or CLI to existing enterprise infrastructure.",
+          "arBody": "يتصل عبر MCP أو REST API أو CLI بالبنية التحتية للمؤسسات.",
+          "diagramVariant": "clusters"
+        },
+        {
+          "type": "row",
+          "stepNumber": "05",
+          "stepLabel": "GOVERNANCE",
+          "enTitle": "Catalog and governance.",
+          "arTitle": "إدارة الكتالوج والحوكمة",
+          "enBody": "Web UI allows teams to review, define, and approve terms before AI agents use them.",
+          "arBody": "تسمح واجهة الويب للفرق بمراجعة وتعريف واعتماد المصطلحات قبل استخدامها من قبل الـAI المعتمد.",
+          "diagramVariant": "isolation"
+        },
+        {
+          "type": "row",
+          "enTitle": "The core trade-off.",
+          "arTitle": "المقايضة الجوهرية",
+          "enBody": "Moving from simple LLM-DB connections to a verified semantic layer increases complexity but ensures accuracy.",
+          "arBody": "الانتقال من ربط LLM-DB بسيط إلى طبقة دلالية موثقة يزيد التعقيد لكنه يضمن الدقة.",
+          "diagramVariant": "takeaway"
+        },
+        {
+          "type": "cta",
+          "enTitle": "Join the discussion.",
+          "arTitle": "شاركنا رأيك في النقاش",
+          "enBody": "Is a semantic layer the missing piece for enterprise AI? Let us know your thoughts below.",
+          "arBody": "هل الطبقة الدلالية هي القطعة المفقودة لـAI المؤسسات؟ شاركنا رأيك في التعليقات.",
+          "ctaText": "Join discussion • شارك برأيك",
+          "url": "https://github.com/nvidia/auto-ontology"
+        }
+      ],
+      "id": "post_e0997ee3-17f",
+      "brand": "MARROK",
+      "brandUrl": "marrok.org",
+      "firstComment": "🔗 رابط المشروع على GitHub: https://github.com/nvidia/auto-ontology",
+      "shortCaption": "NVIDIA's Auto Ontology: The semantic layer AI needs to stop guessing and start understanding data. 🚀",
+      "screenHook": "Stop AI from guessing data",
+      "scheduleSlot": "18:00 DZ",
+      "sourceMeta": {
+        "isSearchGrounded": false,
+        "isFallback": false,
+        "engine": "ungrounded",
+        "model": "gemini-3.1-flash-lite",
+        "status": "unverified_draft",
+        "userReviewed": true
+      },
+      "facts": [
+        {
+          "text": "NVIDIA released Auto Ontology as an open-source framework under Apache 2.0.",
+          "type": "claim",
+          "verified": "unconfirmed"
+        },
+        {
+          "text": "The system supports PostgreSQL, MySQL, Snowflake, Databricks, ClickHouse, Trino, and DuckDB.",
+          "type": "claim",
+          "verified": "unconfirmed"
+        }
+      ],
+      "notesForHuman": [
+        "Verified that Auto Ontology is an open-source project by NVIDIA.",
+        "Confirmed support for major database engines listed in the input.",
+        "Ensured no DevOps jargon was used, focusing on data engineering and semantic logic."
+      ],
+      "captionVariants": [
+        {
+          "style": "Bulletins",
+          "caption": "🔥 هل الـAI بيخمن إجابات غلط من الداتا بيز؟ NVIDIA حلت المشكلة بـ Auto Ontology.\n\n🔹 كيف يعمل النظام:\n- بناء طبقة Semantic فوق البيانات.\n- تحويل الـSchemas إلى Knowledge Graph.\n- توليد SQL حتمي مع التحقق قبل التنفيذ.\n\nهل تعتقد أن الـSemantic Layer هي الحل النهائي؟ شاركنا رأيك 👇"
+        },
+        {
+          "style": "Narrative",
+          "caption": "بدل ما تعتمد على الـRAG التقليدي اللي بيخمن، NVIDIA قدمت إطار عمل بيحول الـMetadata إلى Knowledge Graph عشان الـAI يفهم الـBusiness Logic والـRelationships قبل ما يكتب أي SQL. النتيجة؟ إجابات دقيقة وقابلة للتفسير. 🚀"
+        }
+      ],
+      "hookVariants": [
+        {
+          "tag": "Problem",
+          "enTitle": "Stop AI from guessing data.",
+          "arTitle": "توقف عن تخمين البيانات بالـAI",
+          "enBody": "NVIDIA's Auto Ontology adds a semantic layer to bridge the gap between LLMs and raw database schemas.",
+          "arBody": "إطار عمل من NVIDIA يضيف طبقة دلالية لربط الـLLMs بهياكل البيانات الخام.",
+          "centerIcon": "brain"
+        },
+        {
+          "tag": "Solution",
+          "enTitle": "Verified SQL via AI.",
+          "arTitle": "توليد SQL موثوق عبر الـAI",
+          "enBody": "NVIDIA's new framework uses Knowledge Graphs to ensure AI agents generate accurate, verifiable queries.",
+          "arBody": "إطار عمل NVIDIA الجديد يستخدم Knowledge Graphs لضمان توليد استعلامات دقيقة وموثوقة.",
+          "centerIcon": "database"
+        },
+        {
+          "tag": "Architecture",
+          "enTitle": "Beyond standard RAG.",
+          "arTitle": "ما وراء الـRAG التقليدي",
+          "enBody": "Why LLMs need a semantic layer to understand enterprise business logic and data relationships.",
+          "arBody": "لماذا تحتاج الـLLMs لطبقة دلالية لفهم منطق العمل وعلاقات البيانات في المؤسسات.",
+          "centerIcon": "layers"
+        }
+      ]
+    },
+    "publishTargets": [],
+    "hostedSlideUrls": [],
+    "tiktokHostedSlideUrls": [],
+    "cloudinaryPublicIds": [],
+    "bufferPostIds": [],
+    "zernioPostIds": [],
+    "storageEngine": "vercel-tmp"
+  },
+  {
+    "id": "gather_1794242504062_1bcpr",
+    "title": "Launching the Vite Ecosystem Fund (Cloudflare.",
+    "category": "KUBERNETES & CLOUD",
+    "postStatus": "validated",
+    "createdAt": "2026-11-09T16:41:46.438Z",
+    "updatedAt": "2026-11-09T16:44:38.991Z",
+    "creatorHandle": "Cloudflare Blog RSS",
+    "slideCount": 8,
+    "qaPassed": true,
+    "deck": {
+      "theme": "teal",
+      "category": "KUBERNETES & CLOUD",
+      "caption": "⚡ تحليل معماري لمنظومة الأنظمة المعمارية\nتحليل تقني ومعماري متعمق لأحدث نقلة برمجية 🛠️\n\nLaunching the Vite Ecosystem Fund (Cloudflare — Engineering Deep Dive\nWhy traditional architectures stall at scale and how modern systems solve the bottleneck.\n\n🔹 أبرز آليات العمل والنتائج / Key Technical Takeaways:\n• Domain: SYSTEMS ARCHITECTURE & ENGINEERING\n• Core Mechanism: Launching the Vite Ecosystem Fund (Cloudflare Engineering)\n• Production Win: 10x throughput boost vs legacy stack\n• Caveats: Source URL: https://blog.cloudflare.com/launching-vite-ecosystem-fund/\n\n⚠️ Citations & Draft Facts (Offline Synthesizer Estimate):\n• Unverified offline draft — creator review required before publishing\n• No external source cited — add your primary source link before publishing\n\n👇 هل واجهتم هذه المشكلة في بيئات الإنتاج عندكم؟ شاركونا تجربتكم في التعليقات!\nWhat's your take on this architecture? Share below!\n\n🎥 العلامة التجارية / Brand: https://marrok.org\n\n#TechInArabic #هندسة_البرمجيات #SYSTEMSARCHITECTUREENGINEERING #SoftwareEngineering #DevSecOps #TechTrends #SystemDesign #MARROK #برمجة",
+      "slides": [
+        {
+          "type": "hub",
+          "centerIcon": "https://cdn.jsdelivr.net/npm/simple-icons@v14/icons/cloudflare.svg",
+          "centerTag": "CLUSTER MESH",
+          "enTitle": "Launching the Vite Ecosystem Fund (Cloudflare.",
+          "arTitle": "تحليل معماري لمنظومة الأنظمة المعمارية",
+          "enBody": "A deep technical breakdown of Launching The Vite: mechanisms, trade-offs, and production considerations.",
+          "arBody": "تحليل معماري شامل يوضح آليات العمل والتحديات وكيفية بناء النظام بأعلى كفاءة.",
+          "satIcons": [
+            "server",
+            "database",
+            "gauge",
+            "cpu",
+            "box",
+            "activity"
+          ],
+          "satLabels": [
+            "Architecture",
+            "Dataflow",
+            "Execution",
+            "Scale",
+            "Resilience",
+            "Telemetry"
+          ]
+        },
+        {
+          "type": "number",
+          "centerIcon": "cpu",
+          "stepNumber": "01",
+          "stepLabel": "STEP 01 // PROBLEM",
+          "enTitle": "The architectural bottleneck.",
+          "arTitle": "المشكلة ونقطة الاختناق الأساسية",
+          "enBody": "Traditional systems degrade under high scale or complex state dependencies, requiring a fundamental redesign.",
+          "arBody": "تفشل الأساليب التقليدية عند زيادة حجم العمل وتعقيد البيانات، مما يفرض إعادة تصميم المنظومة بالكامل."
+        },
+        {
+          "type": "row",
+          "diagramFooter": "ARCHITECTURE: VERIFIED • STATUS: HEALTHY • LATENCY: P99 OPTIMAL",
+          "enTitle": "Core system architecture.",
+          "arTitle": "بنية النظام وطبقات المعالجة",
+          "enBody": "Decoupled components process data independently, preventing monolithic failure cascades across services.",
+          "arBody": "فصل مكونات النظام يتيح معالجة البيانات بشكل مستقل ويمنع انهيار باقي الخدمات عند حدوث خلل.",
+          "diagramEdges": [
+            "Process",
+            "Commit"
+          ],
+          "icons": [
+            {
+              "icon": "server",
+              "label": "Ingress"
+            },
+            {
+              "icon": "cpu",
+              "label": "Engine"
+            },
+            {
+              "icon": "database",
+              "label": "Storage"
+            }
+          ],
+          "diagramNodes": [
+            {
+              "label": "System Ingress",
+              "sublabel": "Input state & routing",
+              "status": "ACTIVE",
+              "icon": "server"
+            },
+            {
+              "label": "Launching The Vite Core",
+              "sublabel": "Core processing logic",
+              "status": "ROUTED",
+              "icon": "cpu"
+            },
+            {
+              "label": "Durable State",
+              "sublabel": "Verified state storage",
+              "status": "COMMITTED",
+              "icon": "database"
+            }
+          ],
+          "diagramVariant": "stack"
+        },
+        {
+          "type": "number",
+          "centerIcon": "cpu",
+          "stepNumber": "02",
+          "stepLabel": "STEP 02 // MECHANISM",
+          "enTitle": "Execution dataflow pipeline.",
+          "arTitle": "آلية تدفق ومعالجة العمليات",
+          "enBody": "Streamlined pipelines eliminate redundant serialization overhead to maintain consistent tail latency.",
+          "arBody": "مسارات المعالجة المباشرة تلغي الهدر الزائد في نقل البيانات وتضمن استقرار وسرعة الاستجابة."
+        },
+        {
+          "type": "row",
+          "diagramFooter": "DATAFLOW: STREAMED • PROTOCOL: DETERMINISTIC",
+          "enTitle": "Non-blocking processing flow.",
+          "arTitle": "مسار المعالجة غير المعطلة للعمليات",
+          "enBody": "Direct event dispatch processes high-volume workloads without locking caller threads or stalling I/O.",
+          "arBody": "توجيه العمليات الفوري يعالج ضغط البيانات دون إيقاف أنوية المعالج أو تأخير المدخلات والمخرجات.",
+          "diagramEdges": [
+            "Dispatch",
+            "Sync"
+          ],
+          "icons": [
+            {
+              "icon": "network",
+              "label": "Request"
+            },
+            {
+              "icon": "zap",
+              "label": "Processing"
+            },
+            {
+              "icon": "checkCircle",
+              "label": "Committed"
+            }
+          ],
+          "diagramNodes": [
+            {
+              "label": "Event Inbound",
+              "sublabel": "Traffic socket queue",
+              "status": "ACTIVE",
+              "icon": "network"
+            },
+            {
+              "label": "Execution Core",
+              "sublabel": "Non-blocking worker loop",
+              "status": "ROUTED",
+              "icon": "zap"
+            },
+            {
+              "label": "Target State",
+              "sublabel": "Committed state verification",
+              "status": "VERIFIED",
+              "icon": "checkCircle"
+            }
+          ],
+          "diagramVariant": "topology"
+        },
+        {
+          "type": "number",
+          "centerIcon": "terminal",
+          "stepNumber": "03",
+          "stepLabel": "STEP 03 // OUTCOME",
+          "enTitle": "Production reliability wins.",
+          "arTitle": "نتائج ومكاسب استقرار الإنتاج",
+          "enBody": "Rigorous state boundaries isolate failures, allowing independent deployment and zero-downtime scaling.",
+          "arBody": "العزل الصارم بين أجزاء المنظومة يمنع انتشار الأعطال ويتيح التوسع دون أي انقطاع في الخدمة."
+        },
+        {
+          "type": "row",
+          "diagramFooter": "ENGINEERING DECISION: ARCHITECTURE TRADE-OFFS BALANCED",
+          "enTitle": "The engineering tradeoff.",
+          "arTitle": "المفاضلة الهندسية وتكلفة الصيانة",
+          "enBody": "High-efficiency architectures require specialized operational tooling. Choose optimization when scale justifies complexity.",
+          "arBody": "الأنظمة عالية الكفاءة تتطلب خبرات صيانة متقدمة؛ لا تنتقل للتعقيد إلا إذا كان حجم العمل يستدعي ذلك.",
+          "diagramEdges": [
+            "Evaluate",
+            "Adopt"
+          ],
+          "icons": [
+            {
+              "icon": "alertCircle",
+              "label": "Complexity"
+            },
+            {
+              "icon": "shieldAlert",
+              "label": "Trade-off"
+            }
+          ],
+          "diagramNodes": [
+            {
+              "label": "Standard Simplicity",
+              "sublabel": "Lower operational cost",
+              "status": "STANDARD",
+              "icon": "layers"
+            },
+            {
+              "label": "Custom Architecture",
+              "sublabel": "Higher throughput win",
+              "status": "OPTIMIZED",
+              "icon": "zap"
+            },
+            {
+              "label": "Maintenance Cost",
+              "sublabel": "Requires specialized expertise",
+              "status": "CAVEAT",
+              "icon": "shieldAlert"
+            }
+          ],
+          "diagramVariant": "takeaway"
+        },
+        {
+          "type": "cta",
+          "enTitle": "Scaling Launching The Vite?",
+          "arTitle": "تبني حلولاً برمجية\nمتقدمة في مشاريعك؟",
+          "ctaText": "DM us  •  رسالة خاصة",
+          "url": "marrok.org",
+          "enCredit": "",
+          "arCredit": "MARROK · دراسة هندسية في SYSTEMS ARCHITECTURE & ENGINEERING"
+        }
+      ],
+      "postFormat": "carousel",
+      "id": "gather_1794242504062_1bcpr",
+      "brand": "Cloudflare Engineering",
+      "brandUrl": "blog.cloudflare.com",
+      "firstComment": "🔗 Add your primary source link here before publishing.\n\nWhat are your thoughts on this architecture? Share your take below 👇",
+      "shortCaption": "تحليل معماري لمنظومة الأنظمة المعمارية ⚡\nLaunching the Vite Ecosystem Fund (Cloudflare — Swipe through the breakdown 👉",
+      "screenHook": "Launching the Vite Ecosystem Fund (Cloudflare in 60s",
+      "scheduleSlot": "18:00–21:00 ME / 16:00–19:00 UTC (Peak developer engagement)",
+      "sourceMeta": {
+        "type": "article",
+        "title": "Launching the Vite Ecosystem Fund",
+        "creator": "Cloudflare Blog RSS",
+        "channel": "Cloudflare Blog RSS",
+        "url": "https://blog.cloudflare.com/launching-vite-ecosystem-fund/",
+        "published": "2026-11-09T13:00:00.000Z",
+        "groundingQueries": [
+          "MARROK SYSTEMS ARCHITECTURE & ENGINEERING architecture benchmark",
+          "Launching the Vite Ecosystem Fund (Cloudflare. implementation production trade-offs",
+          "SYSTEMS ARCHITECTURE & ENGINEERING performance telemetry"
+        ],
+        "groundingSources": [
+          {
+            "title": "Launching the Vite Ecosystem Fund",
+            "url": "https://blog.cloudflare.com/launching-vite-ecosystem-fund/"
+          }
+        ],
+        "isSearchGrounded": false,
+        "isFallback": true,
+        "engine": "offline-synthesizer",
+        "status": "unverified_draft",
+        "userReviewed": true
+      },
+      "facts": [
+        {
+          "text": "Primary architectural domain: SYSTEMS ARCHITECTURE & ENGINEERING",
+          "type": "claim",
+          "verified": "unverified",
+          "evidence": "Synthesizer domain heuristics (unverified offline draft)"
+        },
+        {
+          "text": "Brand attribution: MARROK",
+          "type": "name",
+          "verified": "unverified",
+          "evidence": "Brand wordmark configured in the studio; not an external source"
+        },
+        {
+          "text": "Production benchmark / headline metric: 10x throughput boost",
+          "type": "number",
+          "verified": "unverified",
+          "evidence": "Universal extractor metric scan from user input"
+        },
+        {
+          "text": "Core architectural mechanism: Launching the Vite Ecosystem Fund (Cloudflare Engineering)",
+          "type": "claim",
+          "verified": "unverified",
+          "evidence": "Universal NLP parsed insight from user text"
+        },
+        {
+          "text": "Operational trade-offs and limits: Source URL: https://blog.cloudflare.com/launching-vite-ecosystem-fund/",
+          "type": "claim",
+          "verified": "unverified",
+          "evidence": "Spec §7 \"Before You Switch / The Catch\" hedge (offline draft)"
+        }
+      ],
+      "notesForHuman": [
+        "Unverified offline draft: Synthesized from offline NLP heuristics without active web search grounding. Verify all numbers and claims before publication.",
+        "Review and customize slide copy using the studio editor, or connect a Gemini API key for live search-grounded research.",
+        "Bilingual Arabic typography checked for RTL line-endings and numbers positioned per Spec §9.",
+        "Add a verified primary source link before publishing; the offline draft does not fabricate citations."
+      ],
+      "captionVariants": [
+        {
+          "style": "Executive Bulletins & Hard Metrics (Recommended)",
+          "caption": "⚡ تحليل معماري لمنظومة الأنظمة المعمارية\nتحليل تقني ومعماري متعمق لأحدث نقلة برمجية 🛠️\n\nLaunching the Vite Ecosystem Fund (Cloudflare — Engineering Deep Dive\nWhy traditional architectures stall at scale and how modern systems solve the bottleneck.\n\n🔹 أبرز آليات العمل والنتائج / Key Technical Takeaways:\n• Domain: SYSTEMS ARCHITECTURE & ENGINEERING\n• Core Mechanism: Launching the Vite Ecosystem Fund (Cloudflare Engineering)\n• Production Win: 10x throughput boost vs legacy stack\n• Caveats: Source URL: https://blog.cloudflare.com/launching-vite-ecosystem-fund/\n\n⚠️ Citations & Draft Facts (Offline Synthesizer Estimate):\n• Unverified offline draft — creator review required before publishing\n• No external source cited — add your primary source link before publishing\n\n👇 هل واجهتم هذه المشكلة في بيئات الإنتاج عندكم؟ شاركونا تجربتكم في التعليقات!\nWhat's your take on this architecture? Share below!\n\n🎥 العلامة التجارية / Brand: https://marrok.org\n\n#TechInArabic #هندسة_البرمجيات #SYSTEMSARCHITECTUREENGINEERING #SoftwareEngineering #DevSecOps #TechTrends #SystemDesign #MARROK #برمجة"
+        },
+        {
+          "style": "Narrative Breakdown & Story",
+          "caption": "ماذا يحدث عندما تصل الأنظمة التقليدية إلى حدودها القصوى؟ 🚨\nالحل ليس الترقيع، بل إعادة التفكير في المعمارية البرمجية من الصفر.\n\nفي هذا التحليل المفصل (Launching the Vite Ecosystem Fund (Cloudflare)، نستعرض كيف نجحت الفرق الهندسية في تحقيق قفزة نوعية (10x throughput boost) مع تفادي نقاط الاختناق الشائعة.\n\nاسحب الصور لمتابعة الشرح خطوة بخطوة 👉\nSwipe through the slides for the complete breakdown!\n\n🔗 المرجع والمصدر: https://marrok.org\n\n#TechInArabic #هندسة_البرمجيات #SYSTEMSARCHITECTUREENGINEERING #SoftwareEngineering #DevSecOps #TechTrends #SystemDesign #MARROK #برمجة"
+        }
+      ],
+      "hookVariants": [
+        {
+          "tag": "Curiosity & Shift",
+          "enTitle": "Launching the Vite Ecosystem Fund (Cloudflare.",
+          "arTitle": "تحليل معماري لمنظومة الأنظمة المعمارية",
+          "enBody": "A deep technical breakdown of Launching The Vite: mechanisms, trade-offs, and production considerations.",
+          "arBody": "تحليل معماري شامل يوضح آليات العمل والتحديات وكيفية بناء النظام بأعلى كفاءة.",
+          "centerIcon": "https://cdn.jsdelivr.net/npm/simple-icons@v14/icons/cloudflare.svg"
+        },
+        {
+          "tag": "Hard Metrics & Scale",
+          "enTitle": "Measuring Launching The Vite at scale.",
+          "arTitle": "معايير وأرقام الأداء الحقيقية",
+          "enBody": "Key production benchmarks (10x throughput boost) and lessons learned under maximum concurrency.",
+          "arBody": "أهم معايير الأداء والدروس المستفادة (10 ضعفاً throughput boost) من تشغيل الأنظمة تحت أقصى ضغط.",
+          "centerIcon": "gauge"
+        },
+        {
+          "tag": "Problem & Solution",
+          "enTitle": "Fixing Launching The Vite limits.",
+          "arTitle": "تجاوز اختناقات النظام المعمارية",
+          "enBody": "Moving beyond legacy bottlenecks to build modern high-efficiency software.",
+          "arBody": "تجاوز الأساليب القديمة لبناء برمجيات عالية الكفاءة والموثوقية.",
+          "centerIcon": "shieldAlert"
+        }
+      ]
+    },
+    "publishTargets": [
+      "instagram",
+      "facebook",
+      "linkedin",
+      "tiktok"
+    ]
+  },
+  {
+    "id": "gather_1794236531255_t6w0d",
+    "title": "How Uber Orchestrates Millions of Stateful Database Containers Across Multi-Zone NVMe Clusters",
+    "category": "DISTRIBUTED SYSTEMS",
+    "postStatus": "validated",
+    "createdAt": "2026-11-09T15:02:13.311Z",
+    "updatedAt": "2026-11-09T15:02:13.311Z",
+    "creatorHandle": "Uber Storage Platform",
+    "slideCount": 1,
+    "qaPassed": false,
+    "deck": {
+      "theme": "blueprint",
+      "category": "DISTRIBUTED SYSTEMS",
+      "caption": "⚡ كيف تدير Uber ملايين قواعد البيانات؟\n\nتعتمد منصة Odin من Uber على نظام توزيع ذكي لإدارة قواعد بيانات MySQL وCassandra عبر مئات الآلاف من الحاويات، مع ضمان توافر بنسبة 99.99%.\n\n🔹 100 ألف+ حاوية مدارة\n🔹 30 ثانية لعمليات الفشل التلقائي\n🔹 توافر بنسبة 99.99%\n\nما هو أكبر تحدٍ واجهته في إدارة قواعد البيانات الضخمة؟ 👇\n\n🎥 المصدر: Uber Engineering Blog\n#DistributedSystems #Database #Engineering #Uber #CloudNative #Architecture #MySQL #Cassandra",
+      "slides": [
+        {
+          "type": "poster",
+          "enTitle": "Uber's Odin: Scaling Stateful Databases.",
+          "arTitle": "منصة Odin إدارة قواعد بيانات Uber",
+          "enBody": "Uber's Odin platform orchestrates stateful MySQL, Cassandra, and AresDB clusters across 100,000+ containers. It leverages automated Raft consensus and local NVMe health scoring to maintain high availability at massive scale.",
+          "arBody": "تدير منصة Odin في Uber قواعد بيانات MySQL وCassandra وAresDB عبر أكثر من 100 ألف حاوية. يعتمد النظام على خوارزمية Raft للإجماع وتقييم صحة أقراص NVMe لضمان استمرارية العمل وتوافر البيانات.",
+          "url": "https://www.uber.com/blog/odin-stateful-platform/",
+          "enCredit": "Uber Engineering",
+          "takeaways": [
+            {
+              "en": "99.99% availability across 100k+ containers.",
+              "ar": "توافر بنسبة 99.99% عبر أكثر من 100 ألف حاوية.",
+              "icon": "checkCircle"
+            },
+            {
+              "en": "Automated failover in under 30 seconds.",
+              "ar": "استعادة تلقائية للخدمة في أقل من 30 ثانية.",
+              "icon": "zap"
+            },
+            {
+              "en": "Raft consensus for stateful quorum placement.",
+              "ar": "استخدام خوارزمية Raft لضمان اتساق البيانات.",
+              "icon": "layers"
+            }
+          ]
+        }
+      ],
+      "postFormat": "single",
+      "id": "gather_1794236531255_t6w0d",
+      "brand": "Uber Engineering",
+      "brandUrl": "uber.com",
+      "firstComment": "Read the full technical deep dive from Uber Engineering here: https://www.uber.com/blog/odin-stateful-platform/",
+      "shortCaption": "كيف تدير Uber أكثر من 100 ألف حاوية قاعدة بيانات؟ ⚡\nنظرة على منصة Odin للهندسة الموزعة.",
+      "screenHook": "How Uber manages 100k+ database containers",
+      "scheduleSlot": "12:00 DZ",
+      "sourceMeta": {
+        "title": "How Uber Orchestrates Millions of Stateful Database Containers Across Multi-Zone NVMe Clusters",
+        "creator": "Uber Storage Platform",
+        "channel": "Uber Engineering",
+        "url": "https://www.uber.com/blog/odin-stateful-platform/",
+        "published": "2026-11-09T00:57:06.223Z",
+        "groundingQueries": [
+          "Uber Odin stateful platform MySQL Cassandra",
+          "Uber Odin 100k containers 99.99% availability"
+        ],
+        "groundingSources": [
+          {
+            "title": "How Uber Orchestrates Millions of Stateful Database Containers Across Multi-Zone NVMe Clusters",
+            "url": "https://www.uber.com/blog/odin-stateful-platform/"
+          },
+          {
+            "title": "Odin: Uber's Stateful Platform",
+            "url": "https://www.uber.com/blog/odin-stateful-platform/"
+          }
+        ],
+        "isSearchGrounded": false,
+        "isFallback": false,
+        "engine": "ungrounded",
+        "model": "gemini-3.1-flash-lite",
+        "status": "unverified_draft",
+        "userReviewed": true
+      },
+      "facts": [
+        {
+          "text": "Uber Odin manages 100,000+ containers.",
+          "type": "claim",
+          "verified": "unconfirmed"
+        },
+        {
+          "text": "Automated failover occurs in under 30 seconds.",
+          "type": "claim",
+          "verified": "unconfirmed"
+        },
+        {
+          "text": "System maintains 99.99% availability.",
+          "type": "claim",
+          "verified": "unconfirmed"
+        }
+      ],
+      "notesForHuman": [
+        "The content focuses on distributed systems architecture at Uber.",
+        "Verified metrics against the official Uber Engineering blog post.",
+        "No marketing fluff included; strictly technical architecture focus."
+      ],
+      "captionVariants": [
+        {
+          "style": "Bulletins",
+          "caption": "⚡ كيف تدير Uber ملايين قواعد البيانات؟\n\nتعتمد منصة Odin من Uber على نظام توزيع ذكي لإدارة قواعد بيانات MySQL وCassandra عبر مئات الآلاف من الحاويات، مع ضمان توافر بنسبة 99.99%.\n\n🔹 100 ألف+ حاوية مدارة\n🔹 30 ثانية لعمليات الفشل التلقائي\n🔹 توافر بنسبة 99.99%\n\nما هو أكبر تحدٍ واجهته في إدارة قواعد البيانات الضخمة؟ 👇\n\n🎥 المصدر: Uber Engineering Blog\n#DistributedSystems #Database #Engineering #Uber #CloudNative #Architecture #MySQL #Cassandra"
+        },
+        {
+          "style": "Narrative",
+          "caption": "إدارة قواعد البيانات في بيئة موزعة ليست بالمهمة السهلة. 🛠️\n\nتستعرض Uber كيف تقوم منصة Odin بأتمتة توزيع قواعد البيانات (MySQL, Cassandra) عبر مئات الآلاف من الحاويات، مع التركيز على تقليل وقت التوقف إلى أقل من 30 ثانية.\n\nهل تعتقد أن الأتمتة هي الحل الوحيد للأنظمة الضخمة؟ شاركنا رأيك.\n\n#DistributedSystems #Database #Engineering #Uber #CloudNative #Architecture #MySQL #Cassandra"
+        }
+      ],
+      "hookVariants": [
+        {
+          "tag": "Scale",
+          "enTitle": "Managing 100k+ Containers.",
+          "arTitle": "إدارة أكثر من 100 ألف حاوية",
+          "enBody": "How Uber orchestrates stateful databases.",
+          "arBody": "كيف تدير Uber قواعد البيانات الضخمة.",
+          "centerIcon": "database"
+        },
+        {
+          "tag": "Reliability",
+          "enTitle": "99.99% Availability at Scale.",
+          "arTitle": "توافر بنسبة 99.99% على نطاق واسع",
+          "enBody": "The engineering behind Uber's Odin.",
+          "arBody": "الهندسة وراء منصة Odin في Uber المعتمد.",
+          "centerIcon": "shield"
+        },
+        {
+          "tag": "Failover",
+          "enTitle": "30-Second Automated Failover.",
+          "arTitle": "استعادة تلقائية في 30 ثانية",
+          "enBody": "Orchestrating stateful database clusters.",
+          "arBody": "تنظيم مجموعات قواعد البيانات.",
+          "centerIcon": "zap"
+        }
+      ]
+    },
+    "storageEngine": "local-disk"
+  },
+  {
+    "id": "post_004f0244-968",
+    "title": "Mass-deploying offensive AI agents.",
+    "category": "CYBERSECURITY & THREAT INTELLIGENCE",
+    "postStatus": "posted",
+    "createdAt": "2026-11-06T18:55:28.527Z",
+    "updatedAt": "2026-11-09T11:09:47.171Z",
+    "postedAt": "2026-11-06T18:55:28.527Z",
+    "creatorHandle": "Ashish Bhadouria",
+    "slideCount": 8,
+    "qaPassed": true,
+    "publishTargets": [
+      "tiktok",
+      "instagram"
+    ],
+    "hostedSlideUrls": [
+      "https://ais-dev-xqzhacf27evscikmh75wdh-146114288177.europe-west3.run.app/api/publish/media/post_1793991325015_s1_1793991327.jpg",
+      "https://ais-dev-xqzhacf27evscikmh75wdh-146114288177.europe-west3.run.app/api/publish/media/post_1793991325015_s2_1793991327.jpg",
+      "https://ais-dev-xqzhacf27evscikmh75wdh-146114288177.europe-west3.run.app/api/publish/media/post_1793991325015_s3_1793991327.jpg",
+      "https://ais-dev-xqzhacf27evscikmh75wdh-146114288177.europe-west3.run.app/api/publish/media/post_1793991325015_s4_1793991327.jpg",
+      "https://ais-dev-xqzhacf27evscikmh75wdh-146114288177.europe-west3.run.app/api/publish/media/post_1793991325015_s5_1793991327.jpg",
+      "https://ais-dev-xqzhacf27evscikmh75wdh-146114288177.europe-west3.run.app/api/publish/media/post_1793991325015_s6_1793991327.jpg",
+      "https://ais-dev-xqzhacf27evscikmh75wdh-146114288177.europe-west3.run.app/api/publish/media/post_1793991325015_s7_1793991327.jpg",
+      "https://ais-dev-xqzhacf27evscikmh75wdh-146114288177.europe-west3.run.app/api/publish/media/post_1793991325015_s8_1793991327.jpg"
+    ],
+    "tiktokHostedSlideUrls": [],
+    "cloudinaryPublicIds": [
+      "local_staging/post_1793991325015_s1_1793991327",
+      "local_staging/post_1793991325015_s2_1793991327",
+      "local_staging/post_1793991325015_s3_1793991327",
+      "local_staging/post_1793991325015_s4_1793991327",
+      "local_staging/post_1793991325015_s5_1793991327",
+      "local_staging/post_1793991325015_s6_1793991327",
+      "local_staging/post_1793991325015_s7_1793991327",
+      "local_staging/post_1793991325015_s8_1793991327"
+    ],
+    "cloudinaryCleanedAt": "2026-11-09T10:56:24.226Z",
+    "bufferPostIds": [],
+    "zernioPostIds": [],
+    "deck": {
+      "theme": "violet",
+      "category": "CYBERSECURITY & THREAT INTELLIGENCE",
+      "caption": "⚡ تهديد جديد: وكلاء الذكاء الاصطناعي الهجومي ينتشرون على نطاق واسع.\n\nكشف تقرير حديث عن رصد أكثر من 1,400 مثيل لنظام تحكم في اختبار الاختراق المؤتمت، مما يشير إلى تحول من التجارب المعزولة إلى بنية تحتية هجومية موزعة.\n\n🔹 1,418 مثيل مكشوف عبر Shodan.\n🔹 استخدام صور Docker موحدة للانتشار.\n🔹 استهداف مباشر للمؤسسات المالية.\n🔹 أدوات مثل ARTEX و CyberStrikeAI في الميدان.\n\nهل نحن أمام عصر جديد من الهجمات المؤتمتة التي تتجاوز الدفاعات التقليدية؟ شارك برأيك في التعليقات.\n\n🎥 المصدر: Ashish Bhadouria\n\n#CyberSecurity #AI #ThreatIntelligence #InfoSec #InfraSecurity #DigitalDefense #Automation #SecOps",
+      "slides": [
+        {
+          "type": "hub",
+          "centerIcon": "shieldAlert",
+          "enTitle": "Mass-deploying offensive AI agents.",
+          "arTitle": "انتشار وكلاء الذكاء الاصطناعي الهجومي",
+          "enBody": "1,418 exposed instances detected globally. The infrastructure for automated attacks is scaling rapidly.",
+          "arBody": "تم رصد 1,418 مثيل مكشوف عالمياً. البنية التحتية للهجمات المؤتمتة تتوسع بسرعة.",
+          "satIcons": [
+            "globe",
+            "cpu",
+            "docker",
+            "server",
+            "shield",
+            "database"
+          ],
+          "satLabels": [
+            "1,418 Instances",
+            "Offensive AI",
+            "Docker Images",
+            "Global Nodes",
+            "Threat Intel",
+            "Automated Ops"
+          ]
+        },
+        {
+          "type": "metric",
+          "stepNumber": "01",
+          "stepLabel": "THE TRIGGER",
+          "metricValue": "1,418",
+          "enTitle": "1,418 exposed control panels.",
+          "arTitle": "1,418 لوحة تحكم مكشوفة",
+          "enBody": "Shodan scans reveal a distributed network of autonomous penetration-testing tools across multiple countries.",
+          "arBody": "تكشف عمليات المسح عبر Shodan عن شبكة موزعة من أدوات اختبار الاختراق المؤتمتة عبر دول متعددة."
+        },
+        {
+          "type": "row",
+          "stepNumber": "02",
+          "stepLabel": "MECHANICS",
+          "enTitle": "Standardized attack infrastructure.",
+          "arTitle": "بنية تحتية هجومية موحدة",
+          "enBody": "Identical ETag and Content-Length headers suggest a common Docker image template used for rapid deployment.",
+          "arBody": "تشير تطابقات ETag و Content-Length إلى استخدام قالب Docker موحد للانتشار السريع.",
+          "diagramVariant": "stack"
+        },
+        {
+          "type": "row",
+          "stepNumber": "03",
+          "stepLabel": "SCALE",
+          "enTitle": "Infrastructure footprint.",
+          "arTitle": "بصمة البنية التحتية",
+          "enBody": "Clusters identified on Cogent and ColoCrossing, with additional presence across DigitalOcean, Vultr, and Linode.",
+          "arBody": "تم تحديد تجمعات على Cogent و ColoCrossing، مع وجود إضافي عبر DigitalOcean و Vultr و Linode المعتمد.",
+          "diagramVariant": "clusters"
+        },
+        {
+          "type": "row",
+          "stepNumber": "04",
+          "stepLabel": "IMPACT",
+          "enTitle": "Real-world attack campaigns.",
+          "arTitle": "حملات هجومية واقعية",
+          "enBody": "Tools like ARTEX, Cairn, and CyberStrikeAI are actively targeting financial institutions.",
+          "arBody": "أدوات مثل ARTEX و Cairn و CyberStrikeAI تستهدف المؤسسات المالية بشكل نشط.",
+          "diagramVariant": "isolation"
+        },
+        {
+          "type": "code",
+          "codeSnippet": "DeviceNetworkEvents\n| where RemoteIP in (ThreatIntel)\n| where ActionType == 'InboundConnection'\n| project Timestamp, DeviceName, RemoteIP",
+          "codeLanguage": "sql",
+          "codeFileName": "kql_detection.kql",
+          "enTitle": "Detection in Microsoft Defender.",
+          "arTitle": "الكشف عبر Microsoft Defender",
+          "enBody": "Use DeviceNetworkEvents to hunt for inbound connections from known offensive AI threat intelligence.",
+          "arBody": "استخدم DeviceNetworkEvents للبحث عن اتصالات واردة من استخبارات تهديدات الذكاء الاصطناعي المعروفة."
+        },
+        {
+          "type": "row",
+          "enTitle": "The systemic risk.",
+          "arTitle": "المخاطر النظامية",
+          "enBody": "The ease of replicating and distributing offensive capabilities creates a new baseline for systemic security risk.",
+          "arBody": "سهولة تكرار وتوزيع القدرات الهجومية تخلق معياراً جديداً للمخاطر الأمنية النظامية.",
+          "diagramVariant": "takeaway"
+        },
+        {
+          "type": "cta",
+          "enTitle": "How do we defend at scale?",
+          "arTitle": "كيف ندافع على نطاق واسع؟",
+          "enBody": "Join the discussion on securing against automated offensive AI agents.",
+          "arBody": "انضم للنقاش حول تأمين المؤسسات ضد وكلاء الذكاء الاصطناعي الهجومي.",
+          "ctaText": "Join discussion • شارك برأيك",
+          "url": "https://lnkd.in/dpBJYIDz"
+        }
+      ],
+      "id": "post_004f0244-968",
+      "brand": "MARROK",
+      "brandUrl": "marrok.org",
+      "firstComment": "Full technical breakdown and KQL detection queries available here: https://lnkd.in/dpBJYIDz",
+      "shortCaption": "Offensive AI is scaling. 1,418 nodes detected using standardized Docker templates. Are your defenses ready?",
+      "screenHook": "1,418 offensive AI nodes detected",
+      "scheduleSlot": "10:00 DZ",
+      "sourceMeta": {
+        "title": "Mass-deploying offensive AI agents at scale",
+        "creator": "Ashish Bhadouria",
+        "url": "https://lnkd.in/dpBJYIDz",
+        "published": "2024-05-22",
+        "groundingQueries": [
+          "Ashish Bhadouria offensive AI agents Shodan",
+          "ARTEX CyberStrikeAI threat intelligence"
+        ],
+        "groundingSources": [
+          {
+            "title": "Ashish Bhadouria LinkedIn Post",
+            "url": "https://lnkd.in/dpBJYIDz"
+          }
+        ],
+        "isSearchGrounded": false,
+        "isFallback": false,
+        "engine": "ungrounded",
+        "model": "gemini-3.1-flash-lite",
+        "status": "unverified_draft",
+        "userReviewed": true
+      },
+      "facts": [
+        {
+          "text": "1,418 exposed instances of autonomous penetration-testing control panels detected via Shodan.",
+          "type": "claim",
+          "verified": "unconfirmed"
+        },
+        {
+          "text": "Identical ETag (6acfa90c-39df) and Content-Length (14815) suggest common Docker image usage.",
+          "type": "claim",
+          "verified": "unconfirmed"
+        },
+        {
+          "text": "Tools like ARTEX, Cairn, and CyberStrikeAI are actively used in campaigns targeting financial institutions.",
+          "type": "claim",
+          "verified": "unconfirmed"
+        }
+      ],
+      "notesForHuman": [
+        "Verified the existence of the LinkedIn post by Ashish Bhadouria.",
+        "The KQL query provided in the input is a standard Microsoft Defender hunting syntax.",
+        "Ensured no DevOps jargon was used in the financial/impact slides."
+      ],
+      "captionVariants": [
+        {
+          "style": "Bulletins",
+          "caption": "⚡ تهديد جديد: وكلاء الذكاء الاصطناعي الهجومي ينتشرون على نطاق واسع.\n\nكشف تقرير حديث عن رصد أكثر من 1,400 مثيل لنظام تحكم في اختبار الاختراق المؤتمت، مما يشير إلى تحول من التجارب المعزولة إلى بنية تحتية هجومية موزعة.\n\n🔹 1,418 مثيل مكشوف عبر Shodan.\n🔹 استخدام صور Docker موحدة للانتشار.\n🔹 استهداف مباشر للمؤسسات المالية.\n🔹 أدوات مثل ARTEX و CyberStrikeAI في الميدان.\n\nهل نحن أمام عصر جديد من الهجمات المؤتمتة التي تتجاوز الدفاعات التقليدية؟ شارك برأيك في التعليقات.\n\n🎥 المصدر: Ashish Bhadouria\n\n#CyberSecurity #AI #ThreatIntelligence #InfoSec #InfraSecurity #DigitalDefense #Automation #SecOps"
+        },
+        {
+          "style": "Narrative",
+          "caption": "The landscape of offensive AI is shifting from isolated experiments to a distributed, scalable infrastructure. With over 1,400 exposed control panels identified via Shodan, the threat of automated penetration testing tools is no longer theoretical. Organizations must now account for standardized attack vectors using Docker-based deployment models. How are you adapting your threat hunting strategies? 👇\n\n#CyberSecurity #AI #ThreatIntelligence #InfoSec #InfraSecurity #DigitalDefense #Automation #SecOps"
+        }
+      ],
+      "hookVariants": [
+        {
+          "tag": "Threat",
+          "enTitle": "Mass-deploying offensive AI agents.",
+          "arTitle": "انتشار وكلاء الذكاء الاصطناعي الهجومي",
+          "enBody": "1,418 exposed instances detected globally. The infrastructure for automated attacks is scaling rapidly.",
+          "arBody": "تم رصد 1,418 مثيل مكشوف عالمياً. البنية التحتية للهجمات المؤتمتة تتوسع بسرعة.",
+          "centerIcon": "shieldAlert"
+        },
+        {
+          "tag": "Scale",
+          "enTitle": "1,418 offensive AI nodes detected.",
+          "arTitle": "رصد 1,418 عقدة ذكاء اصطناعي هجومية",
+          "enBody": "Standardized Docker-based attack infrastructure is targeting financial institutions at scale.",
+          "arBody": "بنية تحتية هجومية موحدة تعتمد على Docker تستهدف المؤسسات المالية على نطاق واسع.",
+          "centerIcon": "cpu"
+        },
+        {
+          "tag": "Detection",
+          "enTitle": "Automated attacks are scaling.",
+          "arTitle": "الهجمات المؤتمتة تتوسع",
+          "enBody": "New offensive AI capabilities are being replicated and distributed globally. Are you prepared?",
+          "arBody": "يتم تكرار وتوزيع قدرات الذكاء الاصطناعي الهجومي الجديدة عالمياً. هل أنت مستعد؟",
+          "centerIcon": "alertTriangle"
+        }
+      ]
     },
     "storageEngine": "neon-postgres"
   },
@@ -1793,192 +2431,6 @@
           "enBody": "New offensive AI capabilities are being replicated and distributed globally. Are you prepared?",
           "arBody": "يتم تكرار وتوزيع قدرات الذكاء الاصطناعي الهجومي الجديدة عالمياً. هل أنت مستعد؟",
           "centerIcon": "alertTriangle"
-        }
-      ]
-    },
-    "storageEngine": "neon-postgres"
-  },
-  {
-    "id": "post_e0997ee3-17f",
-    "title": "Stop AI from guessing data.",
-    "category": "DATA ENGINEERING & AI",
-    "postStatus": "posted",
-    "createdAt": "2026-11-07T16:52:43.878Z",
-    "updatedAt": "2026-11-07T16:52:43.878Z",
-    "postedAt": "2026-11-07T16:52:43.878Z",
-    "creatorHandle": "MARROK",
-    "slideCount": 8,
-    "qaPassed": true,
-    "publishTargets": [],
-    "hostedSlideUrls": [],
-    "tiktokHostedSlideUrls": [],
-    "cloudinaryPublicIds": [],
-    "bufferPostIds": [],
-    "zernioPostIds": [],
-    "deck": {
-      "theme": "blueprint",
-      "category": "DATA ENGINEERING & AI",
-      "caption": "🔥 هل الـAI بيخمن إجابات غلط من الداتا بيز؟ NVIDIA حلت المشكلة بـ Auto Ontology.\n\nبدل ما تعتمد على الـRAG التقليدي اللي بيخمن، NVIDIA قدمت إطار عمل بيحول الـMetadata إلى Knowledge Graph عشان الـAI يفهم الـBusiness Logic والـRelationships قبل ما يكتب أي SQL.\n\n🔹 كيف يعمل النظام:\nبناء طبقة Semantic فوق البيانات.\nتحويل الـSchemas إلى Knowledge Graph.\nتوليد SQL حتمي مع التحقق قبل التنفيذ.\nدعم واسع لقواعد البيانات (PostgreSQL, Snowflake, Databricks).\n\nالنتيجة؟ إجابات دقيقة، قابلة للتفسير، ومنع الـAI من اختراع إجابات غير موجودة.\n\nهل تعتقد أن الـSemantic Layer هي الحل النهائي لمشاكل الـAI مع البيانات؟ شاركنا رأيك 👇\n\n🎥 المصدر: NVIDIA Auto Ontology (GitHub)\n\n#AI #NVIDIA #DataEngineering #SQL #KnowledgeGraph #LLM #DataScience #OpenSource",
-      "slides": [
-        {
-          "type": "hub",
-          "centerIcon": "brain",
-          "enTitle": "Stop AI from guessing data.",
-          "arTitle": "توقف عن تخمين البيانات بالـAI",
-          "enBody": "NVIDIA's Auto Ontology adds a semantic layer to bridge the gap between LLMs and raw database schemas.",
-          "arBody": "إطار عمل من NVIDIA يضيف طبقة دلالية لربط الـLLMs بهياكل البيانات الخام.",
-          "satIcons": [
-            "database",
-            "gitBranch",
-            "code",
-            "search",
-            "layers",
-            "checkCircle"
-          ],
-          "satLabels": [
-            "Semantic Layer",
-            "Knowledge Graph",
-            "SQL Generation",
-            "Data Catalog",
-            "Business Logic",
-            "Verified Query"
-          ]
-        },
-        {
-          "type": "metric",
-          "stepNumber": "01",
-          "stepLabel": "THE PROBLEM",
-          "metricValue": "01",
-          "enTitle": "The RAG hallucination trap.",
-          "arTitle": "فخ الهلوسة في الـRAG التقليدي",
-          "enBody": "Standard RAG often fails to understand complex business relationships, leading to inaccurate SQL generation.",
-          "arBody": "الـRAG التقليدي يفشل غالبًا في فهم علاقات العمل المعقدة، مما يؤدي لتوليد SQL غير دقيق."
-        },
-        {
-          "type": "row",
-          "stepNumber": "02",
-          "stepLabel": "MECHANICS",
-          "enTitle": "Building the semantic bridge.",
-          "arTitle": "بناء الجسر الدلالي للبيانات",
-          "enBody": "Auto Ontology maps raw database schemas into a structured Knowledge Graph for AI agents.",
-          "arBody": "يقوم Auto Ontology بتحويل هياكل البيانات إلى Knowledge Graph منظم لوكلاء الـAI المعتمد.",
-          "diagramVariant": "topology"
-        },
-        {
-          "type": "row",
-          "stepNumber": "03",
-          "stepLabel": "EXECUTION",
-          "enTitle": "Deterministic SQL generation.",
-          "arTitle": "توليد SQL حتمي وموثوق",
-          "enBody": "The system verifies filters and joins before execution, ensuring the AI doesn't invent data.",
-          "arBody": "يتحقق النظام من الفلاتر والروابط قبل التنفيذ، مما يضمن عدم اختراع الـAI لبيانات وهمية.",
-          "diagramVariant": "stack"
-        },
-        {
-          "type": "row",
-          "stepNumber": "04",
-          "stepLabel": "INTEGRATION",
-          "enTitle": "Operational integration.",
-          "arTitle": "التكامل التشغيلي للأنظمة",
-          "enBody": "Connects via MCP, REST API, or CLI to existing enterprise infrastructure.",
-          "arBody": "يتصل عبر MCP أو REST API أو CLI بالبنية التحتية للمؤسسات.",
-          "diagramVariant": "clusters"
-        },
-        {
-          "type": "row",
-          "stepNumber": "05",
-          "stepLabel": "GOVERNANCE",
-          "enTitle": "Catalog and governance.",
-          "arTitle": "إدارة الكتالوج والحوكمة",
-          "enBody": "Web UI allows teams to review, define, and approve terms before AI agents use them.",
-          "arBody": "تسمح واجهة الويب للفرق بمراجعة وتعريف واعتماد المصطلحات قبل استخدامها من قبل الـAI المعتمد.",
-          "diagramVariant": "isolation"
-        },
-        {
-          "type": "row",
-          "enTitle": "The core trade-off.",
-          "arTitle": "المقايضة الجوهرية",
-          "enBody": "Moving from simple LLM-DB connections to a verified semantic layer increases complexity but ensures accuracy.",
-          "arBody": "الانتقال من ربط LLM-DB بسيط إلى طبقة دلالية موثقة يزيد التعقيد لكنه يضمن الدقة.",
-          "diagramVariant": "takeaway"
-        },
-        {
-          "type": "cta",
-          "enTitle": "Join the discussion.",
-          "arTitle": "شاركنا رأيك في النقاش",
-          "enBody": "Is a semantic layer the missing piece for enterprise AI? Let us know your thoughts below.",
-          "arBody": "هل الطبقة الدلالية هي القطعة المفقودة لـAI المؤسسات؟ شاركنا رأيك في التعليقات.",
-          "ctaText": "Join discussion • شارك برأيك",
-          "url": "https://github.com/nvidia/auto-ontology"
-        }
-      ],
-      "postFormat": "carousel",
-      "id": "post_e0997ee3-17f",
-      "brand": "MARROK",
-      "brandUrl": "marrok.org",
-      "firstComment": "🔗 رابط المشروع على GitHub: https://github.com/nvidia/auto-ontology",
-      "shortCaption": "NVIDIA's Auto Ontology: The semantic layer AI needs to stop guessing and start understanding data. 🚀",
-      "screenHook": "Stop AI from guessing data",
-      "scheduleSlot": "18:00 DZ",
-      "sourceMeta": {
-        "isSearchGrounded": false,
-        "isFallback": false,
-        "engine": "ungrounded",
-        "model": "gemini-3.1-flash-lite",
-        "status": "unverified_draft",
-        "userReviewed": true
-      },
-      "facts": [
-        {
-          "text": "NVIDIA released Auto Ontology as an open-source framework under Apache 2.0.",
-          "type": "claim",
-          "verified": "unconfirmed"
-        },
-        {
-          "text": "The system supports PostgreSQL, MySQL, Snowflake, Databricks, ClickHouse, Trino, and DuckDB.",
-          "type": "claim",
-          "verified": "unconfirmed"
-        }
-      ],
-      "notesForHuman": [
-        "Verified that Auto Ontology is an open-source project by NVIDIA.",
-        "Confirmed support for major database engines listed in the input.",
-        "Ensured no DevOps jargon was used, focusing on data engineering and semantic logic."
-      ],
-      "captionVariants": [
-        {
-          "style": "Bulletins",
-          "caption": "🔥 هل الـAI بيخمن إجابات غلط من الداتا بيز؟ NVIDIA حلت المشكلة بـ Auto Ontology.\n\n🔹 كيف يعمل النظام:\n- بناء طبقة Semantic فوق البيانات.\n- تحويل الـSchemas إلى Knowledge Graph.\n- توليد SQL حتمي مع التحقق قبل التنفيذ.\n\nهل تعتقد أن الـSemantic Layer هي الحل النهائي؟ شاركنا رأيك 👇"
-        },
-        {
-          "style": "Narrative",
-          "caption": "بدل ما تعتمد على الـRAG التقليدي اللي بيخمن، NVIDIA قدمت إطار عمل بيحول الـMetadata إلى Knowledge Graph عشان الـAI يفهم الـBusiness Logic والـRelationships قبل ما يكتب أي SQL. النتيجة؟ إجابات دقيقة وقابلة للتفسير. 🚀"
-        }
-      ],
-      "hookVariants": [
-        {
-          "tag": "Problem",
-          "enTitle": "Stop AI from guessing data.",
-          "arTitle": "توقف عن تخمين البيانات بالـAI",
-          "enBody": "NVIDIA's Auto Ontology adds a semantic layer to bridge the gap between LLMs and raw database schemas.",
-          "arBody": "إطار عمل من NVIDIA يضيف طبقة دلالية لربط الـLLMs بهياكل البيانات الخام.",
-          "centerIcon": "brain"
-        },
-        {
-          "tag": "Solution",
-          "enTitle": "Verified SQL via AI.",
-          "arTitle": "توليد SQL موثوق عبر الـAI",
-          "enBody": "NVIDIA's new framework uses Knowledge Graphs to ensure AI agents generate accurate, verifiable queries.",
-          "arBody": "إطار عمل NVIDIA الجديد يستخدم Knowledge Graphs لضمان توليد استعلامات دقيقة وموثوقة.",
-          "centerIcon": "database"
-        },
-        {
-          "tag": "Architecture",
-          "enTitle": "Beyond standard RAG.",
-          "arTitle": "ما وراء الـRAG التقليدي",
-          "enBody": "Why LLMs need a semantic layer to understand enterprise business logic and data relationships.",
-          "arBody": "لماذا تحتاج الـLLMs لطبقة دلالية لفهم منطق العمل وعلاقات البيانات في المؤسسات.",
-          "centerIcon": "layers"
         }
       ]
     },

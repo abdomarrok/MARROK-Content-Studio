@@ -245,7 +245,7 @@ export const Header: React.FC<HeaderProps> = ({
                   ? 'border-teal-400/40 bg-teal-500/15 text-teal-200 hover:bg-teal-500/25'
                   : 'border-white/15 bg-white/[0.05] text-slate-200 hover:bg-white/[0.1] hover:text-white'
               }`}
-              title={`Save current deck to Vault (Status: ${deckStatus.toUpperCase()})`}
+              title={`Save current deck to Post Library (Status: ${deckStatus.toUpperCase()})`}
             >
               {deckStatus === 'posted' ? (
                 <Check className="w-3.5 h-3.5 text-emerald-300" />

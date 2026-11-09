@@ -135,14 +135,14 @@ export const SavedPostsDrawer: React.FC<SavedPostsDrawerProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-sm font-extrabold text-white font-jakarta tracking-tight">
-                  Saved & Posted Vault
+                  Post Library
                 </h2>
                 <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-white/10 text-white">
                   {posts.length}
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">
-                Only validated and posted carousels are stored here — replaces static presets
+                Validated and posted carousels ready for review, editing, or re-export
               </p>
             </div>
           </div>

@@ -70,7 +70,7 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
   const isTextHiddenByFullFrame = hasCardMedia && isFullMemeSlide(currentSlide);
 
   // Progressive disclosure states for secondary sections
-  const [isHooksOpen, setIsHooksOpen] = useState(false);
+  const [isHooksOpen, setIsHooksOpen] = useState(currentSlideIndex === 0);
   const [isTakeawaysOpen, setIsTakeawaysOpen] = useState(
     selectedElementId === 'takeawaysBlock'
   );
@@ -246,6 +246,52 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
               })}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Slide 1 Viral Hook Presets (Prominently placed above headlines for fast testing) */}
+      {currentSlideIndex === 0 && hookVariants && hookVariants.length > 0 && onApplyHookVariant && (
+        <div className="p-3 rounded-xl bg-white/[0.02] border border-white/10 space-y-2">
+          <button
+            type="button"
+            onClick={() => setIsHooksOpen((prev) => !prev)}
+            className="w-full flex items-center justify-between text-xs text-slate-300 transition-colors cursor-pointer"
+          >
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-3.5 h-3.5" style={{ color: theme.accent }} />
+              <span className="font-semibold text-white">Slide 1 Viral Hook Presets</span>
+              <span aria-hidden="true" className="text-slate-500">·</span>
+              <span className="text-[11px] font-mono text-slate-400">
+                {hookVariants.length} options
+              </span>
+            </div>
+            {isHooksOpen ? (
+              <ChevronUp className="w-4 h-4 text-slate-400" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-slate-400" />
+            )}
+          </button>
+
+          {isHooksOpen && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 pt-1 animate-fade-in">
+              {hookVariants.map((v, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => onApplyHookVariant(v)}
+                  className="p-2 rounded-lg text-left bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 hover:border-white/20 transition-all cursor-pointer group"
+                  title={v.enTitle}
+                >
+                  <div className="text-[10px] font-mono font-bold uppercase truncate" style={{ color: theme.accent }}>
+                    {v.tag}
+                  </div>
+                  <div className="text-xs text-slate-200 group-hover:text-white line-clamp-2 leading-tight mt-0.5">
+                    {v.enTitle}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -431,52 +477,6 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
           />
         </div>
       </div>
-
-      {/* Progressive Disclosure: Slide 1 Hook Variants Bar */}
-      {currentSlideIndex === 0 && hookVariants && hookVariants.length > 0 && onApplyHookVariant && (
-        <div className="pt-2 border-t border-white/[0.08]">
-          <button
-            type="button"
-            onClick={() => setIsHooksOpen((prev) => !prev)}
-            className="w-full flex items-center justify-between py-2 px-3 rounded-xl bg-white/[0.02] hover:bg-white/[0.05] border border-white/10 text-xs text-slate-300 transition-colors cursor-pointer"
-          >
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-3.5 h-3.5" style={{ color: theme.accent }} />
-              <span className="font-semibold text-white">Slide 1 Viral Hook Presets</span>
-              <span aria-hidden="true" className="text-slate-500">·</span>
-              <span className="text-[11px] font-mono text-slate-400">
-                {hookVariants.length} options
-              </span>
-            </div>
-            {isHooksOpen ? (
-              <ChevronUp className="w-4 h-4 text-slate-400" />
-            ) : (
-              <ChevronDown className="w-4 h-4 text-slate-400" />
-            )}
-          </button>
-
-          {isHooksOpen && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 pt-2.5 animate-fade-in">
-              {hookVariants.map((v, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => onApplyHookVariant(v)}
-                  className="px-2.5 py-1.5 rounded-lg text-left bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 transition-colors cursor-pointer group"
-                  title={v.enTitle}
-                >
-                  <div className="text-xs font-mono font-bold uppercase truncate" style={{ color: theme.accent }}>
-                    {v.tag}
-                  </div>
-                  <div className="text-xs text-slate-300 group-hover:text-white truncate">
-                    {v.enTitle}
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Progressive Disclosure: Key Takeaways Bento List */}
       {(isSingle || currentSlide.type === 'poster' || (currentSlide.takeaways && currentSlide.takeaways.length > 0)) && (

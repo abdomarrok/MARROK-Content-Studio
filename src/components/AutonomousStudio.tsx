@@ -2361,6 +2361,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 onDuplicateSlide={handleDuplicateSlide}
                 onDeleteSlide={handleDeleteSlide}
                 onMoveSlide={handleMoveSlide}
+                onOpenContactSheet={onOpenContactSheet}
               />
             )}
 
@@ -2759,7 +2760,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
               <span className="text-[11px] font-mono tabular-nums font-bold uppercase tracking-wider text-slate-200 truncate">
                 Slide {currentSlideIndex + 1} ·{' '}
                 {inspectorTab === 'copy'
-                  ? 'Content'
+                  ? 'Slide Text'
                   : inspectorTab === 'visual'
                   ? `Design (${currentSlide.type})`
                   : inspectorTab === 'position'
@@ -2891,7 +2892,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                     }`}
                   >
                     <Type className="w-3.5 h-3.5" style={!isExpanded && inspectorTab === 'copy' ? { color: theme.accent } : undefined} />
-                    <span>2. Content</span>
+                    <span>2. Slide Text</span>
                   </button>
 
                   <button
@@ -3344,7 +3345,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           {[
             {
               id: 'copy' as const,
-              label: activePostFormat === 'reel' ? 'Motion' : 'Content',
+              label: activePostFormat === 'reel' ? 'Motion' : 'Slide Text',
               icon: activePostFormat === 'reel' ? Film : Type,
               active: isSheetOpen && inspectorTab === 'copy',
               hidden: false,
