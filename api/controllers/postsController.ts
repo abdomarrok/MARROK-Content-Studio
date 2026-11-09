@@ -252,8 +252,28 @@ export async function loadStoredPosts(env: NodeJS.ProcessEnv = process.env): Pro
         }
         const pgPosts = await queryPostgresPosts(pool);
         if (pgPosts.length > 0) {
+          const nowMs = Date.now();
+          const nowIso = new Date(nowMs).toISOString();
+          const promotedPosts: SavedPostRecord[] = [];
+          for (const post of pgPosts) {
+            const schedMs = post.scheduledFor ? Date.parse(post.scheduledFor) : NaN;
+            if (Number.isFinite(schedMs) && schedMs <= nowMs) {
+              const promoted: SavedPostRecord = {
+                ...post,
+                postStatus: 'posted',
+                postedAt: post.postedAt || post.scheduledFor,
+                scheduledFor: undefined,
+                updatedAt: nowIso,
+              };
+              const sig = normalizePostTitleSignature(promoted);
+              await upsertPostgresPost(pool, promoted, sig);
+              promotedPosts.push(promoted);
+            } else {
+              promotedPosts.push(post);
+            }
+          }
           return {
-            posts: deduplicateSavedPosts(pgPosts),
+            posts: deduplicateSavedPosts(promotedPosts),
             storageEngine: 'neon-postgres',
             isCloudPersistent: true,
           };

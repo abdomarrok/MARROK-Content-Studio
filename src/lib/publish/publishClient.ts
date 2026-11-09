@@ -626,8 +626,8 @@ export interface ManagePublishedPostResponse {
 /**
  * Classifies a SavedPostRecord into one of the 4 canonical Post Management lifecycle stages:
  * - 'attention': QA failed (!qaPassed)
- * - 'scheduled': scheduledFor is in the future (> nowMs) OR postStatus !== 'posted' with scheduledFor set
- * - 'posted': postStatus === 'posted' (and either immediate or scheduledFor <= nowMs)
+ * - 'scheduled': scheduledFor is in the future (> nowMs)
+ * - 'posted': postStatus === 'posted' OR scheduledFor time has arrived (<= nowMs)
  * - 'draft': postStatus === 'validated' and not scheduled
  */
 export function derivePostLifecycleStage(
@@ -639,9 +639,10 @@ export function derivePostLifecycleStage(
   }
   const scheduledMs = post.scheduledFor ? Date.parse(post.scheduledFor) : NaN;
   if (Number.isFinite(scheduledMs)) {
-    if (scheduledMs > nowMs || post.postStatus !== 'posted') {
+    if (scheduledMs > nowMs) {
       return 'scheduled';
     }
+    return 'posted';
   }
   if (post.postStatus === 'posted') {
     return 'posted';

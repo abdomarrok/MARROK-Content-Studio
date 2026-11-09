@@ -266,32 +266,45 @@ export async function sweepExpiredCloudinaryAssets(options?: {
 
   const updatedPosts = await Promise.all(
     posts.map(async (post) => {
-      const pubIds = post.cloudinaryPublicIds || [];
-      if (pubIds.length === 0 || post.cloudinaryCleanedAt) {
-        return post;
+      let currentPost = post;
+      const scheduledMs = currentPost.scheduledFor ? Date.parse(currentPost.scheduledFor) : NaN;
+      const isScheduleDue = Number.isFinite(scheduledMs) && now >= scheduledMs;
+
+      // 1. As soon as scheduledFor time arrives, promote the post from 'Scheduled' to 'Posted'
+      if (isScheduleDue && (currentPost.postStatus !== 'posted' || currentPost.scheduledFor)) {
+        currentPost = {
+          ...currentPost,
+          postStatus: 'posted',
+          postedAt: currentPost.postedAt || currentPost.scheduledFor,
+          scheduledFor: undefined,
+          updatedAt: new Date().toISOString(),
+        };
+        didMutate = true;
       }
 
-      const scheduledMs = post.scheduledFor ? Date.parse(post.scheduledFor) : NaN;
+      const pubIds = currentPost.cloudinaryPublicIds || [];
+      if (pubIds.length === 0 || currentPost.cloudinaryCleanedAt) {
+        return currentPost;
+      }
+
       const isScheduleExpired = Number.isFinite(scheduledMs) && now >= scheduledMs + ONE_HOUR_MS;
-      const postedMs = post.postedAt ? Date.parse(post.postedAt) : NaN;
-      // Keep immediate-published Cloudinary images live for 1 hour so Buffer's async media worker & Metricool CSV imports never hit 404
+      const postedMs = currentPost.postedAt ? Date.parse(currentPost.postedAt) : NaN;
+      // Keep published Cloudinary images live for 1 hour after publication so Buffer/Zernio async media workers never hit 404
       const isImmediatePublishedExpired =
-        post.postStatus === 'posted' &&
-        !post.scheduledFor &&
+        currentPost.postStatus === 'posted' &&
+        !currentPost.scheduledFor &&
         (!Number.isFinite(postedMs) || now >= postedMs + ONE_HOUR_MS);
       const isTargeted =
         Boolean(options?.forceAll) ||
-        (Boolean(options?.postId) && post.id === options?.postId);
+        (Boolean(options?.postId) && currentPost.id === options?.postId);
 
       if (isTargeted || isScheduleExpired || isImmediatePublishedExpired) {
         await Promise.all(pubIds.map((pid) => destroyCloudinaryAsset(pid, config)));
         cleanedPublicIds.push(...pubIds);
-        cleanedPostIds.push(post.id);
+        cleanedPostIds.push(currentPost.id);
         didMutate = true;
         return {
-          ...post,
-          postStatus: isScheduleExpired ? 'posted' : post.postStatus,
-          postedAt: isScheduleExpired ? post.postedAt || post.scheduledFor : post.postedAt,
+          ...currentPost,
           cloudinaryPublicIds: [],
           cloudinaryCleanedAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -299,7 +312,7 @@ export async function sweepExpiredCloudinaryAssets(options?: {
       }
 
       remainingStagedCount += pubIds.length;
-      return post;
+      return currentPost;
     })
   );
 

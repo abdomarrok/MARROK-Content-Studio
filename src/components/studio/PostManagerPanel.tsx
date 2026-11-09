@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Calendar,
   Clock,
@@ -106,7 +106,25 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
   // Busy tracking per post ID
   const [busyPostId, setBusyPostId] = useState<string | null>(null);
 
-  const nowMs = Date.now();
+  // Live clock tick every 15s so scheduled posts flip to 'Posted' automatically as soon as their time arrives
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const nextNow = Date.now();
+      setNowMs(nextNow);
+      const hasNewlyDuePost = savedPosts.some((p) => {
+        if (!p.scheduledFor) return false;
+        const ms = Date.parse(p.scheduledFor);
+        return Number.isFinite(ms) && ms <= nextNow && p.postStatus !== 'posted';
+      });
+      if (hasNewlyDuePost) {
+        onRefreshStatus();
+        onRefreshVault();
+      }
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [savedPosts, onRefreshStatus, onRefreshVault]);
 
   const postsWithStage = useMemo(() => {
     return savedPosts.map((post) => ({
@@ -834,8 +852,10 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                 const scheduleParts = post.scheduledFor
                   ? formatLocalDateTimeParts(post.scheduledFor)
                   : null;
-                const postedParts = post.postedAt
-                  ? formatLocalDateTimeParts(post.postedAt)
+                const effectivePostedIso =
+                  post.postedAt || (stage === 'posted' ? post.scheduledFor : undefined);
+                const postedParts = effectivePostedIso
+                  ? formatLocalDateTimeParts(effectivePostedIso)
                   : null;
 
                 const postTargets: PublishTargetPlatform[] =
