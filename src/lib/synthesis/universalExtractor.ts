@@ -513,15 +513,67 @@ export function synthesizeUniversalCarousel(rawInput: string, options: Universal
   // 2. Extract Entities & Comparison
   const entities = parseComparativeEntities(cleaned, metrics);
 
-  // 3. Extract Core Subject & Headlines
+  // 3. Extract Core Subject & Substantive Sentences/Points
   let coreSubject = '';
-  const firstLine = lines[0] || 'System Architecture';
-  const userSubstantivePoints = lines
+  const firstLine = (lines[0] || 'System Architecture')
+    .replace(/\s*\([^)]*(?:Engineering|Blog|RSS|Research|Team|News| Lobsters|Reddit)[^)]*\)\s*$/i, '')
+    .trim();
+
+  // Filter out prompt wrapper headers ("Source URL:", "Technical Summary & Engineering Context:")
+  const contentLines = lines
     .slice(1)
-    .filter((l) => l.length > 20 && !/^https?:\/\//i.test(l));
+    .filter(
+      (l) =>
+        l.length > 18 &&
+        !/^https?:\/\//i.test(l) &&
+        !/^(?:source\s+url|technical\s+summary\s*(?:&\s*engineering\s+context)?|key\s+quantitative\s+metrics)\s*:?$/i.test(
+          l.trim()
+        )
+    );
+
+  // Expand multi-sentence paragraphs into distinct substantive points so RSS/article summaries
+  // with 1-2 paragraphs never collapse into < 3 points!
+  const userSubstantivePoints: string[] = [];
+  for (const line of contentLines) {
+    if (/^key\s+quantitative\s+metrics\s*:/i.test(line)) continue;
+    const sentences = line
+      .split(/(?<=[.!?])\s+(?=[A-Z0-9"`'•-])/)
+      .map((s) => s.replace(/^[•*-]\s*/, '').trim())
+      .filter((s) => s.length > 20);
+    if (sentences.length > 1 && contentLines.length < 5) {
+      for (const s of sentences) {
+        if (!userSubstantivePoints.includes(s)) {
+          userSubstantivePoints.push(s);
+        }
+      }
+    } else if (!userSubstantivePoints.includes(line)) {
+      userSubstantivePoints.push(line);
+    }
+  }
+
+  // If still < 3 points but we have a long single sentence with semicolons or clauses, split clauses
+  if (userSubstantivePoints.length > 0 && userSubstantivePoints.length < 3) {
+    const expanded: string[] = [];
+    for (const pt of userSubstantivePoints) {
+      const clauses = pt
+        .split(/(?:;\s+|\s+—\s+|\s+--\s+|,\s+(?:while|whereas|requiring|enabling|preventing|reducing|cutting|dropping)\s+)/i)
+        .map((c) => c.trim())
+        .filter((c) => c.length > 22);
+      if (clauses.length > 1) {
+        expanded.push(...clauses);
+      } else {
+        expanded.push(pt);
+      }
+    }
+    if (expanded.length >= 3) {
+      userSubstantivePoints.length = 0;
+      userSubstantivePoints.push(...expanded);
+    }
+  }
+
   const isExplicitHeadlineComparison =
     entities.isComparative &&
-    (/\b(?:vs\.?|versus|compared\s+to|faster\s+than)\b/i.test(firstLine) || userSubstantivePoints.length < 3);
+    (/\b(?:vs\.?|versus|compared\s+to|faster\s+than)\b/i.test(firstLine) || userSubstantivePoints.length < 2);
 
   if (isExplicitHeadlineComparison) {
     if (/\b(?:web\s*api|api)\b/i.test(cleaned)) {
@@ -549,6 +601,10 @@ export function synthesizeUniversalCarousel(rawInput: string, options: Universal
 
   // 4. Topic & Domain Classification
   const lower = cleaned.toLowerCase();
+  const isAgentOrDelegation =
+    /\b(agents?\s+aren['’]?t\s+humans|trusted\s+agent|agent\s+delegation|delegated?\s+auth|human[- ]in[- ]the[- ]loop|mcp\b|model\s+context\s+protocol|on\s+behalf\s+of|agentic\s+auth|scoped\s+delegation|oauth\s+delegation|ai\s+agents?)\b/i.test(
+      lower
+    );
   const isScionOrVcs = /\b(scion|git|vcs|monorepo|changeset|commit|checkouts?|branch|rebase)\b/i.test(lower);
   const isRedisOrCache = /\b(redis|valkey|memcached|cache|caching|in-memory|lru|key-value)\b/i.test(lower);
   const isContainerOrCloud = /\b(docker|container|scratch|distroless|multi-stage|dockerfile|k8s|kubernetes|pod)\b/i.test(lower);
@@ -557,9 +613,9 @@ export function synthesizeUniversalCarousel(rawInput: string, options: Universal
   const isAiOrLlm = /\b(llm|gpt|transformer|attention|kv[- ]?cache|token|inference|embedding|rag|weights)\b/i.test(lower);
   const isDatabase = /\b(postgres|postgresql|pgbouncer|mysql|sqlite|wal|database|sql|acid|query planner)\b/i.test(lower);
 
-  // 5. If user provided multiple substantive bullet points or sentences (>= 3 points):
+  // 5. If user provided multiple substantive bullet points or sentences (>= 2 points):
   // Directly synthesize slides from the user's actual points!
-  if (userSubstantivePoints.length >= 3 && !isExplicitHeadlineComparison) {
+  if (userSubstantivePoints.length >= 2 && !isExplicitHeadlineComparison) {
     return buildDeckFromUserPoints(coreSubject, userSubstantivePoints, {
       brand,
       brandUrl,
@@ -571,6 +627,10 @@ export function synthesizeUniversalCarousel(rawInput: string, options: Universal
   }
 
   // 6. Domain-Specific Narrative Generation for Short Prompts / Topic Inputs
+  if (isAgentOrDelegation) {
+    return buildAgentDelegationStory(coreSubject, { brand, brandUrl, targetCount, metrics });
+  }
+
   if (isScionOrVcs) {
     return buildVcsStory(coreSubject, { brand, brandUrl, targetCount, metrics });
   }
@@ -1148,28 +1208,97 @@ function buildDeckFromUserPoints(
       return;
     }
 
-    // Default Fallback
-    const words = (topicBody || point).split(/\s+/).filter(Boolean);
-    const n1 = words[0] ? words[0].slice(0, 16) : 'Ingress';
-    const n2 = words[2] ? words[2].slice(0, 16) : 'Engine';
-    const n3 = words[4] ? words[4].slice(0, 16) : 'Persistence';
+    // 10. AI Agent / Delegation / Auth / Identity Boundary Recognition
+    if (/\b(agent|delegat|oauth|mcp|human|impersonat|permission|token|scope|bot|identity|credential)\b/i.test(fullText)) {
+      if (/\b(human|user|bot|script|vs\b|versus|neither|nor|impersonat)\b/i.test(fullText) && idx <= 1) {
+        slides.push({
+          type: 'compare',
+          compareLeftTitle: 'UNSCOPED BOT / HUMAN LOGIN',
+          compareLeftBody: '• Shares static user credentials\n• Broad ambient account privileges\n• Zero cryptographic delegation trail',
+          compareRightTitle: 'DELEGATED AI AGENT',
+          compareRightBody: '• Ephemeral scoped OAuth/JWT token\n• Explicit human-in-the-loop bounds\n• Verifiable per-action audit log',
+          enTitle,
+          arTitle: 'مقارنة: حساب بشري مقابل تفويض الوكيل.',
+          enBody: autoFitTextToLimits(topicBody, 135),
+          arBody: hasArabicText
+            ? sanitizeArabicSlideText(topicBody.slice(0, 135))
+            : 'الوكيل الذكي ليس مجرد نص برمجي ولا مستخدماً بشرياً؛ بل يتطلب تفويضاً مشفراً بصلاحيات محددة.',
+        });
+        return;
+      }
+
+      if (/\b(token|jwt|oauth|scope|policy|header|attestation|sign)\b/i.test(fullText)) {
+        slides.push({
+          type: 'code',
+          codeFileName: 'agent_delegation_jwt.json',
+          codeLanguage: 'json',
+          codeSnippet: `{\n  "sub": "agent:cloudflare-worker-04",\n  "act": { "sub": "user:principal@org.com" },\n  "scope": "read:dns write:workers_kv",\n  "exp": 1735689900\n}`,
+          enTitle,
+          arTitle: 'تفويض الصلاحيات عبر رموز OAuth.',
+          enBody: autoFitTextToLimits(topicBody, 135),
+          arBody: hasArabicText
+            ? sanitizeArabicSlideText(topicBody.slice(0, 135))
+            : 'تقييد الوكيل الذكي برموز جلسة قصيرة الأجل تحدد هوية المفوِّض ونطاق الأدوات المسموح بها.',
+        });
+        return;
+      }
+
+      slides.push({
+        type: 'row',
+        diagramVariant: 'isolation',
+        diagramNodes: [
+          { label: 'Human Principal', sublabel: 'Issues Scoped Consent', status: 'VERIFIED', icon: 'users' },
+          { label: 'Delegation Gate', sublabel: 'Token Exchange & Policy', status: 'SCOPED', icon: 'lock' },
+          { label: 'AI Agent Runtime', sublabel: 'Bounded Tool Execution', status: 'ISOLATED', icon: 'robot' },
+        ],
+        diagramEdges: ['DELEGATE', 'ENFORCE'],
+        diagramFooter: 'IDENTITY BOUNDARY: CRYPTOGRAPHIC AGENT DELEGATION',
+        enTitle,
+        arTitle: 'عزل وتفويض صلاحيات الوكيل الذكي.',
+        enBody: autoFitTextToLimits(topicBody, 135),
+        arBody: hasArabicText
+          ? sanitizeArabicSlideText(topicBody.slice(0, 135))
+          : 'فصل هوية المستخدم عن هوية الوكيل عبر بوابة تفويض تمنع تجاوز الصلاحيات أو انتحال الهوية.',
+      });
+      return;
+    }
+
+    // 11. Context-Aware Dynamic Archetype Rotation (Eliminates Generic Ingress/Core/State Boilerplate)
+    const cleanTokens = (topicBody || point)
+      .replace(/[^A-Za-z0-9\s/-]/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length >= 4 && !ENTITY_STOP_WORDS.has(w.toLowerCase()));
+    const phrase1 = cleanTokens.slice(0, 2).join(' ') || cleanSubject.slice(0, 16);
+    const phrase2 = cleanTokens.slice(2, 4).join(' ') || 'Core Mechanism';
+    const phrase3 = cleanTokens.slice(4, 6).join(' ') || 'Verified Output';
+
+    const dynamicVariants: Array<'isolation' | 'clusters' | 'split' | 'features' | 'graph' | 'topology' | 'stack'> = [
+      'topology',
+      'isolation',
+      'clusters',
+      'split',
+      'features',
+      'stack',
+      'graph',
+    ];
+    const chosenVariant = dynamicVariants[idx % dynamicVariants.length];
 
     slides.push({
       type: 'row',
-      diagramVariant: idx % 2 === 0 ? 'stack' : 'topology',
+      diagramVariant: chosenVariant,
       diagramNodes: [
-        { label: n1, sublabel: 'Input Stage', status: 'ACTIVE', icon: 'server' },
-        { label: n2, sublabel: 'Core Logic', status: 'ROUTED', icon: 'cpu' },
-        { label: n3, sublabel: 'Target State', status: 'COMMITTED', icon: 'database' },
+        { label: phrase1.slice(0, 18), sublabel: 'Primary Context', status: 'ACTIVE', icon: 'layers' },
+        { label: phrase2.slice(0, 18), sublabel: 'Mechanism Execution', status: 'VERIFIED', icon: 'cpu' },
+        { label: phrase3.slice(0, 18), sublabel: 'Production Outcome', status: 'SECURED', icon: 'checkCircle' },
       ],
-      diagramEdges: ['Process', 'Commit'],
-      diagramFooter: `PIPELINE STEP ${idx + 1} • STATUS: VERIFIED`,
+      diagramEdges: ['EXECUTE', 'VERIFY'],
+      diagramFooter: `${cleanSubject.toUpperCase().slice(0, 28)} • ARCHITECTURE VERIFIED`,
       enTitle,
-      arTitle: `آلية العمل: ${n1}`,
+      arTitle: `آلية ${arSubject}: ${phrase1.slice(0, 18)}.`,
       enBody: autoFitTextToLimits(topicBody, 135),
       arBody: hasArabicText
         ? sanitizeArabicSlideText(topicBody.slice(0, 135))
-        : 'كيفية إدارة وتوجيه العمليات المتزامنة بكفاءة وموثوقية في النظام.',
+        : `تحليل تفصيلي يوضح دور ${phrase1} في تعزيز كفاءة وموثوقية منظومة ${arSubject}.`,
     });
   });
 
@@ -1201,47 +1330,72 @@ function buildDeckFromUserPoints(
             diagramVariant: 'takeaway',
             icons: [{ icon: 'shieldAlert', label: 'Trade-off' }, { icon: 'activity', label: 'Evaluation' }],
             diagramNodes: [
-              { label: 'Standard Pattern', sublabel: 'Baseline simplicity', status: 'STANDARD', icon: 'layers' },
-              { label: `${cleanSubject} Shift`, sublabel: 'Target architecture', status: 'SHIFT', icon: 'zap' },
-              { label: 'Operational Cost', sublabel: 'Specialized maintenance', status: 'CAVEAT', icon: 'shieldAlert' },
+              { label: 'Baseline Model', sublabel: 'Simpler initial setup', status: 'BASELINE', icon: 'layers' },
+              { label: `${cleanSubject.slice(0, 15)} Shift`, sublabel: 'Target architecture', status: 'ADOPTED', icon: 'zap' },
+              { label: 'Governance Cost', sublabel: 'Policy & audit overhead', status: 'BALANCE', icon: 'shieldAlert' },
             ],
             diagramEdges: ['Evaluate', 'Adopt'],
-            diagramFooter: 'ENGINEERING DECISION: ARCHITECTURE TRADE-OFFS BALANCED',
-            enTitle: 'The core tradeoff.',
-            arTitle: 'المفاضلة وحدود الاستخدام',
-            enBody: 'Every architectural choice has a cost. Adopt deep optimization only when production scale justifies operational complexity.',
-            arBody: 'لكل اختيار معماري تكلفة؛ اختر التحسين العميق فقط حين يبرر حجم العمل التعقيد.',
+            diagramFooter: `ARCHITECTURAL VERDICT: ${cleanSubject.toUpperCase().slice(0, 32)}`,
+            enTitle: `The ${cleanSubject.split(/\s+/).slice(0, 3).join(' ')} tradeoff.`,
+            arTitle: `المفاضلة الهندسية في ${arSubject}.`,
+            enBody: `Adopting ${cleanSubject} unlocks stronger guarantees and scale, provided teams enforce clear operational boundaries and observability.`,
+            arBody: `تطبيق ${arSubject} يمنحك كفاءة وضمانات أعلى بشرط الالتزام بحدود الصلاحيات والمراقبة الدقيقة.`,
           }
     );
   }
 
-  // Pad to targetCount - 1 if fewer points provided
+  // Pad to targetCount - 1 with varied, topic-grounded archetypes (Compare, Code, Number) if fewer points were provided
+  const padArchetypes: Array<'compare' | 'code' | 'number'> = ['compare', 'code', 'number'];
+  let padIdx = 0;
   while (slides.length < targetCount - 1) {
-    const stepNum = slides.length;
-    slides.splice(
-      1,
-      0,
-      isFinancialOrMacro
-        ? {
-            type: 'number',
-            stepNumber: `0${stepNum - 1}`,
-            stepLabel: `STEP 0${stepNum - 1} // CAPITAL DEFICIT`,
-            centerIcon: 'trendingDown',
-            enTitle: 'The unit economics gap.',
-            arTitle: 'فجوة العوائد والإنفاق الرأسمالي.',
-            enBody: 'Capital burn and infrastructure commitments far exceed current operating revenue, requiring massive external financing.',
-            arBody: 'تتجاوز الالتزامات الرأسمالية وتكاليف التشغيل العوائد الحالية، مما يفرض الاعتماد على تمويل خارجي مستمر.',
-          }
-        : {
-            type: 'number',
-            stepNumber: `0${stepNum - 1}`,
-            stepLabel: `STEP 0${stepNum - 1} // ARCHITECTURE`,
-            enTitle: 'The scalability bottleneck.',
-            arTitle: 'نقطة الاختناق ومحدودية التوسع',
-            enBody: 'Legacy approaches stall under high concurrency or growing state size, requiring a fundamental shift in system design.',
-            arBody: 'الأساليب التقليدية تصل لحدودها القصوى تحت الضغط العالي، مما يفرض إعادة تصميم بنية المنظومة بالكامل.',
-          }
-    );
+    const padType = padArchetypes[padIdx % padArchetypes.length];
+    padIdx++;
+    if (isFinancialOrMacro) {
+      slides.splice(1, 0, {
+        type: 'number',
+        stepNumber: `0${padIdx}`,
+        stepLabel: `STEP 0${padIdx} // CAPITAL DEFICIT`,
+        centerIcon: 'trendingDown',
+        enTitle: 'The unit economics gap.',
+        arTitle: 'فجوة العوائد والإنفاق الرأسمالي.',
+        enBody: 'Capital burn and infrastructure commitments far exceed current operating revenue, requiring massive external financing.',
+        arBody: 'تتجاوز الالتزامات الرأسمالية وتكاليف التشغيل العوائد الحالية، مما يفرض الاعتماد على تمويل خارجي مستمر.',
+      });
+    } else if (padType === 'compare') {
+      slides.splice(Math.min(2, slides.length), 0, {
+        type: 'compare',
+        compareLeftTitle: 'IMPLICIT / LEGACY MODEL',
+        compareLeftBody: `• Unscoped ${cleanSubject.slice(0, 18)} access\n• Shared static credentials\n• Fragile under edge conditions`,
+        compareRightTitle: 'EXPLICIT / SCOPED DESIGN',
+        compareRightBody: `• Cryptographically bounded ${cleanSubject.slice(0, 14)}\n• Least-privilege execution\n• Auditable production telemetry`,
+        enTitle: enforceHeadlineSpecRule(`Legacy vs scoped ${cleanSubject.split(/\s+/).slice(0, 2).join(' ')}`, { isHook: false }),
+        arTitle: `مقارنة: النهج التقليدي مقابل ${arSubject}.`,
+        enBody: `Contrasting implicit legacy assumptions against explicit, verifiable boundaries in ${cleanSubject}.`,
+        arBody: `مقارنة عملية توضح الفرق بين الصلاحيات المفتوحة تقليدياً والضوابط المحددة في ${arSubject}.`,
+      });
+    } else if (padType === 'code') {
+      slides.splice(Math.min(3, slides.length), 0, {
+        type: 'code',
+        codeFileName: `${cleanSubject.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 16) || 'policy'}.yaml`,
+        codeLanguage: 'yaml',
+        codeSnippet: `# Production policy specification for ${cleanSubject.slice(0, 28)}\nmode: enforce_strict_bounds\ndelegation:\n  require_scoped_token: true\n  audit_trail: immutable`,
+        enTitle: enforceHeadlineSpecRule(`Enforcing ${cleanSubject.split(/\s+/).slice(0, 3).join(' ')} policy`, { isHook: false }),
+        arTitle: `تطبيق السياسات البرمجية في ${arSubject}.`,
+        enBody: `Declarative configuration enforces strict runtime boundaries and verifiable execution rules for ${cleanSubject}.`,
+        arBody: `تطبيق قواعد التحقق والصلاحيات برمجياً لضمان عدم تجاوز الحدود المسموح بها أثناء التشغيل.`,
+      });
+    } else {
+      slides.splice(Math.min(4, slides.length), 0, {
+        type: 'number',
+        stepNumber: `0${padIdx}`,
+        stepLabel: `PILLAR 0${padIdx} // VERIFICATION`,
+        centerIcon: 'shieldAlert',
+        enTitle: enforceHeadlineSpecRule(`Verifiable ${cleanSubject.split(/\s+/).slice(0, 3).join(' ')} bounds`, { isHook: false }),
+        arTitle: `ضوابط التحقق والأمان في ${arSubject}.`,
+        enBody: `Every request and state transition in ${cleanSubject} is validated against explicit scope constraints before execution.`,
+        arBody: `يتم التحقق من كل عملية داخل منظومة ${arSubject} وفق صلاحيات محددة مسبقاً قبل السماح بالتنفيذ.`,
+      });
+    }
   }
 
   // Trim excess if too many points were given
@@ -2135,107 +2289,243 @@ function buildComparativeStory(
 }
 
 /**
- * General Systems Architecture Story: Fallback for arbitrary topics with clear, professional narrative.
+ * AI Agent Delegation, Identity & Scoped Autonomy Story:
+ * Dedicated deep architectural narrative for AI Agents vs Human Identity, OAuth Delegation, MCP, and Cryptographic Boundaries.
+ */
+function buildAgentDelegationStory(subject: string, opts: StoryOptions): SlideData[] {
+  const { cleanSubject, arSubject } = extractCleanSubject(subject);
+  const enHook = enforceHeadlineSpecRule(subject, { isHook: true, fallbackSubject: 'AI Agent Delegation' });
+
+  const candidates: SlideData[] = [
+    {
+      type: 'hub',
+      centerIcon: 'robot',
+      satIcons: ['users', 'key', 'lock', 'shieldAlert', 'code', 'activity'],
+      satLabels: ['Human Principal', 'Scoped OAuth', 'Token Exchange', 'Tool Sandbox', 'Audit Trail', 'Kill Switch'],
+      enTitle: enHook,
+      arTitle: `لماذا يختلف الوكيل الذكي عن المستخدم البشري؟`,
+      enBody: `AI agents are neither static cron scripts nor human users — they require cryptographic delegation, scoped tokens, and bounded tool access.`,
+      arBody: `وكلاء الذكاء الاصطناعي ليسوا مجرد سكربتات تقليدية ولا بشراً؛ بل يحتاجون إلى تفويض مشفر وصلاحيات محددة بدقة.`,
+    },
+    {
+      type: 'compare',
+      compareLeftTitle: 'HUMAN USER / STATIC BOT',
+      compareLeftBody: '• Broad session cookies or static API keys\n• Interactive CAPTCHA & browser assumptions\n• Full account blast radius on compromise',
+      compareRightTitle: 'DELEGATED AI AGENT',
+      compareRightBody: '• Short-lived RFC 8693 OAuth token exchange\n• Explicit `act` claim linking human & agent\n• Task-scoped permissions with instant revocation',
+      enTitle: 'Human identity vs agent delegation.',
+      arTitle: 'هوية البشر مقابل تفويض الوكيل الذكي.',
+      enBody: 'Treating agents like humans forces shared passwords; treating them like dumb bots blocks legitimate delegated workflows.',
+      arBody: 'معاملة الوكيل كإنسان تدفع لمشاركة كلمات المرور، ومعاملته كبوت عشوائي تمنعه من إنجاز المهام المفوضة شرعياً.',
+    },
+    {
+      type: 'row',
+      diagramVariant: 'isolation',
+      diagramNodes: [
+        { label: 'Human Principal', sublabel: 'Grants Intent & Consent', status: 'VERIFIED', icon: 'users' },
+        { label: 'OAuth Token Exchange', sublabel: 'Attests Agent + Scopes', status: 'SCOPED', icon: 'key' },
+        { label: 'Resource Server', sublabel: 'Enforces Least Privilege', status: 'GUARDED', icon: 'lock' },
+      ],
+      diagramEdges: ['DELEGATE', 'ATTEST'],
+      diagramFooter: 'CRYPTOGRAPHIC DELEGATION: SEPARATING PRINCIPAL FROM ACTOR',
+      enTitle: 'Cryptographic delegation chains.',
+      arTitle: 'سلسلة التفويض المشفر وعزل الهوية.',
+      enBody: 'Instead of impersonating the user, the agent presents a dual-identity token proving both who authorized the task and which agent is acting.',
+      arBody: 'بدلاً من انتحال شخصية المستخدم، يحمل الوكيل رمزاً مزدوجاً يثبت هوية المفوِّض البشري وهوية الوكيل المنفِّذ معاً.',
+    },
+    {
+      type: 'code',
+      codeFileName: 'delegated_agent_jwt.json',
+      codeLanguage: 'json',
+      codeSnippet: `{\n  "iss": "https://auth.cloudflare.com",\n  "sub": "user:eng-lead@acme.dev",\n  "act": { "sub": "agent:triage-bot-v2" },\n  "scope": "workers:read logs:query",\n  "exp": 1735690200\n}`,
+      enTitle: 'Attesting identity with `act` claims.',
+      arTitle: 'توثيق التفويض عبر معيار `act` البرمجي.',
+      enBody: 'RFC 8693 Token Exchange embeds the `act` (actor) claim inside the JWT so downstream APIs audit the exact agent and human principal.',
+      arBody: 'يتيح معيار RFC 8693 تضمين حقل الفاعل `act` داخل الرمز لتمكين الخوادم من تدقيق حركات الوكيل والمستخدم بدقة.',
+    },
+    {
+      type: 'row',
+      diagramVariant: 'clusters',
+      diagramNodes: [
+        { label: 'Read-Only Tools', sublabel: 'Autonomous Execution', status: 'AUTO', icon: 'search' },
+        { label: 'Scoped Writes', sublabel: 'Policy Rate-Limited', status: 'BOUNDED', icon: 'sliders' },
+        { label: 'Destructive Actions', sublabel: 'Human-in-the-Loop Gate', status: 'GATED', icon: 'shieldAlert' },
+      ],
+      diagramEdges: ['CLASSIFY', 'GATE'],
+      diagramFooter: 'TOOL GOVERNANCE: TIERED AUTONOMY & APPROVAL GATES',
+      enTitle: 'Tiered autonomy by action risk.',
+      arTitle: 'تدرج الاستقلالية حسب خطورة العملية.',
+      enBody: 'Agents can query telemetry autonomously, but production mutations or billing changes require explicit human-in-the-loop step-up approval.',
+      arBody: 'يمكن للوكيل قراءة السجلات تلقائياً، لكن تعديل الإنتاج أو الفواتير يتطلب موافقة بشرية فورية قبل التنفيذ.',
+    },
+    {
+      type: 'metric',
+      metricValue: '300s',
+      metricLabel: 'EPHEMERAL AGENT TOKEN TTL',
+      metricDiff: '▼ Eliminates long-lived static API key leaks',
+      metricIcon: 'lock',
+      enTitle: 'Zero standing privileges.',
+      arTitle: 'إلغاء الصلاحيات الدائمة والمفاتيح الثابتة.',
+      enBody: 'Short-lived 5-minute delegated tokens ensure that even if an agent context is prompt-injected, the blast radius expires immediately.',
+      arBody: 'رموز التفويض قصيرة الأجل تضمن انتهاء الصلاحية فوراً وحصر الأضرار حتى في حال تعرض الوكيل لحقن الأوامر.',
+    },
+    {
+      type: 'row',
+      diagramVariant: 'takeaway',
+      diagramNodes: [
+        { label: 'Bot Blocking', sublabel: 'Breaks legitimate agents', status: 'FRAGILE', icon: 'shieldAlert' },
+        { label: 'Verified Delegation', sublabel: 'Signed identity + intent', status: 'TRUSTED', icon: 'key' },
+        { label: 'Auditability', sublabel: 'Per-action accountability', status: 'VERIFIED', icon: 'checkCircle' },
+      ],
+      diagramEdges: ['AUTHENTICATE', 'ACCOUNT'],
+      diagramFooter: 'ARCHITECTURE VERDICT: DESIGN FOR DELEGATED AGENCY',
+      enTitle: 'Design APIs for delegated agency.',
+      arTitle: 'الخلاصة: صمّم أنظمتك لتفويض الوكلاء.',
+      enBody: `The web must evolve beyond binary "human vs bad bot" checks toward verifiable agent identity, scoped consent, and revocation.`,
+      arBody: `يجب أن تتجاوز الأنظمة ثنائية "إنسان أو بوت ضار" نحو هوية وكيل موثقة وتفويض محدد النطاق قابل للإلغاء لحظياً.`,
+    },
+    {
+      type: 'cta',
+      enTitle: enforceHeadlineSpecRule(`How do you scope ${cleanSubject}?`, { isCta: true }),
+      arTitle: `كيف تضبط صلاحيات ${arSubject} في مشاريعك؟`,
+      enBody: 'Share how your engineering team handles OAuth token exchange, MCP tool permissions, and agent guardrails in production.',
+      arBody: 'شاركنا في التعليقات كيف يدير فريقك صلاحيات وكلاء الذكاء الاصطناعي وتفويض الأدوات في بيئة الإنتاج.',
+      ctaText: 'Join discussion  •  شارك برأيك',
+      url: opts.brandUrl,
+      enCredit: '',
+      arCredit: `${opts.brand} · دراسة هندسية في أمن وهوية الوكلاء`,
+    },
+  ];
+
+  return trimSlides(candidates, opts.targetCount);
+}
+
+/**
+ * General Systems Architecture Story: Context-aware narrative with diverse visual archetypes
+ * (Hub -> Compare -> Stack Row -> Code -> Isolation Row -> Features Row -> Takeaway Row -> CTA).
  */
 function buildGeneralSystemsStory(subject: string, opts: StoryOptions): SlideData[] {
   const safeSubject = !subject || isNonSemanticFileName(subject) ? opts.domainCategory || 'System Architecture' : subject;
   const { cleanSubject, arSubject } = extractCleanSubject(safeSubject);
   const enHook = enforceHeadlineSpecRule(safeSubject, { isHook: true, fallbackSubject: 'Architecture' });
 
-  return [
+  const words = cleanSubject
+    .replace(/[^A-Za-z0-9\s-]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !ENTITY_STOP_WORDS.has(w.toLowerCase()));
+  const term1 = words[0] || 'Control Plane';
+  const term2 = words[1] || 'Execution Policy';
+  const term3 = words[2] || 'Telemetry State';
+  const slug = cleanSubject.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 18) || 'system_spec';
+
+  const candidates: SlideData[] = [
     {
       type: 'hub',
       centerIcon: resolveTechLogo(subject) || 'cpu',
-      satIcons: ['server', 'database', 'gauge', 'cpu', 'box', 'activity'],
-      satLabels: ['Architecture', 'Dataflow', 'Execution', 'Scale', 'Resilience', 'Telemetry'],
+      satIcons: ['layers', 'lock', 'code', 'gauge', 'box', 'activity'],
+      satLabels: [
+        term1.toUpperCase().slice(0, 14),
+        term2.toUpperCase().slice(0, 14),
+        term3.toUpperCase().slice(0, 14),
+        'BOUNDARIES',
+        'VERIFICATION',
+        'OBSERVABILITY',
+      ],
       enTitle: enHook,
-      arTitle: `تحليل معماري لمنظومة ${arSubject}`,
-      enBody: `A deep technical breakdown of ${cleanSubject}: mechanisms, trade-offs, and production considerations.`,
-      arBody: `تحليل معماري شامل يوضح آليات العمل والتحديات وكيفية بناء النظام بأعلى كفاءة.`,
+      arTitle: `تحليل معماري لمنظومة ${arSubject}.`,
+      enBody: `A technical breakdown of ${cleanSubject}: core mechanisms, operational boundaries, and production trade-offs.`,
+      arBody: `تحليل هندسي معمق لمنظومة ${arSubject} يوضح آليات العمل والضوابط التشغيلية والمفاضلات في الإنتاج.`,
     },
     {
-      type: 'number',
-      stepNumber: '01',
-      stepLabel: 'STEP 01 // PROBLEM',
-      enTitle: 'The architectural bottleneck.',
-      arTitle: 'المشكلة ونقطة الاختناق الأساسية',
-      enBody: `Traditional systems degrade under high scale or complex state dependencies, requiring a fundamental redesign.`,
-      arBody: `تفشل الأساليب التقليدية عند زيادة حجم العمل وتعقيد البيانات، مما يفرض إعادة تصميم المنظومة بالكامل.`,
-    },
-    {
-      type: 'row',
-      diagramVariant: 'stack',
-      icons: [{ icon: 'server', label: 'Ingress' }, { icon: 'cpu', label: 'Engine' }, { icon: 'database', label: 'Storage' }],
-      diagramNodes: [
-        { label: 'System Ingress', sublabel: 'Input state & routing', status: 'ACTIVE', icon: 'server' },
-        { label: `${cleanSubject} Core`, sublabel: 'Core processing logic', status: 'ROUTED', icon: 'cpu' },
-        { label: 'Durable State', sublabel: 'Verified state storage', status: 'COMMITTED', icon: 'database' },
-      ],
-      diagramEdges: ['Process', 'Commit'],
-      diagramFooter: 'ARCHITECTURE: VERIFIED • STATUS: HEALTHY • LATENCY: P99 OPTIMAL',
-      enTitle: 'Core system architecture.',
-      arTitle: 'بنية النظام وطبقات المعالجة',
-      enBody: `Decoupled components process data independently, preventing monolithic failure cascades across services.`,
-      arBody: `فصل مكونات النظام يتيح معالجة البيانات بشكل مستقل ويمنع انهيار باقي الخدمات عند حدوث خلل.`,
-    },
-    {
-      type: 'number',
-      stepNumber: '02',
-      stepLabel: 'STEP 02 // MECHANISM',
-      enTitle: 'Execution dataflow pipeline.',
-      arTitle: 'آلية تدفق ومعالجة العمليات',
-      enBody: `Streamlined pipelines eliminate redundant serialization overhead to maintain consistent tail latency.`,
-      arBody: `مسارات المعالجة المباشرة تلغي الهدر الزائد في نقل البيانات وتضمن استقرار وسرعة الاستجابة.`,
+      type: 'compare',
+      compareLeftTitle: `IMPLICIT ${term1.toUpperCase().slice(0, 12)}`,
+      compareLeftBody: `• Unbounded ${term1.toLowerCase()} assumptions\n• Tightly coupled state mutations\n• Hard to audit under edge failures`,
+      compareRightTitle: `EXPLICIT ${term1.toUpperCase().slice(0, 12)}`,
+      compareRightBody: `• Strictly scoped ${term1.toLowerCase()} contracts\n• Deterministic verification gates\n• Full per-operation observability`,
+      enTitle: enforceHeadlineSpecRule(`Why implicit ${term1.toLowerCase()} fails`, { isHook: false }),
+      arTitle: `مقارنة: التصميم الضمني مقابل الصريح في ${arSubject}.`,
+      enBody: `Relying on implicit conventions in ${cleanSubject} creates hidden failure modes; explicit contracts make behavior predictable.`,
+      arBody: `الاعتماد على الافتراضات غير المقيدة في ${arSubject} يخلق ثغرات خفية، بينما تضمن العقود الصريحة استقرار النظام.`,
     },
     {
       type: 'row',
-      diagramVariant: 'topology',
-      icons: [{ icon: 'network', label: 'Request' }, { icon: 'zap', label: 'Processing' }, { icon: 'checkCircle', label: 'Committed' }],
+      diagramVariant: 'isolation',
       diagramNodes: [
-        { label: 'Event Inbound', sublabel: 'Traffic socket queue', status: 'ACTIVE', icon: 'network' },
-        { label: 'Execution Core', sublabel: 'Non-blocking worker loop', status: 'ROUTED', icon: 'zap' },
-        { label: 'Target State', sublabel: 'Committed state verification', status: 'VERIFIED', icon: 'checkCircle' },
+        { label: `${term1} Boundary`, sublabel: 'Schema & Intent Check', status: 'VALIDATED', icon: 'lock' },
+        { label: `${term2} Core`, sublabel: 'Bounded Execution', status: 'ISOLATED', icon: 'cpu' },
+        { label: `${term3} Commit`, sublabel: 'Audited Output State', status: 'VERIFIED', icon: 'checkCircle' },
       ],
-      diagramEdges: ['Dispatch', 'Sync'],
-      diagramFooter: 'DATAFLOW: STREAMED • PROTOCOL: DETERMINISTIC',
-      enTitle: 'Non-blocking processing flow.',
-      arTitle: 'مسار المعالجة غير المعطلة للعمليات',
-      enBody: `Direct event dispatch processes high-volume workloads without locking caller threads or stalling I/O.`,
-      arBody: `توجيه العمليات الفوري يعالج ضغط البيانات دون إيقاف أنوية المعالج أو تأخير المدخلات والمخرجات.`,
+      diagramEdges: ['VALIDATE', 'ENFORCE'],
+      diagramFooter: `${cleanSubject.toUpperCase().slice(0, 28)} • BOUNDARY ISOLATION`,
+      enTitle: enforceHeadlineSpecRule(`Isolating ${term1.toLowerCase()} boundaries`, { isHook: false }),
+      arTitle: `عزل الحدود والتحقق في ${arSubject}.`,
+      enBody: `Enforcing strict boundaries around ${cleanSubject} prevents cascading faults and unauthorized state transitions.`,
+      arBody: `فرض حدود عزل صارمة داخل ${arSubject} يمنع انتقال الأعطال أو تنفيذ عمليات خارج النطاق المصرح به.`,
+    },
+    {
+      type: 'code',
+      codeFileName: `${slug}.yaml`,
+      codeLanguage: 'yaml',
+      codeSnippet: `# Declarative ${cleanSubject.slice(0, 28)} specification\npolicy: strict_verification\nscope:\n  target: "${term1.toLowerCase()}"\n  mode: "${term2.toLowerCase()}"\n  audit_log: enabled`,
+      enTitle: enforceHeadlineSpecRule(`Declarative ${term1.toLowerCase()} rules`, { isHook: false }),
+      arTitle: `توصيف القواعد البرمجية لـ ${arSubject}.`,
+      enBody: `Codifying ${cleanSubject} constraints as versioned configuration eliminates configuration drift across environments.`,
+      arBody: `تحويل قواعد وضوابط ${arSubject} إلى ملفات إعداد موثقة يمنع التضارب بين بيئات التطوير والإنتاج.`,
+    },
+    {
+      type: 'row',
+      diagramVariant: 'clusters',
+      diagramNodes: [
+        { label: 'Fast Path', sublabel: 'Low-Latency Reads', status: 'OPTIMIZED', icon: 'zap' },
+        { label: 'Policy Coordinator', sublabel: 'Concurrency & Quotas', status: 'GOVERNED', icon: 'sliders' },
+        { label: 'Audit Sink', sublabel: 'Immutable Telemetry', status: 'RECORDED', icon: 'database' },
+      ],
+      diagramEdges: ['ROUTE', 'AUDIT'],
+      diagramFooter: `EXECUTION TOPOLOGY • DETERMINISTIC CONTROL PLANE`,
+      enTitle: enforceHeadlineSpecRule(`Coordinating ${cleanSubject.split(/\s+/).slice(0, 3).join(' ')}`, { isHook: false }),
+      arTitle: `تنسيق المسارات والمراقبة في ${arSubject}.`,
+      enBody: `Separating fast-path operations from policy coordination keeps ${cleanSubject} responsive while preserving full auditability.`,
+      arBody: `فصل المسار السريع عن طبقة التحكم يحافظ على سرعة استجابة ${arSubject} مع توثيق كامل لجميع العمليات.`,
     },
     {
       type: 'number',
       stepNumber: '03',
-      stepLabel: 'STEP 03 // OUTCOME',
-      enTitle: 'Production reliability wins.',
-      arTitle: 'نتائج ومكاسب استقرار الإنتاج',
-      enBody: `Rigorous state boundaries isolate failures, allowing independent deployment and zero-downtime scaling.`,
-      arBody: `العزل الصارم بين أجزاء المنظومة يمنع انتشار الأعطال ويتيح التوسع دون أي انقطاع في الخدمة.`,
+      stepLabel: `PILLAR 03 // OBSERVABILITY`,
+      centerIcon: 'gauge',
+      enTitle: enforceHeadlineSpecRule(`Measuring ${term1.toLowerCase()} in production`, { isHook: false }),
+      arTitle: `قياس الأداء والموثوقية في بيئة الإنتاج.`,
+      enBody: `Structured telemetry across every ${cleanSubject} boundary lets engineers detect anomalies before they impact downstream callers.`,
+      arBody: `المراقبة المهيكلة لكل مرحلة في ${arSubject} تتيح اكتشاف الاختناقات والأخطاء مبكراً قبل تأثر المستخدمين.`,
     },
     {
       type: 'row',
       diagramVariant: 'takeaway',
       icons: [{ icon: 'alertCircle', label: 'Complexity' }, { icon: 'shieldAlert', label: 'Trade-off' }],
       diagramNodes: [
-        { label: 'Standard Simplicity', sublabel: 'Lower operational cost', status: 'STANDARD', icon: 'layers' },
-        { label: 'Custom Architecture', sublabel: 'Higher throughput win', status: 'OPTIMIZED', icon: 'zap' },
-        { label: 'Maintenance Cost', sublabel: 'Requires specialized expertise', status: 'CAVEAT', icon: 'shieldAlert' },
+        { label: 'Baseline Simplicity', sublabel: 'Minimal initial setup', status: 'BASELINE', icon: 'layers' },
+        { label: `${term1.slice(0, 14)} Rigor`, sublabel: 'Explicit verification', status: 'ADOPTED', icon: 'zap' },
+        { label: 'Operational Discipline', sublabel: 'Ongoing policy upkeep', status: 'TRADE-OFF', icon: 'shieldAlert' },
       ],
-      diagramEdges: ['Evaluate', 'Adopt'],
-      diagramFooter: 'ENGINEERING DECISION: ARCHITECTURE TRADE-OFFS BALANCED',
-      enTitle: 'The engineering tradeoff.',
-      arTitle: 'المفاضلة الهندسية وتكلفة الصيانة',
-      enBody: `High-efficiency architectures require specialized operational tooling. Choose optimization when scale justifies complexity.`,
-      arBody: `الأنظمة عالية الكفاءة تتطلب خبرات صيانة متقدمة؛ لا تنتقل للتعقيد إلا إذا كان حجم العمل يستدعي ذلك.`,
+      diagramEdges: ['EVALUATE', 'ADOPT'],
+      diagramFooter: `ENGINEERING VERDICT: ${cleanSubject.toUpperCase().slice(0, 30)}`,
+      enTitle: enforceHeadlineSpecRule(`The ${term1.toLowerCase()} engineering tradeoff`, { isHook: false }),
+      arTitle: `المفاضلة الهندسية في تبني ${arSubject}.`,
+      enBody: `Explicit boundaries and verification in ${cleanSubject} add upfront design rigor, but eliminate catastrophic production blind spots.`,
+      arBody: `تطبيق الضوابط الصارمة في ${arSubject} يتطلب جهداً تأسيسياً، لكنه يحمي المنظومة من الأعطال والثغرات المكلفة.`,
     },
     {
       type: 'cta',
-      enTitle: enforceHeadlineSpecRule(`Scaling ${cleanSubject}?`, { isCta: true }),
-      arTitle: 'تبني حلولاً برمجية\nمتقدمة في مشاريعك؟',
-      ctaText: 'DM us  •  رسالة خاصة',
+      enTitle: enforceHeadlineSpecRule(`Building with ${cleanSubject}?`, { isCta: true }),
+      arTitle: `كيف تطبق ${arSubject} في مشاريعك؟`,
+      enBody: `Share your architectural patterns and lessons learned with ${cleanSubject} in the comments.`,
+      arBody: `شاركنا تجربتك وأفضل الممارسات الهندسية التي تعتمدها مع ${arSubject} في التعليقات.`,
+      ctaText: 'Join discussion  •  شارك برأيك',
       url: opts.brandUrl,
       enCredit: '',
       arCredit: `${opts.brand} · دراسة هندسية في ${opts.domainCategory || 'معمارية الأنظمة'}`,
     },
   ];
+
+  return trimSlides(candidates, opts.targetCount);
 }
+

@@ -216,7 +216,33 @@ export function buildSynthesisPromptFromTopic(item: {
     item.extractedMetrics.length > 0
       ? `\nKey Quantitative Metrics: ${item.extractedMetrics.join(', ')}`
       : '';
-  return `${item.title} (${item.brand})\nSource URL: ${item.url}\n\nTechnical Summary & Engineering Context:\n${item.summary}${metricsLine}`;
+
+  const rawLines = (item.summary || '')
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  // Ensure single-paragraph summaries are broken into distinct sentence bullets so downstream
+  // AI and NLP extractors always receive structured multi-point technical context.
+  const structuredLines: string[] = [];
+  for (const line of rawLines) {
+    if (rawLines.length < 3 && line.length > 90) {
+      const sentences = line
+        .split(/(?<=[.!?])\s+(?=[A-Z0-9"`'•-])/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 18);
+      if (sentences.length > 1) {
+        for (const s of sentences) {
+          structuredLines.push(s.startsWith('•') ? s : `• ${s}`);
+        }
+        continue;
+      }
+    }
+    structuredLines.push(line);
+  }
+
+  const formattedSummary = structuredLines.join('\n');
+  return `${item.title} (${item.brand})\nSource URL: ${item.url}\n\nTechnical Summary & Engineering Context:\n${formattedSummary}${metricsLine}`;
 }
 
 /**
@@ -355,7 +381,7 @@ function decodeHtmlEntities(input: string): string {
     });
 }
 
-export function stripHtmlToCleanText(html: string, maxLength = 2400): string {
+export function stripHtmlToCleanText(html: string, maxLength = 5000): string {
   const withoutScripts = html
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ')
     .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ')
@@ -363,15 +389,17 @@ export function stripHtmlToCleanText(html: string, maxLength = 2400): string {
     .replace(/<nav\b[^<]*(?:(?!<\/nav>)<[^<]*)*<\/nav>/gi, ' ')
     .replace(/<footer\b[^<]*(?:(?!<\/footer>)<[^<]*)*<\/footer>/gi, ' ');
 
-  const withLineBreaks = withoutScripts
+  const withFormattedBlocks = withoutScripts
+    .replace(/<(h1|h2|h3|h4)\b[^>]*>/gi, '\n• ')
+    .replace(/<li\b[^>]*>/gi, '\n• ')
     .replace(/<\/(p|h1|h2|h3|h4|li|pre|blockquote|div|tr)>/gi, '\n')
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<[^>]+>/g, ' ');
 
-  const decoded = decodeHtmlEntities(withLineBreaks)
+  const decoded = decodeHtmlEntities(withFormattedBlocks)
     .split('\n')
     .map((line) => line.replace(/\s+/g, ' ').trim())
-    .filter((line) => line.length > 25)
+    .filter((line) => line.length > 20)
     .join('\n');
 
   return decoded.slice(0, maxLength).trim();
@@ -528,6 +556,9 @@ async function fetchCloudflareEngineeringRss(limit = 4): Promise<GatheredTopicIt
         block.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>/i) ||
         block.match(/<title>([\s\S]*?)<\/title>/i);
       const linkMatch = block.match(/<link>([\s\S]*?)<\/link>/i);
+      const contentEncodedMatch =
+        block.match(/<content:encoded><!\[CDATA\[([\s\S]*?)\]\]><\/content:encoded>/i) ||
+        block.match(/<content:encoded>([\s\S]*?)<\/content:encoded>/i);
       const descMatch =
         block.match(/<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>/i) ||
         block.match(/<description>([\s\S]*?)<\/description>/i);
@@ -536,8 +567,9 @@ async function fetchCloudflareEngineeringRss(limit = 4): Promise<GatheredTopicIt
       if (!titleMatch || !linkMatch) continue;
       const title = decodeHtmlEntities(titleMatch[1]).trim();
       const url = linkMatch[1].trim();
-      const summary = descMatch
-        ? stripHtmlToCleanText(descMatch[1], 480)
+      const rawHtmlBody = contentEncodedMatch?.[1] || descMatch?.[1] || '';
+      const summary = rawHtmlBody
+        ? stripHtmlToCleanText(rawHtmlBody, 3600)
         : `Cloudflare Engineering architectural deep-dive: ${title}`;
       const metrics = extractQuantitativeMetrics(`${title} ${summary}`);
       const domainCategory = classifyEngineeringDomain(`${title} ${summary}`);
@@ -678,6 +710,9 @@ async function fetchCustomRssFeed(rssUrl: string, limit = 5): Promise<GatheredTo
       const linkMatch =
         block.match(/<link[^>]+href=["']([^"']+)["']/i) ||
         block.match(/<link>([\s\S]*?)<\/link>/i);
+      const contentEncodedMatch =
+        block.match(/<content:encoded[^>]*><!\[CDATA\[([\s\S]*?)\]\]><\/content:encoded>/i) ||
+        block.match(/<content:encoded[^>]*>([\s\S]*?)<\/content:encoded>/i);
       const descMatch =
         block.match(/<(?:description|summary|content)[^>]*><!\[CDATA\[([\s\S]*?)\]\]><\/(?:description|summary|content)>/i) ||
         block.match(/<(?:description|summary|content)[^>]*>([\s\S]*?)<\/(?:description|summary|content)>/i);
@@ -689,8 +724,9 @@ async function fetchCustomRssFeed(rssUrl: string, limit = 5): Promise<GatheredTo
       const url = linkMatch[1].trim();
       if (!title || !url) continue;
 
-      const summary = descMatch
-        ? stripHtmlToCleanText(descMatch[1], 480)
+      const rawBodyHtml = contentEncodedMatch?.[1] || descMatch?.[1] || '';
+      const summary = rawBodyHtml
+        ? stripHtmlToCleanText(rawBodyHtml, 3600)
         : `${brand} RSS feed update: ${title}`;
       const metrics = extractQuantitativeMetrics(`${title} ${summary}`);
       const domainCategory = classifyEngineeringDomain(`${title} ${summary}`);
@@ -894,8 +930,8 @@ export async function handleExtractUrlContent(req: Request, res: Response): Prom
     const articleMatch =
       html.match(/<article\b[^>]*>([\s\S]*?)<\/article>/i) ||
       html.match(/<main\b[^>]*>([\s\S]*?)<\/main>/i);
-    const bodyText = stripHtmlToCleanText(articleMatch ? articleMatch[1] : html, 2200);
-    const combinedSummary = [metaDesc, bodyText].filter(Boolean).join('\n\n').slice(0, 1800).trim();
+    const bodyText = stripHtmlToCleanText(articleMatch ? articleMatch[1] : html, 6000);
+    const combinedSummary = [metaDesc, bodyText].filter(Boolean).join('\n\n').slice(0, 5500).trim();
 
     const { brand, brandUrl } = deriveBrandFromUrl(rawUrl, 'Engineering Source');
     const metrics = extractQuantitativeMetrics(`${title} ${combinedSummary}`);

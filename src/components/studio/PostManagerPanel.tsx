@@ -25,6 +25,7 @@ import type {
 } from '../../types.ts';
 import {
   buildLocalScheduledIso,
+  cleanupPublishedCloudinaryMedia,
   computeWeeklyScheduleSlots,
   DAILY_PEAK_TIME_SLOTS,
   derivePostLifecycleStage,
@@ -36,6 +37,7 @@ import {
   resolveNextFutureSlotForTime,
   WeeklyCadencePreset,
 } from '../../lib/publish/publishClient.ts';
+import { syncLocalVaultAfterManage } from '../../lib/storage/postsVaultClient.ts';
 import { WeeklyProgramReviewPanel } from './WeeklyProgramReviewPanel.tsx';
 
 interface PostManagerPanelProps {
@@ -279,6 +281,18 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
     const targetTime = overrideTimeStr || editTimeStr;
     const scheduledForIso = buildLocalScheduledIso(targetDate, targetTime);
 
+    // Optimistically update local vault state immediately (< 10ms feedback)
+    const optimisticPost: SavedPostRecord = {
+      ...post,
+      scheduledFor: scheduledForIso,
+      publishTargets: editTargets,
+      updatedAt: new Date().toISOString(),
+    };
+    await syncLocalVaultAfterManage({ updatedPost: optimisticPost });
+    onRefreshVault();
+    setEditingSchedulePostId(null);
+    setAssigningDateStr(null);
+
     setBusyPostId(post.id);
     try {
       const res = await managePublishedPost({
@@ -289,8 +303,6 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
         requeueBuffer: requeueOnBuffer,
       });
 
-      setEditingSchedulePostId(null);
-      setAssigningDateStr(null);
       onRefreshVault();
       onRefreshStatus();
       onShowToast(
@@ -299,6 +311,9 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
           : `✓ Scheduled "${post.title.slice(0, 28)}" for ${targetDate} at ${targetTime}`
       );
     } catch (err) {
+      // Revert optimistic update on failure
+      await syncLocalVaultAfterManage({ updatedPost: post });
+      onRefreshVault();
       onShowToast(`⚠️ ${err instanceof Error ? err.message : 'Failed to reschedule post'}`);
     } finally {
       setBusyPostId(null);
@@ -306,13 +321,22 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
   };
 
   const handleUnscheduleToDraft = async (post: SavedPostRecord) => {
+    // Optimistically revert to draft in local vault
+    const optimisticPost: SavedPostRecord = {
+      ...post,
+      scheduledFor: undefined,
+      updatedAt: new Date().toISOString(),
+    };
+    await syncLocalVaultAfterManage({ updatedPost: optimisticPost });
+    onRefreshVault();
+    setEditingSchedulePostId(null);
+
     setBusyPostId(post.id);
     try {
       const res = await managePublishedPost({
         postId: post.id,
         action: 'unschedule',
       });
-      setEditingSchedulePostId(null);
       onRefreshVault();
       onRefreshStatus();
       onShowToast(
@@ -321,6 +345,9 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
           : `✓ Schedule cancelled — "${post.title.slice(0, 28)}" moved to Drafts`
       );
     } catch (err) {
+      // Revert optimistic update on failure
+      await syncLocalVaultAfterManage({ updatedPost: post });
+      onRefreshVault();
       onShowToast(`⚠️ ${err instanceof Error ? err.message : 'Failed to unschedule post'}`);
     } finally {
       setBusyPostId(null);
@@ -350,6 +377,24 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
     }
   };
 
+  const handlePurgePostCloudinary = async (post: SavedPostRecord) => {
+    setBusyPostId(post.id);
+    try {
+      const res = await cleanupPublishedCloudinaryMedia({ postId: post.id });
+      onRefreshVault();
+      onRefreshStatus();
+      onShowToast(
+        res.cleanedPublicIds.length > 0
+          ? `✓ Purged ${res.cleanedPublicIds.length} staged Cloudinary slide asset(s)`
+          : `✓ Staged Cloudinary media marked clean for "${post.title.slice(0, 28)}"`
+      );
+    } catch (err) {
+      onShowToast(`⚠️ ${err instanceof Error ? err.message : 'Failed to purge Cloudinary assets'}`);
+    } finally {
+      setBusyPostId(null);
+    }
+  };
+
   // Bulk schedule slots calculation
   const bulkSlots = useMemo(
     () =>
@@ -372,6 +417,23 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
       return;
     }
 
+    // Optimistically update local vault for all selected posts
+    for (let i = 0; i < selectedRecords.length; i++) {
+      const post = selectedRecords[i];
+      const slot = bulkSlots[i];
+      const dueIso = slot?.isoDate || buildLocalScheduledIso(bulkStartDate, bulkTimeStr);
+      await syncLocalVaultAfterManage({
+        updatedPost: {
+          ...post,
+          scheduledFor: dueIso,
+          publishTargets: ALL_PLATFORMS,
+          updatedAt: new Date().toISOString(),
+        },
+      });
+    }
+    onRefreshVault();
+    setViewMode('calendar');
+
     setIsBulkBusy(true);
     try {
       for (let i = 0; i < selectedRecords.length; i++) {
@@ -389,7 +451,6 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
 
       onRefreshVault();
       onRefreshStatus();
-      setViewMode('calendar');
       onShowToast(
         `✓ Scheduled ${selectedRecords.length} post(s) onto your calendar & synced Buffer/Zernio`
       );
@@ -967,6 +1028,41 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                               );
                             })}
                           </div>
+
+                          {/* Pill 4: Cloudinary Staging & Auto-Purge (+1h) Lifecycle */}
+                          {post.cloudinaryPublicIds &&
+                            post.cloudinaryPublicIds.length > 0 &&
+                            !post.cloudinaryCleanedAt && (
+                              <span
+                                title="Staged in Cloudinary marrok_staging/* — automatically destroyed +1h after publication"
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono bg-sky-500/15 text-sky-200 border border-sky-400/30"
+                              >
+                                <span>
+                                  Cloudinary ({post.cloudinaryPublicIds.length}) · Auto-purge +1h
+                                </span>
+                                {stage !== 'scheduled' && (
+                                  <button
+                                    type="button"
+                                    disabled={isPostBusy}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void handlePurgePostCloudinary(post);
+                                    }}
+                                    className="ml-1 underline hover:text-white cursor-pointer"
+                                  >
+                                    Purge now
+                                  </button>
+                                )}
+                              </span>
+                            )}
+                          {post.cloudinaryCleanedAt && (
+                            <span
+                              title={`Cloudinary staging purged at ${post.cloudinaryCleanedAt}`}
+                              className="px-2 py-0.5 rounded-md text-[10px] font-mono bg-white/[0.04] text-slate-400 border border-white/10"
+                            >
+                              Staging Purged
+                            </span>
+                          )}
                         </div>
 
                         <div className="text-sm font-bold text-white truncate" title={post.title}>

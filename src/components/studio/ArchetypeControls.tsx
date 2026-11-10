@@ -48,6 +48,7 @@ export interface ArchetypeControlsProps {
   onUpdateField: (field: keyof SlideData, value: any) => void;
   onUpdateSlideFields?: (updates: Partial<SlideData>) => void;
   onSmartMatchVisuals?: (useRecommendedArchetype?: boolean) => void;
+  onDiversifyDeckVisuals?: () => void;
   onUpdateCarouselField?: (field: keyof CarouselData, value: any) => void;
   onUpdateSatLabel: (index: number, value: string) => void;
   onUpdateSatIcon?: (index: number, iconName: string) => void;
@@ -105,6 +106,7 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
   onUpdateField,
   onUpdateSlideFields,
   onSmartMatchVisuals,
+  onDiversifyDeckVisuals,
   onUpdateCarouselField,
   onUpdateSatLabel,
   onUpdateSatIcon,
@@ -263,6 +265,17 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5">
+            {onDiversifyDeckVisuals && totalSlides > 1 && (
+              <button
+                type="button"
+                onClick={onDiversifyDeckVisuals}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/35 text-[11px] font-semibold text-amber-200 transition-colors cursor-pointer whitespace-nowrap"
+                title="Auto-diversify Slides 2–7 across Compare, Code, Metric, and varied Diagram schematics matched to each slide's copy"
+              >
+                <Wand2 className="w-3 h-3" />
+                <span>Diversify Deck (2–7)</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => handleTriggerSmartMatch(true)}

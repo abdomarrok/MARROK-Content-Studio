@@ -7,6 +7,8 @@ import {
   synthesizeUniversalCarousel,
 } from './universalExtractor';
 import { extractCleanSubject } from '../text/headlines';
+import { diversifyDeckArchetypesAndVisuals } from './smartVisualDefaults';
+import { seedSlideArchetypeData } from './archetypes';
 
 describe('cleanRawInput', () => {
   it('strips list markers without deleting leading years or metrics', () => {
@@ -273,5 +275,48 @@ describe('synthesizeUniversalCarousel (Zero AI Slop)', () => {
     expect(topologySlide).toBeDefined();
     expect(topologySlide!.diagramNodes?.some((n) => ['dollarSign', 'landmark', 'factory', 'lifecycle', 'trendingDown', 'scales'].includes(n.icon || ''))).toBe(true);
   });
+
+  it('synthesizes Cloudflare "Agents aren’t humans (but they kinda are)." RSS prompt with deep agent delegation content and zero generic boilerplate', () => {
+    const rssPrompt = `Agents aren’t humans (but they kinda are). (Cloudflare Engineering)
+Source URL: https://blog.cloudflare.com/trusted-agent-delegation/
+
+Technical Summary & Engineering Context:
+AI agents act on behalf of human principals but cannot safely share user passwords or unscoped static API keys. Delegated authentication uses short-lived OAuth token exchange with explicit actor claims and least-privilege tool scopes.`;
+
+    const slides = synthesizeUniversalCarousel(rssPrompt);
+    expect(slides).toHaveLength(8);
+
+    const serialized = JSON.stringify(slides);
+    // Zero generic boilerplate from old fallback
+    expect(serialized).not.toContain('Traditional systems degrade under high scale');
+    expect(serialized).not.toContain('The architectural bottleneck.');
+    expect(serialized).not.toContain('System Ingress');
+    expect(serialized).not.toContain('Durable State');
+
+    // Rich archetype diversity across Slides 2-7 (compare, code, row isolation/takeaway)
+    const midTypes = new Set(slides.slice(1, 7).map((s) => s.type));
+    expect(midTypes.size).toBeGreaterThanOrEqual(3);
+    expect(midTypes.has('compare')).toBe(true);
+    expect(midTypes.has('code')).toBe(true);
+  });
+
+  it('dynamically diversifies mid-deck archetypes and replaces generic placeholder nodes via diversifyDeckArchetypesAndVisuals', () => {
+    const rawSlides = synthesizeUniversalCarousel('Distributed Raft Consensus Quorum');
+    const diversified = diversifyDeckArchetypesAndVisuals(rawSlides);
+
+    expect(diversified).toHaveLength(8);
+    expect(diversified[0].type).toBe('hub');
+    expect(diversified[7].type).toBe('cta');
+
+    const midArchetypes = new Set(diversified.slice(1, 7).map((s) => s.type));
+    expect(midArchetypes.size).toBeGreaterThanOrEqual(3);
+
+    // Dynamic single-slide switching populates context-aware fields immediately
+    const compareSlide = seedSlideArchetypeData(diversified[2], 'compare', 2);
+    expect(compareSlide.type).toBe('compare');
+    expect(compareSlide.compareLeftTitle).toBeTruthy();
+    expect(compareSlide.compareRightTitle).toBeTruthy();
+  });
 });
+
 

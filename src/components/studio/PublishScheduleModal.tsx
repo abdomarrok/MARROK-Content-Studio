@@ -81,8 +81,8 @@ const PLATFORM_OPTIONS: {
   {
     id: 'tiktok',
     label: 'TikTok',
-    handle: '@Marrok',
-    providerLabel: 'Metricool Free (20/mo)',
+    handle: '@marrokorg',
+    providerLabel: 'Zernio Free REST API',
     defaultPreset: 'tiktok-9:16',
   },
 ];

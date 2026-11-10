@@ -363,7 +363,111 @@ export interface AcceptCandidatesResult {
 }
 
 /**
- * Accepts one or more GatheredCandidatePosts, saves them to the Vault as reviewed (`userReviewed: true`),
+ * Full AI Synthesis with Deep Article Scraping:
+ * Upgrades a gathered candidate post by scraping the full article text from its source URL
+ * (when only a short RSS/social snippet is present) and running the full AI synthesis pipeline
+ * (`runAutonomousPipeline`) so Slides 2-7 contain deep, article-grounded engineering mechanisms
+ * and diverse visual archetypes rather than static offline templates.
+ */
+export async function synthesizeCandidateWithFullAi(
+  candidate: GatheredCandidatePost,
+  options?: {
+    onStatus?: (msg: string) => void;
+  }
+): Promise<GatheredCandidatePost> {
+  let enrichedTopic: GatheredTopicItem = candidate.topic;
+  const targetFormat: PostFormat = candidate.postFormat || 'carousel';
+
+  // 1. Scrape full article text if URL is public HTTP(S) and current summary is short
+  if (
+    enrichedTopic.url &&
+    /^https?:\/\//i.test(enrichedTopic.url) &&
+    !enrichedTopic.url.includes('news.ycombinator.com') &&
+    (enrichedTopic.summary || '').length < 900
+  ) {
+    try {
+      options?.onStatus?.(`Scraping full article from ${enrichedTopic.brand || enrichedTopic.sourceName}...`);
+      const extracted = await extractArticleFromUrl(enrichedTopic.url);
+      if (extracted?.ok && extracted.topic?.summary && extracted.topic.summary.length > (enrichedTopic.summary || '').length) {
+        enrichedTopic = {
+          ...enrichedTopic,
+          summary: extracted.topic.summary,
+          extractedMetrics:
+            extracted.topic.extractedMetrics?.length > 0
+              ? extracted.topic.extractedMetrics
+              : enrichedTopic.extractedMetrics,
+          synthesisPrompt: extracted.topic.synthesisPrompt || enrichedTopic.synthesisPrompt,
+        };
+      }
+    } catch {
+      // Proceed with existing topic summary if upstream site blocks scraping or is offline
+    }
+  }
+
+  // 2. Run full AI synthesis pipeline on the scraped article prompt
+  let aiDeck: CarouselData = candidate.deck;
+  try {
+    options?.onStatus?.(`Synthesizing ${targetFormat === 'single' ? '1-slide infographic' : '8-slide deck'} with AI...`);
+    aiDeck = await runAutonomousPipeline(enrichedTopic.synthesisPrompt, {
+      categoryHint: enrichedTopic.domainCategory,
+      postFormat: targetFormat === 'single' ? 'single' : 'carousel',
+      onProgress: options?.onStatus,
+    });
+    if (targetFormat === 'single' && aiDeck.slides.length > 1) {
+      aiDeck = condenseCarouselToSingleSlide(aiDeck);
+    }
+  } catch {
+    // Fallback to upgraded local synthesis with the newly scraped article summary
+    aiDeck = synthesizeCarousel({
+      prompt: enrichedTopic.synthesisPrompt,
+      categoryHint: enrichedTopic.domainCategory,
+      postFormat: targetFormat === 'single' ? 'single' : 'carousel',
+    });
+    if (targetFormat === 'single' && aiDeck.slides.length > 1) {
+      aiDeck = condenseCarouselToSingleSlide(aiDeck);
+    }
+  }
+
+  const draftTitle = aiDeck.slides[0]?.enTitle || candidate.draftTitle || enrichedTopic.title;
+  const upgradedDeck: CarouselData = {
+    ...aiDeck,
+    id: candidate.deck.id || `candidate_${enrichedTopic.id}`,
+    theme: candidate.themeId,
+    category: enrichedTopic.domainCategory || aiDeck.category || 'SYSTEMS ARCHITECTURE',
+    brand: enrichedTopic.brand || aiDeck.brand || 'MARROK',
+    brandUrl: enrichedTopic.brandUrl || aiDeck.brandUrl || 'marrok.org',
+    postFormat: targetFormat,
+    sourceMeta: {
+      ...aiDeck.sourceMeta,
+      title: enrichedTopic.title,
+      creator: enrichedTopic.author || enrichedTopic.sourceName,
+      channel: enrichedTopic.sourceName,
+      published: enrichedTopic.publishedAt,
+      url: enrichedTopic.url,
+      userReviewed: false,
+      groundingSources: [
+        { title: enrichedTopic.title, url: enrichedTopic.url },
+        ...(aiDeck.sourceMeta?.groundingSources || []),
+      ],
+    },
+  };
+
+  const upgradedCandidate: GatheredCandidatePost = {
+    ...candidate,
+    topic: enrichedTopic,
+    deck: upgradedDeck,
+    draftTitle,
+    generatedAt: new Date().toISOString(),
+  };
+
+  const cacheKey = `${enrichedTopic.id}|${targetFormat}`;
+  candidateDeckCache.set(cacheKey, upgradedCandidate);
+  return upgradedCandidate;
+}
+
+/**
+ * Accepts one or more GatheredCandidatePosts, automatically upgrades any offline outline
+ * via full article scraping + AI synthesis, saves them to the Vault as reviewed (`userReviewed: true`),
  * and schedules them into their strictly validated future schedule slots (`10:00` · `12:00` · `18:00`).
  */
 export async function acceptGatheredCandidatesIntoSchedule(
@@ -376,6 +480,7 @@ export async function acceptGatheredCandidatesIntoSchedule(
   options?: {
     requeueBuffer?: boolean;
     scheduleImmediately?: boolean;
+    skipAiUpgrade?: boolean;
     onProgress?: (current: number, total: number, title: string) => void;
   }
 ): Promise<AcceptCandidatesResult> {
@@ -384,10 +489,21 @@ export async function acceptGatheredCandidatesIntoSchedule(
   const shouldSchedule = options?.scheduleImmediately !== false;
 
   for (let i = 0; i < items.length; i++) {
-    const { candidate, datePart, timeShort, targets } = items[i];
-    options?.onProgress?.(i + 1, items.length, candidate.draftTitle);
+    const { candidate: rawCandidate, datePart, timeShort, targets } = items[i];
+    options?.onProgress?.(i + 1, items.length, rawCandidate.draftTitle);
 
     try {
+      // Automatically upgrade candidate with full article scraping & AI synthesis if still an offline outline
+      const needsAiUpgrade =
+        !options?.skipAiUpgrade &&
+        (rawCandidate.deck.sourceMeta?.isFallback !== false ||
+          rawCandidate.deck.sourceMeta?.engine === 'offline-synthesizer' ||
+          !rawCandidate.deck.sourceMeta?.engine);
+
+      const candidate = needsAiUpgrade
+        ? await synthesizeCandidateWithFullAi(rawCandidate)
+        : rawCandidate;
+
       const cleanDeck: CarouselData = {
         ...candidate.deck,
         id: `gather_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -426,7 +542,7 @@ export async function acceptGatheredCandidatesIntoSchedule(
       dismissGatherTopicId(candidate.topic.id);
     } catch (err) {
       failedCandidates.push({
-        title: candidate.draftTitle,
+        title: rawCandidate.draftTitle,
         error: err instanceof Error ? err.message : 'Failed to accept and schedule post',
       });
     }

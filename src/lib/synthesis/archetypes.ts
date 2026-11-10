@@ -14,12 +14,13 @@ export function seedSlideArchetypeData(
   slideIndex: number = 0,
   forceRefresh: boolean = false
 ): SlideData {
+  const isTypeChange = slide.type !== targetType;
   const updated: SlideData = {
     ...slide,
     type: targetType,
   };
 
-  const smart = resolveSmartSlideVisuals(updated, slideIndex, forceRefresh);
+  const smart = resolveSmartSlideVisuals(updated, slideIndex, forceRefresh || isTypeChange);
 
   switch (targetType) {
     case 'metric': {

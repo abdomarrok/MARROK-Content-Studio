@@ -48,12 +48,18 @@ Organize carousel slides in a strict, logical progression without interleaving u
 - Slide 7: "The Core Trade-off / Verdict" (Spec §7 & §12.1) — Synthesize the overarching trade-off, systemic risk, or engineering caveat. Use archetype "row" with diagramVariant: 'takeaway' or 'isolation'.
 - Slide 8: Archetype "cta" (The Closer) — Targeted viewer question or community discussion call ("Join discussion • شارك برأيك"), marrok.org, and source credit. NEVER make commercial service claims (no "DM for Architecture Review").
 
-DIAGRAM NODE & ICON SPECIFICITY:
+DIAGRAM NODE, ARCHETYPE DIVERSITY & ANTI-BOILERPLATE RULES:
+- STRICT ARCHETYPE DIVERSITY ACROSS SLIDES 2–7:
+  * NEVER repeat the same slide archetype on 3 consecutive mid-deck slides. Across Slides 2–7, you MUST use at least 3 to 4 distinct visual archetypes (e.g., mixing "compare", "metric", "code", "number", and "row" with distinct diagramVariants).
+  * When using "row", NEVER repeat the same diagramVariant twice in a row — actively rotate across 'isolation', 'clusters', 'split', 'features', 'graph', 'scatter', 'topology', 'stack', and 'takeaway' based on the exact concept of that slide.
+- ZERO GENERIC BOILERPLATE NODES OR COPY:
+  * STRICTLY PROHIBIT generic filler headlines or body text such as "The architectural bottleneck", "Traditional systems degrade under high scale", "Core system architecture", "Execution dataflow pipeline", or "Production reliability wins". Every slide (2 through 7) MUST explain a specific mechanism, protocol, comparison, or claim directly from the source article!
+  * STRICTLY PROHIBIT generic diagramNode labels such as "System Ingress", "Execution Core", "Durable State", "Target State", or "Event Inbound". Every single diagramNode label and sublabel MUST name a real actor, protocol, component, token claim, or entity from the article (e.g. "Human Principal", "OAuth Token Exchange", "RFC 8693 'act' Claim", "ScyllaDB Shard", "Pingora Worker").
 - For every mechanism slide ("row"):
   * diagramVariant: 'scatter' | 'graph' | 'clusters' | 'split' | 'features' | 'topology' | 'stack' | 'isolation' | 'takeaway'
   * diagramNodes: exactly 3 component cards specific to THAT slide's concept (label, sublabel, status, icon).
     - For financial/economic topics, use finance & infrastructure icons: 'dollarSign' (capital/valuation/revenue), 'landmark' (banks/government/taxpayers/subsidies), 'factory' (power plants/nuclear/energy grid/industrial capex), 'trendingDown' (losses/deficits), 'scales' (risk/trade-offs), 'lifecycle' (circular financing), 'users' (retirees/employees/consumers), 'cpu' (AI chips). NEVER use 'server' or DevOps labels ("Ingress", "Port 443", "P99 < 1.0ms") for financial flows!
-  * diagramEdges: 2 flow labels relevant to the slide (e.g. ["FINANCE", "RECYCLE"] or ["SUBSIDIZE", "BACKSTOP"] for finance; ["ENCODE", "SIMILARITY"] for vectors).
+  * diagramEdges: 2 flow labels relevant to the slide (e.g. ["FINANCE", "RECYCLE"] or ["SUBSIDIZE", "BACKSTOP"] for finance; ["DELEGATE", "ATTEST"] for agent auth; ["ENCODE", "SIMILARITY"] for vectors).
   * diagramFooter: bottom summary line matching the domain (e.g. "CAPITAL TOPOLOGY: CIRCULAR FINANCING & VALUE FLOW").
 
 STAGE 5: COPYWRITING & RTL LINT (Spec §8)
@@ -179,11 +185,10 @@ export function buildUserCarouselPrompt(options: {
 - Return valid JSON matching the exact schema.`;
   } else {
     userPromptText += `\nInstructions for a coherent, logically grouped 8-slide carousel:
-- Organize slides in a strict narrative flow:
-  * Slide 1 ("hub" — The Hook): Shocking premise or valuation hook with centerIcon, 6 domain-matched satIcons, AND 6 topic-specific satLabels extracted directly from the input.
-  * Slide 2 (The Problem / Losses): Core deficit, unit economics, or trigger (use "metric" if a dramatic stat like $20.9B loss or $2.60 per $1 exists).
-  * Slides 3–4 (The Mechanics & Scale): How the mechanism works (e.g. circular financing flow with finance icons 'dollarSign', 'landmark', 'factory', 'lifecycle') and infrastructure scale (e.g. $1.4T commitments, 10GW nuclear scale).
-  * Slides 5–6 (The Real-World & Human Impact — GROUPED TOGETHER): Group consumer, retiree, employee cash-out ($6.6B), energy bill (+63%), and taxpayer/government backstop (5% stake) impacts together in consecutive slides rather than jumping back and forth.
+- Organize slides in a strict narrative flow with high visual archetype diversity:
+  * Slide 1 ("hub" — The Hook): Shocking premise or architectural hook with centerIcon, 6 domain-matched satIcons, AND 6 topic-specific satLabels extracted directly from the input.
+  * Slide 2 (The Problem / Contrast / Metric): Core bottleneck, identity/architecture contrast ("compare"), or dramatic stat ("metric").
+  * Slides 3–6 (Deep Specific Mechanisms, Code & Real-World Impact): Break down the exact mechanisms, protocols, configurations, and impacts from the input. Mix archetypes dynamically ("compare", "code", "metric", "number", and "row" with varied diagramVariants: 'isolation', 'clusters', 'split', 'features', 'graph', 'topology', 'stack'). NEVER output generic filler like "Traditional systems degrade under high scale" or generic nodes like "System Ingress -> Core -> Durable State".
   * Slide 7 (The Core Trade-off / Verdict): Overarching takeaway ("row" with variant 'takeaway' or 'isolation').
   * Slide 8 ("cta" — The Closer): Domain discussion question, Join discussion CTA, and source attribution.
 - STRICT TOPICAL TONE: If the input is about finance, economics, valuation, or energy, strictly prohibit IT/software/DevOps jargon (no "latency", "modular", "deployment", "ingress"). Use economic terminology and finance icons ('dollarSign', 'landmark', 'factory', 'scales', 'trendingDown', 'users').

@@ -29,11 +29,24 @@ const GENERIC_PLACEHOLDER_LABELS = new Set([
   'sys_exec.sh',
   'legacy stack',
   'modern engine',
+  'system ingress',
+  'durable state',
+  'execution core',
+  'event inbound',
+  'target state',
+  'standard simplicity',
+  'custom architecture',
+  'maintenance cost',
+  'input stage',
+  'core logic',
 ]);
 
 export function isGenericPlaceholderValue(val?: string): boolean {
   if (!val || !val.trim()) return true;
-  return GENERIC_PLACEHOLDER_LABELS.has(val.trim().toLowerCase());
+  const clean = val.trim().toLowerCase();
+  if (GENERIC_PLACEHOLDER_LABELS.has(clean)) return true;
+  if (/^component\s*0?\d+$/i.test(clean) || /^stage\s*0?\d+$/i.test(clean)) return true;
+  return false;
 }
 
 /**
@@ -763,3 +776,155 @@ export function resolveSmartSlideVisuals(
     compareRightBody,
   };
 }
+
+/**
+ * Deck-Wide Dynamic Archetype & Graphic Diversifier:
+ * Analyzes Slides 2 through N-1 and assigns a rich variety of visual archetypes
+ * (`compare`, `code`, `metric`, `number`, and non-repeating `row` diagramVariants)
+ * while seeding content-specific nodes, comparisons, metrics, and code snippets from each slide's copy.
+ */
+export function diversifyDeckArchetypesAndVisuals(slides: SlideData[]): SlideData[] {
+  if (!slides || slides.length <= 1) return slides;
+
+  const variantRotation: DiagramVariant[] = [
+    'isolation',
+    'clusters',
+    'split',
+    'features',
+    'graph',
+    'topology',
+    'stack',
+    'scatter',
+  ];
+  let variantCursor = 0;
+  let usedCompare = false;
+  let usedCode = false;
+  let usedMetric = false;
+
+  return slides.map((slide, idx) => {
+    // Keep Slide 1 as Hub and Last Slide as CTA (with refreshed smart visuals if generic)
+    if (idx === 0) {
+      const smartHub = resolveSmartSlideVisuals(slide, 0, true);
+      return {
+        ...slide,
+        type: 'hub',
+        centerIcon: smartHub.centerIcon,
+        centerTag: smartHub.centerTag,
+        satLabels: smartHub.satLabels,
+        satIcons: smartHub.satIcons,
+      };
+    }
+
+    if (idx === slides.length - 1 && slide.type === 'cta') {
+      return slide;
+    }
+
+    // Preserve explicit custom images/videos
+    if (slide.type === 'image' && (slide.imageUrl || slide.videoUrl)) {
+      return slide;
+    }
+
+    // Penultimate slide: Takeaway / Trade-off schematic
+    if (idx === slides.length - 2 && slides.length >= 5) {
+      const smartTakeaway = resolveSmartSlideVisuals(
+        { ...slide, type: 'row', diagramVariant: 'takeaway' },
+        idx,
+        true
+      );
+      return {
+        ...slide,
+        type: 'row',
+        diagramVariant: 'takeaway',
+        diagramNodes: smartTakeaway.diagramNodes,
+        diagramEdges: smartTakeaway.diagramEdges,
+        diagramFooter: smartTakeaway.diagramFooter,
+      };
+    }
+
+    let targetType: SlideType = analyzeSlideTextForArchetype(slide, idx);
+
+    // Ensure rich archetype variety across mid-deck slides (Slides 2 to N-2)
+    if (targetType === 'row') {
+      if (!usedCompare && idx === 1) {
+        targetType = 'compare';
+      } else if (!usedCode && idx === 3) {
+        targetType = 'code';
+      } else if (!usedMetric && idx === 4 && /\d/.test(`${slide.enTitle} ${slide.enBody}`)) {
+        targetType = 'metric';
+      }
+    }
+
+    if (targetType === 'compare') usedCompare = true;
+    if (targetType === 'code') usedCode = true;
+    if (targetType === 'metric') usedMetric = true;
+
+    const chosenVariant =
+      targetType === 'row'
+        ? inferBestDiagramVariant(slide) !== 'topology'
+          ? inferBestDiagramVariant(slide)
+          : variantRotation[variantCursor++ % variantRotation.length]
+        : undefined;
+
+    const smart = resolveSmartSlideVisuals(
+      {
+        ...slide,
+        type: targetType,
+        diagramVariant: chosenVariant || slide.diagramVariant,
+      },
+      idx,
+      true
+    );
+
+    if (targetType === 'compare') {
+      return {
+        ...slide,
+        type: 'compare',
+        compareLeftTitle: smart.compareLeftTitle,
+        compareLeftBody: smart.compareLeftBody,
+        compareRightTitle: smart.compareRightTitle,
+        compareRightBody: smart.compareRightBody,
+      };
+    }
+
+    if (targetType === 'code') {
+      return {
+        ...slide,
+        type: 'code',
+        codeFileName: smart.codeFileName,
+        codeLanguage: smart.codeLanguage,
+        codeSnippet: smart.codeSnippet,
+      };
+    }
+
+    if (targetType === 'metric') {
+      return {
+        ...slide,
+        type: 'metric',
+        metricValue: smart.metricValue,
+        metricLabel: smart.metricLabel,
+        metricDiff: smart.metricDiff,
+        metricIcon: smart.metricIcon,
+      };
+    }
+
+    if (targetType === 'number') {
+      return {
+        ...slide,
+        type: 'number',
+        stepNumber: smart.stepNumber,
+        stepLabel: smart.stepLabel,
+        centerIcon: smart.numberIcon,
+      };
+    }
+
+    return {
+      ...slide,
+      type: 'row',
+      diagramVariant: chosenVariant || smart.diagramVariant,
+      diagramNodes: smart.diagramNodes,
+      diagramEdges: smart.diagramEdges,
+      diagramFooter: smart.diagramFooter,
+    };
+  });
+}
+

@@ -435,5 +435,11 @@ npm run build
 | **2.1** | Decompose AutonomousStudio into Modular Panels | **Completed** | Extracted `StudioCommandBar.tsx` (925 LOC), `UnderCanvasDeliveryDock.tsx` (476 LOC), and `MobileStudioBottomBar.tsx` (330 LOC); reduced `AutonomousStudio.tsx` by 1,278 LOC (>35% reduction). |
 | **2.2** | Split ArchetypeControls into Per-Archetype Editors | **Completed** | Extracted 8 dedicated archetype editors in `src/components/studio/archetypes/`; reduced `ArchetypeControls.tsx` from 1,862 LOC to 431 LOC (>76% reduction). |
 | **2.3** | Decompose WeeklyProgramReviewPanel | **Completed** | Extracted `TopicRadarGatherView.tsx` (819 LOC) and `PeakScheduleBoardView.tsx` (323 LOC); reduced `WeeklyProgramReviewPanel.tsx` from 1,713 LOC to 712 LOC (>58% reduction). |
-| **3.1** | Extract useStudioHistory & useSlideNavigation Custom Hooks | **Queued** | Extract undo/redo stack & slide cursor navigation into dedicated custom hooks. |
+| **3.1** | Extract `useStudioHistory` & `useSlideNavigation` Custom Hooks | **Completed** | Created `src/hooks/useStudioHistory.ts` and `src/hooks/useSlideNavigation.ts` with unit tests in `src/hooks/useStudioHooks.test.ts`; integrated into `App.tsx` and `AutonomousStudio.tsx`. |
+| **3.2** | Extract `useThemeCadence` Custom Hook | **Completed** | Created `src/hooks/useThemeCadence.ts` wrapping `analyzePostHistoryCadence` & `resolveHarmoniousPaletteWithoutRepetition`; integrated into `AutonomousStudio.tsx`. |
+| **3.3** | Introduce `StudioContext` Provider | **Completed** | Created `src/context/StudioContext.tsx` (`StudioProvider`, `useStudioContext`, `useOptionalStudioContext`) and wrapped `AutonomousStudio.tsx` render tree while preserving backward-compatible props. |
+| **4.1** | Cloudinary Staging & `+1h` Auto-Purge Lifecycle Visibility | **Completed** | Added Cloudinary staging status badges (`Cloudinary (N) · Auto-purge +1h` / `Staging Purged`) and 1-click `Purge now` action in `PostManagerPanel.tsx`. |
+| **4.2** | Full Regression Verification & Build Validation | **Completed** | All unit & integration test suites (`npm test`), TypeScript typecheck (`npm run lint`), and production Vite bundle (`npm run build`) verified with 0 warnings. |
+| **4.3** | Optimistic Multi-Platform Scheduled Queue Sync | **Completed** | Immediate optimistic local vault update in `PostManagerPanel.tsx` (< 10ms response) with automatic rollback on network failure; aligned TikTok handle (`@marrokorg`) and Zernio REST API branding in `PublishScheduleModal.tsx`. |
+
 

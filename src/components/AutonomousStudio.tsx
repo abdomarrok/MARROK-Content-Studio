@@ -44,6 +44,7 @@ import {
   ThemePalette,
   HookVariant,
   DiagramNode,
+  DiagramVariant,
   DEFAULT_PALETTES,
   GraphicalElementId,
   ElementLayoutOverride,
@@ -77,6 +78,7 @@ import {
   condenseCarouselToSingleSlide,
   resolveSmartSlideVisuals,
   analyzeSlideTextForArchetype,
+  diversifyDeckArchetypesAndVisuals,
 } from '../lib/synthesizer.ts';
 import { runQAChecks, CHAR_LIMITS } from '../lib/qaChecks.ts';
 import { runPlatformRiskChecks } from '../lib/riskChecks.ts';
@@ -167,6 +169,9 @@ import {
 } from './studio/panels/StudioCommandBar.tsx';
 import { UnderCanvasDeliveryDock } from './studio/panels/UnderCanvasDeliveryDock.tsx';
 import { MobileStudioBottomBar } from './studio/panels/MobileStudioBottomBar.tsx';
+import { useSlideNavigation } from '../hooks/useSlideNavigation.ts';
+import { useThemeCadence } from '../hooks/useThemeCadence.ts';
+import { StudioProvider } from '../context/StudioContext.tsx';
 
 export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   carousel,
@@ -188,16 +193,24 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   const [promptInput, setPromptInput] = useState('');
   const [categoryHint, setCategoryHint] = useState<string>('auto');
 
-  // Intelligent Feed Cadence Analysis for Live Context
-  const dockCadence = React.useMemo(() => {
-    return analyzePostHistoryCadence(savedPosts, theme.id, {
-      prompt: promptInput,
-      category: categoryHint,
-    });
-  }, [savedPosts, theme.id, promptInput, categoryHint]);
+  // Intelligent Feed Cadence Analysis for Live Context via custom hook
+  const { cadence: dockCadence } = useThemeCadence({
+    savedPosts,
+    activeThemeId: theme.id,
+    prompt: promptInput,
+    category: categoryHint,
+  });
   const [isGenerating, setIsGenerating] = useState(false);
   const [pipelineStatus, setPipelineStatus] = useState<string | null>(null);
-  const [currentSlideIndex, setCurrentSlideIndex] = useState(activeSlideIndex ?? 0);
+  const {
+    currentSlideIndex,
+    currentSlideIndexRef,
+    changeSlide,
+  } = useSlideNavigation({
+    slidesCount: carousel.slides.length,
+    externalSlideIndex: activeSlideIndex,
+    onSlideChange,
+  });
   const [showSafeZones, setShowSafeZones] = useState(false);
   const [stageOverlayMode, setStageOverlayMode] = useState<StageOverlayMode>('clean');
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
@@ -211,33 +224,6 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
   // Direct Graphical Control & Hit-Testing States
   const [selectedElementId, setSelectedElementId] = useState<GraphicalElementId | null>(null);
-
-  const currentSlideIndexRef = useRef(currentSlideIndex);
-  currentSlideIndexRef.current = currentSlideIndex;
-
-  // Sync with external slide index changes (e.g. from ContactSheetModal thumbnail clicks)
-  useEffect(() => {
-    if (activeSlideIndex !== undefined && activeSlideIndex !== currentSlideIndexRef.current) {
-      const clamped = Math.max(0, Math.min(carousel.slides.length - 1, activeSlideIndex));
-      currentSlideIndexRef.current = clamped;
-      setCurrentSlideIndex(clamped);
-    }
-  }, [activeSlideIndex, carousel.slides.length]);
-
-  const changeSlide = (
-    indexOrUpdater: number | ((prev: number) => number),
-    overrideSlidesCount?: number
-  ) => {
-    const prev = currentSlideIndexRef.current;
-    const next = typeof indexOrUpdater === 'function' ? indexOrUpdater(prev) : indexOrUpdater;
-    const maxCount = overrideSlidesCount ?? carousel.slides.length;
-    const clamped = Math.max(0, Math.min(Math.max(0, maxCount - 1), next));
-    currentSlideIndexRef.current = clamped;
-    setCurrentSlideIndex(clamped);
-    if (clamped !== prev) {
-      onSlideChange?.(clamped);
-    }
-  };
 
   // Unified Smart Dock States
   const [isExpanded, setIsExpanded] = useState(false);
@@ -1058,6 +1044,50 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     );
   };
 
+  // 1-Click Schematic Variant Switcher from Stage Console
+  const handleSelectDiagramVariant = (variant: DiagramVariant) => {
+    applyDeckUpdate((prev) => {
+      const targetIndex = Math.min(currentSlideIndex, prev.slides.length - 1);
+      const current = prev.slides[targetIndex];
+      if (!current) return prev;
+
+      const refreshed = resolveSmartSlideVisuals(
+        { ...current, type: current.type === 'poster' ? 'poster' : 'row', diagramVariant: variant },
+        targetIndex,
+        true
+      );
+      const newSlides = [...prev.slides];
+      newSlides[targetIndex] = sanitizeSlide(
+        {
+          ...current,
+          type: current.type === 'poster' ? 'poster' : 'row',
+          diagramVariant: variant,
+          diagramNodes: refreshed.diagramNodes,
+          diagramEdges: refreshed.diagramEdges,
+          diagramFooter: refreshed.diagramFooter,
+        },
+        targetIndex,
+        prev.slides.length
+      );
+      return { ...prev, slides: newSlides };
+    });
+    onShowToast(`Switched diagram schematic to ${variant.toUpperCase()}`);
+  };
+
+  // 1-Click Deck-Wide Dynamic Archetype & Graphic Diversifier (Slides 2 to N-1)
+  const handleDiversifyDeckVisuals = () => {
+    applyDeckUpdate((prev) => {
+      const diversified = diversifyDeckArchetypesAndVisuals(prev.slides).map((s, idx, arr) =>
+        sanitizeSlide(s, idx, arr.length)
+      );
+      return {
+        ...prev,
+        slides: diversified,
+      };
+    });
+    onShowToast('✨ Diversified Slides 2–7 across Compare, Code, Metric & Schematic layouts');
+  };
+
   // Explicit confirmation: Creator confirms draft review (advisory status)
   const handleToggleReviewDraft = () => {
     const newReviewed = !Boolean(carousel.sourceMeta?.userReviewed);
@@ -1515,8 +1545,31 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
   const activeOverridesCount = Object.keys(currentSlide.layoutOverrides || {}).length;
 
+  const studioContextValue = React.useMemo(
+    () => ({
+      carousel,
+      currentSlide,
+      currentSlideIndex,
+      theme,
+      activePostFormat,
+      changeSlide,
+      updateCurrentSlide: (updater: (slide: SlideData) => SlideData) => {
+        applyDeckUpdate((prev) => {
+          const targetIndex = Math.min(currentSlideIndex, prev.slides.length - 1);
+          if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
+          const nextSlides = [...prev.slides];
+          nextSlides[targetIndex] = updater(nextSlides[targetIndex]);
+          return { ...prev, slides: nextSlides };
+        });
+      },
+      updateCarousel: onUpdateCarousel,
+    }),
+    [carousel, currentSlide, currentSlideIndex, theme, activePostFormat, changeSlide, onUpdateCarousel]
+  );
+
   return (
-    <div className="w-full lg:flex-1 lg:min-h-0 flex flex-col gap-3 animate-fade-in">
+    <StudioProvider value={studioContextValue}>
+      <div className="w-full lg:flex-1 lg:min-h-0 flex flex-col gap-3 animate-fade-in">
       {/* 1. Compact Command Bar with Overlay Ingestion Drawer */}
       <StudioCommandBar
         promptInput={promptInput}
@@ -1645,6 +1698,9 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 onDeleteSlide={handleDeleteSlide}
                 onMoveSlide={handleMoveSlide}
                 onOpenContactSheet={onOpenContactSheet}
+                onSetSlideType={handleSetSlideType}
+                onSelectDiagramVariant={handleSelectDiagramVariant}
+                onDiversifyDeckVisuals={handleDiversifyDeckVisuals}
               />
             )}
 
@@ -1981,6 +2037,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   onUpdateField={handleUpdateCurrentSlide}
                   onUpdateSlideFields={handleUpdateSlideFields}
                   onSmartMatchVisuals={handleSmartMatchVisuals}
+                  onDiversifyDeckVisuals={handleDiversifyDeckVisuals}
                   onUpdateCarouselField={(field, value) =>
                     applyDeckUpdate((prev) => ({
                       ...prev,
@@ -2343,6 +2400,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           />
         </Suspense>
       )}
-    </div>
+      </div>
+    </StudioProvider>
   );
 };

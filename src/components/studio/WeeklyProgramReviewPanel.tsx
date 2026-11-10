@@ -30,6 +30,7 @@ import {
   generateGatheredCandidatesInBackground,
   getSavedCustomRssFeeds,
   saveCustomRssFeeds,
+  synthesizeCandidateWithFullAi,
 } from '../../lib/gather/gatherClient.ts';
 import { saveValidPost } from '../../lib/storage/postsVaultClient.ts';
 import {
@@ -100,6 +101,7 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
   const [requeueBufferOnApprove] = useState<boolean>(true);
   const [isAcceptingBatch, setIsAcceptingBatch] = useState<boolean>(false);
   const [acceptingSingleId, setAcceptingSingleId] = useState<string | null>(null);
+  const [synthesizingCandidateId, setSynthesizingCandidateId] = useState<string | null>(null);
 
   // Per-candidate custom schedule overrides
   const [candidateScheduleOverrides, setCandidateScheduleOverrides] = useState<
@@ -325,11 +327,12 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
     setIsExtractingInput(true);
     try {
       const res = await extractArticleFromUrl(clean);
-      const newCandidate = buildCandidateFromTopicSync(
+      const initialCandidate = buildCandidateFromTopicSync(
         res.topic,
         theme.id || 'teal',
         formatFilter
       );
+      const newCandidate = await synthesizeCandidateWithFullAi(initialCandidate);
       setCandidates((prev) => [
         newCandidate,
         ...prev.filter((c) => c.id !== newCandidate.id),
@@ -341,7 +344,7 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
       setActiveOutlineSlideIdx(0);
       setUrlOrRssInput('');
       onShowToast(
-        `✓ Generated draft carousel & ${newCandidate.deck.slides.length}-slide outline from "${res.topic.title.slice(0, 38)}..."`
+        `✓ Deep-synthesized ${newCandidate.deck.slides.length}-slide deck from "${res.topic.title.slice(0, 38)}..."`
       );
     } catch (err) {
       onShowToast(
@@ -349,6 +352,27 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
       );
     } finally {
       setIsExtractingInput(false);
+    }
+  };
+
+  const handleSynthesizeCandidateWithAi = async (candidate: GatheredCandidatePost) => {
+    setSynthesizingCandidateId(candidate.id);
+    try {
+      const upgraded = await synthesizeCandidateWithFullAi(candidate);
+      setCandidates((prev) =>
+        prev.map((c) => (c.id === candidate.id ? upgraded : c))
+      );
+      setExpandedCandidateId(candidate.id);
+      setActiveOutlineSlideIdx(0);
+      onShowToast(
+        `✨ Deep AI Synthesis complete for "${upgraded.draftTitle.slice(0, 36)}" (${upgraded.deck.slides.length} slides)`
+      );
+    } catch (err) {
+      onShowToast(
+        `⚠️ ${err instanceof Error ? err.message : 'Deep AI synthesis failed'}`
+      );
+    } finally {
+      setSynthesizingCandidateId(null);
     }
   };
 
@@ -666,6 +690,8 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
           activeOutlineSlideIdx={activeOutlineSlideIdx}
           onSetActiveOutlineSlideIdx={setActiveOutlineSlideIdx}
           onUpdateCandidateDeck={updateCandidateDeck}
+          synthesizingCandidateId={synthesizingCandidateId}
+          onSynthesizeCandidateWithAi={handleSynthesizeCandidateWithAi}
           onLoadCandidateIntoStudio={onLoadCandidateIntoStudio}
           onShowToast={onShowToast}
         />

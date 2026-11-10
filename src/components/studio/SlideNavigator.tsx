@@ -1,8 +1,37 @@
 import React from 'react';
-import { Plus, Copy, Trash2, ArrowLeft, ArrowRight, LayoutGrid } from 'lucide-react';
-import { CanvasDimensionPreset, CarouselData, HookVariant } from '../../types.ts';
-import { CANVAS_DIMENSION_PRESET_LIST, getCanvasDimensionSpec } from '../../lib/canvas/constants.ts';
+import { Plus, Copy, Trash2, ArrowLeft, ArrowRight, LayoutGrid, Wand2 } from 'lucide-react';
+import {
+  CanvasDimensionPreset,
+  CarouselData,
+  DiagramVariant,
+  HookVariant,
+  SlideType,
+} from '../../types.ts';
+import { getCanvasDimensionSpec } from '../../lib/canvas/constants.ts';
 import { StageOverlayMode } from './ViewportCanvas.tsx';
+
+const QUICK_ARCHETYPES: Array<{ id: SlideType; label: string }> = [
+  { id: 'hub', label: 'Hub' },
+  { id: 'row', label: 'Diagram' },
+  { id: 'compare', label: 'Compare' },
+  { id: 'code', label: 'Code' },
+  { id: 'metric', label: 'Metric' },
+  { id: 'number', label: 'Step' },
+  { id: 'image', label: 'Media' },
+  { id: 'cta', label: 'CTA' },
+];
+
+const QUICK_VARIANTS: Array<{ id: DiagramVariant; label: string }> = [
+  { id: 'topology', label: 'Topology' },
+  { id: 'isolation', label: 'Isolation' },
+  { id: 'clusters', label: 'Clusters' },
+  { id: 'split', label: 'Hot/Cold' },
+  { id: 'features', label: 'Features' },
+  { id: 'stack', label: 'Stack' },
+  { id: 'graph', label: 'Graph' },
+  { id: 'scatter', label: 'Scatter' },
+  { id: 'takeaway', label: 'Takeaway' },
+];
 
 interface SlideNavigatorProps {
   carousel: CarouselData;
@@ -19,6 +48,9 @@ interface SlideNavigatorProps {
   onMoveSlide: (direction: 'left' | 'right') => void;
   onApplyHookVariant?: (variant: HookVariant) => void;
   onOpenContactSheet?: () => void;
+  onSetSlideType?: (type: SlideType) => void;
+  onSelectDiagramVariant?: (variant: DiagramVariant) => void;
+  onDiversifyDeckVisuals?: () => void;
 }
 
 export const SlideNavigator: React.FC<SlideNavigatorProps> = ({
@@ -28,13 +60,15 @@ export const SlideNavigator: React.FC<SlideNavigatorProps> = ({
   stageOverlayMode,
   onSetStageOverlayMode,
   onToggleSafeZones,
-  onSelectDimensionPreset,
   onSelectSlide,
   onAddSlide,
   onDuplicateSlide,
   onDeleteSlide,
   onMoveSlide,
   onOpenContactSheet,
+  onSetSlideType,
+  onSelectDiagramVariant,
+  onDiversifyDeckVisuals,
 }) => {
   const isSinglePost = carousel.postFormat === 'single' || carousel.slides.length === 1;
   const activeSlide = carousel.slides[currentSlideIndex] || carousel.slides[0];
@@ -91,7 +125,7 @@ export const SlideNavigator: React.FC<SlideNavigatorProps> = ({
 
   if (isSinglePost) {
     return (
-      <div className="w-full">
+      <div className="w-full space-y-1.5">
         <div className="w-full flex items-center justify-between gap-2 text-xs text-slate-300">
           <div className="flex items-center gap-2 font-mono text-xs">
             <span className="text-white font-bold">Single Slide</span>
@@ -216,6 +250,76 @@ export const SlideNavigator: React.FC<SlideNavigatorProps> = ({
           </button>
         ))}
       </div>
+
+      {/* Dynamic Slide Archetype & Graphic Variant Quick Bar */}
+      {onSetSlideType && activeSlide && (
+        <div className="pt-1 border-t border-white/10 space-y-1">
+          <div className="flex items-center justify-between gap-1.5 overflow-x-auto py-0.5">
+            <div className="flex items-center gap-1 shrink-0">
+              <span className="text-[10px] font-mono uppercase text-slate-500 mr-0.5">
+                Graphic:
+              </span>
+              {QUICK_ARCHETYPES.map((arch) => {
+                const isSelected = activeSlide.type === arch.id;
+                return (
+                  <button
+                    key={arch.id}
+                    type="button"
+                    onClick={() => onSetSlideType(arch.id)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-sans font-bold transition-colors cursor-pointer whitespace-nowrap ${
+                      isSelected
+                        ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/45'
+                        : 'bg-white/[0.03] text-slate-400 hover:text-white border border-white/5'
+                    }`}
+                    title={`Switch Slide ${currentSlideIndex + 1} to ${arch.label} layout`}
+                  >
+                    {arch.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {onDiversifyDeckVisuals && (
+              <button
+                type="button"
+                onClick={onDiversifyDeckVisuals}
+                className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/35 text-[10px] font-sans font-bold text-amber-200 cursor-pointer shrink-0 whitespace-nowrap"
+                title="Auto-diversify Slides 2–7 across Compare, Code, Metric, and varied Diagram schematics matched to each slide's copy"
+              >
+                <Wand2 className="w-2.5 h-2.5" />
+                <span>Diversify 2–7</span>
+              </button>
+            )}
+          </div>
+
+          {onSelectDiagramVariant && (activeSlide.type === 'row' || activeSlide.type === 'poster') && (
+            <div className="flex items-center gap-1 overflow-x-auto py-0.5">
+              <span className="text-[10px] font-mono uppercase text-slate-500 mr-0.5 shrink-0">
+                Schematic:
+              </span>
+              {QUICK_VARIANTS.map((v) => {
+                const isSelected = (activeSlide.diagramVariant || 'topology') === v.id;
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => onSelectDiagramVariant(v.id)}
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                      isSelected
+                        ? 'bg-emerald-500/25 text-emerald-200 border border-emerald-400/45 font-bold'
+                        : 'bg-black/40 text-slate-400 hover:text-white border border-white/5'
+                    }`}
+                    title={`Switch schematic variant to ${v.label}`}
+                  >
+                    {v.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
+

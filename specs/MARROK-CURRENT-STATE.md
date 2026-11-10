@@ -163,7 +163,8 @@ The codebase currently passes all regression tests:
 ```bash
 npm test -- --run
 ```
-- **Test Files:** 26 passed (26)
-- **Tests:** 172 passed (172)
-- **Duration:** 3.12s
+- **Test Files:** 27 passed (27)
+- **Tests:** 175 passed (175)
+- **Duration:** 5.57s
 - **Pass Rate:** 100%
+

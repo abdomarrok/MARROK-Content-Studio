@@ -43,44 +43,55 @@ import {
   importVaultJson,
 } from './lib/storage/postsVaultClient';
 import { fetchPublishStatus } from './lib/publish/publishClient';
+import { useStudioHistory } from './hooks/useStudioHistory.ts';
 
 const MAX_HISTORY_STEPS = 30;
 
 export default function App() {
   const hasRestoredLocalDraftRef = useRef(false);
 
-  // Local Draft Persistence (Hydrate from browser localStorage if available)
-  const [carousel, setCarousel] = useState<CarouselData>(() => {
-    try {
-      const saved = localStorage.getItem('marrok_deck_draft_v1');
-      if (saved) {
-        const parsed = parseCarouselData(JSON.parse(saved), { minSlides: 3 });
-        if (parsed) {
-          const isIdenticalToStarter =
-            parsed.slides[0]?.enTitle === DEFAULT_STARTER_DECK.slides[0]?.enTitle &&
-            !parsed.id;
-          if (!isIdenticalToStarter) {
-            hasRestoredLocalDraftRef.current = true;
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3200);
+  }, []);
+
+  // 30-Step Undo / Redo History Ring Buffer via useStudioHistory
+  const {
+    state: carousel,
+    canUndo,
+    canRedo,
+    setState: pushCarouselHistory,
+    replaceStateWithoutHistory: setCarousel,
+    undo: handleUndo,
+    redo: handleRedo,
+  } = useStudioHistory<CarouselData>(
+    () => {
+      try {
+        const saved = localStorage.getItem('marrok_deck_draft_v1');
+        if (saved) {
+          const parsed = parseCarouselData(JSON.parse(saved), { minSlides: 3 });
+          if (parsed) {
+            const isIdenticalToStarter =
+              parsed.slides[0]?.enTitle === DEFAULT_STARTER_DECK.slides[0]?.enTitle &&
+              !parsed.id;
+            if (!isIdenticalToStarter) {
+              hasRestoredLocalDraftRef.current = true;
+            }
+            return sanitizeFullCarousel(parsed);
           }
-          return sanitizeFullCarousel(parsed);
         }
+      } catch (err) {
+        console.warn('Failed to restore draft from localStorage:', err);
       }
-    } catch (err) {
-      console.warn('Failed to restore draft from localStorage:', err);
+      return DEFAULT_STARTER_DECK;
+    },
+    {
+      maxDepth: MAX_HISTORY_STEPS,
+      onUndo: () => showToast('Undid last change'),
+      onRedo: () => showToast('Redid change'),
     }
-    return DEFAULT_STARTER_DECK;
-  });
-
-  // 30-Step Undo / Redo History Ring Buffer
-  const [pastHistory, setPastHistory] = useState<CarouselData[]>([]);
-  const [futureHistory, setFutureHistory] = useState<CarouselData[]>([]);
-
-  const carouselRef = useRef<CarouselData>(carousel);
-  carouselRef.current = carousel;
-  const pastHistoryRef = useRef<CarouselData[]>(pastHistory);
-  pastHistoryRef.current = pastHistory;
-  const futureHistoryRef = useRef<CarouselData[]>(futureHistory);
-  futureHistoryRef.current = futureHistory;
+  );
 
   const [lastSavedTime, setLastSavedTime] = useState<string | null>(null);
 
@@ -105,7 +116,6 @@ export default function App() {
         const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         setLastSavedTime(timeStr);
       } catch (err) {
-        // If quota is exceeded due to large base64 images, strip inline data URLs and retry
         try {
           const lightweightDraft: CarouselData = {
             ...carousel,
@@ -135,12 +145,6 @@ export default function App() {
   const [isThemeCustomizerOpen, setIsThemeCustomizerOpen] = useState(false);
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
   const [isContactSheetOpen, setIsContactSheetOpen] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  const showToast = useCallback((msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3200);
-  }, []);
 
   const refreshVaultPosts = useCallback((isInitialMount = false) => {
     loadVaultPosts()
@@ -149,7 +153,6 @@ export default function App() {
         setStorageEngine(res.storageEngine);
         if (isInitialMount && res.posts.length > 0 && !hasRestoredLocalDraftRef.current) {
           const latest = sanitizeFullCarousel(res.posts[0].deck);
-          carouselRef.current = latest;
           setCarousel(latest);
           if (latest.theme && DEFAULT_PALETTES[latest.theme]) {
             setCurrentPalette(DEFAULT_PALETTES[latest.theme]);
@@ -159,10 +162,9 @@ export default function App() {
       .catch((err) => {
         console.warn('Failed to load saved posts vault:', err);
       });
-  }, []);
+  }, [setCarousel]);
 
   // Load Saved & Posted Carousels on startup and re-sync when switching browser tabs
-  // Also triggers automatic background Cloudinary cleanup for any scheduled post whose dueAt has passed
   useEffect(() => {
     refreshVaultPosts(true);
     fetchPublishStatus()
@@ -185,58 +187,10 @@ export default function App() {
   const handleUpdateCarousel: React.Dispatch<React.SetStateAction<CarouselData>> = useCallback(
     (updaterOrValue) => {
       hasRestoredLocalDraftRef.current = true;
-      const prev = carouselRef.current;
-      const next =
-        typeof updaterOrValue === 'function'
-          ? (updaterOrValue as (prevState: CarouselData) => CarouselData)(prev)
-          : updaterOrValue;
-      if (next === prev) return;
-      const nextPast = [...pastHistoryRef.current.slice(-(MAX_HISTORY_STEPS - 1)), prev];
-      carouselRef.current = next;
-      pastHistoryRef.current = nextPast;
-      futureHistoryRef.current = [];
-      setCarousel(next);
-      setPastHistory(nextPast);
-      setFutureHistory([]);
+      pushCarouselHistory(updaterOrValue);
     },
-    []
+    [pushCarouselHistory]
   );
-
-  const handleUndo = useCallback(() => {
-    const oldPast = pastHistoryRef.current;
-    if (oldPast.length === 0) return;
-    const previousState = oldPast[oldPast.length - 1];
-    const remainingPast = oldPast.slice(0, -1);
-    const current = carouselRef.current;
-    const nextFuture = [current, ...futureHistoryRef.current.slice(0, MAX_HISTORY_STEPS - 1)];
-
-    carouselRef.current = previousState;
-    pastHistoryRef.current = remainingPast;
-    futureHistoryRef.current = nextFuture;
-
-    setPastHistory(remainingPast);
-    setFutureHistory(nextFuture);
-    setCarousel(previousState);
-    showToast('Undid last change');
-  }, [showToast]);
-
-  const handleRedo = useCallback(() => {
-    const oldFuture = futureHistoryRef.current;
-    if (oldFuture.length === 0) return;
-    const nextState = oldFuture[0];
-    const remainingFuture = oldFuture.slice(1);
-    const current = carouselRef.current;
-    const nextPast = [...pastHistoryRef.current.slice(-(MAX_HISTORY_STEPS - 1)), current];
-
-    carouselRef.current = nextState;
-    pastHistoryRef.current = nextPast;
-    futureHistoryRef.current = remainingFuture;
-
-    setFutureHistory(remainingFuture);
-    setPastHistory(nextPast);
-    setCarousel(nextState);
-    showToast('Redid change');
-  }, [showToast]);
 
   // Global Keyboard Shortcuts for Undo (Ctrl+Z / Cmd+Z) and Redo (Ctrl+Y / Cmd+Shift+Z)
   useEffect(() => {
@@ -424,8 +378,8 @@ export default function App() {
             (p) => p.postStatus !== 'posted' && p.deck?.sourceMeta?.userReviewed === false
           ).length
         }
-        canUndo={pastHistory.length > 0}
-        canRedo={futureHistory.length > 0}
+        canUndo={canUndo}
+        canRedo={canRedo}
         onUndo={handleUndo}
         onRedo={handleRedo}
         lastSavedTime={lastSavedTime}

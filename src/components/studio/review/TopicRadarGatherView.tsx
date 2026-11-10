@@ -18,11 +18,18 @@ import {
 import {
   CarouselData,
   DEFAULT_PALETTES,
+  DiagramVariant,
   PostFormat,
   PublishTargetPlatform,
   SlideData,
+  SlideType,
   ThemePalette,
 } from '../../../types.ts';
+import {
+  diversifyDeckArchetypesAndVisuals,
+  resolveSmartSlideVisuals,
+  seedSlideArchetypeData,
+} from '../../../lib/synthesizer.ts';
 import {
   DAILY_PEAK_TIME_SLOTS,
   PeakProgramDensity,
@@ -117,6 +124,8 @@ export interface TopicRadarGatherViewProps {
     candidateId: string,
     updater: (prev: GatheredCandidatePost) => GatheredCandidatePost
   ) => void;
+  synthesizingCandidateId?: string | null;
+  onSynthesizeCandidateWithAi?: (candidate: GatheredCandidatePost) => void;
   onLoadCandidateIntoStudio?: (deck: CarouselData, title: string) => void;
   onShowToast: (msg: string) => void;
 }
@@ -159,6 +168,8 @@ export const TopicRadarGatherView: React.FC<TopicRadarGatherViewProps> = ({
   activeOutlineSlideIdx,
   onSetActiveOutlineSlideIdx,
   onUpdateCandidateDeck,
+  synthesizingCandidateId,
+  onSynthesizeCandidateWithAi,
   onLoadCandidateIntoStudio,
   onShowToast,
 }) => {
@@ -657,6 +668,25 @@ export const TopicRadarGatherView: React.FC<TopicRadarGatherViewProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
+                    {onSynthesizeCandidateWithAi && (
+                      <button
+                        type="button"
+                        disabled={synthesizingCandidateId === candidate.id}
+                        onClick={() => onSynthesizeCandidateWithAi(candidate)}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/35 text-amber-200 text-xs font-semibold cursor-pointer disabled:opacity-50"
+                        title="Scrape full article from source URL and synthesize all slides with AI"
+                      >
+                        <Sparkles className={`w-3.5 h-3.5 ${synthesizingCandidateId === candidate.id ? 'animate-spin' : ''}`} />
+                        <span>
+                          {synthesizingCandidateId === candidate.id
+                            ? 'Scraping & Synthesizing...'
+                            : candidate.deck.sourceMeta?.isFallback === false
+                            ? 'Re-Synthesize AI'
+                            : 'Deep AI Synthesize'}
+                        </span>
+                      </button>
+                    )}
+
                     {onLoadCandidateIntoStudio && (
                       <button
                         type="button"
@@ -695,17 +725,112 @@ export const TopicRadarGatherView: React.FC<TopicRadarGatherViewProps> = ({
                 {/* Expanded Inline Editor for Candidate's 8 Slide Outlines & Caption */}
                 {isExpanded && activeSlide && (
                   <div className="p-3 rounded-xl border border-cyan-400/25 bg-black/60 space-y-3 animate-fade-in">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="text-xs font-bold text-white flex items-center gap-2">
                         <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
                         <span>
                           Editing Outline for Slide {activeOutlineSlideIdx + 1} of{' '}
-                          {slides.length} ({activeSlide.type.toUpperCase()})
+                          {slides.length} ({activeSlide.type.toUpperCase()}
+                          {activeSlide.type === 'row' && activeSlide.diagramVariant
+                            ? ` · ${activeSlide.diagramVariant.toUpperCase()}`
+                            : ''}
+                          )
                         </span>
                       </span>
-                      <span className="text-[10px] font-mono text-slate-400">
-                        Pre-generated outline ready to publish or load into Studio
-                      </span>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <select
+                          aria-label="Slide Archetype"
+                          value={activeSlide.type}
+                          onChange={(e) => {
+                            const newType = e.target.value as SlideType;
+                            onUpdateCandidateDeck(candidate.id, (prev) => {
+                              const nextSlides = [...(prev.deck.slides || [])];
+                              if (nextSlides[activeOutlineSlideIdx]) {
+                                nextSlides[activeOutlineSlideIdx] = seedSlideArchetypeData(
+                                  nextSlides[activeOutlineSlideIdx],
+                                  newType,
+                                  activeOutlineSlideIdx,
+                                  true
+                                );
+                              }
+                              return { ...prev, deck: { ...prev.deck, slides: nextSlides } };
+                            });
+                            onShowToast(`Switched Slide ${activeOutlineSlideIdx + 1} to ${newType.toUpperCase()}`);
+                          }}
+                          className="px-2 py-1 rounded-lg bg-black/80 border border-white/15 text-[11px] font-mono text-cyan-200"
+                        >
+                          <option value="hub">Archetype: Hub</option>
+                          <option value="row">Archetype: Diagram (Row)</option>
+                          <option value="compare">Archetype: Compare</option>
+                          <option value="code">Archetype: Code Diff</option>
+                          <option value="metric">Archetype: Metric</option>
+                          <option value="number">Archetype: Step Number</option>
+                          <option value="image">Archetype: Media / Meme</option>
+                          <option value="cta">Archetype: CTA</option>
+                        </select>
+
+                        {(activeSlide.type === 'row' || activeSlide.type === 'poster') && (
+                          <select
+                            aria-label="Diagram Variant"
+                            value={activeSlide.diagramVariant || 'topology'}
+                            onChange={(e) => {
+                              const newVariant = e.target.value as DiagramVariant;
+                              onUpdateCandidateDeck(candidate.id, (prev) => {
+                                const nextSlides = [...(prev.deck.slides || [])];
+                                const curr = nextSlides[activeOutlineSlideIdx];
+                                if (curr) {
+                                  const smart = resolveSmartSlideVisuals(
+                                    { ...curr, diagramVariant: newVariant },
+                                    activeOutlineSlideIdx,
+                                    true
+                                  );
+                                  nextSlides[activeOutlineSlideIdx] = {
+                                    ...curr,
+                                    diagramVariant: newVariant,
+                                    diagramNodes: smart.diagramNodes,
+                                    diagramEdges: smart.diagramEdges,
+                                    diagramFooter: smart.diagramFooter,
+                                  };
+                                }
+                                return { ...prev, deck: { ...prev.deck, slides: nextSlides } };
+                              });
+                              onShowToast(`Switched diagram schematic to ${newVariant.toUpperCase()}`);
+                            }}
+                            className="px-2 py-1 rounded-lg bg-black/80 border border-white/15 text-[11px] font-mono text-emerald-200"
+                          >
+                            <option value="topology">Variant: Topology</option>
+                            <option value="isolation">Variant: Isolation</option>
+                            <option value="clusters">Variant: Clusters</option>
+                            <option value="split">Variant: Hot/Cold Split</option>
+                            <option value="features">Variant: Features</option>
+                            <option value="stack">Variant: Layered Stack</option>
+                            <option value="graph">Variant: Skip Graph</option>
+                            <option value="scatter">Variant: Vector Scatter</option>
+                            <option value="takeaway">Variant: Takeaway</option>
+                          </select>
+                        )}
+
+                        {slides.length > 2 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onUpdateCandidateDeck(candidate.id, (prev) => ({
+                                ...prev,
+                                deck: {
+                                  ...prev.deck,
+                                  slides: diversifyDeckArchetypesAndVisuals(prev.deck.slides || []),
+                                },
+                              }));
+                              onShowToast('✨ Diversified Slides 2–7 across Compare, Code, Metric & Schematic layouts');
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/35 text-[11px] font-bold text-amber-200 cursor-pointer"
+                            title="Auto-diversify Slides 2–7 across Compare, Code, Metric, and varied Diagram schematics"
+                          >
+                            Diversify Slides 2–7
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
