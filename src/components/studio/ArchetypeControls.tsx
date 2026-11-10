@@ -1666,7 +1666,7 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
                   {(
                     [
                       { id: 'clean', label: 'Clean' },
-                      { id: 'hud', label: 'HUD' },
+                      { id: 'hud', label: 'Blueprint' },
                       { id: 'tint', label: 'Tint' },
                       { id: 'invert', label: 'Invert' },
                     ] as const

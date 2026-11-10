@@ -1730,7 +1730,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
             <span className="sm:hidden text-[11px] font-mono uppercase" style={{ color: theme.accent }}>
               {activePostFormat === 'single' ? '1-Slide' : activePostFormat === 'reel' ? 'Reel' : 'Deck'}
             </span>
-            <span className="hidden sm:inline">Source / OCR</span>
+            <span className="hidden sm:inline">Sources & Notes</span>
             {isExpanded ? <ChevronUp className="w-3.5 h-3.5 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 shrink-0" />}
           </button>
 
@@ -1775,7 +1775,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
               <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-white/10">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="text-xs font-bold text-white font-jakarta tracking-wide truncate">
-                    Step 1 · Source Ingestion
+                    Topic & Source Ingestion
                   </span>
                   <span className="text-[11px] text-slate-400 hidden md:inline truncate">
                     · Paste notes, YouTube transcripts, or screenshots
@@ -1967,9 +1967,9 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
                   {/* Top Radar Items */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
-                    {studioRadarTopics.slice(0, 6).map((item) => (
+                    {studioRadarTopics.slice(0, 6).map((item, idx) => (
                       <div
-                        key={item.id}
+                        key={`${item.id}_${idx}`}
                         className="p-2.5 rounded-lg border border-white/10 bg-white/[0.02] hover:bg-white/[0.05] flex flex-col justify-between gap-1.5"
                       >
                         <div>

@@ -861,13 +861,15 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
       {viewMode === 'list' && (
         <div className="rounded-2xl border border-white/10 bg-[#0b1218]/90 p-3 sm:p-4 space-y-2.5">
           {filteredPosts.length === 0 ? (
-            <div className="py-10 text-center space-y-2 rounded-xl border border-dashed border-white/10 bg-black/20">
-              <FileText className="w-6 h-6 text-slate-500 mx-auto" />
-              <div className="text-xs font-bold text-slate-300">
-                No posts match this filter
+            <div className="py-12 text-center space-y-3 rounded-xl border border-dashed border-white/10 bg-black/20">
+              <FileText className="w-7 h-7 text-slate-500 mx-auto" />
+              <div className="text-sm font-bold text-slate-200">
+                {savedPosts.length === 0 ? 'No posts in your library yet' : 'No posts match this filter'}
               </div>
-              <p className="text-[11px] text-slate-500 max-w-md mx-auto">
-                Switch status tabs above or clear your search query.
+              <p className="text-xs text-slate-400 max-w-md mx-auto">
+                {savedPosts.length === 0
+                  ? 'Generate or save carousels in Create Studio to schedule, track, or distribute them here.'
+                  : 'Switch status tabs above or clear your search query.'}
               </p>
             </div>
           ) : (

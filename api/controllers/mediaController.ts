@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
 import { TECH_ICONS_LIST } from '../constants.ts';
 import { isAllowedProxyUrl, resolveAndValidateHost } from './proxyController.ts';
@@ -543,7 +544,7 @@ async function fetchCloudflareEngineeringRss(limit = 4): Promise<GatheredTopicIt
       const recommendedFormat = recommendPostFormat(title, summary, metrics);
 
       results.push({
-        id: `rss_cf_${Buffer.from(url).toString('base64url').slice(0, 14)}`,
+        id: `rss_cf_${crypto.createHash('sha256').update(url).digest('hex').slice(0, 20)}`,
         title,
         url,
         sourceName: 'Cloudflare Blog RSS',
@@ -696,7 +697,7 @@ async function fetchCustomRssFeed(rssUrl: string, limit = 5): Promise<GatheredTo
       const recommendedFormat = recommendPostFormat(title, summary, metrics);
 
       results.push({
-        id: `rss_custom_${Buffer.from(url).toString('base64url').slice(0, 14)}`,
+        id: `rss_custom_${crypto.createHash('sha256').update(url).digest('hex').slice(0, 20)}`,
         title,
         url,
         sourceName: `${brand} RSS`,
@@ -902,7 +903,7 @@ export async function handleExtractUrlContent(req: Request, res: Response): Prom
     const recommendedFormat = recommendPostFormat(title, combinedSummary, metrics);
 
     const topic: GatheredTopicItem = {
-      id: `url_${Buffer.from(rawUrl).toString('base64url').slice(0, 16)}`,
+      id: `url_${crypto.createHash('sha256').update(rawUrl).digest('hex').slice(0, 20)}`,
       title,
       url: rawUrl,
       sourceName: brand,

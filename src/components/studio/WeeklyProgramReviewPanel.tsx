@@ -1009,7 +1009,7 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
             </div>
           ) : (
             <div className="space-y-3">
-              {candidates.map((candidate) => {
+              {candidates.map((candidate, cIdx) => {
                 const isSelected = selectedCandidateIds.includes(candidate.id);
                 const isExpanded = expandedCandidateId === candidate.id;
                 const sched = getCandidateFutureSchedule(candidate.id);
@@ -1021,7 +1021,7 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
 
                 return (
                   <div
-                    key={candidate.id}
+                    key={`${candidate.id}_${cIdx}`}
                     className={`rounded-2xl border transition-all p-4 space-y-3 ${
                       isSelected
                         ? 'border-cyan-400/45 bg-[#0d1720]/95'
