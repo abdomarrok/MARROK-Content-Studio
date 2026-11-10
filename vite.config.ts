@@ -12,7 +12,7 @@ export default defineConfig(() => {
       },
     },
     build: {
-      chunkSizeWarningLimit: 600,
+      chunkSizeWarningLimit: 1500,
       rollupOptions: {
         output: {
           manualChunks(id: string) {
@@ -27,6 +27,15 @@ export default defineConfig(() => {
             }
             if (/[\\/]node_modules[\\/]mp4-muxer[\\/]/.test(id)) {
               return 'vendor-mp4';
+            }
+            if (/[\\/]src[\\/]lib[\\/]canvas[\\/]/.test(id)) {
+              return 'engine-canvas';
+            }
+            if (/[\\/]src[\\/]lib[\\/]motion[\\/]/.test(id)) {
+              return 'engine-motion';
+            }
+            if (/[\\/]src[\\/]lib[\\/]synthesis[\\/]/.test(id)) {
+              return 'engine-synthesis';
             }
           },
         },

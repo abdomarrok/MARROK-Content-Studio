@@ -62,10 +62,11 @@ interface UseStudioShortcutsAndClipboardParams {
   onCollapseExpanded: () => void;
   onChangeSlide: (updater: (prev: number) => number) => void;
   onPasteImageFile: (file: File) => void;
+  onOpenContactSheet?: () => void;
 }
 
 /**
- * Encapsulates keyboard navigation (ArrowLeft / ArrowRight / Escape) and
+ * Encapsulates keyboard navigation (ArrowLeft / ArrowRight / 1-9 / Space / Escape) and
  * global clipboard image paste ingestion for AutonomousStudio.
  */
 export function useStudioShortcutsAndClipboard({
@@ -74,23 +75,45 @@ export function useStudioShortcutsAndClipboard({
   onCollapseExpanded,
   onChangeSlide,
   onPasteImageFile,
+  onOpenContactSheet,
 }: UseStudioShortcutsAndClipboardParams): void {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement ||
+        (e.target instanceof HTMLElement && e.target.isContentEditable)
+      ) {
         return;
       }
+      if (e.ctrlKey || e.metaKey || e.altKey) {
+        return;
+      }
+
       if (e.key === 'ArrowLeft') {
         onChangeSlide((prev) => Math.max(0, prev - 1));
       } else if (e.key === 'ArrowRight') {
         onChangeSlide((prev) => Math.min(slidesCount - 1, prev + 1));
       } else if (e.key === 'Escape' && isExpanded) {
         onCollapseExpanded();
+      } else if (/^[1-9]$/.test(e.key)) {
+        const targetIndex = parseInt(e.key, 10) - 1;
+        if (targetIndex >= 0 && targetIndex < slidesCount) {
+          onChangeSlide(() => targetIndex);
+        }
+      } else if (e.key === ' ' && onOpenContactSheet && !isExpanded) {
+        // Only trigger if focus is on body or stage container, not on a button
+        if (e.target instanceof HTMLButtonElement || e.target instanceof HTMLAnchorElement) {
+          return;
+        }
+        e.preventDefault();
+        onOpenContactSheet();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [slidesCount, isExpanded, onCollapseExpanded, onChangeSlide]);
+  }, [slidesCount, isExpanded, onCollapseExpanded, onChangeSlide, onOpenContactSheet]);
 
   useEffect(() => {
     const handleGlobalPaste = (e: ClipboardEvent) => {
@@ -113,3 +136,4 @@ export function useStudioShortcutsAndClipboard({
     return () => window.removeEventListener('paste', handleGlobalPaste);
   }, [onPasteImageFile]);
 }
+

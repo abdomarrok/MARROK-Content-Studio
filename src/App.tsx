@@ -33,7 +33,7 @@ import { sanitizeFullCarousel, sanitizeSlide } from './lib/textSanitizer';
 import { parseCarouselData } from './lib/validation/carousel';
 import { runQAChecks } from './lib/qaChecks';
 import { runPlatformRiskChecks } from './lib/riskChecks';
-import { getPublishBlockers } from './components/studio/index.ts';
+import { getPublishBlockers } from './components/studio/PublishChecklist.tsx';
 import {
   loadVaultPosts,
   saveValidPost,

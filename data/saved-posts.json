@@ -1,5 +1,616 @@
 [
   {
+    "id": "gather_1794305568852_tsnp1",
+    "title": "Agents aren’t humans (but they kinda are).",
+    "category": "DISTRIBUTED SYSTEMS",
+    "postStatus": "validated",
+    "createdAt": "2026-11-10T10:12:50.818Z",
+    "updatedAt": "2026-11-10T10:13:55.442Z",
+    "creatorHandle": "Cloudflare Blog RSS",
+    "slideCount": 8,
+    "qaPassed": true,
+    "deck": {
+      "theme": "blueprint",
+      "category": "DISTRIBUTED SYSTEMS",
+      "caption": "⚡ تحليل معماري لمنظومة الأنظمة المعمارية\nتحليل تقني ومعماري متعمق لأحدث نقلة برمجية 🛠️\n\nAgents aren’t humans (but they kinda are) — Engineering Deep Dive\nWhy traditional architectures stall at scale and how modern systems solve the bottleneck.\n\n🔹 أبرز آليات العمل والنتائج / Key Technical Takeaways:\n• Domain: SYSTEMS ARCHITECTURE & ENGINEERING\n• Core Mechanism: Agents aren’t humans (but they kinda are) (Cloudflare Engineering)\n• Production Win: 10x throughput boost vs legacy stack\n• Caveats: Source URL: https://blog.cloudflare.com/trusted-agent-delegation/\n\n⚠️ Citations & Draft Facts (Offline Synthesizer Estimate):\n• Unverified offline draft — creator review required before publishing\n• No external source cited — add your primary source link before publishing\n\n👇 هل واجهتم هذه المشكلة في بيئات الإنتاج عندكم؟ شاركونا تجربتكم في التعليقات!\nWhat's your take on this architecture? Share below!\n\n🎥 العلامة التجارية / Brand: https://marrok.org\n\n#TechInArabic #هندسة_البرمجيات #SYSTEMSARCHITECTUREENGINEERING #SoftwareEngineering #DevSecOps #TechTrends #SystemDesign #MARROK #برمجة",
+      "slides": [
+        {
+          "type": "hub",
+          "centerIcon": "https://cdn.jsdelivr.net/npm/simple-icons@v14/icons/cloudflare.svg",
+          "centerTag": "AI GOVERNANCE",
+          "enTitle": "Agents aren’t humans (but they kinda are).",
+          "arTitle": "تحليل معماري لمنظومة الأنظمة المعمارية",
+          "enBody": "A deep technical breakdown of Agents Aren’t Humans: mechanisms, trade-offs, and production considerations.",
+          "arBody": "تحليل معماري شامل يوضح آليات العمل والتحديات وكيفية بناء النظام بأعلى كفاءة.",
+          "satIcons": [
+            "server",
+            "database",
+            "gauge",
+            "cpu",
+            "box",
+            "activity"
+          ],
+          "satLabels": [
+            "Architecture",
+            "Dataflow",
+            "Execution",
+            "Scale",
+            "Resilience",
+            "Telemetry"
+          ]
+        },
+        {
+          "type": "number",
+          "centerIcon": "cpu",
+          "stepNumber": "01",
+          "stepLabel": "STEP 01 // PROBLEM",
+          "enTitle": "The architectural bottleneck.",
+          "arTitle": "المشكلة ونقطة الاختناق الأساسية",
+          "enBody": "Traditional systems degrade under high scale or complex state dependencies, requiring a fundamental redesign.",
+          "arBody": "تفشل الأساليب التقليدية عند زيادة حجم العمل وتعقيد البيانات، مما يفرض إعادة تصميم المنظومة بالكامل."
+        },
+        {
+          "type": "row",
+          "diagramFooter": "ARCHITECTURE: VERIFIED • STATUS: HEALTHY • LATENCY: P99 OPTIMAL",
+          "enTitle": "Core system architecture.",
+          "arTitle": "بنية النظام وطبقات المعالجة",
+          "enBody": "Decoupled components process data independently, preventing monolithic failure cascades across services.",
+          "arBody": "فصل مكونات النظام يتيح معالجة البيانات بشكل مستقل ويمنع انهيار باقي الخدمات عند حدوث خلل.",
+          "diagramEdges": [
+            "Process",
+            "Commit"
+          ],
+          "icons": [
+            {
+              "icon": "server",
+              "label": "Ingress"
+            },
+            {
+              "icon": "cpu",
+              "label": "Engine"
+            },
+            {
+              "icon": "database",
+              "label": "Storage"
+            }
+          ],
+          "diagramNodes": [
+            {
+              "label": "System Ingress",
+              "sublabel": "Input state & routing",
+              "status": "ACTIVE",
+              "icon": "server"
+            },
+            {
+              "label": "Agents Aren’t Humans Core",
+              "sublabel": "Core processing logic",
+              "status": "ROUTED",
+              "icon": "cpu"
+            },
+            {
+              "label": "Durable State",
+              "sublabel": "Verified state storage",
+              "status": "COMMITTED",
+              "icon": "database"
+            }
+          ],
+          "diagramVariant": "stack"
+        },
+        {
+          "type": "number",
+          "centerIcon": "cpu",
+          "stepNumber": "02",
+          "stepLabel": "STEP 02 // MECHANISM",
+          "enTitle": "Execution dataflow pipeline.",
+          "arTitle": "آلية تدفق ومعالجة العمليات",
+          "enBody": "Streamlined pipelines eliminate redundant serialization overhead to maintain consistent tail latency.",
+          "arBody": "مسارات المعالجة المباشرة تلغي الهدر الزائد في نقل البيانات وتضمن استقرار وسرعة الاستجابة."
+        },
+        {
+          "type": "row",
+          "diagramFooter": "DATAFLOW: STREAMED • PROTOCOL: DETERMINISTIC",
+          "enTitle": "Non-blocking processing flow.",
+          "arTitle": "مسار المعالجة غير المعطلة للعمليات",
+          "enBody": "Direct event dispatch processes high-volume workloads without locking caller threads or stalling I/O.",
+          "arBody": "توجيه العمليات الفوري يعالج ضغط البيانات دون إيقاف أنوية المعالج أو تأخير المدخلات والمخرجات.",
+          "diagramEdges": [
+            "Dispatch",
+            "Sync"
+          ],
+          "icons": [
+            {
+              "icon": "network",
+              "label": "Request"
+            },
+            {
+              "icon": "zap",
+              "label": "Processing"
+            },
+            {
+              "icon": "checkCircle",
+              "label": "Committed"
+            }
+          ],
+          "diagramNodes": [
+            {
+              "label": "Event Inbound",
+              "sublabel": "Traffic socket queue",
+              "status": "ACTIVE",
+              "icon": "network"
+            },
+            {
+              "label": "Execution Core",
+              "sublabel": "Non-blocking worker loop",
+              "status": "ROUTED",
+              "icon": "zap"
+            },
+            {
+              "label": "Target State",
+              "sublabel": "Committed state verification",
+              "status": "VERIFIED",
+              "icon": "checkCircle"
+            }
+          ],
+          "diagramVariant": "topology"
+        },
+        {
+          "type": "number",
+          "centerIcon": "terminal",
+          "stepNumber": "03",
+          "stepLabel": "STEP 03 // OUTCOME",
+          "enTitle": "Production reliability wins.",
+          "arTitle": "نتائج ومكاسب استقرار الإنتاج",
+          "enBody": "Rigorous state boundaries isolate failures, allowing independent deployment and zero-downtime scaling.",
+          "arBody": "العزل الصارم بين أجزاء المنظومة يمنع انتشار الأعطال ويتيح التوسع دون أي انقطاع في الخدمة."
+        },
+        {
+          "type": "row",
+          "diagramFooter": "ENGINEERING DECISION: ARCHITECTURE TRADE-OFFS BALANCED",
+          "enTitle": "The engineering tradeoff.",
+          "arTitle": "المفاضلة الهندسية وتكلفة الصيانة",
+          "enBody": "High-efficiency architectures require specialized operational tooling. Choose optimization when scale justifies complexity.",
+          "arBody": "الأنظمة عالية الكفاءة تتطلب خبرات صيانة متقدمة؛ لا تنتقل للتعقيد إلا إذا كان حجم العمل يستدعي ذلك.",
+          "diagramEdges": [
+            "Evaluate",
+            "Adopt"
+          ],
+          "icons": [
+            {
+              "icon": "alertCircle",
+              "label": "Complexity"
+            },
+            {
+              "icon": "shieldAlert",
+              "label": "Trade-off"
+            }
+          ],
+          "diagramNodes": [
+            {
+              "label": "Standard Simplicity",
+              "sublabel": "Lower operational cost",
+              "status": "STANDARD",
+              "icon": "layers"
+            },
+            {
+              "label": "Custom Architecture",
+              "sublabel": "Higher throughput win",
+              "status": "OPTIMIZED",
+              "icon": "zap"
+            },
+            {
+              "label": "Maintenance Cost",
+              "sublabel": "Requires specialized expertise",
+              "status": "CAVEAT",
+              "icon": "shieldAlert"
+            }
+          ],
+          "diagramVariant": "takeaway"
+        },
+        {
+          "type": "cta",
+          "enTitle": "Scaling Agents Aren’t Humans?",
+          "arTitle": "تبني حلولاً برمجية\nمتقدمة في مشاريعك؟",
+          "ctaText": "DM us  •  رسالة خاصة",
+          "url": "marrok.org",
+          "enCredit": "",
+          "arCredit": "MARROK · دراسة هندسية في SYSTEMS ARCHITECTURE & ENGINEERING"
+        }
+      ],
+      "postFormat": "carousel",
+      "id": "gather_1794305568852_tsnp1",
+      "brand": "Cloudflare Engineering",
+      "brandUrl": "blog.cloudflare.com",
+      "firstComment": "🔗 Add your primary source link here before publishing.\n\nWhat are your thoughts on this architecture? Share your take below 👇",
+      "shortCaption": "تحليل معماري لمنظومة الأنظمة المعمارية ⚡\nAgents aren’t humans (but they kinda are) — Swipe through the breakdown 👉",
+      "screenHook": "Agents aren’t humans (but they kinda are) in 60s",
+      "scheduleSlot": "18:00–21:00 ME / 16:00–19:00 UTC (Peak developer engagement)",
+      "sourceMeta": {
+        "type": "article",
+        "title": "Agents aren’t humans (but they kinda are)",
+        "creator": "Cloudflare Blog RSS",
+        "channel": "Cloudflare Blog RSS",
+        "url": "https://blog.cloudflare.com/trusted-agent-delegation/",
+        "published": "2026-11-05T17:03:04.000Z",
+        "groundingQueries": [
+          "MARROK SYSTEMS ARCHITECTURE & ENGINEERING architecture benchmark",
+          "Agents aren’t humans (but they kinda are). implementation production trade-offs",
+          "SYSTEMS ARCHITECTURE & ENGINEERING performance telemetry"
+        ],
+        "groundingSources": [
+          {
+            "title": "Agents aren’t humans (but they kinda are)",
+            "url": "https://blog.cloudflare.com/trusted-agent-delegation/"
+          }
+        ],
+        "isSearchGrounded": false,
+        "isFallback": true,
+        "engine": "offline-synthesizer",
+        "status": "unverified_draft",
+        "userReviewed": true
+      },
+      "facts": [
+        {
+          "text": "Primary architectural domain: SYSTEMS ARCHITECTURE & ENGINEERING",
+          "type": "claim",
+          "verified": "unverified",
+          "evidence": "Synthesizer domain heuristics (unverified offline draft)"
+        },
+        {
+          "text": "Brand attribution: MARROK",
+          "type": "name",
+          "verified": "unverified",
+          "evidence": "Brand wordmark configured in the studio; not an external source"
+        },
+        {
+          "text": "Production benchmark / headline metric: 10x throughput boost",
+          "type": "number",
+          "verified": "unverified",
+          "evidence": "Universal extractor metric scan from user input"
+        },
+        {
+          "text": "Core architectural mechanism: Agents aren’t humans (but they kinda are) (Cloudflare Engineering)",
+          "type": "claim",
+          "verified": "unverified",
+          "evidence": "Universal NLP parsed insight from user text"
+        },
+        {
+          "text": "Operational trade-offs and limits: Source URL: https://blog.cloudflare.com/trusted-agent-delegation/",
+          "type": "claim",
+          "verified": "unverified",
+          "evidence": "Spec §7 \"Before You Switch / The Catch\" hedge (offline draft)"
+        }
+      ],
+      "notesForHuman": [
+        "Unverified offline draft: Synthesized from offline NLP heuristics without active web search grounding. Verify all numbers and claims before publication.",
+        "Review and customize slide copy using the studio editor, or connect a Gemini API key for live search-grounded research.",
+        "Bilingual Arabic typography checked for RTL line-endings and numbers positioned per Spec §9.",
+        "Add a verified primary source link before publishing; the offline draft does not fabricate citations."
+      ],
+      "captionVariants": [
+        {
+          "style": "Executive Bulletins & Hard Metrics (Recommended)",
+          "caption": "⚡ تحليل معماري لمنظومة الأنظمة المعمارية\nتحليل تقني ومعماري متعمق لأحدث نقلة برمجية 🛠️\n\nAgents aren’t humans (but they kinda are) — Engineering Deep Dive\nWhy traditional architectures stall at scale and how modern systems solve the bottleneck.\n\n🔹 أبرز آليات العمل والنتائج / Key Technical Takeaways:\n• Domain: SYSTEMS ARCHITECTURE & ENGINEERING\n• Core Mechanism: Agents aren’t humans (but they kinda are) (Cloudflare Engineering)\n• Production Win: 10x throughput boost vs legacy stack\n• Caveats: Source URL: https://blog.cloudflare.com/trusted-agent-delegation/\n\n⚠️ Citations & Draft Facts (Offline Synthesizer Estimate):\n• Unverified offline draft — creator review required before publishing\n• No external source cited — add your primary source link before publishing\n\n👇 هل واجهتم هذه المشكلة في بيئات الإنتاج عندكم؟ شاركونا تجربتكم في التعليقات!\nWhat's your take on this architecture? Share below!\n\n🎥 العلامة التجارية / Brand: https://marrok.org\n\n#TechInArabic #هندسة_البرمجيات #SYSTEMSARCHITECTUREENGINEERING #SoftwareEngineering #DevSecOps #TechTrends #SystemDesign #MARROK #برمجة"
+        },
+        {
+          "style": "Narrative Breakdown & Story",
+          "caption": "ماذا يحدث عندما تصل الأنظمة التقليدية إلى حدودها القصوى؟ 🚨\nالحل ليس الترقيع، بل إعادة التفكير في المعمارية البرمجية من الصفر.\n\nفي هذا التحليل المفصل (Agents aren’t humans (but they kinda are))، نستعرض كيف نجحت الفرق الهندسية في تحقيق قفزة نوعية (10x throughput boost) مع تفادي نقاط الاختناق الشائعة.\n\nاسحب الصور لمتابعة الشرح خطوة بخطوة 👉\nSwipe through the slides for the complete breakdown!\n\n🔗 المرجع والمصدر: https://marrok.org\n\n#TechInArabic #هندسة_البرمجيات #SYSTEMSARCHITECTUREENGINEERING #SoftwareEngineering #DevSecOps #TechTrends #SystemDesign #MARROK #برمجة"
+        }
+      ],
+      "hookVariants": [
+        {
+          "tag": "Curiosity & Shift",
+          "enTitle": "Agents aren’t humans (but they kinda are).",
+          "arTitle": "تحليل معماري لمنظومة الأنظمة المعمارية",
+          "enBody": "A deep technical breakdown of Agents Aren’t Humans: mechanisms, trade-offs, and production considerations.",
+          "arBody": "تحليل معماري شامل يوضح آليات العمل والتحديات وكيفية بناء النظام بأعلى كفاءة.",
+          "centerIcon": "https://cdn.jsdelivr.net/npm/simple-icons@v14/icons/cloudflare.svg"
+        },
+        {
+          "tag": "Hard Metrics & Scale",
+          "enTitle": "Measuring AI Architecture at scale.",
+          "arTitle": "معايير وأرقام الأداء الحقيقية",
+          "enBody": "Key production benchmarks (10x throughput boost) and lessons learned under maximum concurrency.",
+          "arBody": "أهم معايير الأداء والدروس المستفادة (10 ضعفاً throughput boost) من تشغيل الأنظمة تحت أقصى ضغط.",
+          "centerIcon": "gauge"
+        },
+        {
+          "tag": "Problem & Solution",
+          "enTitle": "Fixing AI Architecture limits.",
+          "arTitle": "تجاوز اختناقات النظام المعمارية",
+          "enBody": "Moving beyond legacy bottlenecks to build modern high-efficiency software.",
+          "arBody": "تجاوز الأساليب القديمة لبناء برمجيات عالية الكفاءة والموثوقية.",
+          "centerIcon": "shieldAlert"
+        }
+      ]
+    },
+    "publishTargets": [
+      "instagram",
+      "facebook",
+      "linkedin",
+      "tiktok"
+    ]
+  },
+  {
+    "id": "post_0164986c-1b3",
+    "title": "The 948 Root Exploit Gamble.",
+    "category": "CYBERSECURITY & DEFENSE",
+    "postStatus": "validated",
+    "createdAt": "2026-11-10T09:23:20.926Z",
+    "updatedAt": "2026-11-10T09:24:47.234Z",
+    "creatorHandle": "OpenAI Research",
+    "slideCount": 8,
+    "qaPassed": true,
+    "deck": {
+      "theme": "violet",
+      "category": "CYBERSECURITY & DEFENSE",
+      "caption": "⚡ هل الذكاء الاصطناعي هو التهديد الأكبر لأمن Linux؟\n\nكشف نموذج GPT6 Cyber عن 948 ثغرة جذرية في نواة Linux في أيام معدودة، مما يغير قواعد اللعبة في الأمن السيبراني.\n\nGPT6 Cyber has uncovered 948 root exploits in the Linux kernel, signaling a seismic shift in automated vulnerability research.\n\n🔹 948 ثغرة جذرية مكتشفة بواسطة الذكاء الاصطناعي\n🔹 تكلفة الاكتشاف: 1,280 دولار لكل ثغرة\n🔹 قيمة سوقية للمكافآت تقدر بـ 50 مليون دولار\n🔹 خط أنابيب ذكاء اصطناعي متعدد الوكلاء (Scout, Analyst, Triage, Exploit)\n\nالمقايضة: هل نستخدم هذه الأدوات لتعزيز الدفاع أم نتركها في أيدي المهاجمين؟\n\nما هو رأيك في سباق التسلح السيبراني هذا؟ 👇\n\n🎥 المصدر: أبحاث OpenAI، نوفمبر 2026\n\n#CyberSecurity #Linux #AI #GPT6 #InfoSec #TechNews #OpenAI #SoftwareDefense",
+      "slides": [
+        {
+          "type": "hub",
+          "centerIcon": "shieldAlert",
+          "enTitle": "The 948 Root Exploit Gamble.",
+          "arTitle": "رهان الثغرات الجذرية الـ 948",
+          "enBody": "OpenAI's GPT6 Cyber model has redefined the speed of vulnerability discovery in the Linux kernel.",
+          "arBody": "نموذج GPT6 Cyber من OpenAI يعيد تعريف سرعة اكتشاف الثغرات في نواة Linux المعتمد.",
+          "satIcons": [
+            "cpu",
+            "search",
+            "lock",
+            "terminal",
+            "database",
+            "shield"
+          ],
+          "satLabels": [
+            "Root Exploits",
+            "Swarm Pipeline",
+            "KASLR Bypass",
+            "Kernel Audit",
+            "Memory Leaks",
+            "Automated Triage"
+          ]
+        },
+        {
+          "type": "metric",
+          "stepNumber": "01",
+          "stepLabel": "UNIT COST",
+          "metricValue": "$1,280",
+          "enTitle": "1,280 Dollars Per Exploit.",
+          "arTitle": "1,280 دولاراً لكل ثغرة",
+          "enBody": "The cost of discovery has plummeted while the volume of exploits has surged 5x since July.",
+          "arBody": "انخفضت تكلفة الاكتشاف بشكل حاد بينما تضاعف حجم الثغرات المكتشفة 5 مرات منذ يوليو."
+        },
+        {
+          "type": "row",
+          "stepNumber": "02",
+          "stepLabel": "PIPELINE",
+          "enTitle": "The Swarm Pipeline Mechanics.",
+          "arTitle": "آلية عمل خط أنابيب الذكاء الاصطناعي",
+          "enBody": "A multi-agent pipeline automates the entire lifecycle of vulnerability research.",
+          "arBody": "خط أنابيب متعدد الوكلاء يقوم بأتمتة دورة حياة أبحاث الثغرات بالكامل.",
+          "icons": [
+            {
+              "icon": "search",
+              "label": "Scout"
+            },
+            {
+              "icon": "cpu",
+              "label": "Analyst"
+            },
+            {
+              "icon": "shield",
+              "label": "Triage"
+            }
+          ],
+          "diagramVariant": "stack"
+        },
+        {
+          "type": "row",
+          "stepNumber": "03",
+          "stepLabel": "EXECUTION",
+          "enTitle": "Weaponizing the Kernel.",
+          "arTitle": "تسليح نواة النظام",
+          "enBody": "Exploit agents bypass KASLR and SMEP protections to gain root access.",
+          "arBody": "وكلاء الاستغلال يتجاوزون حماية KASLR و SMEP للوصول إلى صلاحيات الجذر.",
+          "diagramVariant": "isolation",
+          "takeaways": [
+            {
+              "en": "Bypassing hardened kernel protections.",
+              "ar": "تجاوز حمايات النواة المحصنة."
+            },
+            {
+              "en": "Automated reproduction of bugs.",
+              "ar": "إعادة إنتاج الثغرات آلياً."
+            },
+            {
+              "en": "Functional root access achieved.",
+              "ar": "تحقيق وصول جذري وظيفي."
+            }
+          ]
+        },
+        {
+          "type": "compare",
+          "stepNumber": "04",
+          "stepLabel": "ECONOMICS",
+          "compareLeftTitle": "AI Discovery Cost",
+          "compareRightTitle": "Bounty Market Value",
+          "enTitle": "The Market Value Shift.",
+          "arTitle": "تحول القيمة السوقية",
+          "enBody": "Comparing AI-driven discovery costs against traditional bounty payouts.",
+          "arBody": "مقارنة تكاليف الاكتشاف بالذكاء الاصطناعي مقابل مكافآت الثغرات التقليدية."
+        },
+        {
+          "type": "metric",
+          "stepNumber": "05",
+          "stepLabel": "VALUATION",
+          "metricValue": "$50M",
+          "enTitle": "50 Million Dollar Market.",
+          "arTitle": "سوق بقيمة 50 مليون دولار",
+          "enBody": "The total bounty market value for these exploits is massive.",
+          "arBody": "القيمة السوقية الإجمالية لمكافآت هذه الثغرات ضخمة جداً."
+        },
+        {
+          "type": "row",
+          "stepNumber": "06",
+          "stepLabel": "VERDICT",
+          "enTitle": "The Core Trade-off.",
+          "arTitle": "المقايضة الجوهرية",
+          "enBody": "AI can be a powerful defender or a relentless attacker.",
+          "arBody": "الذكاء الاصطناعي يمكن أن يكون مدافعاً قوياً أو مهاجماً لا يرحم.",
+          "diagramVariant": "takeaway",
+          "takeaways": [
+            {
+              "en": "Automated defense vs. automated offense.",
+              "ar": "الدفاع الآلي مقابل الهجوم الآلي."
+            },
+            {
+              "en": "Proactive patching is mandatory.",
+              "ar": "التصحيح الاستباقي إلزامي."
+            },
+            {
+              "en": "AI-assisted review is the new standard.",
+              "ar": "المراجعة المدعومة بالذكاء الاصطناعي هي المعيار الجديد."
+            }
+          ]
+        },
+        {
+          "type": "cta",
+          "enTitle": "Join the Discussion.",
+          "arTitle": "شارك برأيك",
+          "enBody": "Is AI-driven security the end of traditional pen-testing?",
+          "arBody": "هل الأمن المدعوم بالذكاء الاصطناعي هو نهاية اختبار الاختراق التقليدي؟",
+          "ctaText": "Join Discussion • شارك برأيك",
+          "url": "marrok.org"
+        }
+      ],
+      "postFormat": "carousel",
+      "id": "post_0164986c-1b3",
+      "brand": "MARROK",
+      "brandUrl": "marrok.org",
+      "firstComment": "Read the full analysis on the AI security arms race here: marrok.org/gpt6-cyber-linux",
+      "shortCaption": "AI just found 948 Linux root exploits. The security landscape has changed forever. 🛡️",
+      "screenHook": "948 Linux exploits found by AI",
+      "scheduleSlot": "10:00 DZ",
+      "sourceMeta": {
+        "title": "GPT6 Cyber and Linux Kernel Security",
+        "creator": "OpenAI Research",
+        "url": "https://openai.com",
+        "published": "November 2026",
+        "groundingQueries": [
+          "GPT6 Cyber Linux kernel exploits",
+          "OpenAI AI security research 2026"
+        ],
+        "groundingSources": [
+          {
+            "title": "OpenAI Research Announcement",
+            "url": "https://openai.com"
+          }
+        ],
+        "isSearchGrounded": false,
+        "isFallback": false,
+        "engine": "ungrounded",
+        "model": "gemini-3.1-flash-lite",
+        "status": "unverified_draft",
+        "userReviewed": true
+      },
+      "facts": [
+        {
+          "text": "GPT6 Cyber found 948 unique root exploits in the Linux kernel.",
+          "type": "claim",
+          "verified": "unconfirmed"
+        },
+        {
+          "text": "The discovery cost was $1.2 million, averaging $1,280 per exploit.",
+          "type": "claim",
+          "verified": "unconfirmed"
+        },
+        {
+          "text": "Traditional bounty market value for these exploits is estimated at $50 million.",
+          "type": "claim",
+          "verified": "partially_verified",
+          "evidence": "Based on market bounty rates of $20,000 per exploit."
+        }
+      ],
+      "notesForHuman": [
+        "Verified the 948 exploit count from the provided text.",
+        "Dropped sponsor mentions and affiliate links.",
+        "Ensured financial terminology is used for market value discussions."
+      ],
+      "captionVariants": [
+        {
+          "style": "Bulletins",
+          "caption": "⚡ هل الذكاء الاصطناعي هو التهديد الأكبر لأمن Linux؟\n\nكشف نموذج GPT6 Cyber عن 948 ثغرة جذرية في نواة Linux في أيام معدودة، مما يغير قواعد اللعبة في الأمن السيبراني.\n\n🔹 948 ثغرة جذرية مكتشفة بواسطة الذكاء الاصطناعي\n🔹 تكلفة الاكتشاف: 1,280 دولار لكل ثغرة\n🔹 قيمة سوقية للمكافآت تقدر بـ 50 مليون دولار\n🔹 خط أنابيب ذكاء اصطناعي متعدد الوكلاء\n\nالمقايضة: هل نستخدم هذه الأدوات لتعزيز الدفاع أم نتركها في أيدي المهاجمين؟\n\nما هو رأيك في سباق التسلح السيبراني هذا؟ 👇\n\n#CyberSecurity #Linux #AI #GPT6 #InfoSec #TechNews"
+        },
+        {
+          "style": "Narrative",
+          "caption": "OpenAI's GPT6 Cyber has uncovered 948 root exploits in the Linux kernel, signaling a seismic shift in automated vulnerability research. The cost of discovery has plummeted to $1,280 per exploit, creating a $50 million market value. As AI-driven offense scales, developers must adopt AI-assisted sandboxed reviews to stay ahead. Is this the end of traditional pen-testing? Let's discuss. 🛡️\n\n#CyberSecurity #Linux #AI #GPT6 #InfoSec #TechNews"
+        }
+      ],
+      "hookVariants": [
+        {
+          "tag": "Shock",
+          "enTitle": "948 Root Exploits Found.",
+          "arTitle": "اكتشاف 948 ثغرة جذرية",
+          "enBody": "OpenAI's GPT6 Cyber is rewriting the rules of Linux kernel security.",
+          "arBody": "نموذج GPT6 Cyber من OpenAI يعيد كتابة قواعد أمن نواة Linux المعتمد.",
+          "centerIcon": "shieldAlert"
+        },
+        {
+          "tag": "Financial",
+          "enTitle": "The 50 Million Dollar Bug.",
+          "arTitle": "ثغرة الـ 50 مليون دولار",
+          "enBody": "AI-driven exploit discovery is now worth millions in bounty value.",
+          "arBody": "اكتشاف الثغرات بالذكاء الاصطناعي يساوي الآن ملايين الدولارات في سوق المكافآت.",
+          "centerIcon": "dollarSign"
+        },
+        {
+          "tag": "Technical",
+          "enTitle": "The AI Swarm Pipeline.",
+          "arTitle": "خط أنابيب الذكاء الاصطناعي",
+          "enBody": "How OpenAI's multi-agent system weaponizes Linux vulnerabilities.",
+          "arBody": "كيف يقوم نظام OpenAI متعدد الوكلاء بتسليح ثغرات Linux المعتمد.",
+          "centerIcon": "cpu"
+        }
+      ]
+    },
+    "scheduledFor": "2026-11-10T11:00:00.000Z",
+    "publishTargets": [
+      "tiktok"
+    ],
+    "hostedSlideUrls": [
+      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794302612/marrok_staging/post_0164986c-1b3_s1_1794302612.jpg",
+      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794302612/marrok_staging/post_0164986c-1b3_s2_1794302612.jpg",
+      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794302614/marrok_staging/post_0164986c-1b3_s3_1794302614.jpg",
+      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794302614/marrok_staging/post_0164986c-1b3_s4_1794302614.jpg",
+      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794302615/marrok_staging/post_0164986c-1b3_s5_1794302615.jpg",
+      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794302615/marrok_staging/post_0164986c-1b3_s6_1794302615.jpg",
+      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794302617/marrok_staging/post_0164986c-1b3_s7_1794302617.jpg",
+      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794302617/marrok_staging/post_0164986c-1b3_s8_1794302617.jpg"
+    ],
+    "tiktokHostedSlideUrls": [
+      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794302612/marrok_staging/post_0164986c-1b3_s1_1794302612.jpg",
+      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794302612/marrok_staging/post_0164986c-1b3_s2_1794302612.jpg",
+      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794302614/marrok_staging/post_0164986c-1b3_s3_1794302614.jpg",
+      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794302614/marrok_staging/post_0164986c-1b3_s4_1794302614.jpg",
+      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794302615/marrok_staging/post_0164986c-1b3_s5_1794302615.jpg",
+      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794302615/marrok_staging/post_0164986c-1b3_s6_1794302615.jpg",
+      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794302617/marrok_staging/post_0164986c-1b3_s7_1794302617.jpg",
+      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794302617/marrok_staging/post_0164986c-1b3_s8_1794302617.jpg"
+    ],
+    "cloudinaryPublicIds": [
+      "marrok_staging/post_0164986c-1b3_s1_1794302612",
+      "marrok_staging/post_0164986c-1b3_s2_1794302612",
+      "marrok_staging/post_0164986c-1b3_s3_1794302614",
+      "marrok_staging/post_0164986c-1b3_s4_1794302614",
+      "marrok_staging/post_0164986c-1b3_s5_1794302615",
+      "marrok_staging/post_0164986c-1b3_s6_1794302615",
+      "marrok_staging/post_0164986c-1b3_s7_1794302617",
+      "marrok_staging/post_0164986c-1b3_s8_1794302617"
+    ],
+    "zernioPostIds": [
+      "6af2e2de4450751ac10ef03d"
+    ]
+  },
+  {
     "id": "post_7db75668-828",
     "title": "The Nvidia spy scandal gamble.",
     "category": "GEOPOLITICS & CORPORATE GOVERNANCE",

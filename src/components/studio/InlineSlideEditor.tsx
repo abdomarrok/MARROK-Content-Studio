@@ -17,6 +17,15 @@ import { SlideData, ThemePalette, GraphicalElementId, HookVariant } from '../../
 import { CHAR_LIMITS, SINGLE_SLIDE_CHAR_LIMITS } from '../../lib/qaChecks.ts';
 import { seedSingleSlideTakeaways } from '../../lib/synthesis/singleSlideCondenser.ts';
 import { isVideoSlide, isFullMemeSlide } from '../../lib/canvas/constants.ts';
+import {
+  autoPolishHeadline,
+  autoFitTextToLimits,
+  enforceHeadlineSpecRule,
+} from '../../lib/text/headlines.ts';
+import {
+  sanitizeArabicSlideText,
+  fixArabicPunctuation,
+} from '../../lib/text/arabicBiDi.ts';
 
 interface InlineSlideEditorProps {
   currentSlide: SlideData;
@@ -302,7 +311,7 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
             selectedElementId === 'titleBlock' ? 'ring-1 ring-cyan-400/50 bg-cyan-950/10 p-2.5 -mx-2.5' : ''
           }`}
         >
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <label className="text-xs font-semibold text-slate-200 flex items-center gap-2">
               <span>{isCtaSlide ? 'Call-to-Action Question (English)' : 'English Headline'}</span>
               {selectedElementId === 'titleBlock' && (
@@ -312,13 +321,44 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
                 </span>
               )}
             </label>
-            <span
-              className={`text-xs font-mono tabular-nums ${
-                enTitleLen > enTitleLimit ? 'text-amber-400 font-bold' : 'text-slate-400'
-              }`}
-            >
-              {enTitleLen} / {enTitleLimit}
-            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  const next = enforceHeadlineSpecRule(currentSlide.enTitle || '', {
+                    isHook,
+                    isCta: isCtaSlide,
+                  });
+                  handleEditTextWithReveal('enTitle', autoPolishHeadline(next));
+                }}
+                className="px-2 py-0.5 rounded bg-white/[0.05] hover:bg-white/10 border border-white/10 text-[10px] font-mono text-slate-300 hover:text-white cursor-pointer transition-colors"
+                title="Make headline punchy and format punctuation to spec"
+              >
+                Punchier
+              </button>
+              {enTitleLen > enTitleLimit && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleEditTextWithReveal(
+                      'enTitle',
+                      autoFitTextToLimits(currentSlide.enTitle || '', enTitleLimit)
+                    )
+                  }
+                  className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-[10px] font-mono text-amber-200 cursor-pointer transition-colors"
+                  title="Trim headline to fit character limit"
+                >
+                  Trim
+                </button>
+              )}
+              <span
+                className={`text-xs font-mono tabular-nums ${
+                  enTitleLen > enTitleLimit ? 'text-amber-400 font-bold' : 'text-slate-400'
+                }`}
+              >
+                {enTitleLen} / {enTitleLimit}
+              </span>
+            </div>
           </div>
           <input
             type="text"
@@ -337,14 +377,44 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
             selectedElementId === 'arabicTitleBlock' ? 'ring-1 ring-cyan-400/50 bg-cyan-950/10 p-2.5 -mx-2.5' : ''
           }`}
         >
-          <div className="flex items-center justify-between">
-            <span
-              className={`text-xs font-mono tabular-nums ${
-                arTitleLen > limits.arTitle ? 'text-amber-400 font-bold' : 'text-slate-400'
-              }`}
-            >
-              {arTitleLen} / {limits.arTitle}
-            </span>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5">
+              <span
+                className={`text-xs font-mono tabular-nums ${
+                  arTitleLen > limits.arTitle ? 'text-amber-400 font-bold' : 'text-slate-400'
+                }`}
+              >
+                {arTitleLen} / {limits.arTitle}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  handleEditTextWithReveal(
+                    'arTitle',
+                    sanitizeArabicSlideText(currentSlide.arTitle || '', { isTitle: true })
+                  )
+                }
+                className="px-2 py-0.5 rounded bg-white/[0.05] hover:bg-white/10 border border-white/10 text-[10px] font-mono text-slate-300 hover:text-white cursor-pointer transition-colors"
+                title="Sanitize Arabic BiDi punctuation and trailing Latin units"
+              >
+                Fix BiDi
+              </button>
+              {arTitleLen > limits.arTitle && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleEditTextWithReveal(
+                      'arTitle',
+                      autoFitTextToLimits(currentSlide.arTitle || '', limits.arTitle).replace(/[.?!]$/, '')
+                    )
+                  }
+                  className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-[10px] font-mono text-amber-200 cursor-pointer transition-colors"
+                  title="Trim Arabic headline to fit character limit"
+                >
+                  Trim
+                </button>
+              )}
+            </div>
             <label className="text-xs font-semibold text-slate-200 flex items-center gap-2 font-cairo">
               {selectedElementId === 'arabicTitleBlock' && (
                 <span className="text-xs font-mono text-cyan-400 flex items-center gap-1 font-sans">
@@ -409,7 +479,7 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
             selectedElementId === 'bodyBlock' ? 'ring-1 ring-cyan-400/50 bg-cyan-950/10 p-2.5 -mx-2.5' : ''
           }`}
         >
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <label className="text-xs font-semibold text-slate-200 flex items-center gap-2">
               <span>Technical Mechanism & Details (English)</span>
               {selectedElementId === 'bodyBlock' && (
@@ -419,13 +489,30 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
                 </span>
               )}
             </label>
-            <span
-              className={`text-xs font-mono tabular-nums ${
-                enBodyLen > limits.enBody ? 'text-amber-400 font-bold' : 'text-slate-400'
-              }`}
-            >
-              {enBodyLen} / {limits.enBody}
-            </span>
+            <div className="flex items-center gap-1.5">
+              {enBodyLen > limits.enBody && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleEditTextWithReveal(
+                      'enBody',
+                      autoFitTextToLimits(currentSlide.enBody || '', limits.enBody)
+                    )
+                  }
+                  className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-[10px] font-mono text-amber-200 cursor-pointer transition-colors"
+                  title="Trim body text to fit character limit"
+                >
+                  Trim
+                </button>
+              )}
+              <span
+                className={`text-xs font-mono tabular-nums ${
+                  enBodyLen > limits.enBody ? 'text-amber-400 font-bold' : 'text-slate-400'
+                }`}
+              >
+                {enBodyLen} / {limits.enBody}
+              </span>
+            </div>
           </div>
           <textarea
             rows={3}
@@ -444,14 +531,44 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
             selectedElementId === 'arabicBodyBlock' ? 'ring-1 ring-cyan-400/50 bg-cyan-950/10 p-2.5 -mx-2.5' : ''
           }`}
         >
-          <div className="flex items-center justify-between">
-            <span
-              className={`text-xs font-mono tabular-nums ${
-                arBodyLen > limits.arBody ? 'text-amber-400 font-bold' : 'text-slate-400'
-              }`}
-            >
-              {arBodyLen} / {limits.arBody}
-            </span>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5">
+              <span
+                className={`text-xs font-mono tabular-nums ${
+                  arBodyLen > limits.arBody ? 'text-amber-400 font-bold' : 'text-slate-400'
+                }`}
+              >
+                {arBodyLen} / {limits.arBody}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  handleEditTextWithReveal(
+                    'arBody',
+                    fixArabicPunctuation(sanitizeArabicSlideText(currentSlide.arBody || '', { isTitle: false }))
+                  )
+                }
+                className="px-2 py-0.5 rounded bg-white/[0.05] hover:bg-white/10 border border-white/10 text-[10px] font-mono text-slate-300 hover:text-white cursor-pointer transition-colors"
+                title="Sanitize Arabic BiDi punctuation and trailing Latin units"
+              >
+                Fix BiDi
+              </button>
+              {arBodyLen > limits.arBody && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleEditTextWithReveal(
+                      'arBody',
+                      fixArabicPunctuation(autoFitTextToLimits(currentSlide.arBody || '', limits.arBody))
+                    )
+                  }
+                  className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-[10px] font-mono text-amber-200 cursor-pointer transition-colors"
+                  title="Trim Arabic body text to fit character limit"
+                >
+                  Trim
+                </button>
+              )}
+            </div>
             <label className="text-xs font-semibold text-slate-200 flex items-center gap-2 font-cairo">
               {selectedElementId === 'arabicBodyBlock' && (
                 <span className="text-xs font-mono text-cyan-400 flex items-center gap-1 font-sans">

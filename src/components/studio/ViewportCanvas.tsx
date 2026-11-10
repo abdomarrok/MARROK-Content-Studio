@@ -537,8 +537,8 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
       style={{ aspectRatio: `${spec.width} / ${spec.height}` }}
       className={`relative mx-auto rounded-2xl overflow-hidden border border-white/15 bg-black shadow-2xl w-auto max-w-[min(420px,92vw)] ${
         compactMobileStage
-          ? 'max-h-[min(300px,35dvh)] sm:max-h-[min(340px,36dvh)] lg:max-h-[min(620px,calc(100vh-205px))]'
-          : 'max-h-[min(560px,calc(100dvh-230px))] sm:max-h-[min(620px,calc(100vh-205px))]'
+          ? 'max-h-[min(320px,36dvh)] sm:max-h-[min(360px,38dvh)] lg:max-h-[min(620px,calc(100dvh-205px))]'
+          : 'max-h-[min(520px,calc(100dvh-250px))] sm:max-h-[min(620px,calc(100dvh-205px))]'
       } shrink-0 outline-none focus:ring-1 focus:ring-cyan-500/40 select-none group transition-all duration-200`}
     >
       <canvas
