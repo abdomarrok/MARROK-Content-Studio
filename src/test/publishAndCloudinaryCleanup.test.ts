@@ -33,8 +33,8 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
 
   beforeEach(async () => {
     process.env.POSTS_STORAGE_FILE = tmpFile;
-    process.env.CLOUDINARY_CLOUD_NAME = 'dug1cw6ux';
-    process.env.CLOUDINARY_API_KEY = '286517213493826';
+    process.env.CLOUDINARY_CLOUD_NAME = 'test_cloud_name';
+    process.env.CLOUDINARY_API_KEY = 'test_cloudinary_api_key';
     process.env.CLOUDINARY_API_SECRET = 'test_secret_for_signature';
   });
 
@@ -213,8 +213,8 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
       scheduledDateIso: '2026-11-10T18:00:00.000Z',
       targets: ['tiktok', 'instagram', 'linkedin'],
       imageUrls: [
-        'https://res.cloudinary.com/dug1cw6ux/image/upload/v1/marrok_staging/s1.jpg',
-        'https://res.cloudinary.com/dug1cw6ux/image/upload/v1/marrok_staging/s2.jpg',
+        'https://res.cloudinary.com/test_cloud_name/image/upload/v1/marrok_staging/s1.jpg',
+        'https://res.cloudinary.com/test_cloud_name/image/upload/v1/marrok_staging/s2.jpg',
       ],
       templateOptions: {
         linkedInImagesAsCarousel: true,
@@ -230,7 +230,7 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
     );
     expect(headerLine).toContain('TikTok Title,TikTok disable comments');
     expect(headerLine).toContain('LinkedIn Images as Carousel,Threads Reply Control,Threads Is Spoiler,Threads Post Type,Brand name');
-    expect(dataLine).toContain('https://res.cloudinary.com/dug1cw6ux/image/upload/v1/marrok_staging/s1.jpg');
+    expect(dataLine).toContain('https://res.cloudinary.com/test_cloud_name/image/upload/v1/marrok_staging/s1.jpg');
     expect(dataLine).toContain('PUBLIC_TO_EVERYONE');
     expect(dataLine).toContain('Marrok');
   });

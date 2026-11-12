@@ -300,7 +300,7 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
     }
   };
 
-  // Stage slides to Cloudinary (`dug1cw6ux`) without dispatching yet
+  // Stage slides to Cloudinary without dispatching yet
   const handleStageSlidesToCloudinary = async () => {
     setIsBusy(true);
     try {
@@ -322,7 +322,7 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
       }));
       onShowToast(
         `✓ Staged ${uploaded.urls.length} slide(s) to Cloudinary (${
-          status?.cloudinaryCloudName || 'dug1cw6ux'
+          status?.cloudinaryCloudName || 'configured'
         })`
       );
       await loadStatus();
