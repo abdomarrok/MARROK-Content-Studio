@@ -696,7 +696,7 @@ export const PublishScheduleModal: React.FC<PublishScheduleModalProps> = ({
                       className="rounded border-white/20 bg-black/50"
                     />
                     <span>
-                      Automatically delete staged slide images from Cloudinary (`dug1cw6ux`) as soon as publish completes
+                      Automatically delete staged slide images from Cloudinary staging as soon as publish completes
                     </span>
                   </label>
                 )}

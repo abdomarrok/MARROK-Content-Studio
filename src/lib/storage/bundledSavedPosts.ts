@@ -248,24 +248,24 @@ export const BUNDLED_SAVED_POSTS: SavedPostRecord[] = [
       "tiktok"
     ],
     "hostedSlideUrls": [
-      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794222178/marrok_staging/post_1794222176928_s1_1794222178.jpg",
-      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794222178/marrok_staging/post_1794222176928_s2_1794222178.jpg",
-      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794222180/marrok_staging/post_1794222176928_s3_1794222180.jpg",
-      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794222180/marrok_staging/post_1794222176928_s4_1794222180.jpg",
-      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794222181/marrok_staging/post_1794222176928_s5_1794222181.jpg",
-      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794222181/marrok_staging/post_1794222176928_s6_1794222181.jpg",
-      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794222182/marrok_staging/post_1794222176928_s7_1794222182.jpg",
-      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794222182/marrok_staging/post_1794222176928_s8_1794222182.jpg"
+      "https://res.cloudinary.com/your-cloud-name/image/upload/v1794222178/marrok_staging/post_1794222176928_s1_1794222178.jpg",
+      "https://res.cloudinary.com/your-cloud-name/image/upload/v1794222178/marrok_staging/post_1794222176928_s2_1794222178.jpg",
+      "https://res.cloudinary.com/your-cloud-name/image/upload/v1794222180/marrok_staging/post_1794222176928_s3_1794222180.jpg",
+      "https://res.cloudinary.com/your-cloud-name/image/upload/v1794222180/marrok_staging/post_1794222176928_s4_1794222180.jpg",
+      "https://res.cloudinary.com/your-cloud-name/image/upload/v1794222181/marrok_staging/post_1794222176928_s5_1794222181.jpg",
+      "https://res.cloudinary.com/your-cloud-name/image/upload/v1794222181/marrok_staging/post_1794222176928_s6_1794222181.jpg",
+      "https://res.cloudinary.com/your-cloud-name/image/upload/v1794222182/marrok_staging/post_1794222176928_s7_1794222182.jpg",
+      "https://res.cloudinary.com/your-cloud-name/image/upload/v1794222182/marrok_staging/post_1794222176928_s8_1794222182.jpg"
     ],
     "tiktokHostedSlideUrls": [
-      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794222184/marrok_staging/post_1794222182723_s1_1794222184.jpg",
-      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794222184/marrok_staging/post_1794222182723_s2_1794222184.jpg",
-      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794222186/marrok_staging/post_1794222182723_s3_1794222186.jpg",
-      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794222186/marrok_staging/post_1794222182723_s4_1794222186.jpg",
-      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794222188/marrok_staging/post_1794222182723_s5_1794222188.jpg",
-      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794222188/marrok_staging/post_1794222182723_s6_1794222188.jpg",
-      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794222189/marrok_staging/post_1794222182723_s7_1794222189.jpg",
-      "https://res.cloudinary.com/dug1cw6ux/image/upload/v1794222189/marrok_staging/post_1794222182723_s8_1794222189.jpg"
+      "https://res.cloudinary.com/your-cloud-name/image/upload/v1794222184/marrok_staging/post_1794222182723_s1_1794222184.jpg",
+      "https://res.cloudinary.com/your-cloud-name/image/upload/v1794222184/marrok_staging/post_1794222182723_s2_1794222184.jpg",
+      "https://res.cloudinary.com/your-cloud-name/image/upload/v1794222186/marrok_staging/post_1794222182723_s3_1794222186.jpg",
+      "https://res.cloudinary.com/your-cloud-name/image/upload/v1794222186/marrok_staging/post_1794222182723_s4_1794222186.jpg",
+      "https://res.cloudinary.com/your-cloud-name/image/upload/v1794222188/marrok_staging/post_1794222182723_s5_1794222188.jpg",
+      "https://res.cloudinary.com/your-cloud-name/image/upload/v1794222188/marrok_staging/post_1794222182723_s6_1794222188.jpg",
+      "https://res.cloudinary.com/your-cloud-name/image/upload/v1794222189/marrok_staging/post_1794222182723_s7_1794222189.jpg",
+      "https://res.cloudinary.com/your-cloud-name/image/upload/v1794222189/marrok_staging/post_1794222182723_s8_1794222189.jpg"
     ],
     "cloudinaryPublicIds": [
       "marrok_staging/post_1794222176928_s1_1794222178",
