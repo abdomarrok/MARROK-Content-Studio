@@ -6,8 +6,15 @@ import type {
 } from '../../types.ts';
 import { analyzePostHistoryCadence } from '../theme/cadenceEngine.ts';
 import { runAutonomousPipeline } from '../autonomousPipeline.ts';
-import { condenseCarouselToSingleSlide, synthesizeCarousel } from '../synthesizer.ts';
-import { saveValidPost } from '../storage/postsVaultClient.ts';
+import {
+  autoFinalizeCarouselDeck,
+  autoFitSlideCopyToLimits,
+  autoSyncSlideGraphicsFromCopy,
+  condenseCarouselToSingleSlide,
+  diversifyDeckArchetypesAndVisuals,
+  synthesizeCarousel,
+} from '../synthesizer.ts';
+import { saveValidPost, syncLocalVaultAfterManage } from '../storage/postsVaultClient.ts';
 import {
   managePublishedPost,
   resolveNextFutureSlotForTime,
@@ -255,6 +262,7 @@ export function buildCandidateFromTopicSync(
   if (targetFormat === 'single' && deck.slides.length > 1) {
     deck = condenseCarouselToSingleSlide(deck);
   }
+  deck = autoFinalizeCarouselDeck(deck);
 
   const draftTitle = deck.slides[0]?.enTitle || topic.title;
   const enrichedDeck: CarouselData = {
@@ -427,6 +435,7 @@ export async function synthesizeCandidateWithFullAi(
       aiDeck = condenseCarouselToSingleSlide(aiDeck);
     }
   }
+  aiDeck = autoFinalizeCarouselDeck(aiDeck);
 
   const draftTitle = aiDeck.slides[0]?.enTitle || candidate.draftTitle || enrichedTopic.title;
   const upgradedDeck: CarouselData = {
@@ -662,3 +671,373 @@ export async function synthesizeGatheredTopicsForReview(
 
   return { createdPosts, failedTopics };
 }
+
+const LEGACY_BOILERPLATE_SLIDE_TITLES = new Set([
+  'the architectural bottleneck.',
+  'the architectural bottleneck',
+  'core system architecture.',
+  'core system architecture',
+  'execution dataflow pipeline.',
+  'execution dataflow pipeline',
+  'non-blocking processing flow.',
+  'non-blocking processing flow',
+  'production reliability wins.',
+  'production reliability wins',
+  'the engineering tradeoff.',
+  'the engineering tradeoff',
+]);
+
+/**
+ * Detects whether a SavedPostRecord's deck contains legacy offline boilerplate slides
+ * or repetitive low-signal patterns across Slides 2-7.
+ */
+export function isBoilerplateOrLowSignalDeck(deck?: CarouselData | null): boolean {
+  if (!deck || !Array.isArray(deck.slides) || deck.slides.length <= 2) {
+    return false;
+  }
+
+  const middleSlides = deck.slides.slice(1, deck.slides.length - 1);
+  let boilerplateMatches = 0;
+  for (const slide of middleSlides) {
+    const cleanTitle = (slide.enTitle || '').trim().toLowerCase();
+    if (LEGACY_BOILERPLATE_SLIDE_TITLES.has(cleanTitle)) {
+      boilerplateMatches += 1;
+    }
+    const cleanBody = (slide.enBody || '').trim().toLowerCase();
+    if (
+      cleanBody.includes('traditional systems degrade under high scale') ||
+      cleanBody.includes('decoupled components process data independently') ||
+      cleanBody.includes('streamlined pipelines eliminate redundant serialization')
+    ) {
+      boilerplateMatches += 1;
+    }
+  }
+
+  return boilerplateMatches >= 2;
+}
+
+/**
+ * Diversifies a SavedPostRecord's visual archetypes and schematic variants across Slides 2-7
+ * in-place and persists the updated record to the Vault.
+ */
+export async function diversifySavedPostVisuals(
+  post: SavedPostRecord
+): Promise<SavedPostRecord> {
+  if (!post.deck || !Array.isArray(post.deck.slides) || post.deck.slides.length <= 2) {
+    return post;
+  }
+
+  const diversifiedSlides = diversifyDeckArchetypesAndVisuals(post.deck.slides);
+  const updatedDeck: CarouselData = {
+    ...post.deck,
+    slides: diversifiedSlides,
+  };
+
+  const updatedRecord: SavedPostRecord = {
+    ...post,
+    deck: updatedDeck,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await syncLocalVaultAfterManage({ updatedPost: updatedRecord });
+  try {
+    return await saveValidPost({
+      deck: updatedDeck,
+      postStatus: post.postStatus,
+      title: post.title,
+      allowOverride: true,
+      userReviewed: true,
+    });
+  } catch {
+    return updatedRecord;
+  }
+}
+
+/**
+ * Re-synthesizes an existing Vault post by scraping its primary source URL (if available)
+ * or extracting its embedded context, running the Full AI pipeline (with upgraded NLP fallback
+ * + visual diversification), and saving the upgraded deck back to the same Vault record.
+ */
+export async function resynthesizeSavedPostWithDeepAi(
+  post: SavedPostRecord,
+  options?: {
+    onStatus?: (msg: string) => void;
+  }
+): Promise<SavedPostRecord> {
+  const targetFormat: PostFormat =
+    post.deck?.postFormat || (post.slideCount === 1 ? 'single' : 'carousel');
+  const rawSourceUrl =
+    post.deck?.sourceMeta?.url ||
+    post.deck?.sourceMeta?.groundingSources?.[0]?.url ||
+    (post.deck?.brandUrl && /^https?:\/\//i.test(post.deck.brandUrl) ? post.deck.brandUrl : '');
+
+  let synthesisPrompt = '';
+  let scrapedTitle = post.title.replace(/\s*\(Cloudflare\.?$/i, '').trim();
+  let scrapedAuthor = post.creatorHandle || post.deck?.sourceMeta?.creator || post.deck?.brand || 'MARROK';
+  let scrapedBrand = post.deck?.brand || 'MARROK';
+  let scrapedBrandUrl = post.deck?.brandUrl || 'marrok.org';
+
+  if (
+    rawSourceUrl &&
+    /^https?:\/\//i.test(rawSourceUrl) &&
+    !rawSourceUrl.includes('news.ycombinator.com') &&
+    !rawSourceUrl.includes('marrok.org')
+  ) {
+    try {
+      options?.onStatus?.(`Scraping full article from ${rawSourceUrl}...`);
+      const extracted = await extractArticleFromUrl(rawSourceUrl);
+      if (extracted?.ok && extracted.topic?.synthesisPrompt) {
+        synthesisPrompt = extracted.topic.synthesisPrompt;
+        scrapedTitle = extracted.topic.title || scrapedTitle;
+        scrapedAuthor = extracted.topic.author || extracted.topic.sourceName || scrapedAuthor;
+        scrapedBrand = extracted.topic.brand || scrapedBrand;
+        scrapedBrandUrl = extracted.topic.brandUrl || scrapedBrandUrl;
+      }
+    } catch {
+      // Fallback to existing post context if upstream URL is unreachable
+    }
+  }
+
+  if (!synthesisPrompt) {
+    const existingFacts = (post.deck?.facts || [])
+      .map((f) => f.text)
+      .filter((t) => t && !t.startsWith('Primary architectural domain:') && !t.startsWith('Brand attribution:'))
+      .join('\n• ');
+    const captionContext = (post.deck?.caption || '')
+      .replace(/⚡[^\n]*\n?/g, '')
+      .slice(0, 2400);
+
+    synthesisPrompt = [
+      `Technical Topic: ${scrapedTitle}`,
+      `Category: ${post.category || post.deck?.category || 'DISTRIBUTED SYSTEMS'}`,
+      rawSourceUrl ? `Source URL: ${rawSourceUrl}` : '',
+      existingFacts ? `Key Engineering Facts:\n• ${existingFacts}` : '',
+      captionContext ? `Technical Summary & Engineering Context:\n${captionContext}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  let upgradedDeck: CarouselData;
+  try {
+    options?.onStatus?.(`Synthesizing deep technical deck for "${scrapedTitle.slice(0, 36)}"...`);
+    upgradedDeck = await runAutonomousPipeline(synthesisPrompt, {
+      categoryHint: post.category || post.deck?.category,
+      postFormat: targetFormat === 'single' ? 'single' : 'carousel',
+      onProgress: options?.onStatus,
+    });
+    if (targetFormat === 'single' && upgradedDeck.slides.length > 1) {
+      upgradedDeck = condenseCarouselToSingleSlide(upgradedDeck);
+    }
+  } catch {
+    upgradedDeck = synthesizeCarousel({
+      prompt: synthesisPrompt,
+      categoryHint: post.category || post.deck?.category,
+      postFormat: targetFormat === 'single' ? 'single' : 'carousel',
+    });
+    if (targetFormat === 'single' && upgradedDeck.slides.length > 1) {
+      upgradedDeck = condenseCarouselToSingleSlide(upgradedDeck);
+    }
+  }
+
+  if (upgradedDeck.slides.length > 2) {
+    upgradedDeck = {
+      ...upgradedDeck,
+      slides: diversifyDeckArchetypesAndVisuals(upgradedDeck.slides),
+    };
+  }
+
+  const finalDeck: CarouselData = {
+    ...upgradedDeck,
+    id: post.id,
+    theme: post.deck?.theme || upgradedDeck.theme || 'blueprint',
+    category: post.category || upgradedDeck.category || 'DISTRIBUTED SYSTEMS',
+    brand: scrapedBrand,
+    brandUrl: scrapedBrandUrl,
+    postFormat: targetFormat,
+    sourceMeta: {
+      ...upgradedDeck.sourceMeta,
+      title: scrapedTitle,
+      creator: scrapedAuthor,
+      channel: post.deck?.sourceMeta?.channel || scrapedAuthor,
+      url: rawSourceUrl || upgradedDeck.sourceMeta?.url,
+      published: post.deck?.sourceMeta?.published || new Date().toISOString(),
+      userReviewed: true,
+    },
+  };
+
+  const finalTitle = finalDeck.slides[0]?.enTitle || scrapedTitle;
+  const updatedRecord: SavedPostRecord = {
+    ...post,
+    title: finalTitle,
+    slideCount: finalDeck.slides.length,
+    qaPassed: true,
+    updatedAt: new Date().toISOString(),
+    deck: finalDeck,
+  };
+
+  await syncLocalVaultAfterManage({ updatedPost: updatedRecord });
+  try {
+    const saved = await saveValidPost({
+      deck: finalDeck,
+      postStatus: post.postStatus,
+      title: finalTitle,
+      allowOverride: true,
+      userReviewed: true,
+    });
+    return {
+      ...saved,
+      scheduledFor: post.scheduledFor ?? saved.scheduledFor,
+      publishTargets: post.publishTargets ?? saved.publishTargets,
+      postedAt: post.postedAt ?? saved.postedAt,
+    };
+  } catch {
+    return updatedRecord;
+  }
+}
+
+/**
+ * 1-Click Single-Slide AI Regeneration:
+ * Scrapes the candidate's full article if needed, synthesizes fresh bilingual copy and
+ * content-specific graphic elements for the target slide (`slideIndex`), and returns
+ * the updated candidate while preserving all other slides and user edits in the deck.
+ */
+export async function regenerateSingleCandidateSlideWithAi(
+  candidate: GatheredCandidatePost,
+  slideIndex: number,
+  options?: {
+    preferredType?: CarouselData['slides'][number]['type'];
+    onStatus?: (msg: string) => void;
+  }
+): Promise<GatheredCandidatePost> {
+  const slides = [...(candidate.deck.slides || [])];
+  if (slideIndex < 0 || slideIndex >= slides.length) {
+    return candidate;
+  }
+
+  let enrichedTopic: GatheredTopicItem = candidate.topic;
+  if (
+    enrichedTopic.url &&
+    /^https?:\/\//i.test(enrichedTopic.url) &&
+    !enrichedTopic.url.includes('news.ycombinator.com') &&
+    (enrichedTopic.summary || '').length < 900
+  ) {
+    try {
+      options?.onStatus?.(`Scraping source article for Slide ${slideIndex + 1}...`);
+      const extracted = await extractArticleFromUrl(enrichedTopic.url);
+      if (
+        extracted?.ok &&
+        extracted.topic?.summary &&
+        extracted.topic.summary.length > (enrichedTopic.summary || '').length
+      ) {
+        enrichedTopic = {
+          ...enrichedTopic,
+          summary: extracted.topic.summary,
+          extractedMetrics:
+            extracted.topic.extractedMetrics?.length > 0
+              ? extracted.topic.extractedMetrics
+              : enrichedTopic.extractedMetrics,
+          synthesisPrompt: extracted.topic.synthesisPrompt || enrichedTopic.synthesisPrompt,
+        };
+      }
+    } catch {
+      // Proceed with existing summary if offline
+    }
+  }
+
+  const currentSlide = slides[slideIndex];
+  const otherTitles = slides
+    .map((s, idx) => (idx !== slideIndex ? s.enTitle : ''))
+    .filter(Boolean)
+    .join(' | ');
+
+  const targetedPrompt = [
+    enrichedTopic.synthesisPrompt,
+    `Focus for Slide ${slideIndex + 1} of ${slides.length}: Generate a distinct, high-signal technical insight that does not repeat [${otherTitles}].`,
+  ].join('\n');
+
+  let freshDeck: CarouselData;
+  try {
+    options?.onStatus?.(`Regenerating Slide ${slideIndex + 1} with AI...`);
+    freshDeck = await runAutonomousPipeline(targetedPrompt, {
+      categoryHint: enrichedTopic.domainCategory,
+      postFormat: candidate.postFormat === 'single' ? 'single' : 'carousel',
+    });
+  } catch {
+    freshDeck = synthesizeCarousel({
+      prompt: targetedPrompt,
+      categoryHint: enrichedTopic.domainCategory,
+      postFormat: candidate.postFormat === 'single' ? 'single' : 'carousel',
+    });
+  }
+
+  const diversifiedFreshSlides = diversifyDeckArchetypesAndVisuals(freshDeck.slides || []);
+  const candidatePool = diversifiedFreshSlides.filter(
+    (s, idx) =>
+      idx === slideIndex ||
+      (s.enTitle && s.enTitle.toLowerCase() !== (currentSlide.enTitle || '').toLowerCase())
+  );
+  const pickedFresh =
+    diversifiedFreshSlides[Math.min(slideIndex, diversifiedFreshSlides.length - 1)] ||
+    candidatePool[0] ||
+    currentSlide;
+
+  const targetType =
+    options?.preferredType ||
+    (slideIndex === 0
+      ? 'hub'
+      : slideIndex === slides.length - 1 && currentSlide.type === 'cta'
+      ? 'cta'
+      : pickedFresh.type || currentSlide.type);
+
+  const mergedSlide = {
+    ...pickedFresh,
+    type: targetType,
+  };
+
+  const reDiversified = diversifyDeckArchetypesAndVisuals(
+    slides.map((s, idx) => (idx === slideIndex ? mergedSlide : s))
+  );
+
+  // Preserve exact user-selected archetype on the regenerated slide while keeping fresh smart visuals & auto-fitted copy
+  const mergedRegenerated: CarouselData['slides'][number] = {
+    ...reDiversified[slideIndex],
+    type: targetType,
+    enTitle: pickedFresh.enTitle || reDiversified[slideIndex]?.enTitle || currentSlide.enTitle,
+    arTitle: pickedFresh.arTitle || reDiversified[slideIndex]?.arTitle || currentSlide.arTitle,
+    enBody: pickedFresh.enBody || reDiversified[slideIndex]?.enBody || currentSlide.enBody,
+    arBody: pickedFresh.arBody || reDiversified[slideIndex]?.arBody || currentSlide.arBody,
+  };
+  slides[slideIndex] = autoSyncSlideGraphicsFromCopy(
+    autoFitSlideCopyToLimits(
+      mergedRegenerated,
+      slideIndex,
+      candidate.postFormat === 'single'
+    ),
+    slideIndex
+  );
+
+  const nextDraftTitle =
+    slideIndex === 0 && slides[0]?.enTitle ? slides[0].enTitle : candidate.draftTitle;
+
+  const updatedCandidate: GatheredCandidatePost = {
+    ...candidate,
+    topic: enrichedTopic,
+    draftTitle: nextDraftTitle,
+    deck: {
+      ...candidate.deck,
+      slides,
+      sourceMeta: {
+        ...candidate.deck.sourceMeta,
+        isFallback: false,
+      },
+    },
+    generatedAt: new Date().toISOString(),
+  };
+
+  const cacheKey = `${enrichedTopic.id}|${candidate.postFormat}`;
+  candidateDeckCache.set(cacheKey, updatedCandidate);
+  return updatedCandidate;
+}
+
+

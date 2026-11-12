@@ -1,5 +1,23 @@
 # Changelog — MARROK Content Studio
 
+## [1.6.0] — Dedicated 4th Meme Post Format, Smart Aspect-Ratio Meme Space Maximization, Separated Graphic Photo Upload & Zero-Click Auto-Sync
+
+### 1. Dedicated 4th `Meme` Post Format & Separated Graphic Photo Workflow (`src/types.ts`, `src/lib/canvas/videoFrameExtractor.ts`, `src/components/studio/panels/StudioCommandBar.tsx`, `src/components/studio/InlineSlideEditor.tsx`)
+- **4th First-Class `Meme` Post Format (`PostFormat = 'carousel' | 'single' | 'meme' | 'reel'`):** Added a dedicated **`Meme`** format tab (`format-toggle-meme`) and quick-action **`Upload Meme`** button in the top Studio command bar on both desktop and mobile.
+- **Zero-Residue Meme Deck Builder (`buildCleanMemeCarouselDeck`):** Uploading a meme immediately resets the deck into a spotless 1-slide Full Meme post (`standaloneMeme: true`, `imageFrameMode: 'full'`, `category: ''`, `takeaways: []`, `enTitle: ''`, `arTitle: ''`, `enCredit: ''`), purging all leftover template copy and running Vision AI (`analyzeImageForMemeAndCaption`) in the background to generate a matching bilingual social media caption.
+- **Non-Destructive Slide Graphic Photo Upload (`applySlideGraphicPhoto`):** Separated normal slide graphic photo uploads from meme creation. Uploading a photo in `Carousel` or `1-Slide` mode replaces only the slide's graphic slot while preserving existing headlines, body copy, and takeaways, and displays an optional **AI Suggested Headlines from Uploaded Graphic Photo** banner (`Apply to Slide` / `Keep My Text`).
+
+### 2. Smart Aspect-Ratio-Aware Meme Space Maximization & Header Cleanup (`src/lib/canvas/constants.ts`, `src/lib/canvas/archetypes/renderImage.ts`, `src/lib/canvas/renderSlide.ts`, `src/lib/canvas/background.ts`)
+- **Expanded Full Meme Canvas Geometry (`resolveSmartFullMemeCardBounds`):** Widened Full Meme cards to **`1008px`** (`93.3%` of the `1080px` slide width, centered at `x = 36..1044`) with a tight **`6px`** inner padding (`996px` usable meme width) across all 5 social formats (`tiktok-9:16`, `ig-9:16`, `ig-4:5`, `ig-3:4`, `ig-1:1`), and expanded the vertical span from right below the compact MARROK badge (`headerY + 44`) down to the footer ceiling (`1300px–1460px` on `9:16`, `1214px` on `3:4`, `1137px` on `4:5`, `894px` on `1:1`).
+- **Dynamic Aspect-Ratio Card Hugging (`imageAspectRatio`):** Automatically detects the natural width/height ratio of uploaded memes so width-bound memes fill the full `996px` width while the card hugs their top and bottom edges without empty white slabs, and omitted interior corner registration marks on Full Meme cards.
+- **Category Header Removal on Memes:** Suppressed the top-right `categoryTag` in `drawHeader` and `renderSlide` on all Meme slides and removed the `Top-Right Header Tag` input from the Meme Post Studio UI.
+
+### 3. Zero-Click Auto Deep AI Synthesis, Live Graphic Sync & Text Auto-Fit (`src/components/AutonomousStudio.tsx`, `src/components/studio/InlineSlideEditor.tsx`, `src/lib/gather/gatherClient.ts`)
+- **Automatic Deep AI & Polish on Load:** Automatically runs Deep AI synthesis, `syncSlideVisualFromText`, and `fitSlideTextLimits` when loading unrefined or gathered posts into the Studio.
+- **Live Graphic Sync on Edit:** Editing slide headlines or body text in `InlineSlideEditor` live-syncs the slide's diagram nodes/edges (`syncSlideVisualFromText`) as you type and auto-fits copy limits on blur, eliminating manual *"Sync Graphic from Copy"* and *"Auto-Fit Text"* clicks.
+
+---
+
 ## [1.5.0] — Neon Serverless PostgreSQL Persistence Vault, TikTok Photo Mode Safe-Zone Re-Anchoring & Caption Polish
 
 ### 1. Neon Serverless PostgreSQL Content Vault (`api/db/postgres.ts`, `api/controllers/postsController.ts`)

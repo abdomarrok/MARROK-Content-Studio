@@ -1,6 +1,6 @@
 import { CarouselData, DEFAULT_PALETTES, THEME_CONFIGS, ThemePalette, VisualSystemOptions } from '../../types.ts';
 import { seedSlideArchetypeData } from '../synthesis/archetypes.ts';
-import { getCanvasDimensionSpec, getArchetypeGraphicTransform } from './constants.ts';
+import { getCanvasDimensionSpec, getArchetypeGraphicTransform, isFullMemeSlide } from './constants.ts';
 import { computeSlideLayoutAwareness } from './layoutAwareness.ts';
 import {
   drawBaseBackground,
@@ -59,7 +59,11 @@ export async function renderSlideToCanvas(
     DEFAULT_PALETTES[themeMode] ||
     THEME_CONFIGS[themeMode] ||
     DEFAULT_PALETTES.teal;
-  const categoryTag = carousel.category || (themeMode === 'security' ? 'AI + SECURITY' : 'AI + ENGINEERING');
+  const isMemeSlide =
+    carousel.postFormat === 'meme' || Boolean(slide.standaloneMeme) || isFullMemeSlide(slide);
+  const categoryTag = isMemeSlide
+    ? ''
+    : carousel.category || (themeMode === 'security' ? 'AI + SECURITY' : 'AI + ENGINEERING');
   const totalSlides = carousel.slides.length;
 
   // Resolve visual system toggles
@@ -117,7 +121,7 @@ export async function renderSlideToCanvas(
     ctx.restore();
   } else if (!layout.graphicCard?.hidden) {
     ctx.save();
-    const cx = spec.safeTextCenterX;
+    const cx = isMemeSlide ? graphicTransform.cardX + graphicTransform.cardW / 2 : spec.safeTextCenterX;
     const cy = graphicTransform.cardY + graphicTransform.cardH / 2;
     const cardShiftX = layout.graphicCard ? layout.graphicCard.dx : graphicOverride?.dx || 0;
     const cardShiftY = layout.graphicCard
@@ -157,9 +161,9 @@ export async function renderSlideToCanvas(
     } else if (slide.type === 'compare') {
       rawGraphicEnd = await drawCompareSlide(ctx, slide, theme, options);
     } else if (slide.type === 'image') {
-      rawGraphicEnd = await drawImageSlide(ctx, slide, theme, options, carousel.brand || 'MARROK', videoElement);
+      rawGraphicEnd = await drawImageSlide(ctx, slide, theme, options, carousel.brand || 'MARROK', videoElement, spec);
     } else if (slide.type === 'poster') {
-      rawGraphicEnd = await drawPosterSlide(ctx, slide, theme, options, carousel.brand || 'MARROK', videoElement);
+      rawGraphicEnd = await drawPosterSlide(ctx, slide, theme, options, carousel.brand || 'MARROK', videoElement, spec);
     }
     yGraphicEnd = Math.round(rawGraphicEnd * graphicTransform.scale + graphicTransform.translateY);
     ctx.restore();

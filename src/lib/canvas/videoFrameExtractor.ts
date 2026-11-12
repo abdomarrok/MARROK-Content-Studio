@@ -1,4 +1,4 @@
-import type { CarouselData, SlideData, ThemePalette } from '../../types.ts';
+import type { CarouselData, SlideData, SlideType, ThemePalette } from '../../types.ts';
 import { runAutonomousPipeline } from '../autonomousPipeline.ts';
 import { sanitizeSlide } from '../text/sanitizer.ts';
 import { seedSingleSlideTakeaways } from '../synthesis/singleSlideCondenser.ts';
@@ -366,4 +366,255 @@ export async function analyzeVideoForSlideAndCaption(
     storyboard,
   };
 }
+
+export interface AnalyzeImageOptions {
+  imageDataUrl?: string;
+  imageBase64?: string;
+  imageMimeType?: string;
+  imageFileName?: string;
+  prompt?: string;
+  theme?: ThemePalette;
+  currentSlide?: SlideData;
+  keepFullMemeMode?: boolean;
+  onProgress?: (status: string) => void;
+  signal?: AbortSignal;
+}
+
+export interface AnalyzeImageResult {
+  carousel: CarouselData;
+  slideUpdates: Partial<SlideData>;
+  caption: string;
+  category: string;
+  suggestedEnTitle: string;
+  suggestedArTitle: string;
+  suggestedEnBody: string;
+  suggestedArBody: string;
+  hookVariants?: CarouselData['hookVariants'];
+}
+
+function cleanImageTopicFromFileName(fileName?: string): string {
+  const withoutExt = (fileName || '')
+    .replace(/\.[a-z0-9]+$/i, '')
+    .replace(/^(screenshot|img|image|photo|pxl|dsc)[_-]*\d*[_-]*/i, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\d{6,}\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return withoutExt || 'Developer Logic & Tech Humor';
+}
+
+/**
+ * Replaces ONLY the visual graphic slot of a normal slide (in Carousel or Single-Slide mode)
+ * while keeping existing slide titles, body copy, takeaways, and footer credits 100% intact.
+ */
+export function applySlideGraphicPhoto(
+  prevSlide: SlideData,
+  imageDataUrl: string,
+  isSingleSlide = false
+): SlideData {
+  const targetType: SlideType =
+    prevSlide.type === 'poster' || isSingleSlide ? 'poster' : 'image';
+  const hasTakeaways = Array.isArray(prevSlide.takeaways) && prevSlide.takeaways.length > 0;
+  const preservedFrameMode: 'hero' | 'standard' =
+    prevSlide.imageFrameMode === 'standard' || hasTakeaways ? 'standard' : 'hero';
+
+  return {
+    ...prevSlide,
+    type: targetType,
+    mediaType: 'image',
+    imageUrl: imageDataUrl,
+    videoUrl: '',
+    videoMimeType: undefined,
+    videoFileName: undefined,
+    standaloneMeme: false,
+    imageFrameMode: preservedFrameMode,
+    imageFit: prevSlide.imageFit || 'contain',
+    imageFilter: prevSlide.imageFilter || 'clean',
+    imageBgStyle: prevSlide.imageBgStyle || 'white',
+    brandWatermark: prevSlide.brandWatermark || 'bottom-right',
+    imageZoom: 1,
+    imagePanX: 0,
+    imagePanY: 0,
+  };
+}
+
+/**
+ * Immediately resets a carousel deck into a clean 1-slide Standalone Meme Post (`postFormat: 'meme'`).
+ * Purges any previous template's category ('CYBERSECURITY & SYSTEMS'), takeaways ('In-kernel execution stack'),
+ * old slide headlines, and old footer credit ('MARROK Engine') so the user gets a spotless meme frame in 0ms.
+ */
+export function buildCleanMemeCarouselDeck(
+  prevCarousel: CarouselData,
+  imageDataUrl: string,
+  fileName?: string
+): CarouselData {
+  const cleanTopic = cleanImageTopicFromFileName(fileName);
+  const cleanSlide: SlideData = {
+    type: 'poster',
+    mediaType: 'image',
+    imageUrl: imageDataUrl,
+    videoUrl: '',
+    videoMimeType: undefined,
+    videoFileName: undefined,
+    standaloneMeme: true,
+    imageFrameMode: 'full',
+    imageFit: 'contain',
+    imageFilter: 'clean',
+    imageBgStyle: 'white',
+    brandWatermark: 'bottom-right',
+    imageCaption: '',
+    enTitle: '',
+    arTitle: '',
+    enBody: '',
+    arBody: '',
+    takeaways: [],
+    enCredit: '',
+    arCredit: '',
+    metricValue: '',
+    metricLabel: '',
+    metricDiff: '',
+    imageZoom: 1,
+    imagePanX: 0,
+    imagePanY: 0,
+    layoutOverrides: undefined,
+  };
+
+  return {
+    ...prevCarousel,
+    category: '',
+    postFormat: 'meme',
+    dimensionPreset: prevCarousel.dimensionPreset || 'tiktok-9:16',
+    channel: '',
+    caption: `${cleanTopic} — Developer humor & engineering reality.\n\nواقع الهندسة والبرمجة باختصار.\n\n#MARROK #TechHumor #SoftwareEngineering #Programming #TechInArabic`,
+    shortCaption: `${cleanTopic} #MARROK #TechHumor`,
+    firstComment: '',
+    hookVariants: [],
+    slides: [cleanSlide],
+    sourceMeta: {
+      title: cleanTopic,
+      engine: 'grounded',
+      status: 'verified_live',
+      userReviewed: true,
+      isFallback: false,
+      creator: '',
+      channel: '',
+    },
+  };
+}
+
+/**
+ * Analyzes an uploaded meme or photo using Vision AI (`/api/generate` with `imageBase64`)
+ * to generate a bilingual social media caption with hashtags,
+ * and suggested bilingual slide headlines/body (kept optional when uploading a normal slide graphic).
+ */
+export async function analyzeImageForMemeAndCaption(
+  options: AnalyzeImageOptions
+): Promise<AnalyzeImageResult> {
+  const {
+    imageDataUrl,
+    imageBase64: rawBase64,
+    imageMimeType = 'image/jpeg',
+    imageFileName = 'meme-upload.jpg',
+    prompt = '',
+    theme,
+    currentSlide,
+    keepFullMemeMode = true,
+    onProgress,
+    signal,
+  } = options;
+  const imageBase64 = imageDataUrl || rawBase64 || '';
+
+  const inferredTopic = cleanImageTopicFromFileName(imageFileName);
+  const userHint = prompt.trim();
+  const effectivePrompt =
+    userHint ||
+    `Analyze the attached uploaded image ("${inferredTopic}"). Read all visible text, diagrams, humor, or visual flow in the image. Generate a witty and engaging bilingual English + Arabic social media caption with relevant hashtags, and a punchy bilingual headline and body summarizing the image.`;
+
+  onProgress?.('Analyzing uploaded photo & generating AI copy...');
+  const generatedCarousel = await runAutonomousPipeline(effectivePrompt, {
+    theme,
+    generateDiagram: false,
+    inputMode: 'upload',
+    imageBase64,
+    imageMimeType,
+    imageName: imageFileName,
+    postFormat: 'single',
+    signal,
+    onProgress,
+  });
+
+  const aiSlide = generatedCarousel.slides[0] || {};
+  const isFallback =
+    generatedCarousel.sourceMeta?.isFallback ||
+    generatedCarousel.sourceMeta?.engine === 'offline-synthesizer';
+
+  const resolvedCategory = keepFullMemeMode
+    ? ''
+    : !isFallback &&
+      generatedCarousel.category &&
+      !/CYBERSECURITY|REVERSE ENGINEERING/i.test(generatedCarousel.category)
+    ? generatedCarousel.category
+    : generatedCarousel.category || 'SYSTEMS ARCHITECTURE';
+
+  const resolvedCaption =
+    !isFallback && generatedCarousel.caption
+      ? generatedCarousel.caption
+      : `${inferredTopic} — When human logic meets silicon engineering.\n\nمنطق المطورين وهندسة الحواسيب في صورة واحدة.\n\n#MARROK #TechHumor #SoftwareEngineering #Hardware #TechInArabic`;
+
+  const suggestedEnTitle =
+    (!isFallback && aiSlide.enTitle) ? aiSlide.enTitle : `${inferredTopic}.`;
+  const suggestedArTitle =
+    (!isFallback && aiSlide.arTitle) ? aiSlide.arTitle : 'تحليل بصري وتقني للصورة المرفقة.';
+  const suggestedEnBody =
+    (!isFallback && aiSlide.enBody)
+      ? aiSlide.enBody
+      : `Key engineering takeaway and visual insight from ${inferredTopic}.`;
+  const suggestedArBody =
+    (!isFallback && aiSlide.arBody)
+      ? aiSlide.arBody
+      : 'الخلاصة الهندسية والتقنية المستخلصة مباشرة من الصورة المرفقة.';
+
+  const slideUpdates: Partial<SlideData> = {
+    type: 'poster',
+    mediaType: 'image',
+    imageUrl: currentSlide?.imageUrl || imageBase64,
+    standaloneMeme: keepFullMemeMode,
+    imageFrameMode: keepFullMemeMode ? 'full' : 'hero',
+    imageFit: currentSlide?.imageFit || 'contain',
+    imageBgStyle: currentSlide?.imageBgStyle || 'white',
+    brandWatermark: currentSlide?.brandWatermark || 'bottom-right',
+    takeaways: keepFullMemeMode ? [] : currentSlide?.takeaways,
+    enCredit: currentSlide?.enCredit || '',
+    arCredit: currentSlide?.arCredit || '',
+    enTitle: keepFullMemeMode ? '' : suggestedEnTitle,
+    arTitle: keepFullMemeMode ? '' : suggestedArTitle,
+    enBody: keepFullMemeMode ? '' : suggestedEnBody,
+    arBody: keepFullMemeMode ? '' : suggestedArBody,
+  };
+
+  return {
+    carousel: {
+      ...generatedCarousel,
+      category: resolvedCategory,
+      caption: resolvedCaption,
+      postFormat: keepFullMemeMode ? 'meme' : 'single',
+      slides: [
+        {
+          ...(currentSlide || aiSlide),
+          ...slideUpdates,
+        },
+      ],
+    },
+    slideUpdates,
+    caption: resolvedCaption,
+    category: resolvedCategory,
+    suggestedEnTitle,
+    suggestedArTitle,
+    suggestedEnBody,
+    suggestedArBody,
+    hookVariants: generatedCarousel.hookVariants,
+  };
+}
+
+
 

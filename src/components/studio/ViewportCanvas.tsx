@@ -619,10 +619,20 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
                 data-testid="white-card-image-element"
                 src={activeMediaUrl}
                 alt={currentSlide.enTitle || 'Slide media'}
+                onLoad={(e) => {
+                  const nw = e.currentTarget.naturalWidth;
+                  const nh = e.currentTarget.naturalHeight;
+                  if (onUpdateSlideField && nw > 0 && nh > 0) {
+                    const ratio = Number((nw / nh).toFixed(4));
+                    if (Math.abs((currentSlide.imageAspectRatio || 0) - ratio) > 0.01) {
+                      onUpdateSlideField('imageAspectRatio', ratio);
+                    }
+                  }
+                }}
                 className="w-full h-full transition-all duration-150 select-none"
                 style={{
                   objectFit: activeFitMode,
-                  borderRadius: activeFitMode === 'contain' ? '8px' : '12px',
+                  borderRadius: activeFitMode === 'contain' ? `${whiteCardGeom.innerBorderRadius}px` : '12px',
                   transform: `scale(${currentSlide.imageZoom ?? 1}) translate(${currentSlide.imagePanX ?? 0}%, ${currentSlide.imagePanY ?? 0}%)`,
                 }}
               />
@@ -632,7 +642,9 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
           {/* Layered Corner Registration Marks (Top-Left, Top-Right, Bottom-Left) above the video/image */}
           <div
             data-testid="corner-registration-marks"
-            className="absolute inset-0 pointer-events-none"
+            className={`absolute inset-0 pointer-events-none ${
+              isFullMemeSlide(currentSlide) && !isVideoActive ? 'opacity-0' : ''
+            }`}
             style={{ zIndex: 20 }}
           >
             {/* Top-Left Registration Mark */}

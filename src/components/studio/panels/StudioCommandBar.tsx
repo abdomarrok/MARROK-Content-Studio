@@ -15,6 +15,8 @@ import {
   Film,
   Radar,
   Globe,
+  Smile,
+  Upload,
 } from 'lucide-react';
 import {
   extractArticleFromUrl,
@@ -280,7 +282,7 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
           </div>
         )}
 
-        {/* Post Format Segmented Toggle */}
+        {/* Post Format Segmented Toggle (4 Formats: Carousel, Single Slide, Meme, Motion Reel) */}
         <div
           role="group"
           aria-label="Post format selector"
@@ -312,10 +314,26 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
                 : 'text-slate-400 hover:text-white'
             }`}
             style={activePostFormat === 'single' ? { color: theme.accent } : undefined}
-            title="Standalone Single-Slide Post (1 slide, 1080×1920)"
+            title="Standalone Single-Slide Post with Headlines, Body & Takeaways (1 slide, 1080×1920)"
           >
             <ImageIcon className="w-3 h-3" />
             <span>Single Slide</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="format-toggle-meme"
+            onClick={() => onSwitchPostFormat('meme')}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+              activePostFormat === 'meme'
+                ? 'bg-white/15 text-white shadow-sm'
+                : 'text-slate-400 hover:text-white'
+            }`}
+            style={activePostFormat === 'meme' ? { color: theme.accent } : undefined}
+            title="Dedicated Standalone Meme Post (Clean full-bleed white meme card, zero template text, auto-generated AI caption)"
+          >
+            <Smile className="w-3 h-3" />
+            <span>Meme</span>
           </button>
 
           <button
@@ -345,6 +363,33 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
           <span>{engineBadge.label}</span>
         </button>
 
+        {/* Mobile Quick Meme Format Toggle / Upload Button */}
+        {activePostFormat === 'meme' ? (
+          <button
+            type="button"
+            data-testid="top-bar-meme-upload-btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isGenerating}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 min-h-[34px] rounded-xl border border-emerald-400/50 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-100 hover:text-white text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0"
+            title="Upload Meme Image into your clean Meme Post card"
+          >
+            <Upload className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+            <span>Upload Meme</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            data-testid="top-bar-meme-mode-btn"
+            onClick={() => onSwitchPostFormat('meme')}
+            disabled={isGenerating}
+            className="sm:hidden flex items-center gap-1 px-2 py-1.5 min-h-[34px] rounded-xl border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] text-slate-200 hover:text-white text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0"
+            title="Switch to Dedicated Meme Post Format"
+          >
+            <Smile className="w-3.5 h-3.5 text-cyan-300 shrink-0" />
+            <span>Meme</span>
+          </button>
+        )}
+
         {/* Expand Format & Source Ingestion Drawer Button */}
         <button
           type="button"
@@ -358,7 +403,13 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
         >
           <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
           <span className="sm:hidden text-[11px] font-mono uppercase" style={{ color: theme.accent }}>
-            {activePostFormat === 'single' ? '1-Slide' : activePostFormat === 'reel' ? 'Reel' : 'Deck'}
+            {activePostFormat === 'single'
+              ? '1-Slide'
+              : activePostFormat === 'meme'
+              ? 'Meme'
+              : activePostFormat === 'reel'
+              ? 'Reel'
+              : 'Deck'}
           </span>
           <span className="hidden sm:inline">Sources & Notes</span>
           {isExpanded ? (
@@ -387,6 +438,8 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
               <span className="hidden sm:inline">
                 {activePostFormat === 'single'
                   ? 'Generate Slide'
+                  : activePostFormat === 'meme'
+                  ? 'Generate Meme'
                   : activePostFormat === 'reel'
                   ? 'Generate Reel'
                   : 'Generate'}
@@ -476,7 +529,7 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
                 })}
               </div>
 
-              {/* Mobile Post Format Selector */}
+              {/* Mobile Post Format Selector (4 Formats) */}
               <div className="sm:hidden flex items-center justify-between w-full gap-2 pt-1">
                 <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">
                   Output Format:
@@ -485,7 +538,7 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
                   <button
                     type="button"
                     onClick={() => onSwitchPostFormat('carousel')}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                    className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
                       activePostFormat === 'carousel'
                         ? 'bg-white/15 text-white shadow-sm'
                         : 'text-slate-400 hover:text-white'
@@ -498,7 +551,7 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
                   <button
                     type="button"
                     onClick={() => onSwitchPostFormat('single')}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                    className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
                       activePostFormat === 'single'
                         ? 'bg-white/15 text-white shadow-sm'
                         : 'text-slate-400 hover:text-white'
@@ -510,8 +563,21 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
                   </button>
                   <button
                     type="button"
+                    onClick={() => onSwitchPostFormat('meme')}
+                    className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                      activePostFormat === 'meme'
+                        ? 'bg-white/15 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                    style={activePostFormat === 'meme' ? { color: theme.accent } : undefined}
+                  >
+                    <Smile className="w-3 h-3" />
+                    <span>Meme</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => onSwitchPostFormat('reel')}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                    className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
                       activePostFormat === 'reel'
                         ? 'bg-white/15 text-white shadow-sm'
                         : 'text-slate-400 hover:text-white'

@@ -36,10 +36,13 @@ import {
 } from '../../../lib/publish/publishClient.ts';
 import {
   clearDismissedGatherTopicIds,
-  dismissGatherTopicId,
   GatheredCandidatePost,
   saveCustomRssFeeds,
 } from '../../../lib/gather/gatherClient.ts';
+import {
+  CandidateSlidePreviewInspector,
+  CandidateSlideStoryboardStrip,
+} from './CandidateSlidePreviewInspector.tsx';
 
 const ALL_PLATFORMS: PublishTargetPlatform[] = [
   'instagram',
@@ -126,6 +129,11 @@ export interface TopicRadarGatherViewProps {
   ) => void;
   synthesizingCandidateId?: string | null;
   onSynthesizeCandidateWithAi?: (candidate: GatheredCandidatePost) => void;
+  regeneratingSlideKey?: string | null;
+  onRegenerateSingleSlide?: (
+    candidate: GatheredCandidatePost,
+    slideIndex: number
+  ) => void;
   onLoadCandidateIntoStudio?: (deck: CarouselData, title: string) => void;
   onShowToast: (msg: string) => void;
 }
@@ -170,6 +178,8 @@ export const TopicRadarGatherView: React.FC<TopicRadarGatherViewProps> = ({
   onUpdateCandidateDeck,
   synthesizingCandidateId,
   onSynthesizeCandidateWithAi,
+  regeneratingSlideKey,
+  onRegenerateSingleSlide,
   onLoadCandidateIntoStudio,
   onShowToast,
 }) => {
@@ -640,299 +650,96 @@ export const TopicRadarGatherView: React.FC<TopicRadarGatherViewProps> = ({
                   </div>
                 </div>
 
-                {/* Bottom Row: Slide Outline Quick Chips + Expand Outline Editor */}
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/10 text-xs">
-                  <div className="flex items-center gap-1.5 flex-wrap min-w-0 flex-1">
-                    <span className="text-[10px] font-mono text-slate-400 uppercase">
-                      Slide Outlines:
+                {/* Storyboard Strip + Action Bar */}
+                <div className="pt-2 border-t border-white/10 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+                      Slide Storyboard ({slides.length} Slides — Click any slide to open Live Canvas Preview):
                     </span>
-                    {slides.map((s, sIdx) => (
-                      <button
-                        key={sIdx}
-                        type="button"
-                        onClick={() => {
-                          onSetExpandedCandidateId(candidate.id);
-                          onSetActiveOutlineSlideIdx(sIdx);
-                        }}
-                        className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono transition-colors cursor-pointer ${
-                          isExpanded && activeOutlineSlideIdx === sIdx
-                            ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/35 font-bold'
-                            : 'bg-white/[0.04] text-slate-300 hover:text-white border border-white/10'
-                        }`}
-                        title={`Slide ${sIdx + 1}: ${s.enTitle || s.type}`}
-                      >
-                        <span>S{sIdx + 1}</span>
-                        <span className="text-slate-400 capitalize">({s.type})</span>
-                      </button>
-                    ))}
-                  </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
-                    {onSynthesizeCandidateWithAi && (
-                      <button
-                        type="button"
-                        disabled={synthesizingCandidateId === candidate.id}
-                        onClick={() => onSynthesizeCandidateWithAi(candidate)}
-                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/35 text-amber-200 text-xs font-semibold cursor-pointer disabled:opacity-50"
-                        title="Scrape full article from source URL and synthesize all slides with AI"
-                      >
-                        <Sparkles className={`w-3.5 h-3.5 ${synthesizingCandidateId === candidate.id ? 'animate-spin' : ''}`} />
-                        <span>
-                          {synthesizingCandidateId === candidate.id
-                            ? 'Scraping & Synthesizing...'
-                            : candidate.deck.sourceMeta?.isFallback === false
-                            ? 'Re-Synthesize AI'
-                            : 'Deep AI Synthesize'}
+                    <div className="flex items-center gap-2 shrink-0">
+                      {synthesizingCandidateId === candidate.id && (
+                        <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-400/25 text-amber-200 text-[11px] font-mono">
+                          <Sparkles className="w-3 h-3 animate-spin" />
+                          <span>Auto-Synthesizing with AI...</span>
                         </span>
-                      </button>
-                    )}
+                      )}
 
-                    {onLoadCandidateIntoStudio && (
+                      {onLoadCandidateIntoStudio && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onLoadCandidateIntoStudio(
+                              candidate.deck,
+                              candidate.draftTitle
+                            )
+                          }
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/30 text-cyan-200 text-xs font-semibold cursor-pointer"
+                          title="Load this entire generated deck directly into the 9:16 Create Studio"
+                        >
+                          <Layers className="w-3.5 h-3.5" />
+                          <span>Open in Studio</span>
+                        </button>
+                      )}
+
                       <button
                         type="button"
+                        data-testid={`toggle-slide-preview-${candidate.id}`}
                         onClick={() =>
-                          onLoadCandidateIntoStudio(
-                            candidate.deck,
-                            candidate.draftTitle
-                          )
+                          onSetExpandedCandidateId(isExpanded ? null : candidate.id)
                         }
-                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/30 text-cyan-200 text-xs font-semibold cursor-pointer"
-                        title="Load this entire generated deck directly into the 9:16 Create Studio"
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-white/10 bg-white/[0.03] hover:bg-white/[0.08] text-slate-300 text-xs font-semibold cursor-pointer"
                       >
-                        <Layers className="w-3.5 h-3.5" />
-                        <span>Open in Studio</span>
+                        <Edit3 className="w-3 h-3 text-cyan-400" />
+                        <span>
+                          {isExpanded
+                            ? 'Collapse Live Preview'
+                            : 'Live Slide Preview & Edit'}
+                        </span>
+                        {isExpanded ? (
+                          <ChevronUp className="w-3 h-3" />
+                        ) : (
+                          <ChevronDown className="w-3 h-3" />
+                        )}
                       </button>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onSetExpandedCandidateId(isExpanded ? null : candidate.id)
-                      }
-                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-white/10 bg-white/[0.03] hover:bg-white/[0.08] text-slate-300 text-xs font-semibold cursor-pointer"
-                    >
-                      <Edit3 className="w-3 h-3 text-cyan-400" />
-                      <span>{isExpanded ? 'Collapse Outline' : 'Inspect & Edit Outline'}</span>
-                      {isExpanded ? (
-                        <ChevronUp className="w-3 h-3" />
-                      ) : (
-                        <ChevronDown className="w-3 h-3" />
-                      )}
-                    </button>
+                    </div>
                   </div>
+
+                  {/* 8-Slide Storyboard Strip showing each slide's archetype, variant & title */}
+                  <CandidateSlideStoryboardStrip
+                    slides={slides}
+                    isExpanded={isExpanded}
+                    activeSlideIdx={Math.min(
+                      activeOutlineSlideIdx,
+                      Math.max(0, slides.length - 1)
+                    )}
+                    onSelectSlide={(sIdx) => {
+                      onSetExpandedCandidateId(candidate.id);
+                      onSetActiveOutlineSlideIdx(sIdx);
+                    }}
+                  />
                 </div>
 
-                {/* Expanded Inline Editor for Candidate's 8 Slide Outlines & Caption */}
+                {/* Expanded Split-View Live Canvas Preview + Inline Slide & Graphic Inspector */}
                 {isExpanded && activeSlide && (
-                  <div className="p-3 rounded-xl border border-cyan-400/25 bg-black/60 space-y-3 animate-fade-in">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-xs font-bold text-white flex items-center gap-2">
-                        <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                        <span>
-                          Editing Outline for Slide {activeOutlineSlideIdx + 1} of{' '}
-                          {slides.length} ({activeSlide.type.toUpperCase()}
-                          {activeSlide.type === 'row' && activeSlide.diagramVariant
-                            ? ` · ${activeSlide.diagramVariant.toUpperCase()}`
-                            : ''}
-                          )
-                        </span>
-                      </span>
-
-                      <div className="flex flex-wrap items-center gap-2">
-                        <select
-                          aria-label="Slide Archetype"
-                          value={activeSlide.type}
-                          onChange={(e) => {
-                            const newType = e.target.value as SlideType;
-                            onUpdateCandidateDeck(candidate.id, (prev) => {
-                              const nextSlides = [...(prev.deck.slides || [])];
-                              if (nextSlides[activeOutlineSlideIdx]) {
-                                nextSlides[activeOutlineSlideIdx] = seedSlideArchetypeData(
-                                  nextSlides[activeOutlineSlideIdx],
-                                  newType,
-                                  activeOutlineSlideIdx,
-                                  true
-                                );
-                              }
-                              return { ...prev, deck: { ...prev.deck, slides: nextSlides } };
-                            });
-                            onShowToast(`Switched Slide ${activeOutlineSlideIdx + 1} to ${newType.toUpperCase()}`);
-                          }}
-                          className="px-2 py-1 rounded-lg bg-black/80 border border-white/15 text-[11px] font-mono text-cyan-200"
-                        >
-                          <option value="hub">Archetype: Hub</option>
-                          <option value="row">Archetype: Diagram (Row)</option>
-                          <option value="compare">Archetype: Compare</option>
-                          <option value="code">Archetype: Code Diff</option>
-                          <option value="metric">Archetype: Metric</option>
-                          <option value="number">Archetype: Step Number</option>
-                          <option value="image">Archetype: Media / Meme</option>
-                          <option value="cta">Archetype: CTA</option>
-                        </select>
-
-                        {(activeSlide.type === 'row' || activeSlide.type === 'poster') && (
-                          <select
-                            aria-label="Diagram Variant"
-                            value={activeSlide.diagramVariant || 'topology'}
-                            onChange={(e) => {
-                              const newVariant = e.target.value as DiagramVariant;
-                              onUpdateCandidateDeck(candidate.id, (prev) => {
-                                const nextSlides = [...(prev.deck.slides || [])];
-                                const curr = nextSlides[activeOutlineSlideIdx];
-                                if (curr) {
-                                  const smart = resolveSmartSlideVisuals(
-                                    { ...curr, diagramVariant: newVariant },
-                                    activeOutlineSlideIdx,
-                                    true
-                                  );
-                                  nextSlides[activeOutlineSlideIdx] = {
-                                    ...curr,
-                                    diagramVariant: newVariant,
-                                    diagramNodes: smart.diagramNodes,
-                                    diagramEdges: smart.diagramEdges,
-                                    diagramFooter: smart.diagramFooter,
-                                  };
-                                }
-                                return { ...prev, deck: { ...prev.deck, slides: nextSlides } };
-                              });
-                              onShowToast(`Switched diagram schematic to ${newVariant.toUpperCase()}`);
-                            }}
-                            className="px-2 py-1 rounded-lg bg-black/80 border border-white/15 text-[11px] font-mono text-emerald-200"
-                          >
-                            <option value="topology">Variant: Topology</option>
-                            <option value="isolation">Variant: Isolation</option>
-                            <option value="clusters">Variant: Clusters</option>
-                            <option value="split">Variant: Hot/Cold Split</option>
-                            <option value="features">Variant: Features</option>
-                            <option value="stack">Variant: Layered Stack</option>
-                            <option value="graph">Variant: Skip Graph</option>
-                            <option value="scatter">Variant: Vector Scatter</option>
-                            <option value="takeaway">Variant: Takeaway</option>
-                          </select>
-                        )}
-
-                        {slides.length > 2 && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              onUpdateCandidateDeck(candidate.id, (prev) => ({
-                                ...prev,
-                                deck: {
-                                  ...prev.deck,
-                                  slides: diversifyDeckArchetypesAndVisuals(prev.deck.slides || []),
-                                },
-                              }));
-                              onShowToast('✨ Diversified Slides 2–7 across Compare, Code, Metric & Schematic layouts');
-                            }}
-                            className="px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/35 text-[11px] font-bold text-amber-200 cursor-pointer"
-                            title="Auto-diversify Slides 2–7 across Compare, Code, Metric, and varied Diagram schematics"
-                          >
-                            Diversify Slides 2–7
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                      <div>
-                        <label className="text-[10px] font-mono uppercase text-slate-400 block mb-1">
-                          English Slide Title
-                        </label>
-                        <input
-                          type="text"
-                          value={activeSlide.enTitle || ''}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            onUpdateCandidateDeck(candidate.id, (prev) => {
-                              const nextSlides = [...(prev.deck.slides || [])];
-                              if (nextSlides[activeOutlineSlideIdx]) {
-                                nextSlides[activeOutlineSlideIdx] = {
-                                  ...nextSlides[activeOutlineSlideIdx],
-                                  enTitle: val,
-                                };
-                              }
-                              return { ...prev, deck: { ...prev.deck, slides: nextSlides } };
-                            });
-                          }}
-                          className="w-full px-2.5 py-1.5 rounded-lg bg-black/80 border border-white/15 text-xs text-white"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-[10px] font-mono uppercase text-slate-400 block mb-1">
-                          Arabic Slide Title (RTL)
-                        </label>
-                        <input
-                          type="text"
-                          dir="rtl"
-                          value={activeSlide.arTitle || ''}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            onUpdateCandidateDeck(candidate.id, (prev) => {
-                              const nextSlides = [...(prev.deck.slides || [])];
-                              if (nextSlides[activeOutlineSlideIdx]) {
-                                nextSlides[activeOutlineSlideIdx] = {
-                                  ...nextSlides[activeOutlineSlideIdx],
-                                  arTitle: val,
-                                };
-                              }
-                              return { ...prev, deck: { ...prev.deck, slides: nextSlides } };
-                            });
-                          }}
-                          className="w-full px-2.5 py-1.5 rounded-lg bg-black/80 border border-white/15 text-xs text-white font-arabic"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-[10px] font-mono uppercase text-slate-400 block mb-1">
-                          English Bullet Copy
-                        </label>
-                        <textarea
-                          rows={2}
-                          value={activeSlide.enBody || ''}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            onUpdateCandidateDeck(candidate.id, (prev) => {
-                              const nextSlides = [...(prev.deck.slides || [])];
-                              if (nextSlides[activeOutlineSlideIdx]) {
-                                nextSlides[activeOutlineSlideIdx] = {
-                                  ...nextSlides[activeOutlineSlideIdx],
-                                  enBody: val,
-                                };
-                              }
-                              return { ...prev, deck: { ...prev.deck, slides: nextSlides } };
-                            });
-                          }}
-                          className="w-full px-2.5 py-1.5 rounded-lg bg-black/80 border border-white/15 text-xs text-slate-200 resize-none"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-[10px] font-mono uppercase text-slate-400 block mb-1">
-                          Arabic Bullet Copy (RTL)
-                        </label>
-                        <textarea
-                          rows={2}
-                          dir="rtl"
-                          value={activeSlide.arBody || ''}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            onUpdateCandidateDeck(candidate.id, (prev) => {
-                              const nextSlides = [...(prev.deck.slides || [])];
-                              if (nextSlides[activeOutlineSlideIdx]) {
-                                nextSlides[activeOutlineSlideIdx] = {
-                                  ...nextSlides[activeOutlineSlideIdx],
-                                  arBody: val,
-                                };
-                              }
-                              return { ...prev, deck: { ...prev.deck, slides: nextSlides } };
-                            });
-                          }}
-                          className="w-full px-2.5 py-1.5 rounded-lg bg-black/80 border border-white/15 text-xs text-slate-200 font-arabic resize-none"
-                        />
-                      </div>
-                    </div>
-                  </div>
+                  <CandidateSlidePreviewInspector
+                    candidate={candidate}
+                    activeSlideIdx={Math.min(
+                      activeOutlineSlideIdx,
+                      Math.max(0, slides.length - 1)
+                    )}
+                    onSetActiveSlideIdx={onSetActiveOutlineSlideIdx}
+                    onUpdateCandidateDeck={onUpdateCandidateDeck}
+                    onRegenerateSingleSlide={onRegenerateSingleSlide}
+                    isRegeneratingSlide={
+                      regeneratingSlideKey ===
+                      `${candidate.id}:${Math.min(
+                        activeOutlineSlideIdx,
+                        Math.max(0, slides.length - 1)
+                      )}`
+                    }
+                    onShowToast={onShowToast}
+                  />
                 )}
               </div>
             );

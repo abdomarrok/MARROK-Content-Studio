@@ -288,6 +288,63 @@ export interface WhiteCardMediaGeometry {
  * Computes exact pixel and percentage coordinates for the central white rounded card
  * and its inner padded media container across any active dimension preset (e.g. 1080x1440 IG_GRID).
  */
+export const FULL_MEME_CARD_X = 36;
+export const FULL_MEME_CARD_W = 1008;
+
+/**
+ * Computes smart aspect-ratio-adapted card dimensions for a Full Meme slide
+ * so the meme fills maximum horizontal and vertical space between the MARROK header
+ * and footer without dead white bars.
+ */
+export function resolveSmartFullMemeCardBounds(
+  spec: CanvasDimensionSpec,
+  slideContext?: Partial<SlideData> | null
+): { cardX: number; cardY: number; cardW: number; cardH: number } {
+  const minCardY = spec.headerY + 44;
+  const maxCardH = Math.max(400, spec.safeFooterCeilingY - minCardY);
+  const maxCardW = Math.min(FULL_MEME_CARD_W, spec.width - 72);
+  const isVideo = isVideoSlide(slideContext);
+  const pad = isVideo ? 16 : 6;
+
+  let cardW = maxCardW;
+  let cardH = maxCardH;
+
+  const aspect = slideContext?.imageAspectRatio;
+  if (
+    !isVideo &&
+    aspect &&
+    Number.isFinite(aspect) &&
+    aspect > 0.15 &&
+    slideContext?.imageFit !== 'cover'
+  ) {
+    const maxInnerW = maxCardW - pad * 2;
+    const maxInnerH = maxCardH - pad * 2;
+    const idealInnerHAtMaxW = Math.round(maxInnerW / aspect);
+    const idealCardH = idealInnerHAtMaxW + pad * 2;
+
+    if (idealCardH <= maxCardH) {
+      // Width-bound meme: keep full 1008px width and hug height so there are no empty top/bottom bars
+      cardW = maxCardW;
+      cardH = Math.max(Math.round(maxCardH * 0.68), Math.min(maxCardH, idealCardH));
+    } else {
+      // Height-bound tall meme: fill full vertical height and hug width cleanly
+      cardH = maxCardH;
+      const idealInnerWAtMaxH = Math.round(maxInnerH * aspect);
+      const idealCardW = idealInnerWAtMaxH + pad * 2;
+      cardW = Math.max(Math.round(maxCardW * 0.8), Math.min(maxCardW, idealCardW));
+    }
+  }
+
+  const cardX = Math.round((spec.width - cardW) / 2);
+  const cardY = minCardY + Math.round((maxCardH - cardH) / 2);
+
+  return { cardX, cardY, cardW, cardH };
+}
+
+/**
+ * Computes exact pixel and percentage coordinates for the central white rounded card
+ * and its inner padded media container across any active dimension preset (e.g. 1080x1440 IG_GRID).
+ */
 export function computeWhiteCardMediaGeometry(
   spec: CanvasDimensionSpec,
   slide?: Partial<SlideData> | null
@@ -304,20 +361,22 @@ export function computeWhiteCardMediaGeometry(
   const cardX = Math.round(transform.cardX + (transform.cardW - cardW) / 2 + gDx);
   const cardY = Math.round(transform.cardY + (transform.cardH - cardH) / 2 + gDy);
   const effectiveScale = Number((transform.scale * gScale).toFixed(3));
-  const cardRadius = Math.max(16, Math.round(32 * effectiveScale));
-
+  const isFullMeme = isFullMemeSlide(slide, effectiveType);
   const isHero = isHeroImageSlide(slide, effectiveType);
-  const basePad = isHero ? 18 : 24;
-  const innerPad = Math.max(10, Math.round(basePad * effectiveScale));
+  const isVideo = isVideoSlide(slide);
+  const cardRadius = Math.max(16, Math.round((isFullMeme && !isVideo ? 26 : 32) * effectiveScale));
+
+  const basePad = isFullMeme && !isVideo ? 6 : isVideo ? 16 : isHero ? 18 : 24;
+  const innerPad = Math.max(isFullMeme && !isVideo ? 6 : 10, Math.round(basePad * effectiveScale));
   const innerX = cardX + innerPad;
   const innerY = cardY + innerPad;
   const innerW = Math.max(40, cardW - innerPad * 2);
   const innerH = Math.max(40, cardH - innerPad * 2);
-  const innerBorderRadius = slide?.videoBorderRadius ?? 8;
+  const innerBorderRadius = slide?.videoBorderRadius ?? (isFullMeme && !isVideo ? 18 : 8);
   const fit: 'contain' | 'cover' = slide?.imageFit || 'contain';
   const isWhiteBg =
     slide?.imageBgStyle === 'white' ||
-    (!slide?.imageBgStyle && (isHero || isVideoSlide(slide)));
+    (!slide?.imageBgStyle && (isHero || isVideo));
 
   const toPct = (v: number, total: number) => `${((v / total) * 100).toFixed(2)}%`;
 
@@ -360,6 +419,7 @@ export function isFullMemeSlide(slide?: Partial<SlideData> | null, slideTypeOver
   if (!slide) return false;
   const effectiveType = slideTypeOverride || slide.type;
   if (effectiveType !== 'image' && effectiveType !== 'poster') return false;
+  if (slide.standaloneMeme) return true;
   if (slide.imageFrameMode === 'full') return true;
   if (
     slide.imageUrl === '/assets/aistudio/1793547809949_4a78bc04.jpg' &&
@@ -380,7 +440,7 @@ export function isFullMemeSlide(slide?: Partial<SlideData> | null, slideTypeOver
 }
 
 /**
- * Determines whether a slide uses the tall Hero Meme / Visual Frame (820px native height on 9:16) or Full Meme Frame (1140px).
+ * Determines whether a slide uses the tall Hero Meme / Visual Frame (820px native height on 9:16) or Full Meme Frame.
  */
 export function isHeroImageSlide(slide?: Partial<SlideData> | null, slideTypeOverride?: SlideData['type']): boolean {
   if (!slide) return false;
@@ -395,12 +455,9 @@ export function isHeroImageSlide(slide?: Partial<SlideData> | null, slideTypeOve
 
 /**
  * Computes center-locked, header-safe graphic transform and bounding box for a given dimension preset and archetype.
- * - Preserves exact 1:1 native coordinates on `tiktok-9:16`.
- * - Horizontally aligns the archetype's visual center (`540` for hub/number, `518` for cta, `507` for card archetypes)
- *   directly onto `spec.safeTextCenterX` on all Instagram presets so graphics never drift left.
- * - Anchors top Y below the MARROK header + SYS_REF line on compact aspect ratios (`4:5`, `3:4`, `1:1`).
- * - Supports both Full Meme Frame (`baseCardY = 220, baseCardH = 1140` with zero text below) and
- *   Hero Meme + Headline Frame (`baseCardY = 200, baseCardH = 820`) across all 5 social formats.
+ * - In Full Meme mode (`isFullMeme`), expands the card across all 5 social formats (`cardW = 1008`, `cardX = 36`)
+ *   and fills the full vertical zone between the compact MARROK header and footer ceiling (adapting smartly to `imageAspectRatio`).
+ * - Preserves exact 1:1 native coordinates on `tiktok-9:16` for standard schematic archetypes.
  */
 export function getArchetypeGraphicTransform(
   spec: CanvasDimensionSpec,
@@ -408,6 +465,19 @@ export function getArchetypeGraphicTransform(
   slideContext?: Partial<SlideData> | null
 ): ArchetypeGraphicTransform {
   const isFullMeme = isFullMemeSlide(slideContext, slideType);
+  if (isFullMeme) {
+    const { cardX, cardY, cardW, cardH } = resolveSmartFullMemeCardBounds(spec, slideContext);
+    return {
+      scale: 1,
+      translateX: 0,
+      translateY: 0,
+      cardX,
+      cardY,
+      cardW,
+      cardH,
+    };
+  }
+
   const isHeroImage = isHeroImageSlide(slideContext, slideType);
   let baseCardY = 240;
   let baseCardH = 490;
@@ -417,10 +487,6 @@ export function getArchetypeGraphicTransform(
     baseCardY = 190;
     baseCardH = 790;
     nativeCenterX = 540;
-  } else if (isFullMeme) {
-    baseCardY = 220;
-    baseCardH = 1140;
-    nativeCenterX = SAFE_CONTENT_CENTER_X;
   } else if (isHeroImage) {
     baseCardY = 200;
     baseCardH = 820;
@@ -473,19 +539,10 @@ export function getArchetypeGraphicTransform(
   const headerClearance = slideType === 'hub' || isHeroImage ? 72 : 82;
   const targetTopY = spec.headerY + headerClearance;
 
-  // In Full Meme mode (no caption below), maximize scale to fill the safe zone between header and footer
-  let scale: number;
-  if (isFullMeme) {
-    const availH = Math.max(400, spec.safeFooterCeilingY - targetTopY - 20);
-    const maxScaleW = spec.safeContentWidth / SAFE_CONTENT_WIDTH;
-    const maxScaleH = availH / baseCardH;
-    scale = Number(Math.min(1, maxScaleW, maxScaleH).toFixed(3));
-  } else {
-    const isTallOrDense = slideType === 'hub' || isHeroImage || slideType === 'poster' || slideType === 'cta';
-    scale = isTallOrDense
-      ? spec.graphicScale
-      : Number(Math.min(0.86, spec.graphicScale * 1.14).toFixed(3));
-  }
+  const isTallOrDense = slideType === 'hub' || isHeroImage || slideType === 'poster' || slideType === 'cta';
+  const scale = isTallOrDense
+    ? spec.graphicScale
+    : Number(Math.min(0.86, spec.graphicScale * 1.14).toFixed(3));
 
   const translateX = Math.round(spec.safeTextCenterX - nativeCenterX * scale);
   const translateY = Math.round(targetTopY - baseCardY * scale);

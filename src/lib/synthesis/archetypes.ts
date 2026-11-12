@@ -77,7 +77,12 @@ export function seedSlideArchetypeData(
     }
 
     case 'poster': {
-      if (!updated.takeaways || updated.takeaways.length === 0 || forceRefresh) {
+      const isFullMemeOrMedia =
+        (updated.imageFrameMode === 'full' || Boolean(updated.standaloneMeme)) &&
+        Boolean(updated.imageUrl || updated.videoUrl);
+      if (isFullMemeOrMedia) {
+        updated.takeaways = [];
+      } else if (!updated.takeaways || updated.takeaways.length === 0 || forceRefresh) {
         updated.takeaways = seedSingleSlideTakeaways(updated);
       }
       updated.diagramVariant = smart.diagramVariant;

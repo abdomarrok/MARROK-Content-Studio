@@ -68,6 +68,9 @@ import {
   ACCEPTED_SINGLE_SLIDE_MEDIA_ACCEPT,
   extractVideoStoryboardDataUrl,
   analyzeVideoForSlideAndCaption,
+  buildCleanMemeCarouselDeck,
+  applySlideGraphicPhoto,
+  analyzeImageForMemeAndCaption,
   type ExportBundleMode,
 } from '../lib/canvasExporter.ts';
 import { runAutonomousPipeline, enrichAndPaceCarousel } from '../lib/autonomousPipeline.ts';
@@ -270,6 +273,9 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   const activePostFormat: PostFormat =
     carousel.postFormat === 'reel'
       ? 'reel'
+      : carousel.postFormat === 'meme' ||
+        (carousel.slides.length === 1 && Boolean(carousel.slides[0]?.standaloneMeme))
+      ? 'meme'
       : carousel.postFormat === 'single' || carousel.slides.length === 1
       ? 'single'
       : 'carousel';
@@ -305,18 +311,39 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     if (carousel.slides.length > 1) {
       stashedCarouselSlidesRef.current = carousel.slides.map((s) => ({ ...s }));
     }
-    const condensed = condenseCarouselToSingleSlide(carousel);
+    const sourceDeck: CarouselData =
+      stashedCarouselSlidesRef.current && stashedCarouselSlidesRef.current.length > 1
+        ? { ...carousel, slides: stashedCarouselSlidesRef.current }
+        : carousel;
+    const condensed = condenseCarouselToSingleSlide(sourceDeck);
     applyDeckUpdate((prev) => ({
       ...prev,
       ...condensed,
       postFormat: 'single',
+      slides: condensed.slides.map((s) => ({
+        ...s,
+        standaloneMeme: false,
+        imageFrameMode: s.imageUrl ? 'hero' : s.imageFrameMode,
+      })),
     }));
     changeSlide(0, 1);
-    onShowToast('Condensed to 1-Slide Infographic Poster');
+    onShowToast('Switched to 1-Slide Infographic Poster');
   };
 
   const handleSwitchPostFormat = (nextFormat: PostFormat) => {
     if (nextFormat === activePostFormat) return;
+
+    if (nextFormat === 'meme') {
+      if (carousel.slides.length > 1) {
+        stashedCarouselSlidesRef.current = carousel.slides.map((s) => ({ ...s }));
+      }
+      const existingImageUrl = carousel.slides[currentSlideIndex]?.imageUrl || carousel.slides[0]?.imageUrl || uploadedImage?.base64 || '';
+      applyDeckUpdate((prev) => buildCleanMemeCarouselDeck(prev, existingImageUrl, uploadedImage?.name));
+      changeSlide(0, 1);
+      setInspectorTab('copy');
+      onShowToast('Switched to Dedicated Meme Post Studio (clean full card)');
+      return;
+    }
 
     if (nextFormat === 'reel') {
       if (carousel.slides.length > 1) {
@@ -342,7 +369,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       return;
     }
 
-    // Switching from 'single' or 'reel' -> 'carousel'
+    // Switching from 'single', 'meme', or 'reel' -> 'carousel'
     if (carousel.slides.length >= 3) {
       applyDeckUpdate((prev) => ({
         ...prev,
@@ -626,33 +653,161 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       onShowToast('Please select a valid image or video file (PNG, JPG, WebP, MP4, WebM, MOV).');
       return;
     }
-    try {
-      const { base64, mimeType, sizeKb } = await compressImageClientSide(file);
+
+    const applyUploadedImageByMode = (
+      base64: string,
+      mimeType: string,
+      sizeKb: number,
+      forceMode?: 'meme' | 'graphic'
+    ) => {
       setUploadedImage({
         base64,
         mimeType,
         name: file.name,
         sizeKb,
       });
-      setIsExpanded(true);
-      setActiveTab('upload');
-      onShowToast(`Attached screenshot (${sizeKb} KB)`);
+
+      const resolvedMode: 'meme' | 'graphic' =
+        forceMode ||
+        (activePostFormat === 'meme' || Boolean(carousel.slides[currentSlideIndexRef.current]?.standaloneMeme)
+          ? 'meme'
+          : 'graphic');
+
+      if (resolvedMode === 'meme') {
+        applyDeckUpdate((prev) => {
+          if (prev.slides.length > 1) {
+            stashedCarouselSlidesRef.current = prev.slides.map((s) => ({ ...s }));
+          }
+          return buildCleanMemeCarouselDeck(prev, base64, file.name);
+        });
+        changeSlide(0, 1);
+        setIsExpanded(false);
+        setInspectorTab('copy');
+        onShowToast('✨ Loaded clean Meme card — generating AI caption...');
+        void handleAnalyzePhotoCaption(base64, mimeType, file.name, 'meme');
+      } else {
+        // Normal Slide Graphic Photo Upload: replace ONLY the current slide's graphic slot!
+        applyDeckUpdate((prev) => {
+          const targetIndex = Math.min(currentSlideIndexRef.current, prev.slides.length - 1);
+          if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
+          const isSingleDeck = prev.postFormat === 'single' || prev.slides.length === 1;
+          const nextSlides = [...prev.slides];
+          nextSlides[targetIndex] = applySlideGraphicPhoto(
+            nextSlides[targetIndex],
+            base64,
+            isSingleDeck
+          );
+          return {
+            ...prev,
+            slides: nextSlides,
+          };
+        });
+        setIsExpanded(false);
+        setInspectorTab('copy');
+        onShowToast('Inserted photo into slide graphic slot (slide text & deck preserved)');
+        void handleAnalyzePhotoCaption(base64, mimeType, file.name, 'graphic');
+      }
+    };
+
+    try {
+      const { base64, mimeType, sizeKb } = await compressImageClientSide(file);
+      applyUploadedImageByMode(base64, mimeType, sizeKb);
     } catch (err) {
       console.warn('Image downscaling failed, using raw fallback:', err);
       const reader = new FileReader();
       reader.onload = () => {
-        setUploadedImage({
-          base64: reader.result as string,
-          mimeType: file.type || 'image/jpeg',
-          name: file.name,
-          sizeKb: Math.round(file.size / 1024),
-        });
-        setIsExpanded(true);
-        setActiveTab('upload');
+        const base64 = (reader.result as string) || '';
+        const mimeType = file.type || 'image/jpeg';
+        const sizeKb = Math.max(1, Math.round(file.size / 1024));
+        applyUploadedImageByMode(base64, mimeType, sizeKb);
       };
       reader.readAsDataURL(file);
     }
-  }, [onShowToast]);
+  }, [activePostFormat, carousel.slides, onShowToast]);
+
+  const handleUploadMemePhotoFile = useCallback(
+    async (file: File) => {
+      if (!file.type.startsWith('image/')) {
+        void handleImageFile(file);
+        return;
+      }
+      try {
+        const { base64, mimeType, sizeKb } = await compressImageClientSide(file);
+        setUploadedImage({ base64, mimeType, name: file.name, sizeKb });
+        applyDeckUpdate((prev) => {
+          if (prev.slides.length > 1) {
+            stashedCarouselSlidesRef.current = prev.slides.map((s) => ({ ...s }));
+          }
+          return buildCleanMemeCarouselDeck(prev, base64, file.name);
+        });
+        changeSlide(0, 1);
+        setIsExpanded(false);
+        setInspectorTab('copy');
+        onShowToast('✨ Loaded clean Meme card — generating AI caption...');
+        void handleAnalyzePhotoCaption(base64, mimeType, file.name, 'meme');
+      } catch {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64 = (reader.result as string) || '';
+          applyDeckUpdate((prev) => buildCleanMemeCarouselDeck(prev, base64, file.name));
+          changeSlide(0, 1);
+          setIsExpanded(false);
+          void handleAnalyzePhotoCaption(base64, file.type || 'image/jpeg', file.name, 'meme');
+        };
+        reader.readAsDataURL(file);
+      }
+    },
+    [handleImageFile, onShowToast]
+  );
+
+  const handleUploadSlideGraphicFile = useCallback(
+    async (file: File) => {
+      if (!file.type.startsWith('image/')) {
+        void handleImageFile(file);
+        return;
+      }
+      try {
+        const { base64, mimeType, sizeKb } = await compressImageClientSide(file);
+        setUploadedImage({ base64, mimeType, name: file.name, sizeKb });
+        applyDeckUpdate((prev) => {
+          const targetIndex = Math.min(currentSlideIndexRef.current, prev.slides.length - 1);
+          if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
+          const isSingleDeck = prev.postFormat === 'single' || prev.slides.length === 1;
+          const nextSlides = [...prev.slides];
+          nextSlides[targetIndex] = applySlideGraphicPhoto(
+            nextSlides[targetIndex],
+            base64,
+            isSingleDeck
+          );
+          return { ...prev, slides: nextSlides };
+        });
+        setIsExpanded(false);
+        setInspectorTab('copy');
+        onShowToast('Inserted photo into slide graphic slot (slide text & deck preserved)');
+        void handleAnalyzePhotoCaption(base64, mimeType, file.name, 'graphic');
+      } catch {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64 = (reader.result as string) || '';
+          applyDeckUpdate((prev) => {
+            const targetIndex = Math.min(currentSlideIndexRef.current, prev.slides.length - 1);
+            if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
+            const isSingleDeck = prev.postFormat === 'single' || prev.slides.length === 1;
+            const nextSlides = [...prev.slides];
+            nextSlides[targetIndex] = applySlideGraphicPhoto(
+              nextSlides[targetIndex],
+              base64,
+              isSingleDeck
+            );
+            return { ...prev, slides: nextSlides };
+          });
+          void handleAnalyzePhotoCaption(base64, file.type || 'image/jpeg', file.name, 'graphic');
+        };
+        reader.readAsDataURL(file);
+      }
+    },
+    [handleImageFile, onShowToast]
+  );
 
   const handleSelectDemoImage = async (imagePath: string, title: string) => {
     try {
@@ -1433,6 +1588,98 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     }
   };
 
+  // Meme / Photo AI Vision Caption & Optional Slide Headline Suggestion Generator
+  const [isAnalyzingPhoto, setIsAnalyzingPhoto] = useState(false);
+  const [photoCopySuggestion, setPhotoCopySuggestion] = useState<{
+    enTitle: string;
+    arTitle: string;
+    enBody?: string;
+    arBody?: string;
+  } | null>(null);
+
+  const handleAnalyzePhotoCaption = async (
+    imageDataUrlOverride?: string,
+    mimeTypeOverride?: string,
+    fileNameOverride?: string,
+    modeOverride?: 'meme' | 'graphic'
+  ) => {
+    const activeSlide = carousel.slides[currentSlideIndexRef.current] || carousel.slides[0];
+    const imageDataUrl =
+      imageDataUrlOverride || activeSlide?.imageUrl || uploadedImage?.base64 || '';
+    if (!imageDataUrl) {
+      onShowToast('Please upload a meme or photo first.');
+      return;
+    }
+
+    const effectiveMode: 'meme' | 'graphic' =
+      modeOverride ||
+      (activePostFormat === 'meme' || Boolean(activeSlide?.standaloneMeme) ? 'meme' : 'graphic');
+
+    setIsAnalyzingPhoto(true);
+    try {
+      const result = await analyzeImageForMemeAndCaption({
+        imageDataUrl,
+        imageMimeType: mimeTypeOverride || uploadedImage?.mimeType || 'image/jpeg',
+        imageFileName: fileNameOverride || uploadedImage?.name || 'meme-photo.jpg',
+        prompt: promptInput,
+        theme,
+        keepFullMemeMode: effectiveMode === 'meme',
+        onProgress: (status) => setPipelineStatus(status),
+      });
+
+      if (effectiveMode === 'meme') {
+        setPhotoCopySuggestion(null);
+        applyDeckUpdate((prev) => ({
+          ...prev,
+          category: result.category || prev.category,
+          caption: result.caption || prev.caption,
+          hookVariants:
+            result.hookVariants && result.hookVariants.length > 0
+              ? result.hookVariants
+              : prev.hookVariants,
+        }));
+        onShowToast('✨ Auto-generated category tag & social caption from your meme!');
+      } else {
+        // Normal Slide Graphic mode: keep existing slide text untouched and offer optional 1-click AI headline suggestion!
+        setPhotoCopySuggestion({
+          enTitle: result.suggestedEnTitle,
+          arTitle: result.suggestedArTitle,
+          enBody: result.suggestedEnBody,
+          arBody: result.suggestedArBody,
+        });
+        onShowToast('✨ Photo analyzed — optional AI headline suggestion ready!');
+      }
+    } catch (err) {
+      console.warn('Photo caption generation fallback used:', err);
+    } finally {
+      setIsAnalyzingPhoto(false);
+      setPipelineStatus(null);
+    }
+  };
+
+  const handleApplyPhotoCopySuggestion = () => {
+    if (!photoCopySuggestion) return;
+    applyDeckUpdate((prev) => {
+      const targetIndex = Math.min(currentSlideIndexRef.current, prev.slides.length - 1);
+      if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
+      const nextSlides = [...prev.slides];
+      nextSlides[targetIndex] = sanitizeSlide(
+        {
+          ...nextSlides[targetIndex],
+          enTitle: photoCopySuggestion.enTitle || nextSlides[targetIndex].enTitle,
+          arTitle: photoCopySuggestion.arTitle || nextSlides[targetIndex].arTitle,
+          enBody: photoCopySuggestion.enBody || nextSlides[targetIndex].enBody,
+          arBody: photoCopySuggestion.arBody || nextSlides[targetIndex].arBody,
+        },
+        targetIndex,
+        prev.slides.length
+      );
+      return { ...prev, slides: nextSlides };
+    });
+    setPhotoCopySuggestion(null);
+    onShowToast('Applied suggested AI headlines & body from photo');
+  };
+
   // Copy TikTok Caption
   const handleCopyCaption = async () => {
     const rawCaption = carousel.caption || '';
@@ -2012,6 +2259,9 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 isAdvancedCustomizerOpen={false}
                 onToggleAdvancedCustomizer={() => setInspectorTab('visual')}
                 onUpdateField={handleUpdateCurrentSlide}
+                onSetSlideType={handleSetSlideType}
+                onSmartMatchVisuals={handleSmartMatchVisuals}
+                onDiversifyDeckVisuals={handleDiversifyDeckVisuals}
                 selectedElementId={selectedElementId}
                 onSelectElement={setSelectedElementId}
                 hookVariants={carousel.hookVariants}
@@ -2019,8 +2269,30 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 onAutoFitSlide={handleAutoFitCurrentSlide}
                 onOpenPolishDrawer={onOpenPreviewDrawer ? () => onOpenPreviewDrawer('polish') : undefined}
                 isSingleSlide={activePostFormat === 'single'}
+                isMemeFormat={activePostFormat === 'meme'}
                 onGenerateFromVideo={() => handleGenerateFromVideo()}
                 isGeneratingFromVideo={isGeneratingFromVideo}
+                carouselCategory={carousel.category}
+                carouselCaption={carousel.caption}
+                onUpdateCarouselField={(field, value) =>
+                  applyDeckUpdate((prev) => ({
+                    ...prev,
+                    [field]: value,
+                  }))
+                }
+                onUploadMemeOrPhotoFile={(file) => {
+                  void handleUploadMemePhotoFile(file);
+                }}
+                onUploadSlideGraphicFile={(file) => {
+                  void handleUploadSlideGraphicFile(file);
+                }}
+                onAnalyzePhotoCaption={() => {
+                  void handleAnalyzePhotoCaption();
+                }}
+                isAnalyzingPhoto={isAnalyzingPhoto}
+                photoCopySuggestion={photoCopySuggestion}
+                onApplyPhotoCopySuggestion={handleApplyPhotoCopySuggestion}
+                onDismissPhotoCopySuggestion={() => setPhotoCopySuggestion(null)}
               />
             )}
 
@@ -2066,6 +2338,9 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   videoExportStage={videoExportStage}
                   onGenerateFromVideo={(fileOrUrl) => handleGenerateFromVideo(fileOrUrl)}
                   isGeneratingFromVideo={isGeneratingFromVideo}
+                  onGenerateFromPhoto={(file, dataUrl, mode) => {
+                    void handleAnalyzePhotoCaption(dataUrl, file.type || 'image/jpeg', file.name, mode);
+                  }}
                 />
 
                 {imageStudioTargetIndex !== null && carousel.slides[imageStudioTargetIndex] && (

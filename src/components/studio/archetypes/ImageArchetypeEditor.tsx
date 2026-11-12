@@ -48,6 +48,7 @@ export interface ImageArchetypeEditorProps {
   videoExportStage?: string;
   onGenerateFromVideo?: (fileOrUrl?: File | string) => void;
   isGeneratingFromVideo?: boolean;
+  onGenerateFromPhoto?: (file: File, dataUrl: string, mode: 'meme' | 'graphic') => void;
 }
 
 export const ImageArchetypeEditor: React.FC<ImageArchetypeEditorProps> = ({
@@ -67,10 +68,14 @@ export const ImageArchetypeEditor: React.FC<ImageArchetypeEditorProps> = ({
   videoExportStage = '',
   onGenerateFromVideo,
   isGeneratingFromVideo = false,
+  onGenerateFromPhoto,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [selectedVideoFps, setSelectedVideoFps] = useState<30 | 60>(30);
+
+  const isMemeMode =
+    carousel?.postFormat === 'meme' || Boolean(currentSlide.standaloneMeme);
 
   const applySlideBatchUpdates = (updates: Partial<SlideData>) => {
     if (onUpdateSlideFields) {
@@ -84,7 +89,10 @@ export const ImageArchetypeEditor: React.FC<ImageArchetypeEditorProps> = ({
 
   const handleMediaFileUpload = (file: File) => {
     const targetType: SlideType =
-      currentSlide.type === 'poster' || carousel?.postFormat === 'single' || totalSlides === 1
+      currentSlide.type === 'poster' ||
+      carousel?.postFormat === 'single' ||
+      carousel?.postFormat === 'meme' ||
+      totalSlides === 1
         ? 'poster'
         : 'image';
 
@@ -96,7 +104,10 @@ export const ImageArchetypeEditor: React.FC<ImageArchetypeEditorProps> = ({
         }
         if (
           onUpdateCarouselField &&
-          (targetType === 'poster' || carousel?.postFormat === 'single' || totalSlides === 1) &&
+          (targetType === 'poster' ||
+            carousel?.postFormat === 'single' ||
+            carousel?.postFormat === 'meme' ||
+            totalSlides === 1) &&
           !carousel?.dimensionPreset
         ) {
           onUpdateCarouselField('dimensionPreset', 'ig-3:4');
@@ -159,27 +170,70 @@ export const ImageArchetypeEditor: React.FC<ImageArchetypeEditorProps> = ({
       if (currentSlide.type !== targetType) {
         onSetSlideType(targetType);
       }
-      applySlideBatchUpdates({
-        type: targetType,
-        mediaType: 'image',
-        videoUrl: '',
-        videoMimeType: undefined,
-        videoFileName: undefined,
-        imageUrl: dataUrl,
-        imageFrameMode: 'full',
-        imageFit: 'contain',
-        imageFilter: 'clean',
-        imageBgStyle: currentSlide.imageBgStyle || 'white',
-        brandWatermark: currentSlide.brandWatermark || 'bottom-right',
-        imageCaption: '',
-        metricValue: '',
-        metricLabel: '',
-        metricDiff: '',
-        imageZoom: 1,
-        imagePanX: 0,
-        imagePanY: 0,
-        layoutOverrides: undefined,
-      });
+
+      if (isMemeMode) {
+        if (onUpdateCarouselField) {
+          onUpdateCarouselField('category', 'TECH HUMOR & LOGIC');
+        }
+        applySlideBatchUpdates({
+          type: targetType,
+          mediaType: 'image',
+          videoUrl: '',
+          videoMimeType: undefined,
+          videoFileName: undefined,
+          imageUrl: dataUrl,
+          imageFrameMode: 'full',
+          standaloneMeme: true,
+          imageFit: 'contain',
+          imageFilter: 'clean',
+          imageBgStyle: currentSlide.imageBgStyle || 'white',
+          brandWatermark: currentSlide.brandWatermark || 'bottom-right',
+          imageCaption: '',
+          enTitle: '',
+          arTitle: '',
+          enBody: '',
+          arBody: '',
+          enCredit: '',
+          arCredit: '',
+          takeaways: [],
+          metricValue: '',
+          metricLabel: '',
+          metricDiff: '',
+          imageZoom: 1,
+          imagePanX: 0,
+          imagePanY: 0,
+          layoutOverrides: undefined,
+        });
+        if (onGenerateFromPhoto) {
+          onGenerateFromPhoto(file, dataUrl, 'meme');
+        }
+      } else {
+        // Normal Slide Graphic Photo Upload: preserve existing slide headlines, body, takeaways, and deck!
+        const hasTakeaways =
+          Array.isArray(currentSlide.takeaways) && currentSlide.takeaways.length > 0;
+        const normalFrameMode: 'hero' | 'standard' =
+          currentSlide.imageFrameMode === 'standard' || hasTakeaways ? 'standard' : 'hero';
+        applySlideBatchUpdates({
+          type: targetType,
+          mediaType: 'image',
+          videoUrl: '',
+          videoMimeType: undefined,
+          videoFileName: undefined,
+          imageUrl: dataUrl,
+          imageFrameMode: normalFrameMode,
+          standaloneMeme: false,
+          imageFit: currentSlide.imageFit || 'contain',
+          imageFilter: currentSlide.imageFilter || 'clean',
+          imageBgStyle: currentSlide.imageBgStyle || 'white',
+          brandWatermark: currentSlide.brandWatermark || 'bottom-right',
+          imageZoom: 1,
+          imagePanX: 0,
+          imagePanY: 0,
+        });
+        if (onGenerateFromPhoto) {
+          onGenerateFromPhoto(file, dataUrl, 'graphic');
+        }
+      }
     };
     reader.readAsDataURL(file);
   };
@@ -192,6 +246,9 @@ export const ImageArchetypeEditor: React.FC<ImageArchetypeEditorProps> = ({
     if (currentSlide.type !== targetType) {
       onSetSlideType(targetType);
     }
+    if (onUpdateCarouselField) {
+      onUpdateCarouselField('category', 'TECH HUMOR & LOGIC');
+    }
     applySlideBatchUpdates({
       type: targetType,
       mediaType: 'image',
@@ -200,11 +257,19 @@ export const ImageArchetypeEditor: React.FC<ImageArchetypeEditorProps> = ({
       videoFileName: undefined,
       imageUrl: EXPECTATIONS_VS_REALITY_MEME_URL,
       imageFrameMode: 'full',
+      standaloneMeme: true,
       imageFit: 'contain',
       imageFilter: 'clean',
       imageBgStyle: 'white',
       brandWatermark: 'bottom-right',
       imageCaption: '',
+      enTitle: '',
+      arTitle: '',
+      enBody: '',
+      arBody: '',
+      enCredit: '',
+      arCredit: '',
+      takeaways: [],
       metricValue: '',
       metricLabel: '',
       metricDiff: '',

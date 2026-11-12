@@ -456,6 +456,304 @@ describe('ArchetypeControls visual layout editors & smart content-aware defaults
     expect(onUpdateField).toHaveBeenCalledWith('imageFrameMode', 'hero');
     expect(onUpdateField).toHaveBeenCalledWith('enTitle', 'Redis 8 Multi-Threaded Core.');
   });
+
+  it('renders Inline Graphic Transformer in InlineSlideEditor, switches archetypes dynamically, and auto-syncs graphics live as copy is edited + auto-fits on blur', async () => {
+    const { InlineSlideEditor } = await import('./InlineSlideEditor.tsx');
+    const onUpdateField = vi.fn();
+    const onSetSlideType = vi.fn();
+    const onAutoFitSlide = vi.fn();
+
+    const rowSlide: SlideData = {
+      type: 'row',
+      diagramVariant: 'topology',
+      enTitle: 'OAuth 2.0 Token Exchange.',
+      arTitle: 'تبادل الرموز عبر OAuth 2.0',
+      enBody: 'RFC 8693 binds actor claims to short-lived delegated scopes.',
+      arBody: 'يربط المعيار هوية الوكيل بصلاحيات مؤقتة.',
+      diagramNodes: [
+        { label: 'Human Principal', sublabel: 'sub claim', status: 'ACTIVE', icon: 'shield' },
+        { label: 'Token Exchange', sublabel: 'RFC 8693', status: 'ROUTED', icon: 'key' },
+        { label: 'Agent Actor', sublabel: 'act claim', status: 'VERIFIED', icon: 'cpu' },
+      ],
+    };
+
+    render(
+      <InlineSlideEditor
+        currentSlide={rowSlide}
+        currentSlideIndex={2}
+        theme={theme}
+        isAdvancedCustomizerOpen={false}
+        onToggleAdvancedCustomizer={() => {}}
+        onUpdateField={onUpdateField}
+        onSetSlideType={onSetSlideType}
+        onAutoFitSlide={onAutoFitSlide}
+        isSingleSlide={false}
+      />
+    );
+
+    expect(screen.getByTestId('inline-graphic-transformer')).toBeInTheDocument();
+    expect(screen.getByTestId('inline-auto-sync-badge')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('inline-arch-compare'));
+    expect(onSetSlideType).toHaveBeenCalledWith('compare');
+
+    fireEvent.click(screen.getByTestId('inline-variant-isolation'));
+    expect(onUpdateField).toHaveBeenCalledWith('diagramVariant', 'isolation');
+
+    // Editing slide copy automatically syncs diagramNodes in real time without clicking any button
+    const titleInput = screen.getByDisplayValue('OAuth 2.0 Token Exchange.');
+    fireEvent.change(titleInput, {
+      target: { value: 'Ingress Gateway -> Policy Engine -> Worker Sandbox.' },
+    });
+    expect(onUpdateField).toHaveBeenCalledWith(
+      'enTitle',
+      'Ingress Gateway -> Policy Engine -> Worker Sandbox.'
+    );
+    expect(onUpdateField).toHaveBeenCalledWith(
+      'diagramNodes',
+      expect.arrayContaining([
+        expect.objectContaining({ label: expect.any(String) }),
+      ])
+    );
+
+    // Blurring the input automatically triggers auto-fit
+    fireEvent.blur(titleInput);
+    expect(onAutoFitSlide).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders CandidateSlideStoryboardStrip and CandidateSlidePreviewInspector with live canvas preview, 8-slide thumbnail strip, keyboard navigation, live graphic auto-sync, auto-fit on blur, theme/aspect switching, and single-slide AI regenerate', async () => {
+    const {
+      CandidateSlidePreviewInspector,
+      CandidateSlideStoryboardStrip,
+    } = await import('./review/CandidateSlidePreviewInspector.tsx');
+    const { buildCandidateFromTopicSync } = await import(
+      '../../lib/gather/gatherClient.ts'
+    );
+
+    const candidate = buildCandidateFromTopicSync(
+      {
+        id: 'hn_apple_local_ai',
+        title: "Apple's local AI pivot.",
+        url: 'https://example.com/apple-local-ai',
+        sourceName: 'Hacker News',
+        sourceType: 'hn',
+        brand: 'APPLE',
+        brandUrl: 'apple.com',
+        domainCategory: 'AI AGENTS & MODELS',
+        publishedAt: new Date().toISOString(),
+        score: 420,
+        summary:
+          'Apple shifts on-device CoreML and MLX inference to unified memory on M4 silicon vs cloud GPU endpoints, cutting p99 latency to 12ms with 0 cloud token leaks.',
+        extractedMetrics: ['12ms', '0 leaks'],
+        recommendedFormat: 'carousel',
+        synthesisPrompt:
+          'Technical Topic: Apple local AI pivot on unified memory M4 silicon vs cloud GPU endpoints.',
+      },
+      'blueprint',
+      'carousel'
+    );
+
+    const onSelectSlide = vi.fn();
+    const { unmount } = render(
+      <CandidateSlideStoryboardStrip
+        slides={candidate.deck.slides}
+        isExpanded={true}
+        activeSlideIdx={1}
+        onSelectSlide={onSelectSlide}
+      />
+    );
+
+    expect(screen.getByTestId('candidate-storyboard-strip')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('storyboard-chip-s3'));
+    expect(onSelectSlide).toHaveBeenCalledWith(2);
+    unmount();
+
+    let currentCandidate = candidate;
+    let activeIdx = 1;
+    const onSetActiveSlideIdx = vi.fn((nextIdx: number) => {
+      activeIdx = nextIdx;
+    });
+    const onUpdateCandidateDeck = vi.fn(
+      (_id: string, updater: (prev: typeof candidate) => typeof candidate) => {
+        currentCandidate = updater(currentCandidate);
+      }
+    );
+    const onRegenerateSingleSlide = vi.fn();
+    const onShowToast = vi.fn();
+
+    render(
+      <CandidateSlidePreviewInspector
+        candidate={currentCandidate}
+        activeSlideIdx={activeIdx}
+        onSetActiveSlideIdx={onSetActiveSlideIdx}
+        onUpdateCandidateDeck={onUpdateCandidateDeck}
+        onRegenerateSingleSlide={onRegenerateSingleSlide}
+        isRegeneratingSlide={false}
+        onShowToast={onShowToast}
+      />
+    );
+
+    // 1. Live canvas preview & 8-slide thumbnail strip + automatic sync status indicator
+    expect(screen.getByTestId('candidate-live-preview-canvas')).toBeInTheDocument();
+    expect(screen.getByTestId('candidate-thumbnail-strip')).toBeInTheDocument();
+    expect(screen.getByTestId('candidate-thumb-slide-0')).toBeInTheDocument();
+    expect(screen.getByTestId('candidate-thumb-slide-7')).toBeInTheDocument();
+    expect(screen.getByTestId('candidate-auto-sync-status')).toBeInTheDocument();
+
+    // 2. Prev/Next buttons & Keyboard arrow navigation
+    fireEvent.click(screen.getByTestId('preview-next-slide-btn'));
+    expect(onSetActiveSlideIdx).toHaveBeenCalledWith(2);
+
+    fireEvent.keyDown(window, { key: 'ArrowLeft' });
+    expect(onSetActiveSlideIdx).toHaveBeenCalledWith(0);
+
+    // 3. Switch theme palette and aspect ratio inline
+    fireEvent.change(screen.getByTestId('candidate-theme-select'), {
+      target: { value: 'cyber' },
+    });
+    expect(currentCandidate.themeId).toBe('cyber');
+    expect(currentCandidate.deck.theme).toBe('cyber');
+
+    fireEvent.click(screen.getByTestId('aspect-ratio-btn-ig-4:5'));
+    expect(currentCandidate.deck.dimensionPreset).toBe('ig-4:5');
+
+    // 4. Switch archetype & verify editing slide text automatically syncs graphic fields
+    fireEvent.click(screen.getByTestId('candidate-arch-pill-compare'));
+    expect(currentCandidate.deck.slides[1].type).toBe('compare');
+
+    const enTitleInput = screen.getByTestId('candidate-en-title-input');
+    fireEvent.change(enTitleInput, {
+      target: { value: 'Cloud GPU Cluster vs M4 Unified Memory.' },
+    });
+    expect(currentCandidate.deck.slides[1].compareLeftTitle).toBe('CLOUD GPU CLUSTER');
+    expect(currentCandidate.deck.slides[1].compareRightTitle).toBe('M4 UNIFIED MEMORY');
+
+    // 5. One-click regenerate single slide with AI
+    fireEvent.click(screen.getByTestId('regenerate-single-slide-btn'));
+    expect(onRegenerateSingleSlide).toHaveBeenCalledWith(candidate, 1);
+  });
+
+  it('separates Dedicated 4th Meme Post Format from Normal Slide Graphic Photo uploads (preserving slide text + offering optional AI headline suggestions)', async () => {
+    const { buildCleanMemeCarouselDeck, applySlideGraphicPhoto } = await import(
+      '../../lib/canvas/videoFrameExtractor.ts'
+    );
+    const { seedSlideArchetypeData } = await import('../../lib/synthesis/archetypes.ts');
+    const { InlineSlideEditor } = await import('./InlineSlideEditor.tsx');
+    const { synthesizeCarousel } = await import('../../lib/synthesizer.ts');
+
+    const baseSecurityDeck = synthesizeCarousel({
+      prompt: 'eBPF in-kernel execution stack and cybersecurity sandboxing',
+      postFormat: 'single',
+    });
+    expect(baseSecurityDeck.category).not.toBe('TECH HUMOR & LOGIC');
+    expect((baseSecurityDeck.slides[0].takeaways || []).length).toBeGreaterThan(0);
+
+    // 1. Dedicated 4th Meme Format ('meme') clears old template text & takeaways
+    const cleanMemeDeck = buildCleanMemeCarouselDeck(
+      baseSecurityDeck,
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'Human-logic-ryzen-minecraft.png'
+    );
+
+    expect(cleanMemeDeck.postFormat).toBe('meme');
+    expect(cleanMemeDeck.category).toBe('');
+    expect(cleanMemeDeck.slides).toHaveLength(1);
+    expect(cleanMemeDeck.slides[0].type).toBe('poster');
+    expect(cleanMemeDeck.slides[0].imageFrameMode).toBe('full');
+    expect(cleanMemeDeck.slides[0].standaloneMeme).toBe(true);
+    expect(cleanMemeDeck.slides[0].enTitle).toBe('');
+    expect(cleanMemeDeck.slides[0].arTitle).toBe('');
+    expect(cleanMemeDeck.slides[0].enCredit).toBe('');
+    expect(cleanMemeDeck.slides[0].takeaways).toEqual([]);
+    expect(cleanMemeDeck.sourceMeta?.creator).toBe('');
+    expect(cleanMemeDeck.caption).toContain('Human logic ryzen minecraft');
+
+    // Verify canvas render seeding does NOT re-inject default takeaways on a full meme card
+    const seededForRender = seedSlideArchetypeData(cleanMemeDeck.slides[0], 'poster', 0, false);
+    expect(seededForRender.takeaways).toEqual([]);
+
+    const onUpdateField = vi.fn();
+    const onUpdateCarouselField = vi.fn();
+    const onUploadMemeOrPhotoFile = vi.fn();
+    const onAnalyzePhotoCaption = vi.fn();
+
+    const { unmount } = render(
+      <InlineSlideEditor
+        currentSlide={cleanMemeDeck.slides[0]}
+        currentSlideIndex={0}
+        theme={theme}
+        isAdvancedCustomizerOpen={false}
+        onToggleAdvancedCustomizer={vi.fn()}
+        onUpdateField={onUpdateField}
+        isSingleSlide={true}
+        isMemeFormat={true}
+        carouselCategory={cleanMemeDeck.category}
+        carouselCaption={cleanMemeDeck.caption}
+        onUpdateCarouselField={onUpdateCarouselField}
+        onUploadMemeOrPhotoFile={onUploadMemeOrPhotoFile}
+        onAnalyzePhotoCaption={onAnalyzePhotoCaption}
+      />
+    );
+
+    // Inline Upload / Replace Meme button is present
+    expect(screen.getByTestId('inline-upload-meme-btn')).toBeInTheDocument();
+
+    // Normal slide headlines, Key Engineering Takeaways, and Top-Right Header Tag are hidden in Full Meme Card mode
+    expect(screen.queryByText('English Headline')).not.toBeInTheDocument();
+    expect(screen.queryByText('Key Engineering Takeaways')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('editor-meme-category-input')).not.toBeInTheDocument();
+
+    // Social Media Caption input is visible and editable
+    const captionInput = screen.getByTestId('editor-meme-caption-input');
+    fireEvent.change(captionInput, { target: { value: 'Custom meme caption #TechHumor' } });
+    expect(onUpdateCarouselField).toHaveBeenCalledWith('caption', 'Custom meme caption #TechHumor');
+
+    // Regenerate AI Caption button triggers callback
+    fireEvent.click(screen.getByTestId('editor-generate-from-photo-btn'));
+    expect(onAnalyzePhotoCaption).toHaveBeenCalledTimes(1);
+    unmount();
+
+    // 2. Normal Slide Graphic Photo Upload preserves existing titles, body, and takeaways + offers optional AI headline suggestion
+    const normalSlideWithPhoto = applySlideGraphicPhoto(
+      baseSecurityDeck.slides[0],
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      true
+    );
+    expect(normalSlideWithPhoto.standaloneMeme).toBe(false);
+    expect(normalSlideWithPhoto.enTitle).toBe(baseSecurityDeck.slides[0].enTitle);
+    expect(normalSlideWithPhoto.arTitle).toBe(baseSecurityDeck.slides[0].arTitle);
+    expect(normalSlideWithPhoto.takeaways).toEqual(baseSecurityDeck.slides[0].takeaways);
+
+    const onApplyPhotoCopySuggestion = vi.fn();
+    render(
+      <InlineSlideEditor
+        currentSlide={normalSlideWithPhoto}
+        currentSlideIndex={0}
+        theme={theme}
+        isAdvancedCustomizerOpen={false}
+        onToggleAdvancedCustomizer={vi.fn()}
+        onUpdateField={vi.fn()}
+        isSingleSlide={true}
+        isMemeFormat={false}
+        onUploadSlideGraphicFile={vi.fn()}
+        photoCopySuggestion={{
+          enTitle: 'Ryzen 9 Silicon Pipeline.',
+          arTitle: 'معمارية معالجات رايزن 9.',
+        }}
+        onApplyPhotoCopySuggestion={onApplyPhotoCopySuggestion}
+      />
+    );
+
+    expect(screen.getByTestId('inline-upload-graphic-btn')).toBeInTheDocument();
+    expect(screen.getByText('English Headline')).toBeInTheDocument();
+    expect(screen.getByTestId('ai-photo-copy-suggestion-banner')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('apply-photo-suggestion-btn'));
+    expect(onApplyPhotoCopySuggestion).toHaveBeenCalledTimes(1);
+  });
 });
+
+
+
+
 
 

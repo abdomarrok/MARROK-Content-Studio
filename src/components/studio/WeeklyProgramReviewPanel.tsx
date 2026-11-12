@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Radar, Clock } from 'lucide-react';
 import {
   CarouselData,
@@ -29,6 +29,7 @@ import {
   GatheredCandidatePost,
   generateGatheredCandidatesInBackground,
   getSavedCustomRssFeeds,
+  regenerateSingleCandidateSlideWithAi,
   saveCustomRssFeeds,
   synthesizeCandidateWithFullAi,
 } from '../../lib/gather/gatherClient.ts';
@@ -69,6 +70,15 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
   onShowToast,
 }) => {
   const [subView, setSubView] = useState<'gather' | 'peak-board'>(initialSubView);
+  const isMountedRef = useRef<boolean>(true);
+  const autoUpgradedIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Live clock (ticks every 30s so future-only slot validation stays accurate)
   const [nowDate, setNowDate] = useState<Date>(() => new Date());
@@ -102,6 +112,7 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
   const [isAcceptingBatch, setIsAcceptingBatch] = useState<boolean>(false);
   const [acceptingSingleId, setAcceptingSingleId] = useState<string | null>(null);
   const [synthesizingCandidateId, setSynthesizingCandidateId] = useState<string | null>(null);
+  const [regeneratingSlideKey, setRegeneratingSlideKey] = useState<string | null>(null);
 
   // Per-candidate custom schedule overrides
   const [candidateScheduleOverrides, setCandidateScheduleOverrides] = useState<
@@ -145,12 +156,15 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
     return set;
   }, [postsWithStage]);
 
-  // Run background Content Gatherer
+  // Run background Content Gatherer + automatic non-blocking Deep AI upgrade
   const runBackgroundGatherer = useCallback(
     async (refresh = false) => {
       setIsScanningTrends(true);
       setScanProgressLabel('Scanning social media & RSS trend feeds...');
       try {
+        if (refresh) {
+          autoUpgradedIdsRef.current.clear();
+        }
         const res = await fetchTopicRadar({
           source: sourceFilter,
           category: domainFilter,
@@ -164,6 +178,7 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
           {
             formatOverride: formatFilter,
             onProgress: (curr, total, title) => {
+              if (!isMountedRef.current) return;
               setScanProgressLabel(
                 `Generating draft carousel & slide outlines (${curr}/${total}): ${title.slice(0, 42)}...`
               );
@@ -171,19 +186,49 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
           }
         );
 
+        if (!isMountedRef.current) return;
         setCandidates(generated);
         setSelectedCandidateIds((prev) => {
           const validPrev = prev.filter((id) => generated.some((c) => c.id === id));
           if (validPrev.length > 0) return validPrev;
           return generated.slice(0, 6).map((c) => c.id);
         });
+
+        // Automatically run Deep AI Synthesis + Graphic Sync + Limit Fitting in background
+        void (async () => {
+          for (const cand of generated) {
+            if (!isMountedRef.current) break;
+            if (autoUpgradedIdsRef.current.has(cand.id)) continue;
+            autoUpgradedIdsRef.current.add(cand.id);
+            setSynthesizingCandidateId(cand.id);
+            try {
+              const upgraded = await synthesizeCandidateWithFullAi(cand);
+              if (!isMountedRef.current) break;
+              setCandidates((prev) =>
+                prev.map((c) => (c.id === cand.id ? upgraded : c))
+              );
+            } catch {
+              // Keep pre-finalized candidate if background AI upgrade fails
+            } finally {
+              if (isMountedRef.current) {
+                setSynthesizingCandidateId((curr) =>
+                  curr === cand.id ? null : curr
+                );
+              }
+            }
+          }
+        })();
       } catch (err) {
-        onShowToast(
-          `⚠️ ${err instanceof Error ? err.message : 'Failed to scan trend sources'}`
-        );
+        if (isMountedRef.current) {
+          onShowToast(
+            `⚠️ ${err instanceof Error ? err.message : 'Failed to scan trend sources'}`
+          );
+        }
       } finally {
-        setIsScanningTrends(false);
-        setScanProgressLabel(null);
+        if (isMountedRef.current) {
+          setIsScanningTrends(false);
+          setScanProgressLabel(null);
+        }
       }
     },
     [sourceFilter, domainFilter, formatFilter, customRssFeeds, savedPosts, onShowToast]
@@ -373,6 +418,32 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
       );
     } finally {
       setSynthesizingCandidateId(null);
+    }
+  };
+
+  const handleRegenerateSingleCandidateSlide = async (
+    candidate: GatheredCandidatePost,
+    slideIndex: number
+  ) => {
+    const key = `${candidate.id}:${slideIndex}`;
+    setRegeneratingSlideKey(key);
+    try {
+      const updated = await regenerateSingleCandidateSlideWithAi(
+        candidate,
+        slideIndex
+      );
+      setCandidates((prev) =>
+        prev.map((c) => (c.id === candidate.id ? updated : c))
+      );
+      onShowToast(
+        `✨ Regenerated Slide ${slideIndex + 1} with AI for "${updated.draftTitle.slice(0, 32)}"`
+      );
+    } catch (err) {
+      onShowToast(
+        `⚠️ ${err instanceof Error ? err.message : 'Failed to regenerate slide'}`
+      );
+    } finally {
+      setRegeneratingSlideKey(null);
     }
   };
 
@@ -692,6 +763,8 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
           onUpdateCandidateDeck={updateCandidateDeck}
           synthesizingCandidateId={synthesizingCandidateId}
           onSynthesizeCandidateWithAi={handleSynthesizeCandidateWithAi}
+          regeneratingSlideKey={regeneratingSlideKey}
+          onRegenerateSingleSlide={handleRegenerateSingleCandidateSlide}
           onLoadCandidateIntoStudio={onLoadCandidateIntoStudio}
           onShowToast={onShowToast}
         />

@@ -66,6 +66,7 @@ export interface ArchetypeControlsProps {
   videoExportStage?: string;
   onGenerateFromVideo?: (fileOrUrl?: File | string) => void;
   isGeneratingFromVideo?: boolean;
+  onGenerateFromPhoto?: (file: File, dataUrl: string, mode: 'meme' | 'graphic') => void;
 }
 
 function normalizeDiagramVariant(raw?: string): DiagramVariant {
@@ -124,6 +125,7 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
   videoExportStage = '',
   onGenerateFromVideo,
   isGeneratingFromVideo = false,
+  onGenerateFromPhoto,
 }) => {
   const [iconPickerState, setIconPickerState] = useState<{
     isOpen: boolean;
@@ -413,6 +415,7 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
           videoExportStage={videoExportStage}
           onGenerateFromVideo={onGenerateFromVideo}
           isGeneratingFromVideo={isGeneratingFromVideo}
+          onGenerateFromPhoto={onGenerateFromPhoto}
         />
       )}
 

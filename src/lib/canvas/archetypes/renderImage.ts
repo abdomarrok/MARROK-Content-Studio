@@ -3,13 +3,25 @@ import { loadWebImage, loadIconImage, safeDrawImage, drawTintedImage } from '../
 import { drawRoundRect } from '../background.ts';
 import { fitTextInBox } from '../textLayout.ts';
 import {
+  CANVAS_DIMENSION_PRESETS,
+  CanvasDimensionSpec,
   SAFE_CONTENT_WIDTH,
   SAFE_MARGIN_LEFT,
   isFullMemeSlide,
   isHeroImageSlide,
   isVideoSlide,
+  resolveSmartFullMemeCardBounds,
 } from '../constants.ts';
 import { drawMarrokVectorBadge } from '../../icons.ts';
+
+function inferSpecFromCanvas(ctx: CanvasRenderingContext2D, spec?: CanvasDimensionSpec): CanvasDimensionSpec {
+  if (spec) return spec;
+  const h = ctx.canvas?.height || 1920;
+  if (h === 1350) return CANVAS_DIMENSION_PRESETS['ig-4:5'];
+  if (h === 1440) return CANVAS_DIMENSION_PRESETS['ig-3:4'];
+  if (h === 1080) return CANVAS_DIMENSION_PRESETS['ig-1:1'];
+  return CANVAS_DIMENSION_PRESETS['tiktok-9:16'];
+}
 
 /**
  * Draws the 3 technical corner registration marks (top-left, top-right, bottom-left)
@@ -56,10 +68,10 @@ export function drawCardCornerRegistrationMarks(
 /**
  * Archetype 6: Image / Video / Web Visual & Branded Meme Card
  * Supports:
- * - Full Meme/Video Frame (`cardY = 220, cardH = 1140`, captionless), Hero Frame (`cardY = 200, cardH = 820`), and Standard Card (`cardY = 240, cardH = 430`)
+ * - Smart Aspect-Ratio-Maximized Full Meme/Video Frame (`cardW = 1008`, `pad = 6`, captionless), Hero Frame (`cardY = 200, cardH = 820`), and Standard Card (`cardY = 240, cardH = 430`)
  * - Inner Matte Backdrops (`theme`, `white`, `obsidian`) so light-background memes & videos look crisp
  * - Contain (default for 16:9/landscape videos with 8px rounded corners) & Cover (fills inner padded card)
- * - Layered corner registration marks (top-left, top-right, bottom-left) & bottom-right `@MARROK` badge overlay above media
+ * - Layered corner registration marks & bottom-right `@MARROK` badge overlay above media
  */
 export async function drawImageSlide(
   ctx: CanvasRenderingContext2D,
@@ -67,16 +79,51 @@ export async function drawImageSlide(
   theme: ThemePalette,
   _options: VisualSystemOptions,
   brandName: string = 'MARROK',
-  videoElement?: HTMLVideoElement | null
+  videoElement?: HTMLVideoElement | null,
+  spec?: CanvasDimensionSpec
 ): Promise<number> {
   const isFullMeme = isFullMemeSlide(slide);
   const isHeroFrame = isHeroImageSlide(slide);
   const isVideo = isVideoSlide(slide) || Boolean(videoElement);
-  const cardX = SAFE_MARGIN_LEFT;
-  const cardY = isFullMeme ? 220 : isHeroFrame || slide.type === 'poster' ? 200 : 240;
-  const cardW = SAFE_CONTENT_WIDTH;
-  const cardH = isFullMeme ? 1140 : isHeroFrame ? 820 : 430;
-  const radius = 32;
+  const resolvedSpec = inferSpecFromCanvas(ctx, spec);
+
+  // Pre-load image when present so Full Meme mode can smartly adapt card bounds to the image's natural aspect ratio
+  let preloadedImg: HTMLImageElement | null = null;
+  let filterMode: SlideData['imageFilter'] = 'clean';
+  let isSvg = false;
+  if (slide.imageUrl && !isVideo) {
+    const isUploadedOrPreset =
+      isHeroFrame ||
+      slide.imageUrl.startsWith('data:') ||
+      slide.imageUrl.includes('/assets/');
+    filterMode = slide.imageFilter || (isUploadedOrPreset ? 'clean' : 'hud');
+    isSvg = slide.imageUrl.toLowerCase().includes('.svg') || slide.imageUrl.includes('simple-icons');
+    const svgColor = filterMode === 'clean' ? undefined : theme.accent;
+    preloadedImg = await loadWebImage(slide.imageUrl, svgColor);
+  }
+
+  const naturalAspect =
+    slide.imageAspectRatio ||
+    (preloadedImg && preloadedImg.width > 0 && preloadedImg.height > 0
+      ? Number((preloadedImg.width / preloadedImg.height).toFixed(4))
+      : undefined);
+
+  const fullMemeBounds = isFullMeme
+    ? resolveSmartFullMemeCardBounds(resolvedSpec, {
+        ...slide,
+        imageAspectRatio: naturalAspect,
+      })
+    : null;
+
+  const cardX = fullMemeBounds ? fullMemeBounds.cardX : SAFE_MARGIN_LEFT;
+  const cardY = fullMemeBounds
+    ? fullMemeBounds.cardY
+    : isHeroFrame || slide.type === 'poster'
+    ? 200
+    : 240;
+  const cardW = fullMemeBounds ? fullMemeBounds.cardW : SAFE_CONTENT_WIDTH;
+  const cardH = fullMemeBounds ? fullMemeBounds.cardH : isHeroFrame ? 820 : 430;
+  const radius = isFullMeme && !isVideo ? 26 : 32;
 
   // 1. Soft ambient theme glow behind the card matching active post theme
   ctx.save();
@@ -95,7 +142,7 @@ export async function drawImageSlide(
   ctx.restore();
 
   // 2. Card surface fill: supports 'white' matte for white-background memes & videos, 'obsidian', or active theme surface
-  const bgStyle = slide.imageBgStyle || (isVideo ? 'white' : 'theme');
+  const bgStyle = slide.imageBgStyle || (isVideo || isFullMeme ? 'white' : 'theme');
   const cardSurfaceFill =
     bgStyle === 'white'
       ? '#F8FAFC'
@@ -134,12 +181,12 @@ export async function drawImageSlide(
     }
   }
 
-  const pad = isHeroFrame ? 18 : 24;
+  const pad = isFullMeme && !isVideo ? 6 : isVideo ? 16 : isHeroFrame ? 18 : 24;
   const availW = cardW - pad * 2;
   const availH = cardH - pad * 2;
   const innerX = cardX + pad;
   const innerY = cardY + pad;
-  const innerRadius = slide.videoBorderRadius ?? 8;
+  const innerRadius = slide.videoBorderRadius ?? (isFullMeme && !isVideo ? 18 : 8);
 
   if (videoElement && videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
     // Draw live or seeked <video> frame inside the padded white card
@@ -200,15 +247,8 @@ export async function drawImageSlide(
       // ignore transient video frame readiness error
     }
     ctx.restore();
-  } else if (slide.imageUrl && !isVideo) {
-    const isUploadedOrPreset =
-      isHeroFrame ||
-      slide.imageUrl.startsWith('data:') ||
-      slide.imageUrl.includes('/assets/');
-    const filterMode = slide.imageFilter || (isUploadedOrPreset ? 'clean' : 'hud');
-    const isSvg = slide.imageUrl.toLowerCase().includes('.svg') || slide.imageUrl.includes('simple-icons');
-    const svgColor = filterMode === 'clean' ? undefined : theme.accent;
-    const img = await loadWebImage(slide.imageUrl, svgColor);
+  } else if (preloadedImg && !isVideo) {
+    const img = preloadedImg;
 
     if (img.width > 0 && img.height > 0) {
       const imgAspect = img.width / img.height;
@@ -293,8 +333,10 @@ export async function drawImageSlide(
     ctx.restore();
   }
 
-  // Layer the 3 corner registration marks (top-left, top-right, bottom-left) ABOVE the media container
-  drawCardCornerRegistrationMarks(ctx, cardX, cardY, cardW, cardH, theme, bgStyle);
+  // Layer the 3 corner registration marks on video & schematic cards (omitted on Full Meme cards so the meme has clean edge-to-edge space)
+  if (!isFullMeme || isVideo) {
+    drawCardCornerRegistrationMarks(ctx, cardX, cardY, cardW, cardH, theme, bgStyle);
+  }
 
   ctx.restore(); // End clipping
 

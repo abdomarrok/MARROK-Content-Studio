@@ -12,8 +12,8 @@
 │                     ▼                                   ▼                  │
 │  ┌────────────────────────────────────┐  ┌──────────────────────────────┐  │
 │  │ Phase 1: AutonomousStudio.tsx      │  │ Phase 2: Publish & Posts Hub │  │
-│  │  ├─ Carousel | 1-Slide | Reel      │  │  (PublishingHubWorkspace.tsx)│  │
-│  │  ├─ Standalone Meme & Video Slide  │  │  ├─ Tab 1: Publish Active    │  │
+│  │  ├─ Carousel | 1-Slide | Meme|Reel │  │  (PublishingHubWorkspace.tsx)│  │
+│  │  ├─ Smart Meme & Graphic Workflows │  │  ├─ Tab 1: Publish Active    │  │
 │  │  ├─ Feed Color Cadence Auto-Rotate │  │  │   (Buffer + Zernio APIs + │  │
 │  │  └─ ViewportCanvas / ReelViewport  │  │  │    TikTok Trending Music) │  │
 │  └───────┬──────────────────┬─────────┘  │  └─ Tab 2: Posts & Calendar  │  │
@@ -76,10 +76,10 @@
 | `src/lib/publish/tiktokTitle.ts` | Pure standalone string utility (`stripLeadingDuplicateTikTokTitle`) decoupled from browser DOM/Canvas and IndexedDB to guarantee clean Vercel Node.js Serverless function bundling |
 | `src/lib/publish/publishClient.ts` | Client SDK for `/api/publish/*` endpoints, dual aspect-ratio slide renderer (`uploadDeckSlidesForPublishing`), TikTok Commercial Music fetcher (`fetchTikTokCommercialMusic`), local-timezone schedule helpers, and metadata auto-derivation |
 | `src/lib/theme/cadenceEngine.ts` | Posted history color cadence analyzer (`analyzePostHistoryCadence`, `resolveHarmoniousPaletteWithoutRepetition`) preventing consecutive same-color posts |
-| `src/lib/canvas/dimensions.ts` | Platform dimension presets (`tiktok-9:16`, `ig-4:5`, `ig-3:4`, `ig-1:1`, `ig-9:16`), safe zones, and TikTok Photo Mode 3:4 viewport bounds |
+| `src/lib/canvas/constants.ts` | Platform dimension presets (`tiktok-9:16`, `ig-4:5`, `ig-3:4`, `ig-1:1`, `ig-9:16`), safe zones, and smart aspect-ratio-aware Full Meme bounds (`resolveSmartFullMemeCardBounds`, `FULL_MEME_CARD_W = 1008`, `pad = 6`) |
 | `src/lib/canvas/layoutAwareness.ts` | Pure mathematical layout engine enforcing vertical clearances, dynamic dimension scaling, `standaloneMeme` full-bleed layout, and anti-collision drag clamping |
-| `src/lib/canvas/renderSlide.ts` | Pure 2D canvas projection across all supported dimensions for Carousel slides, 1-Slide Infographic Posters, Standalone Memes, and Video Slides |
-| `src/lib/canvas/videoFrameExtractor.ts` | Extracts a 2×2 keyframe storyboard JPEG (`extractVideoStoryboardDataUrl`) from uploaded videos for Gemini Vision multimodal synthesis |
+| `src/lib/canvas/renderSlide.ts` | Pure 2D canvas projection across all supported dimensions for Carousel slides, 1-Slide Infographic Posters, Standalone Memes (omitting top-right category tags), and Video Slides |
+| `src/lib/canvas/videoFrameExtractor.ts` | Extracts 2×2 video keyframe storyboards (`extractVideoStoryboardDataUrl`), builds spotless meme decks (`buildCleanMemeCarouselDeck`), non-destructively inserts slide graphic photos (`applySlideGraphicPhoto`), and runs Vision AI photo analysis (`analyzeImageForMemeAndCaption`) |
 | `src/lib/canvas/singleSlideVideoExporter.ts` | Hardware-accelerated / `MediaRecorder` MP4 & WebM exporter (`exportSingleSlideVideo`) rendering MARROK slide chrome over video slides with preserved audio |
 | `src/lib/canvas/exporter.ts` | Single JPG Q95 download, clipboard copy, Contact Sheet JPG, and 5-in-1 / Metricool ZIP bundle |
 | `src/lib/synthesis/singleSlideCondenser.ts` | Condenses an 8-slide carousel into a 1-slide infographic poster with 3 bilingual takeaways |

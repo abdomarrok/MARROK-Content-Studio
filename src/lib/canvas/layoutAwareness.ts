@@ -359,7 +359,12 @@ export function computeSlideLayoutAwareness(
     hidden: Boolean(headerOverride?.hidden),
   };
 
-  const headerSafeFloorY = headerBadge.hidden ? spec.headerY : headerBadge.y + headerBadge.height;
+  const isFullMeme = isFullMemeSlide(slide);
+  const headerSafeFloorY = headerBadge.hidden
+    ? spec.headerY
+    : isFullMeme
+    ? spec.headerY + 44
+    : headerBadge.y + headerBadge.height;
 
   // 2. CTA Slide Layout Awareness
   if (slide.type === 'cta') {
@@ -378,7 +383,9 @@ export function computeSlideLayoutAwareness(
   const gHidden = Boolean(graphicOverride?.hidden);
 
   const { cardX, cardY: defaultCardY, cardW, cardH } = getArchetypeGraphicTransform(spec, slide.type, slide);
-  const gDx = clampBoxDx(cardX + (cardW - cardW * gScale) / 2, cardW * gScale, rawGDx);
+  const gDx = isFullMeme
+    ? Math.round(Math.max(24 - cardX, Math.min(spec.width - 24 - (cardX + cardW * gScale), rawGDx)))
+    : clampBoxDx(cardX + (cardW - cardW * gScale) / 2, cardW * gScale, rawGDx);
 
   // 4. Content Slide Text Measurement & Scaling Pass
   const rawEnTitle = (slide.enTitle || '').trim();
@@ -398,7 +405,6 @@ export function computeSlideLayoutAwareness(
   const arBodyScale = arBodyOverride?.scale ?? 1;
   const takeawaysScale = Math.min(1, takeawaysOverride?.scale ?? 1);
 
-  const isFullMeme = isFullMemeSlide(slide);
   const titleHidden = isFullMeme || Boolean(titleOverride?.hidden);
   const arTitleHidden = isFullMeme || Boolean(arTitleOverride?.hidden);
   const bodyHidden = isFullMeme || Boolean(bodyOverride?.hidden);

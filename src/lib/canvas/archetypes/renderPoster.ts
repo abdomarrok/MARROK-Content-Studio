@@ -1,6 +1,6 @@
 import { SlideData, SlideTakeawayItem, ThemePalette, VisualSystemOptions } from '../../../types.ts';
 import { drawRoundRect } from '../background.ts';
-import { SAFE_CONTENT_WIDTH, SAFE_MARGIN_LEFT, isVideoSlide } from '../constants.ts';
+import { CanvasDimensionSpec, SAFE_CONTENT_WIDTH, SAFE_MARGIN_LEFT, isVideoSlide } from '../constants.ts';
 import { fitTextInBox } from '../textLayout.ts';
 import { loadIconImage, safeDrawImage } from '../imageLoader.ts';
 import { drawRowSlide } from './renderRow.ts';
@@ -18,7 +18,8 @@ export async function drawPosterSlide(
   theme: ThemePalette,
   options: VisualSystemOptions,
   brandName: string = 'MARROK',
-  videoElement?: HTMLVideoElement | null
+  videoElement?: HTMLVideoElement | null,
+  spec?: CanvasDimensionSpec
 ): Promise<number> {
   const topY = 200;
   const cardW = SAFE_CONTENT_WIDTH;
@@ -29,7 +30,7 @@ export async function drawPosterSlide(
 
   // Render Hero Meme / Image / Video card if media is attached, otherwise render the schematic diagram card
   const graphicEnd = hasVisualMedia
-    ? await drawImageSlide(ctx, slide, theme, options, brandName, videoElement)
+    ? await drawImageSlide(ctx, slide, theme, options, brandName, videoElement, spec)
     : await drawRowSlide(ctx, slide, theme, options);
 
   // If slide has a metricValue and is a schematic diagram (no image/video), draw a metric badge in the top right of the card

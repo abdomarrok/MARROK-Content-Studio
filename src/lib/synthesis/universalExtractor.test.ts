@@ -317,6 +317,38 @@ AI agents act on behalf of human principals but cannot safely share user passwor
     expect(compareSlide.compareLeftTitle).toBeTruthy();
     expect(compareSlide.compareRightTitle).toBeTruthy();
   });
+
+  it('detects legacy boilerplate decks and confirms all bundled Vault posts are boilerplate-free', async () => {
+    const { isBoilerplateOrLowSignalDeck } = await import('../gather/gatherClient.ts');
+    const { BUNDLED_SAVED_POSTS } = await import('../storage/bundledSavedPosts.ts');
+
+    for (const post of BUNDLED_SAVED_POSTS) {
+      expect(isBoilerplateOrLowSignalDeck(post.deck)).toBe(false);
+    }
+
+    expect(
+      isBoilerplateOrLowSignalDeck({
+        theme: 'blueprint',
+        category: 'SYSTEMS',
+        caption: 'test',
+        slides: [
+          { type: 'hub', enTitle: 'Hook.' },
+          {
+            type: 'number',
+            enTitle: 'The architectural bottleneck.',
+            enBody: 'Traditional systems degrade under high scale or complex state dependencies.',
+          },
+          {
+            type: 'row',
+            enTitle: 'Core system architecture.',
+            enBody: 'Decoupled components process data independently.',
+          },
+          { type: 'cta', enTitle: 'Done?' },
+        ],
+      })
+    ).toBe(true);
+  });
 });
+
 
 

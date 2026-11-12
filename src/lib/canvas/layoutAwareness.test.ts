@@ -489,10 +489,11 @@ describe('Slide Layout Awareness Engine', () => {
       });
 
       expect(layout.graphicCard).toBeDefined();
+      expect(layout.graphicCard!.width).toBe(1008);
       if (spec.height >= 1920) {
-        expect(layout.graphicCard!.height).toBe(1140);
+        expect(layout.graphicCard!.height).toBeGreaterThanOrEqual(1300);
       } else {
-        expect(layout.graphicCard!.height).toBeGreaterThan(600);
+        expect(layout.graphicCard!.height).toBeGreaterThan(800);
       }
       expect(layout.graphicCard!.effectiveBottom).toBeLessThanOrEqual(spec.safeFooterCeilingY);
       expect(layout.titleBlock?.hidden).toBe(true);

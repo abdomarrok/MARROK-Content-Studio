@@ -222,12 +222,15 @@ export function drawHeader(
   ctx.shadowBlur = 0;
   ctx.shadowColor = 'transparent';
 
-  // Top-Right Category Tag (aligned to right safe boundary or TikTok safe header right margin)
-  const headerRightX = resolved.headerMarginRight ?? resolved.safeMarginRight;
-  ctx.font = '400 28px "Plus Jakarta Sans", sans-serif';
-  ctx.fillStyle = theme.categoryTag;
-  ctx.textAlign = 'right';
-  ctx.fillText(categoryTag, headerRightX, logoBadgeY + 28);
+  // Top-Right Category Tag (omitted on Meme posts or when categoryTag is empty)
+  const cleanCategory = (categoryTag || '').trim();
+  if (cleanCategory && carousel.postFormat !== 'meme') {
+    const headerRightX = resolved.headerMarginRight ?? resolved.safeMarginRight;
+    ctx.font = '400 28px "Plus Jakarta Sans", sans-serif';
+    ctx.fillStyle = theme.categoryTag;
+    ctx.textAlign = 'right';
+    ctx.fillText(cleanCategory, headerRightX, logoBadgeY + 28);
+  }
   ctx.restore();
 }
 
@@ -249,13 +252,18 @@ export function drawPaginationFooter(
   if (totalSlides <= 1) {
     ctx.save();
     const rawBrand = (carousel?.brand || 'MARROK').trim() || 'MARROK';
+    const isFullMediaCard =
+      (slide?.imageFrameMode === 'full' || Boolean(slide?.standaloneMeme)) &&
+      Boolean(slide?.imageUrl || slide?.videoUrl);
     const rawCredit = (
-      slide?.enCredit ||
-      slide?.arCredit ||
-      carousel?.channel ||
-      carousel?.sourceMeta?.creator ||
-      carousel?.sourceMeta?.channel ||
-      ''
+      isFullMediaCard
+        ? slide?.enCredit || slide?.arCredit || ''
+        : slide?.enCredit ||
+          slide?.arCredit ||
+          carousel?.channel ||
+          carousel?.sourceMeta?.creator ||
+          carousel?.sourceMeta?.channel ||
+          ''
     )
       .replace(/^Source:\s*/i, '')
       .trim();
@@ -264,7 +272,7 @@ export function drawPaginationFooter(
     const rightX = resolved.safeMarginRight;
     const footerY = dotY;
 
-    // Left segment: Source credit (or clean spec indicator if no credit)
+    // Left segment: Source credit (or clean spec indicator on technical posters; left clean on full memes)
     ctx.font = '600 24px "JetBrains Mono", monospace';
     ctx.textBaseline = 'middle';
     if (rawCredit) {
@@ -274,7 +282,7 @@ export function drawPaginationFooter(
       const labelW = ctx.measureText('SOURCE // ').width;
       ctx.fillStyle = theme.textMuted || 'rgba(255, 255, 255, 0.65)';
       ctx.fillText(rawCredit.slice(0, 36), leftX + labelW, footerY);
-    } else {
+    } else if (!isFullMediaCard) {
       ctx.fillStyle = `${theme.accent}99`;
       ctx.textAlign = 'left';
       ctx.fillText('STANDALONE INFOGRAPHIC SPEC', leftX, footerY);

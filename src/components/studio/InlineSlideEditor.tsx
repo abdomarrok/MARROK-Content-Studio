@@ -1,21 +1,42 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Sliders,
   CheckCircle2,
   Sparkles,
-  Wand2,
   Plus,
   Trash2,
   ListChecks,
   Video,
+  Image as ImageIcon,
+  Upload,
   Loader2,
   Eye,
   ChevronDown,
   ChevronUp,
+  Layers,
+  Code,
+  GitCompare,
+  Gauge,
+  Hash,
+  Smile,
+  X,
 } from 'lucide-react';
-import { SlideData, ThemePalette, GraphicalElementId, HookVariant } from '../../types.ts';
+import {
+  CarouselData,
+  SlideData,
+  SlideType,
+  DiagramVariant,
+  ThemePalette,
+  GraphicalElementId,
+  HookVariant,
+} from '../../types.ts';
 import { CHAR_LIMITS, SINGLE_SLIDE_CHAR_LIMITS } from '../../lib/qaChecks.ts';
 import { seedSingleSlideTakeaways } from '../../lib/synthesis/singleSlideCondenser.ts';
+import { seedSlideArchetypeData } from '../../lib/synthesis/archetypes.ts';
+import {
+  autoFitSlideCopyToLimits,
+  autoSyncSlideGraphicsFromCopy,
+} from '../../lib/synthesis/smartVisualDefaults.ts';
 import { isVideoSlide, isFullMemeSlide } from '../../lib/canvas/constants.ts';
 import {
   autoPolishHeadline,
@@ -34,6 +55,9 @@ interface InlineSlideEditorProps {
   isAdvancedCustomizerOpen: boolean;
   onToggleAdvancedCustomizer: () => void;
   onUpdateField: (field: keyof SlideData, value: any) => void;
+  onSetSlideType?: (targetType: SlideType) => void;
+  onSmartMatchVisuals?: () => void;
+  onDiversifyDeckVisuals?: () => void;
   selectedElementId?: GraphicalElementId | null;
   onSelectElement?: (id: GraphicalElementId) => void;
   hookVariants?: HookVariant[];
@@ -41,9 +65,37 @@ interface InlineSlideEditorProps {
   onAutoFitSlide?: () => void;
   onOpenPolishDrawer?: () => void;
   isSingleSlide?: boolean;
+  isMemeFormat?: boolean;
   onGenerateFromVideo?: () => void;
   isGeneratingFromVideo?: boolean;
+  carouselCategory?: string;
+  carouselCaption?: string;
+  onUpdateCarouselField?: (field: keyof CarouselData, value: any) => void;
+  onUploadMemeOrPhotoFile?: (file: File) => void;
+  onUploadSlideGraphicFile?: (file: File) => void;
+  onAnalyzePhotoCaption?: () => void;
+  isAnalyzingPhoto?: boolean;
+  photoCopySuggestion?: {
+    enTitle: string;
+    arTitle: string;
+    enBody?: string;
+    arBody?: string;
+  } | null;
+  onApplyPhotoCopySuggestion?: () => void;
+  onDismissPhotoCopySuggestion?: () => void;
 }
+
+const INLINE_DIAGRAM_VARIANTS: Array<{ id: DiagramVariant; label: string }> = [
+  { id: 'topology', label: 'Pipeline' },
+  { id: 'isolation', label: 'Sandbox' },
+  { id: 'clusters', label: 'Mesh' },
+  { id: 'split', label: 'Split' },
+  { id: 'graph', label: 'Latency' },
+  { id: 'features', label: 'Pillars' },
+  { id: 'stack', label: 'Layers' },
+  { id: 'scatter', label: 'Matrix' },
+  { id: 'takeaway', label: 'Verdict' },
+];
 
 export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
   currentSlide,
@@ -51,6 +103,7 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
   theme,
   onToggleAdvancedCustomizer,
   onUpdateField,
+  onSetSlideType,
   selectedElementId,
   onSelectElement,
   hookVariants,
@@ -58,11 +111,24 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
   onAutoFitSlide,
   onOpenPolishDrawer,
   isSingleSlide = false,
+  isMemeFormat = false,
   onGenerateFromVideo,
   isGeneratingFromVideo = false,
+  carouselCategory = '',
+  carouselCaption = '',
+  onUpdateCarouselField,
+  onUploadMemeOrPhotoFile,
+  onUploadSlideGraphicFile,
+  onAnalyzePhotoCaption,
+  isAnalyzingPhoto = false,
+  photoCopySuggestion = null,
+  onApplyPhotoCopySuggestion,
+  onDismissPhotoCopySuggestion,
 }) => {
+  const inlineMemeFileInputRef = useRef<HTMLInputElement>(null);
+  const inlineGraphicFileInputRef = useRef<HTMLInputElement>(null);
   const isCtaSlide = currentSlide.type === 'cta';
-  const isSingle = isSingleSlide || currentSlide.type === 'poster';
+  const isSingle = isSingleSlide || isMemeFormat || currentSlide.type === 'poster';
   const limits = isSingle ? SINGLE_SLIDE_CHAR_LIMITS : CHAR_LIMITS;
   const isHook = currentSlideIndex === 0 && currentSlide.type === 'hub';
   const enTitleLimit = isHook ? limits.hookTitle : limits.enTitle;
@@ -76,7 +142,12 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
   const hasCardMedia =
     (currentSlide.type === 'poster' || currentSlide.type === 'image') &&
     Boolean(currentSlide.imageUrl || hasVideo);
-  const isTextHiddenByFullFrame = hasCardMedia && isFullMemeSlide(currentSlide);
+  const isMemeMode = Boolean(isMemeFormat || currentSlide.standaloneMeme);
+  const isTextHiddenByFullFrame =
+    (hasCardMedia && isFullMemeSlide(currentSlide)) ||
+    (isMemeMode && currentSlide.imageFrameMode !== 'hero' && currentSlide.imageFrameMode !== 'standard');
+  const hideSlideCopyForMemeStudio =
+    isMemeMode && !hasVideo && currentSlide.imageFrameMode !== 'hero' && currentSlide.imageFrameMode !== 'standard';
 
   // Progressive disclosure states for secondary sections
   const [isHooksOpen, setIsHooksOpen] = useState(currentSlideIndex === 0);
@@ -101,6 +172,66 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
       onUpdateField('imageFrameMode', 'hero');
     }
     onUpdateField(field, value);
+
+    // Automatically sync graphic nodes, compare cards, code snippets & metrics live as copy changes
+    if (
+      !isCtaSlide &&
+      !isSingle &&
+      (field === 'enTitle' || field === 'arTitle' || field === 'enBody' || field === 'arBody')
+    ) {
+      const nextSlide: SlideData = { ...currentSlide, [field]: value };
+      const synced = autoSyncSlideGraphicsFromCopy(nextSlide, currentSlideIndex);
+      const graphicKeys: Array<keyof SlideData> = [
+        'diagramVariant',
+        'diagramNodes',
+        'diagramEdges',
+        'diagramFooter',
+        'compareLeftTitle',
+        'compareLeftBody',
+        'compareRightTitle',
+        'compareRightBody',
+        'codeFileName',
+        'codeLanguage',
+        'codeSnippet',
+        'metricValue',
+        'metricLabel',
+        'metricDiff',
+        'stepNumber',
+        'stepLabel',
+        'centerTag',
+        'satLabels',
+      ];
+      for (const gKey of graphicKeys) {
+        if (synced[gKey] !== undefined && synced[gKey] !== currentSlide[gKey]) {
+          onUpdateField(gKey, synced[gKey]);
+        }
+      }
+    }
+  };
+
+  const handleAutoFitOnBlur = () => {
+    if (onAutoFitSlide) {
+      onAutoFitSlide();
+      return;
+    }
+    const fitted = autoFitSlideCopyToLimits(currentSlide, currentSlideIndex, isSingle);
+    if (fitted.enTitle !== currentSlide.enTitle) onUpdateField('enTitle', fitted.enTitle);
+    if (fitted.arTitle !== currentSlide.arTitle) onUpdateField('arTitle', fitted.arTitle);
+    if (fitted.enBody !== currentSlide.enBody) onUpdateField('enBody', fitted.enBody);
+    if (fitted.arBody !== currentSlide.arBody) onUpdateField('arBody', fitted.arBody);
+  };
+
+  const handleQuickSwitchArchetype = (targetType: SlideType) => {
+    if (onSetSlideType) {
+      onSetSlideType(targetType);
+      return;
+    }
+    const seeded = seedSlideArchetypeData(currentSlide, targetType);
+    (Object.keys(seeded) as Array<keyof SlideData>).forEach((key) => {
+      if (seeded[key] !== currentSlide[key]) {
+        onUpdateField(key, seeded[key]);
+      }
+    });
   };
 
   return (
@@ -108,38 +239,109 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
       {/* Top Action Strip */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.08] pb-3">
         <div className="flex items-center gap-2 text-xs">
-          <span className="font-mono tabular-nums font-bold text-white">
-            Slide {currentSlideIndex + 1}
-          </span>
-          <span aria-hidden="true" className="text-slate-600">·</span>
-          <span className="uppercase font-mono text-slate-400">
-            {currentSlide.type}
-          </span>
-          {(enTitleLen > enTitleLimit ||
-            arTitleLen > limits.arTitle ||
-            enBodyLen > limits.enBody ||
-            arBodyLen > limits.arBody) && (
+          {isMemeMode ? (
             <>
+              <Smile className="w-4 h-4 text-emerald-400" />
+              <span className="font-mono font-bold text-white uppercase">
+                Dedicated Meme Post Studio
+              </span>
               <span aria-hidden="true" className="text-slate-600">·</span>
-              <span className="text-amber-400 font-mono text-[11px]">Over Limit</span>
+              <span className="text-[11px] font-mono text-emerald-300/90">
+                Clean Full Card · Auto AI Caption
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="font-mono tabular-nums font-bold text-white">
+                Slide {currentSlideIndex + 1}
+              </span>
+              <span aria-hidden="true" className="text-slate-600">·</span>
+              <span className="uppercase font-mono text-slate-400">
+                {currentSlide.type}
+              </span>
+              <span
+                data-testid="inline-auto-sync-badge"
+                className="text-[10px] font-mono text-emerald-300/90 flex items-center gap-1 ml-1"
+              >
+                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                <span>Auto-syncs graphic & fits limits</span>
+              </span>
+              {(enTitleLen > enTitleLimit ||
+                arTitleLen > limits.arTitle ||
+                enBodyLen > limits.enBody ||
+                arBodyLen > limits.arBody) && (
+                <>
+                  <span aria-hidden="true" className="text-slate-600">·</span>
+                  <span className="text-amber-400 font-mono text-[11px]">Over Limit</span>
+                </>
+              )}
             </>
           )}
         </div>
 
         <div className="flex items-center gap-1.5 flex-wrap">
-          {onAutoFitSlide && (
-            <button
-              type="button"
-              onClick={onAutoFitSlide}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-white/10 bg-white/[0.03] hover:bg-white/[0.08] text-xs font-medium text-slate-300 hover:text-white transition-colors cursor-pointer whitespace-nowrap shrink-0"
-              title="Automatically trim copy and fix punctuation to fit character limits"
-            >
-              <Wand2 className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Auto-Fit Limits</span>
-            </button>
+          {/* Separated Upload Buttons: Meme Upload (in Meme Mode) vs Normal Slide Graphic Upload (in Carousel / Single Slide Mode) */}
+          {isMemeMode && onUploadMemeOrPhotoFile && (
+            <>
+              <input
+                ref={inlineMemeFileInputRef}
+                data-testid="inline-meme-file-input"
+                type="file"
+                accept="image/*,video/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) onUploadMemeOrPhotoFile(file);
+                  e.target.value = '';
+                }}
+              />
+              <button
+                type="button"
+                data-testid="inline-upload-meme-btn"
+                onClick={() => inlineMemeFileInputRef.current?.click()}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 hover:bg-emerald-500/25 text-xs font-semibold text-emerald-200 hover:text-white transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                title="Upload or replace your Meme image (keeps card spotless and auto-generates AI social caption)"
+              >
+                <Upload className="w-3.5 h-3.5 text-emerald-400" />
+                <span>{currentSlide.imageUrl ? 'Replace Meme Image' : 'Upload Meme Image'}</span>
+              </button>
+            </>
           )}
 
-          {onOpenPolishDrawer && (
+          {!isMemeMode && (onUploadSlideGraphicFile || onUploadMemeOrPhotoFile) && (
+            <>
+              <input
+                ref={inlineGraphicFileInputRef}
+                data-testid="inline-graphic-file-input"
+                type="file"
+                accept="image/*,video/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    if (onUploadSlideGraphicFile) {
+                      onUploadSlideGraphicFile(file);
+                    } else if (onUploadMemeOrPhotoFile) {
+                      onUploadMemeOrPhotoFile(file);
+                    }
+                  }
+                  e.target.value = '';
+                }}
+              />
+              <button
+                type="button"
+                data-testid="inline-upload-graphic-btn"
+                onClick={() => inlineGraphicFileInputRef.current?.click()}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/15 hover:bg-cyan-500/25 text-xs font-semibold text-cyan-200 hover:text-white transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                title="Insert a normal photo into this slide's graphic slot (keeps your slide titles, body, takeaways, and carousel slides intact)"
+              >
+                <ImageIcon className="w-3.5 h-3.5 text-cyan-300" />
+                <span>{currentSlide.imageUrl ? 'Replace Slide Graphic Photo' : 'Insert Graphic Photo'}</span>
+              </button>
+            </>
+          )}
+
+          {onOpenPolishDrawer && !isMemeMode && (
             <button
               type="button"
               onClick={onOpenPolishDrawer}
@@ -153,8 +355,76 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
         </div>
       </div>
 
-      {/* Video AI Content Synthesis & Slide Text Visibility Bar */}
-      {hasCardMedia && (
+      {/* Empty Meme Dropzone when user switched to 4th Meme tab and hasn't uploaded an image yet */}
+      {isMemeMode && !currentSlide.imageUrl && !hasVideo && onUploadMemeOrPhotoFile && (
+        <div
+          data-testid="meme-empty-dropzone"
+          onClick={() => inlineMemeFileInputRef.current?.click()}
+          className="p-6 rounded-2xl border-2 border-dashed border-emerald-400/40 bg-emerald-950/15 hover:bg-emerald-950/25 transition-all cursor-pointer flex flex-col items-center justify-center text-center gap-2"
+        >
+          <Upload className="w-7 h-7 text-emerald-400" />
+          <div className="text-sm font-bold text-white">
+            Click or Drop Your Meme Image Here
+          </div>
+          <div className="text-xs text-slate-300 max-w-md">
+            Creates a spotless full-height white meme card with @MARROK corner watermark and auto-writes your social media caption with AI Vision.
+          </div>
+        </div>
+      )}
+
+      {/* Optional AI Headline & Copy Suggestion Banner (For Normal Slide Graphic Photo Uploads) */}
+      {!isMemeMode && photoCopySuggestion && (
+        <div
+          data-testid="ai-photo-copy-suggestion-banner"
+          className="p-3 rounded-xl bg-emerald-950/30 border border-emerald-500/40 space-y-2 animate-fade-in"
+        >
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-200">
+              <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span>AI Suggested Headlines from Uploaded Graphic Photo</span>
+              <span className="text-[10px] font-mono text-slate-300 font-normal">
+                (Your current slide text was kept intact)
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              {onApplyPhotoCopySuggestion && (
+                <button
+                  type="button"
+                  data-testid="apply-photo-suggestion-btn"
+                  onClick={onApplyPhotoCopySuggestion}
+                  className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition-colors cursor-pointer"
+                >
+                  Apply Suggested Copy
+                </button>
+              )}
+              {onDismissPhotoCopySuggestion && (
+                <button
+                  type="button"
+                  data-testid="dismiss-photo-suggestion-btn"
+                  onClick={onDismissPhotoCopySuggestion}
+                  className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                  title="Dismiss suggestion and keep current slide text"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs bg-black/40 p-2.5 rounded-lg border border-white/10">
+            <div>
+              <span className="text-[10px] font-mono uppercase text-slate-400 block">Suggested English</span>
+              <span className="text-white font-semibold">{photoCopySuggestion.enTitle}</span>
+            </div>
+            <div dir="rtl" lang="ar" className="text-right font-cairo">
+              <span className="text-[10px] font-mono uppercase text-slate-400 block font-sans">Suggested Arabic</span>
+              <span className="text-white font-semibold">{photoCopySuggestion.arTitle}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Video / Meme / Photo AI Content Synthesis & Slide Text Visibility Bar */}
+      {(hasCardMedia || isMemeMode) && (
         <div
           data-testid="editor-video-text-bar"
           className="p-3 rounded-xl bg-cyan-950/25 border border-cyan-500/30 space-y-2.5"
@@ -164,23 +434,48 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
               {hasVideo ? (
                 <Video className="w-4 h-4 text-cyan-400 shrink-0" />
               ) : (
-                <Eye className="w-4 h-4 text-cyan-400 shrink-0" />
+                <ImageIcon className="w-4 h-4 text-emerald-400 shrink-0" />
               )}
               <div>
                 <span className="text-xs font-bold text-white block">
                   {hasVideo
                     ? 'Video-Aware Slide Text & Social Caption'
-                    : 'Media Card & Slide Text Layout'}
+                    : 'Meme / Photo Card & AI Social Caption'}
                 </span>
                 <span className="text-[11px] text-slate-300 block">
                   {isTextHiddenByFullFrame
-                    ? 'Currently in Full Card mode (text hidden on slide). Edit any field below or switch layout to display text under the video.'
+                    ? hasVideo
+                      ? 'Currently in Full Card mode (text hidden on slide). Edit any field below or switch layout to display text under the video.'
+                      : 'Clean Full Meme Card active (old template text & takeaways cleared). Customize your header tag and social caption below.'
                     : 'Slide headlines & body are displayed directly below the white media card.'}
                 </span>
               </div>
             </div>
 
             <div className="flex items-center gap-1.5 flex-wrap">
+              {!hasVideo && onAnalyzePhotoCaption && (
+                <button
+                  type="button"
+                  data-testid="editor-generate-from-photo-btn"
+                  disabled={isAnalyzingPhoto}
+                  onClick={onAnalyzePhotoCaption}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-950 font-bold text-xs shadow-md transition-all cursor-pointer disabled:opacity-60 whitespace-nowrap"
+                  style={{ backgroundColor: theme.accent }}
+                  title="Analyze the uploaded meme/photo with AI Vision and generate a matching category tag + bilingual social caption"
+                >
+                  {isAnalyzingPhoto ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Writing AI Caption...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Regenerate Caption from Photo</span>
+                    </>
+                  )}
+                </button>
+              )}
               {hasVideo && onGenerateFromVideo && (
                 <button
                   type="button"
@@ -207,6 +502,29 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
             </div>
           </div>
 
+          {/* Inline Social Media Caption Quick Editor for Meme / Media Cards */}
+          {onUpdateCarouselField && (
+            <div className="pt-2 border-t border-white/10 space-y-1">
+              <label className="text-[10px] font-mono uppercase tracking-wider text-slate-300 flex items-center justify-between">
+                <span>Social Media Caption (Instagram / TikTok / LinkedIn)</span>
+                {isAnalyzingPhoto && (
+                  <span className="text-emerald-300 flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>AI generating from photo...</span>
+                  </span>
+                )}
+              </label>
+              <textarea
+                rows={2}
+                data-testid="editor-meme-caption-input"
+                value={carouselCaption}
+                onChange={(e) => onUpdateCarouselField('caption', e.target.value)}
+                placeholder="Social caption & hashtags auto-generated from your photo..."
+                className="w-full bg-black/60 border border-white/15 focus:border-cyan-400 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 leading-relaxed focus:outline-none resize-y"
+              />
+            </div>
+          )}
+
           {/* Layout Mode Selector right inside Text Editor */}
           <div className="flex items-center justify-between flex-wrap gap-2 pt-2 border-t border-white/10">
             <span className="text-[11px] font-mono text-slate-300">
@@ -216,19 +534,19 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
               {(
                 [
                   {
+                    id: 'full',
+                    label: 'Full Meme Card (No Slide Text)',
+                    tip: 'Clean full-height white meme/photo card with zero template text underneath',
+                  },
+                  {
                     id: 'hero',
-                    label: 'Video + Headline & Body',
-                    tip: 'Display white video card on top + English/Arabic headlines & body below',
+                    label: `${hasVideo ? 'Video' : 'Photo'} + Headline & Body`,
+                    tip: 'Display white media card on top + English/Arabic headlines & body below',
                   },
                   {
                     id: 'standard',
-                    label: 'Video + Text + 3 Takeaways',
-                    tip: 'Display compact video card + headlines, body & 3 takeaways below',
-                  },
-                  {
-                    id: 'full',
-                    label: 'Full Card Only (Hide Slide Text)',
-                    tip: 'Full-height white video card with no slide text underneath',
+                    label: `${hasVideo ? 'Video' : 'Photo'} + Text + 3 Takeaways`,
+                    tip: 'Display compact media card + headlines, body & 3 takeaways below',
                   },
                 ] as const
               ).map((m) => {
@@ -241,7 +559,15 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
                     key={m.id}
                     type="button"
                     data-testid={`editor-frame-mode-${m.id}`}
-                    onClick={() => onUpdateField('imageFrameMode', m.id)}
+                    onClick={() => {
+                      onUpdateField('imageFrameMode', m.id);
+                      if (m.id === 'full') {
+                        onUpdateField('standaloneMeme', true);
+                        onUpdateField('takeaways', []);
+                      } else {
+                        onUpdateField('standaloneMeme', false);
+                      }
+                    }}
                     title={m.tip}
                     className={`px-2.5 py-1 rounded-md text-[10px] font-mono font-bold transition-colors cursor-pointer ${
                       active
@@ -258,8 +584,8 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
         </div>
       )}
 
-      {/* Slide 1 Viral Hook Presets (Prominently placed above headlines for fast testing) */}
-      {currentSlideIndex === 0 && hookVariants && hookVariants.length > 0 && onApplyHookVariant && (
+      {/* Slide 1 Viral Hook Presets (Hidden in Full Meme Card mode) */}
+      {!hideSlideCopyForMemeStudio && currentSlideIndex === 0 && hookVariants && hookVariants.length > 0 && onApplyHookVariant && (
         <div className="p-3 rounded-xl bg-white/[0.02] border border-white/10 space-y-2">
           <button
             type="button"
@@ -304,7 +630,8 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
         </div>
       )}
 
-      {/* English & Arabic Titles (Side-by-Side on Desktop) */}
+      {/* English & Arabic Titles (Hidden in Full Meme Card mode so Meme Studio stays 100% clean) */}
+      {!hideSlideCopyForMemeStudio && (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
         <div
           className={`space-y-1.5 rounded-xl transition-colors ${
@@ -367,6 +694,7 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
             onFocus={() => onSelectElement?.('titleBlock')}
             onClick={() => onSelectElement?.('titleBlock')}
             onChange={(e) => handleEditTextWithReveal('enTitle', e.target.value)}
+            onBlur={handleAutoFitOnBlur}
             placeholder={isCtaSlide ? 'Scaling Vector Databases?' : 'Crisp architecture headline ending in . or ?'}
             className="w-full bg-black/60 border border-white/15 focus:border-white/40 rounded-xl px-3.5 py-2.5 text-sm text-white font-medium focus:outline-none transition-colors"
           />
@@ -435,11 +763,13 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
             onFocus={() => onSelectElement?.('arabicTitleBlock')}
             onClick={() => onSelectElement?.('arabicTitleBlock')}
             onChange={(e) => handleEditTextWithReveal('arTitle', e.target.value)}
+            onBlur={handleAutoFitOnBlur}
             placeholder="عنوان تقني دقيق ومختصر."
             className="w-full bg-black/60 border border-white/15 focus:border-white/40 rounded-xl px-3.5 py-2.5 text-sm text-white font-medium focus:outline-none font-cairo text-right transition-colors"
           />
         </div>
       </div>
+      )}
 
       {/* CTA Button Text field if on CTA slide */}
       {isCtaSlide && (
@@ -472,7 +802,8 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
         </div>
       )}
 
-      {/* English & Arabic Body Copy (Side-by-Side on Desktop) */}
+      {/* English & Arabic Body Copy (Hidden in Full Meme Card mode) */}
+      {!hideSlideCopyForMemeStudio && (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 pt-2.5 border-t border-white/[0.06]">
         <div
           className={`space-y-1.5 rounded-xl transition-colors ${
@@ -521,6 +852,7 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
             onFocus={() => onSelectElement?.('bodyBlock')}
             onClick={() => onSelectElement?.('bodyBlock')}
             onChange={(e) => handleEditTextWithReveal('enBody', e.target.value)}
+            onBlur={handleAutoFitOnBlur}
             placeholder="1-2 sentences explaining how the mechanism works under the hood."
             className="w-full bg-black/60 border border-white/15 focus:border-white/40 rounded-xl p-3.5 text-xs sm:text-sm text-slate-200 focus:outline-none resize-none leading-relaxed transition-colors"
           />
@@ -589,14 +921,234 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
             onFocus={() => onSelectElement?.('arabicBodyBlock')}
             onClick={() => onSelectElement?.('arabicBodyBlock')}
             onChange={(e) => handleEditTextWithReveal('arBody', e.target.value)}
+            onBlur={handleAutoFitOnBlur}
             placeholder="شرح تقني عميق في سطرين."
             className="w-full bg-black/60 border border-white/15 focus:border-white/40 rounded-xl p-3.5 text-xs sm:text-sm text-slate-200 focus:outline-none resize-none leading-relaxed font-cairo text-right transition-colors"
           />
         </div>
       </div>
+      )}
 
-      {/* Progressive Disclosure: Key Takeaways Bento List */}
-      {(isSingle || currentSlide.type === 'poster' || (currentSlide.takeaways && currentSlide.takeaways.length > 0)) && (
+      {/* Dynamic Graphic & Schematic Editor (Inline inside Content Tab so users can switch & edit visuals without tab-hopping) */}
+      {!isCtaSlide && !isSingle && !isTextHiddenByFullFrame && (
+        <div
+          data-testid="inline-graphic-transformer"
+          className="p-3 rounded-xl bg-white/[0.02] border border-white/10 space-y-2.5"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400 mr-1">
+                Slide Graphic:
+              </span>
+              {(
+                [
+                  { id: 'hub', label: 'Hub', icon: Layers },
+                  { id: 'row', label: 'Schematic', icon: Layers },
+                  { id: 'compare', label: 'Compare A/B', icon: GitCompare },
+                  { id: 'code', label: 'Code Block', icon: Code },
+                  { id: 'metric', label: 'Hard Metric', icon: Gauge },
+                  { id: 'number', label: 'Step #', icon: Hash },
+                ] as const
+              ).map((arch) => {
+                const IconComp = arch.icon;
+                const active = currentSlide.type === arch.id;
+                return (
+                  <button
+                    key={arch.id}
+                    type="button"
+                    data-testid={`inline-arch-${arch.id}`}
+                    onClick={() => handleQuickSwitchArchetype(arch.id)}
+                    className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-mono font-bold transition-all cursor-pointer border ${
+                      active
+                        ? 'bg-emerald-500/20 text-emerald-200 border-emerald-400/50'
+                        : 'bg-black/40 text-slate-400 border-white/10 hover:text-white hover:border-white/25'
+                    }`}
+                  >
+                    <IconComp className="w-3 h-3" />
+                    <span>{arch.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <span className="text-[10px] font-mono text-emerald-300/90 flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+              <span>Graphics sync live from copy</span>
+            </span>
+          </div>
+
+          {/* Schematic Variant Pills + Quick Node Label Editors when slide is 'row' */}
+          {currentSlide.type === 'row' && (
+            <div className="space-y-2 pt-2 border-t border-white/[0.06]">
+              <div className="flex items-center gap-1 flex-wrap">
+                <span className="text-[10px] font-mono text-slate-400 mr-1">
+                  Diagram Layout:
+                </span>
+                {INLINE_DIAGRAM_VARIANTS.map((v) => {
+                  const active = (currentSlide.diagramVariant || 'topology') === v.id;
+                  return (
+                    <button
+                      key={v.id}
+                      type="button"
+                      data-testid={`inline-variant-${v.id}`}
+                      onClick={() => onUpdateField('diagramVariant', v.id)}
+                      className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold transition-all cursor-pointer border ${
+                        active
+                          ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400/50'
+                          : 'bg-black/30 text-slate-400 border-white/10 hover:text-white'
+                      }`}
+                    >
+                      {v.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {currentSlide.diagramNodes && currentSlide.diagramNodes.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {currentSlide.diagramNodes.slice(0, 3).map((node, nIdx) => (
+                    <div key={nIdx} className="bg-black/40 border border-white/10 rounded-lg p-2 space-y-1">
+                      <span className="text-[9px] font-mono uppercase text-slate-400 block">
+                        Node {nIdx + 1} Label
+                      </span>
+                      <input
+                        type="text"
+                        value={node.label || ''}
+                        onChange={(e) => {
+                          const nextNodes = [...(currentSlide.diagramNodes || [])];
+                          nextNodes[nIdx] = { ...nextNodes[nIdx], label: e.target.value };
+                          onUpdateField('diagramNodes', nextNodes);
+                        }}
+                        placeholder={`Node ${nIdx + 1}`}
+                        className="w-full bg-black/60 border border-white/15 rounded px-2 py-1 text-xs text-white font-mono focus:outline-none focus:border-cyan-400"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Inline Compare Left vs Right Editors when slide is 'compare' */}
+          {currentSlide.type === 'compare' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-white/[0.06]">
+              <div className="bg-black/40 border border-white/10 rounded-lg p-2.5 space-y-1.5">
+                <span className="text-[10px] font-mono uppercase text-rose-300 font-bold block">
+                  Left Card (Baseline / Legacy)
+                </span>
+                <input
+                  type="text"
+                  value={currentSlide.compareLeftTitle || ''}
+                  onChange={(e) => onUpdateField('compareLeftTitle', e.target.value)}
+                  placeholder="Left Comparison Title"
+                  className="w-full bg-black/60 border border-white/15 rounded px-2.5 py-1 text-xs text-white font-bold focus:outline-none focus:border-cyan-400"
+                />
+                <input
+                  type="text"
+                  value={currentSlide.compareLeftBody || ''}
+                  onChange={(e) => onUpdateField('compareLeftBody', e.target.value)}
+                  placeholder="Left mechanism detail"
+                  className="w-full bg-black/60 border border-white/15 rounded px-2.5 py-1 text-xs text-slate-300 focus:outline-none focus:border-cyan-400"
+                />
+              </div>
+              <div className="bg-black/40 border border-white/10 rounded-lg p-2.5 space-y-1.5">
+                <span className="text-[10px] font-mono uppercase text-emerald-300 font-bold block">
+                  Right Card (Target Architecture)
+                </span>
+                <input
+                  type="text"
+                  value={currentSlide.compareRightTitle || ''}
+                  onChange={(e) => onUpdateField('compareRightTitle', e.target.value)}
+                  placeholder="Right Comparison Title"
+                  className="w-full bg-black/60 border border-white/15 rounded px-2.5 py-1 text-xs text-white font-bold focus:outline-none focus:border-cyan-400"
+                />
+                <input
+                  type="text"
+                  value={currentSlide.compareRightBody || ''}
+                  onChange={(e) => onUpdateField('compareRightBody', e.target.value)}
+                  placeholder="Right mechanism detail"
+                  className="w-full bg-black/60 border border-white/15 rounded px-2.5 py-1 text-xs text-slate-300 focus:outline-none focus:border-cyan-400"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Inline Code Snippet Editor when slide is 'code' */}
+          {currentSlide.type === 'code' && (
+            <div className="space-y-2 pt-2 border-t border-white/[0.06]">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={currentSlide.codeFileName || ''}
+                  onChange={(e) => onUpdateField('codeFileName', e.target.value)}
+                  placeholder="config.ts"
+                  className="w-40 bg-black/60 border border-white/15 rounded px-2.5 py-1 text-xs text-cyan-300 font-mono focus:outline-none focus:border-cyan-400"
+                />
+                <input
+                  type="text"
+                  value={currentSlide.codeLanguage || ''}
+                  onChange={(e) => onUpdateField('codeLanguage', e.target.value)}
+                  placeholder="typescript"
+                  className="w-28 bg-black/60 border border-white/15 rounded px-2.5 py-1 text-xs text-slate-300 font-mono focus:outline-none focus:border-cyan-400"
+                />
+              </div>
+              <textarea
+                rows={4}
+                value={currentSlide.codeSnippet || ''}
+                onChange={(e) => onUpdateField('codeSnippet', e.target.value)}
+                placeholder="// Concise implementation snippet (max 5 lines)"
+                className="w-full bg-black/70 border border-white/15 rounded-lg p-2.5 text-xs text-emerald-200 font-mono focus:outline-none focus:border-cyan-400 resize-none"
+              />
+            </div>
+          )}
+
+          {/* Inline Hard Metric Editor when slide is 'metric' */}
+          {currentSlide.type === 'metric' && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2 border-t border-white/[0.06]">
+              <div>
+                <span className="text-[9px] font-mono uppercase text-slate-400 block mb-1">
+                  Metric Value
+                </span>
+                <input
+                  type="text"
+                  value={currentSlide.metricValue || ''}
+                  onChange={(e) => onUpdateField('metricValue', e.target.value)}
+                  placeholder="99.99%"
+                  className="w-full bg-black/60 border border-white/15 rounded px-2.5 py-1 text-xs text-emerald-300 font-mono font-bold focus:outline-none focus:border-cyan-400"
+                />
+              </div>
+              <div>
+                <span className="text-[9px] font-mono uppercase text-slate-400 block mb-1">
+                  Metric Label
+                </span>
+                <input
+                  type="text"
+                  value={currentSlide.metricLabel || ''}
+                  onChange={(e) => onUpdateField('metricLabel', e.target.value)}
+                  placeholder="PRODUCTION SLA"
+                  className="w-full bg-black/60 border border-white/15 rounded px-2.5 py-1 text-xs text-white font-mono focus:outline-none focus:border-cyan-400"
+                />
+              </div>
+              <div>
+                <span className="text-[9px] font-mono uppercase text-slate-400 block mb-1">
+                  Benchmark Delta
+                </span>
+                <input
+                  type="text"
+                  value={currentSlide.metricDiff || ''}
+                  onChange={(e) => onUpdateField('metricDiff', e.target.value)}
+                  placeholder="VERIFIED BENCHMARK"
+                  className="w-full bg-black/60 border border-white/15 rounded px-2.5 py-1 text-xs text-slate-300 font-mono focus:outline-none focus:border-cyan-400"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Progressive Disclosure: Key Takeaways Bento List (Hidden in Full Meme Card mode) */}
+      {!isTextHiddenByFullFrame &&
+        (isSingle || currentSlide.type === 'poster' || (currentSlide.takeaways && currentSlide.takeaways.length > 0)) && (
         <div
           className={`pt-2 border-t border-white/[0.08] rounded-xl transition-colors ${
             selectedElementId === 'takeawaysBlock' ? 'ring-1 ring-cyan-400/50 bg-cyan-950/10 p-2.5 -mx-2.5' : ''

@@ -1,5 +1,8 @@
-import type { DiagramNode, DiagramVariant, SlideData, SlideType } from '../../types.ts';
+import type { CarouselData, DiagramNode, DiagramVariant, SlideData, SlideType } from '../../types.ts';
 import { TECH_ICONS_LIST } from '../techLogos.ts';
+import { CHAR_LIMITS, SINGLE_SLIDE_CHAR_LIMITS } from '../qaChecks.ts';
+import { autoFitTextToLimits, autoPolishHeadline } from '../text/headlines.ts';
+import { fixArabicPunctuation } from '../text/arabicBiDi.ts';
 
 const STOP_WORDS = new Set([
   'the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'your', 'are', 'was', 'were',
@@ -927,4 +930,112 @@ export function diversifyDeckArchetypesAndVisuals(slides: SlideData[]): SlideDat
     };
   });
 }
+
+/**
+ * Automatically fits a slide's English and Arabic headlines and body copy
+ * to mobile character limits without requiring a manual "Auto-Fit" button click.
+ */
+export function autoFitSlideCopyToLimits(
+  slide: SlideData,
+  slideIndex: number = 0,
+  isSingleSlide: boolean = false
+): SlideData {
+  const isSingle = isSingleSlide || slide.type === 'poster';
+  const limits = isSingle ? SINGLE_SLIDE_CHAR_LIMITS : CHAR_LIMITS;
+  const isHook = slideIndex === 0 && slide.type === 'hub';
+  const enTitleLimit = isHook ? limits.hookTitle : limits.enTitle;
+
+  const rawEnTitle = (slide.enTitle || '').trim();
+  const rawArTitle = (slide.arTitle || '').trim();
+  const rawEnBody = (slide.enBody || '').trim();
+  const rawArBody = (slide.arBody || '').trim();
+
+  const fittedEnTitle =
+    rawEnTitle.length > enTitleLimit
+      ? autoPolishHeadline(autoFitTextToLimits(rawEnTitle, enTitleLimit))
+      : rawEnTitle;
+  const fittedArTitle =
+    rawArTitle.length > limits.arTitle
+      ? fixArabicPunctuation(autoFitTextToLimits(rawArTitle, limits.arTitle))
+      : fixArabicPunctuation(rawArTitle);
+  const fittedEnBody =
+    rawEnBody.length > limits.enBody
+      ? autoFitTextToLimits(rawEnBody, limits.enBody)
+      : rawEnBody;
+  const fittedArBody =
+    rawArBody.length > limits.arBody
+      ? fixArabicPunctuation(autoFitTextToLimits(rawArBody, limits.arBody))
+      : fixArabicPunctuation(rawArBody);
+
+  return {
+    ...slide,
+    enTitle: fittedEnTitle || slide.enTitle,
+    arTitle: fittedArTitle || slide.arTitle,
+    enBody: fittedEnBody || slide.enBody,
+    arBody: fittedArBody || slide.arBody,
+  };
+}
+
+/**
+ * Automatically synchronizes a slide's graphic elements (diagram nodes, edges,
+ * compare cards, code blocks, hard metrics, step labels, and hub satellites)
+ * directly from its current headline and body copy.
+ */
+export function autoSyncSlideGraphicsFromCopy(
+  slide: SlideData,
+  slideIndex: number = 0
+): SlideData {
+  if (slide.type === 'cta') return slide;
+  const smart = resolveSmartSlideVisuals(slide, slideIndex, true);
+  return {
+    ...slide,
+    diagramVariant: slide.diagramVariant || smart.diagramVariant,
+    diagramNodes: smart.diagramNodes,
+    diagramEdges: smart.diagramEdges,
+    diagramFooter: smart.diagramFooter,
+    compareLeftTitle: smart.compareLeftTitle,
+    compareLeftBody: smart.compareLeftBody,
+    compareRightTitle: smart.compareRightTitle,
+    compareRightBody: smart.compareRightBody,
+    codeFileName: smart.codeFileName,
+    codeLanguage: smart.codeLanguage,
+    codeSnippet: smart.codeSnippet,
+    metricValue: smart.metricValue,
+    metricLabel: smart.metricLabel,
+    metricDiff: smart.metricDiff,
+    metricIcon: smart.metricIcon,
+    stepNumber: smart.stepNumber,
+    stepLabel: smart.stepLabel,
+    centerIcon: smart.centerIcon,
+    centerTag: smart.centerTag,
+    satLabels: smart.satLabels,
+    satIcons: smart.satIcons,
+  };
+}
+
+/**
+ * Zero-Click Deck Finalizer:
+ * Automatically diversifies Slides 2–7 across archetypes & 9 schematic variants,
+ * synchronizes every slide's graphic elements from its copy, and auto-fits
+ * all bilingual headlines and body text to mobile character limits.
+ */
+export function autoFinalizeCarouselDeck(deck: CarouselData): CarouselData {
+  const isSingle = deck.postFormat === 'single' || (deck.slides || []).length === 1;
+  const rawSlides = deck.slides || [];
+  const diversified =
+    !isSingle && rawSlides.length > 2
+      ? diversifyDeckArchetypesAndVisuals(rawSlides)
+      : rawSlides;
+
+  const finalizedSlides = diversified.map((slide, idx) => {
+    const fitted = autoFitSlideCopyToLimits(slide, idx, isSingle);
+    return autoSyncSlideGraphicsFromCopy(fitted, idx);
+  });
+
+  return {
+    ...deck,
+    slides: finalizedSlides,
+  };
+}
+
 

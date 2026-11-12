@@ -17,12 +17,19 @@ import {
   Layers,
   List,
   CalendarDays,
+  Sparkles,
+  Loader2,
 } from 'lucide-react';
 import type {
   PublishTargetPlatform,
   SavedPostRecord,
   ThemePalette,
 } from '../../types.ts';
+import {
+  diversifySavedPostVisuals,
+  isBoilerplateOrLowSignalDeck,
+  resynthesizeSavedPostWithDeepAi,
+} from '../../lib/gather/gatherClient.ts';
 import {
   buildLocalScheduledIso,
   cleanupPublishedCloudinaryMedia,
@@ -111,6 +118,8 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
 
   // Busy tracking per post ID
   const [busyPostId, setBusyPostId] = useState<string | null>(null);
+  const [resynthesizingPostId, setResynthesizingPostId] = useState<string | null>(null);
+  const [isUpgradingAllBoilerplate, setIsUpgradingAllBoilerplate] = useState(false);
 
   // Live clock tick every 15s so scheduled posts flip to 'Posted' automatically as soon as their time arrives
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
@@ -156,6 +165,11 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
   const draftPosts = useMemo(
     () => postsWithStage.filter((x) => x.stage === 'draft').map((x) => x.post),
     [postsWithStage]
+  );
+
+  const boilerplatePosts = useMemo(
+    () => savedPosts.filter((p) => isBoilerplateOrLowSignalDeck(p.deck)),
+    [savedPosts]
   );
 
   // Build upcoming 7 or 14 local calendar days starting today
@@ -392,6 +406,68 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
       onShowToast(`⚠️ ${err instanceof Error ? err.message : 'Failed to purge Cloudinary assets'}`);
     } finally {
       setBusyPostId(null);
+    }
+  };
+
+  const handleResynthesizePost = async (post: SavedPostRecord) => {
+    setBusyPostId(post.id);
+    setResynthesizingPostId(post.id);
+    try {
+      const upgraded = await resynthesizeSavedPostWithDeepAi(post);
+      onRefreshVault();
+      onRefreshStatus();
+      onShowToast(
+        `✨ Deep AI Re-Synthesized "${upgraded.title.slice(0, 32)}" with diverse graphics`
+      );
+    } catch (err) {
+      onShowToast(
+        `⚠️ ${err instanceof Error ? err.message : 'Failed to re-synthesize post'}`
+      );
+    } finally {
+      setBusyPostId(null);
+      setResynthesizingPostId(null);
+    }
+  };
+
+  const handleDiversifyPostVisuals = async (post: SavedPostRecord) => {
+    setBusyPostId(post.id);
+    try {
+      await diversifySavedPostVisuals(post);
+      onRefreshVault();
+      onShowToast(
+        `✓ Diversified Slides 2–7 across Compare, Code, Metric & Schematic diagrams for "${post.title.slice(0, 28)}"`
+      );
+    } catch (err) {
+      onShowToast(
+        `⚠️ ${err instanceof Error ? err.message : 'Failed to diversify post visuals'}`
+      );
+    } finally {
+      setBusyPostId(null);
+    }
+  };
+
+  const handleUpgradeAllBoilerplatePosts = async () => {
+    if (boilerplatePosts.length === 0) return;
+    setIsUpgradingAllBoilerplate(true);
+    let count = 0;
+    try {
+      for (const post of boilerplatePosts) {
+        setResynthesizingPostId(post.id);
+        await resynthesizeSavedPostWithDeepAi(post);
+        count += 1;
+      }
+      onRefreshVault();
+      onRefreshStatus();
+      onShowToast(
+        `✨ Upgraded ${count} post(s) with deep article scraping & diverse graphics`
+      );
+    } catch (err) {
+      onShowToast(
+        `⚠️ ${err instanceof Error ? err.message : 'Batch upgrade encountered an error'}`
+      );
+    } finally {
+      setResynthesizingPostId(null);
+      setIsUpgradingAllBoilerplate(false);
     }
   };
 
@@ -921,6 +997,38 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
       {/* VIEW 3: CLEAN POSTS LIST */}
       {viewMode === 'list' && (
         <div className="rounded-2xl border border-white/10 bg-[#0b1218]/90 p-3 sm:p-4 space-y-2.5">
+          {boilerplatePosts.length > 0 && (
+            <div
+              data-testid="vault-boilerplate-upgrade-banner"
+              className="rounded-xl border border-amber-400/35 bg-amber-500/10 px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2.5"
+            >
+              <div className="flex items-center gap-2 text-xs text-amber-100">
+                <Sparkles className="w-4 h-4 text-amber-300 shrink-0" />
+                <span>
+                  <strong>{boilerplatePosts.length} post(s)</strong> contain generic offline outline slides after Slide 1. Upgrade them with full article scraping & diverse schematics:
+                </span>
+              </div>
+              <button
+                type="button"
+                disabled={isUpgradingAllBoilerplate}
+                onClick={() => void handleUpgradeAllBoilerplatePosts()}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-extrabold transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {isUpgradingAllBoilerplate ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Upgrading {boilerplatePosts.length} Post(s)...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Deep Re-Synthesize All ({boilerplatePosts.length})</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
           {filteredPosts.length === 0 ? (
             <div className="py-12 text-center space-y-3 rounded-xl border border-dashed border-white/10 bg-black/20">
               <FileText className="w-7 h-7 text-slate-500 mx-auto" />
@@ -939,7 +1047,9 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                 const isCurrentInStudio = activeCarouselId === post.id;
                 const isEditingSchedule = editingSchedulePostId === post.id;
                 const isConfirmingDelete = confirmDeletePostId === post.id;
-                const isPostBusy = busyPostId === post.id;
+                const isPostBusy = busyPostId === post.id || resynthesizingPostId === post.id;
+                const isPostResynthesizing = resynthesizingPostId === post.id;
+                const hasBoilerplateOutline = isBoilerplateOrLowSignalDeck(post.deck);
 
                 const scheduleParts = post.scheduledFor
                   ? formatLocalDateTimeParts(post.scheduledFor)
@@ -1063,6 +1173,15 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                               Staging Purged
                             </span>
                           )}
+                          {hasBoilerplateOutline && (
+                            <span
+                              title="This post contains generic offline outline slides — click Deep Re-Synthesize to scrape the source article and generate authentic technical slides"
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-amber-500/20 text-amber-200 border border-amber-400/40"
+                            >
+                              <AlertTriangle className="w-2.5 h-2.5" />
+                              Generic Outline · Upgrade Ready
+                            </span>
+                          )}
                         </div>
 
                         <div className="text-sm font-bold text-white truncate" title={post.title}>
@@ -1072,6 +1191,45 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
 
                       {/* Right: Streamlined Action Bar */}
                       <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                        <button
+                          type="button"
+                          data-testid={`resynthesize-post-${post.id}`}
+                          disabled={isPostBusy}
+                          onClick={() => void handleResynthesizePost(post)}
+                          title="Scrape primary source article and re-synthesize Slides 2–7 with Full AI + diverse archetypes"
+                          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-bold transition-colors cursor-pointer ${
+                            hasBoilerplateOutline
+                              ? 'border-amber-400/60 bg-amber-500/20 hover:bg-amber-500/30 text-amber-100'
+                              : 'border-violet-400/35 bg-violet-500/10 hover:bg-violet-500/20 text-violet-200'
+                          }`}
+                        >
+                          {isPostResynthesizing ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              <span>Synthesizing...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="w-3.5 h-3.5" />
+                              <span>Deep Re-Synthesize</span>
+                            </>
+                          )}
+                        </button>
+
+                        {post.slideCount > 2 && (
+                          <button
+                            type="button"
+                            data-testid={`diversify-post-${post.id}`}
+                            disabled={isPostBusy}
+                            onClick={() => void handleDiversifyPostVisuals(post)}
+                            title="Rotate Slides 2–7 across Compare, Code, Metric, Step & Schematic diagrams"
+                            className="flex items-center gap-1 px-2 py-1.5 rounded-lg border border-white/15 bg-white/[0.04] hover:bg-white/[0.1] text-slate-200 text-xs font-semibold transition-colors cursor-pointer"
+                          >
+                            <Layers className="w-3.5 h-3.5 text-cyan-300" />
+                            <span className="hidden xl:inline">Diversify 2–7</span>
+                          </button>
+                        )}
+
                         <button
                           type="button"
                           disabled={isPostBusy}

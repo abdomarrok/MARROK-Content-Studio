@@ -79,7 +79,9 @@ export interface SlideData {
   imageCaption?: string;      // Micro-badge label for the image/video
   imageFit?: 'contain' | 'cover'; // Fit mode inside the central card (defaults to contain)
   imageFilter?: 'hud' | 'invert' | 'tint' | 'clean'; // Theme integration filter (hud = blueprint dark blend, invert = dark mode inversion, tint = accent wash, clean = original)
-  imageFrameMode?: 'full' | 'hero' | 'standard'; // 'full' = full-height captionless meme (1140px on 9:16, hides slide text below), 'hero' = tall meme + headline (820px), 'standard' = 430px card
+  imageFrameMode?: 'full' | 'hero' | 'standard'; // 'full' = full-height captionless meme (hides slide text below), 'hero' = tall meme + headline (820px), 'standard' = 430px card
+  standaloneMeme?: boolean;   // True when slide is a standalone full-bleed meme card with bottom copy hidden
+  imageAspectRatio?: number;  // Natural width / height ratio of uploaded meme/photo for smart card sizing
   imageBgStyle?: 'theme' | 'white' | 'obsidian'; // Inner card backdrop fill (white is ideal for light-background memes)
   brandWatermark?: 'none' | 'bottom-right' | 'top-right' | 'bottom-left'; // Optional MARROK corner watermark badge on the image card
   imagePrompt?: string;       // Prompt used to generate or edit with gemini-nano-banana-2.1
@@ -179,7 +181,7 @@ export interface PostSourceMeta {
   userReviewed?: boolean;
 }
 
-export type PostFormat = 'carousel' | 'single' | 'reel';
+export type PostFormat = 'carousel' | 'single' | 'meme' | 'reel';
 
 export type CanvasDimensionPreset =
   | 'tiktok-9:16'

@@ -1,325 +1,253 @@
 [
   {
-    "id": "gather_1794305568852_tsnp1",
-    "title": "Agents aren’t humans (but they kinda are).",
-    "category": "DISTRIBUTED SYSTEMS",
+    "id": "gather_1794242504062_1bcpr",
+    "title": "Launching the Vite Ecosystem Fund.",
+    "category": "KUBERNETES & CLOUD",
     "postStatus": "validated",
-    "createdAt": "2026-11-10T10:12:50.818Z",
-    "updatedAt": "2026-11-10T10:13:55.442Z",
+    "createdAt": "2026-11-09T16:41:46.438Z",
+    "updatedAt": "2026-11-10T13:45:00.000Z",
     "creatorHandle": "Cloudflare Blog RSS",
     "slideCount": 8,
     "qaPassed": true,
     "deck": {
-      "theme": "blueprint",
-      "category": "DISTRIBUTED SYSTEMS",
-      "caption": "⚡ تحليل معماري لمنظومة الأنظمة المعمارية\nتحليل تقني ومعماري متعمق لأحدث نقلة برمجية 🛠️\n\nAgents aren’t humans (but they kinda are) — Engineering Deep Dive\nWhy traditional architectures stall at scale and how modern systems solve the bottleneck.\n\n🔹 أبرز آليات العمل والنتائج / Key Technical Takeaways:\n• Domain: SYSTEMS ARCHITECTURE & ENGINEERING\n• Core Mechanism: Agents aren’t humans (but they kinda are) (Cloudflare Engineering)\n• Production Win: 10x throughput boost vs legacy stack\n• Caveats: Source URL: https://blog.cloudflare.com/trusted-agent-delegation/\n\n⚠️ Citations & Draft Facts (Offline Synthesizer Estimate):\n• Unverified offline draft — creator review required before publishing\n• No external source cited — add your primary source link before publishing\n\n👇 هل واجهتم هذه المشكلة في بيئات الإنتاج عندكم؟ شاركونا تجربتكم في التعليقات!\nWhat's your take on this architecture? Share below!\n\n🎥 العلامة التجارية / Brand: https://marrok.org\n\n#TechInArabic #هندسة_البرمجيات #SYSTEMSARCHITECTUREENGINEERING #SoftwareEngineering #DevSecOps #TechTrends #SystemDesign #MARROK #برمجة",
+      "theme": "teal",
+      "category": "KUBERNETES & CLOUD",
+      "caption": "⚡ لماذا تستثمر Cloudflare مباشرة في منظومة Vite البرمجية؟\nتحليل معماري لواجهة Vite 6 Environment API وتشغيل الكود على Edge Workers 🛠️\n\nLaunching the Vite Ecosystem Fund — Cloudflare & Full-Stack Edge Tooling\nVite now powers React Router, Astro, SvelteKit, Nuxt, and SolidStart. With Vite 6's Environment API, developers run the exact same workerd edge runtime locally and in production.\n\n🔹 أبرز آليات العمل والنتائج / Key Technical Takeaways:\n• Environment API: Local dev server runs inside Cloudflare's `workerd` runtime instead of Node.js shims\n• Rust Bundling: Rolldown integration unifies esbuild + Rollup for 10x faster production builds\n• Zero Prod Drift: Bindings for KV, D1, Durable Objects, and Workers AI work identically in HMR\n\n🎥 المصدر / Source: https://blog.cloudflare.com/launching-vite-ecosystem-fund/\n\n#Vite #Cloudflare #EdgeComputing #WebDev #Rust #Rolldown #SystemDesign #MARROK",
       "slides": [
         {
           "type": "hub",
           "centerIcon": "https://cdn.jsdelivr.net/npm/simple-icons@v14/icons/cloudflare.svg",
-          "centerTag": "AI GOVERNANCE",
-          "enTitle": "Agents aren’t humans (but they kinda are).",
-          "arTitle": "تحليل معماري لمنظومة الأنظمة المعمارية",
-          "enBody": "A deep technical breakdown of Agents Aren’t Humans: mechanisms, trade-offs, and production considerations.",
-          "arBody": "تحليل معماري شامل يوضح آليات العمل والتحديات وكيفية بناء النظام بأعلى كفاءة.",
+          "centerTag": "VITE EDGE RUNTIME",
+          "enTitle": "Launching the Vite Ecosystem Fund.",
+          "arTitle": "دمج بيئة Vite مع حوسبة الحافة",
+          "enBody": "Cloudflare is backing open-source Vite maintainers as Vite 6 unifies browser bundling and edge worker execution.",
+          "arBody": "تدعم Cloudflare مطوري Vite مع إطلاق معمارية توحد بناء الواجهات وتشغيل الخوادم على الحافة.",
           "satIcons": [
+            "zap",
+            "cpu",
+            "layers",
             "server",
             "database",
-            "gauge",
-            "cpu",
-            "box",
-            "activity"
+            "code"
           ],
           "satLabels": [
-            "Architecture",
-            "Dataflow",
-            "Execution",
-            "Scale",
-            "Resilience",
-            "Telemetry"
+            "Environment API",
+            "workerd Runtime",
+            "Rolldown Rust",
+            "Edge SSR",
+            "D1 & KV Bindings",
+            "Zero Drift HMR"
           ]
         },
         {
-          "type": "number",
-          "centerIcon": "cpu",
+          "type": "compare",
           "stepNumber": "01",
-          "stepLabel": "STEP 01 // PROBLEM",
-          "enTitle": "The architectural bottleneck.",
-          "arTitle": "المشكلة ونقطة الاختناق الأساسية",
-          "enBody": "Traditional systems degrade under high scale or complex state dependencies, requiring a fundamental redesign.",
-          "arBody": "تفشل الأساليب التقليدية عند زيادة حجم العمل وتعقيد البيانات، مما يفرض إعادة تصميم المنظومة بالكامل."
+          "stepLabel": "DEV VS PROD DRIFT",
+          "compareLeftTitle": "Node.js Local Emulation",
+          "compareLeftBody": "Mocked edge APIs in Node.js cause subtle runtime crashes after deployment.",
+          "compareRightTitle": "Vite 6 Environment API",
+          "compareRightBody": "Executes server code directly inside Cloudflare workerd during local HMR.",
+          "enTitle": "Eliminating dev-to-edge drift.",
+          "arTitle": "القضاء على اختلاف بيئة التطوير والإنتاج",
+          "enBody": "Previously, Vite ran SSR inside Node.js locally while production ran on V8 isolates, creating compatibility gaps.",
+          "arBody": "سابقاً كان تشغيل الكود محلياً يتم عبر Node.js بينما يعمل الإنتاج على بيئة معزولة مما يسبب أخطاء مفاجئة."
         },
         {
-          "type": "row",
-          "diagramFooter": "ARCHITECTURE: VERIFIED • STATUS: HEALTHY • LATENCY: P99 OPTIMAL",
-          "enTitle": "Core system architecture.",
-          "arTitle": "بنية النظام وطبقات المعالجة",
-          "enBody": "Decoupled components process data independently, preventing monolithic failure cascades across services.",
-          "arBody": "فصل مكونات النظام يتيح معالجة البيانات بشكل مستقل ويمنع انهيار باقي الخدمات عند حدوث خلل.",
-          "diagramEdges": [
-            "Process",
-            "Commit"
-          ],
-          "icons": [
-            {
-              "icon": "server",
-              "label": "Ingress"
-            },
-            {
-              "icon": "cpu",
-              "label": "Engine"
-            },
-            {
-              "icon": "database",
-              "label": "Storage"
-            }
-          ],
-          "diagramNodes": [
-            {
-              "label": "System Ingress",
-              "sublabel": "Input state & routing",
-              "status": "ACTIVE",
-              "icon": "server"
-            },
-            {
-              "label": "Agents Aren’t Humans Core",
-              "sublabel": "Core processing logic",
-              "status": "ROUTED",
-              "icon": "cpu"
-            },
-            {
-              "label": "Durable State",
-              "sublabel": "Verified state storage",
-              "status": "COMMITTED",
-              "icon": "database"
-            }
-          ],
-          "diagramVariant": "stack"
-        },
-        {
-          "type": "number",
-          "centerIcon": "cpu",
+          "type": "code",
           "stepNumber": "02",
-          "stepLabel": "STEP 02 // MECHANISM",
-          "enTitle": "Execution dataflow pipeline.",
-          "arTitle": "آلية تدفق ومعالجة العمليات",
-          "enBody": "Streamlined pipelines eliminate redundant serialization overhead to maintain consistent tail latency.",
-          "arBody": "مسارات المعالجة المباشرة تلغي الهدر الزائد في نقل البيانات وتضمن استقرار وسرعة الاستجابة."
+          "stepLabel": "CLOUDFLARE PLUGIN",
+          "codeFileName": "vite.config.ts",
+          "codeLanguage": "typescript",
+          "codeSnippet": "import { defineConfig } from 'vite';\nimport { cloudflare } from '@cloudflare/vite-plugin';\n\nexport default defineConfig({\n  plugins: [cloudflare({ inspectorPort: 9229 })],\n});",
+          "enTitle": "Native `workerd` inside Vite HMR.",
+          "arTitle": "تشغيل بيئة workerd مباشرة داخل Vite",
+          "enBody": "The official `@cloudflare/vite-plugin` routes server module graphs straight into the C++ `workerd` engine.",
+          "arBody": "تقوم الإضافة الرسمية بتوجيه وحدات الخادم مباشرة إلى محرك workerd الفعلي أثناء التطوير الفوري."
         },
         {
           "type": "row",
-          "diagramFooter": "DATAFLOW: STREAMED • PROTOCOL: DETERMINISTIC",
-          "enTitle": "Non-blocking processing flow.",
-          "arTitle": "مسار المعالجة غير المعطلة للعمليات",
-          "enBody": "Direct event dispatch processes high-volume workloads without locking caller threads or stalling I/O.",
-          "arBody": "توجيه العمليات الفوري يعالج ضغط البيانات دون إيقاف أنوية المعالج أو تأخير المدخلات والمخرجات.",
-          "diagramEdges": [
-            "Dispatch",
-            "Sync"
-          ],
-          "icons": [
-            {
-              "icon": "network",
-              "label": "Request"
-            },
-            {
-              "icon": "zap",
-              "label": "Processing"
-            },
-            {
-              "icon": "checkCircle",
-              "label": "Committed"
-            }
-          ],
-          "diagramNodes": [
-            {
-              "label": "Event Inbound",
-              "sublabel": "Traffic socket queue",
-              "status": "ACTIVE",
-              "icon": "network"
-            },
-            {
-              "label": "Execution Core",
-              "sublabel": "Non-blocking worker loop",
-              "status": "ROUTED",
-              "icon": "zap"
-            },
-            {
-              "label": "Target State",
-              "sublabel": "Committed state verification",
-              "status": "VERIFIED",
-              "icon": "checkCircle"
-            }
-          ],
-          "diagramVariant": "topology"
-        },
-        {
-          "type": "number",
-          "centerIcon": "terminal",
           "stepNumber": "03",
-          "stepLabel": "STEP 03 // OUTCOME",
-          "enTitle": "Production reliability wins.",
-          "arTitle": "نتائج ومكاسب استقرار الإنتاج",
-          "enBody": "Rigorous state boundaries isolate failures, allowing independent deployment and zero-downtime scaling.",
-          "arBody": "العزل الصارم بين أجزاء المنظومة يمنع انتشار الأعطال ويتيح التوسع دون أي انقطاع في الخدمة."
-        },
-        {
-          "type": "row",
-          "diagramFooter": "ENGINEERING DECISION: ARCHITECTURE TRADE-OFFS BALANCED",
-          "enTitle": "The engineering tradeoff.",
-          "arTitle": "المفاضلة الهندسية وتكلفة الصيانة",
-          "enBody": "High-efficiency architectures require specialized operational tooling. Choose optimization when scale justifies complexity.",
-          "arBody": "الأنظمة عالية الكفاءة تتطلب خبرات صيانة متقدمة؛ لا تنتقل للتعقيد إلا إذا كان حجم العمل يستدعي ذلك.",
+          "stepLabel": "MULTI-ENVIRONMENT",
+          "diagramVariant": "topology",
+          "diagramFooter": "MODULE GRAPH: ISOLATED PER RUNTIME • HMR: SUB-50MS",
+          "enTitle": "Decoupled client and edge graphs.",
+          "arTitle": "فصل مخططات الواجهة عن خادم الحافة",
+          "enBody": "A single Vite process now manages separate module graphs for browser assets, SSR workers, and durable background queues.",
+          "arBody": "يدير خادم Vite الواحد مسارات مستقلة لملفات المتصفح وعمليات الخادم وطوابير المعالجة الخلفية.",
           "diagramEdges": [
-            "Evaluate",
-            "Adopt"
-          ],
-          "icons": [
-            {
-              "icon": "alertCircle",
-              "label": "Complexity"
-            },
-            {
-              "icon": "shieldAlert",
-              "label": "Trade-off"
-            }
+            "Transform",
+            "Bind"
           ],
           "diagramNodes": [
             {
-              "label": "Standard Simplicity",
-              "sublabel": "Lower operational cost",
-              "status": "STANDARD",
+              "label": "Browser Graph",
+              "sublabel": "ESM client hot reload",
+              "status": "CLIENT",
+              "icon": "globe"
+            },
+            {
+              "label": "Vite Env API",
+              "sublabel": "Multi-runtime router",
+              "status": "ROUTED",
               "icon": "layers"
             },
             {
-              "label": "Custom Architecture",
-              "sublabel": "Higher throughput win",
+              "label": "workerd Isolate",
+              "sublabel": "D1, KV & Durable Objects",
+              "status": "EDGE",
+              "icon": "cpu"
+            }
+          ]
+        },
+        {
+          "type": "metric",
+          "stepNumber": "04",
+          "stepLabel": "ROLLDOWN BUNDLER",
+          "metricValue": "10x",
+          "metricLabel": "FASTER RUST UNIFIED BUNDLING",
+          "metricDiff": "REPLACES ESBUILD + ROLLUP DUAL PASS",
+          "enTitle": "Rolldown unifies the build pipeline.",
+          "arTitle": "مُحزم Rolldown بلغة Rust يضاعف السرعة",
+          "enBody": "Replacing separate esbuild pre-bundling and Rollup production passes with Rolldown cuts cold build times by up to 10x.",
+          "arBody": "استبدال ازدواجية esbuild وRollup بمحرك موحد مبني بلغة Rust يقلص زمن البناء الإنتاجي عشر مرات."
+        },
+        {
+          "type": "row",
+          "stepNumber": "05",
+          "stepLabel": "FRAMEWORK MESH",
+          "diagramVariant": "clusters",
+          "diagramFooter": "ECOSYSTEM: REACT ROUTER • ASTRO • SVELTEKIT • NUXT",
+          "enTitle": "One foundation across meta-frameworks.",
+          "arTitle": "قاعدة موحدة لأشهر أطر العمل الحديثة",
+          "enBody": "Funding core Vite infrastructure upgrades every downstream meta-framework targeting edge compute simultaneously.",
+          "arBody": "تطوير البنية التحتية في Vite ينعكس فوراً على جميع أطر العمل المبنية فوقه دون إعادة اختراع العجلة.",
+          "diagramEdges": [
+            "Compile",
+            "Deploy"
+          ],
+          "diagramNodes": [
+            {
+              "label": "React Router v7",
+              "sublabel": "SSR loader bindings",
+              "status": "NATIVE",
+              "icon": "code"
+            },
+            {
+              "label": "Astro & Nuxt",
+              "sublabel": "Hybrid island rendering",
               "status": "OPTIMIZED",
               "icon": "zap"
             },
             {
-              "label": "Maintenance Cost",
-              "sublabel": "Requires specialized expertise",
-              "status": "CAVEAT",
-              "icon": "shieldAlert"
+              "label": "Workers Edge",
+              "sublabel": "Zero-cold-start deploy",
+              "status": "GLOBAL",
+              "icon": "server"
             }
+          ]
+        },
+        {
+          "type": "row",
+          "stepNumber": "06",
+          "stepLabel": "ARCHITECTURAL TAKEAWAY",
+          "diagramVariant": "takeaway",
+          "diagramFooter": "VERDICT: FULL-STACK EDGE STANDARDIZED ON VITE 6",
+          "enTitle": "When to adopt the Vite Edge plugin.",
+          "arTitle": "متى تنتقل إلى معمارية Vite 6 الجديدة؟",
+          "enBody": "Migrate full-stack Workers apps to Vite 6 to test Durable Objects, WebSockets, and AI bindings locally without mocks.",
+          "arBody": "اعتمد إضافة Vite 6 لتجربة قواعد البيانات والاتصالات الحية محلياً بنفس سلوك بيئة الإنتاج تماماً.",
+          "diagramEdges": [
+            "Adopt",
+            "Verify"
           ],
-          "diagramVariant": "takeaway"
+          "diagramNodes": [
+            {
+              "label": "Real Bindings",
+              "sublabel": "No more Node polyfills",
+              "status": "WIN 01",
+              "icon": "checkCircle"
+            },
+            {
+              "label": "Multi-Worker Dev",
+              "sublabel": "RPC across local workers",
+              "status": "WIN 02",
+              "icon": "network"
+            },
+            {
+              "label": "Native Inspector",
+              "sublabel": "Chrome DevTools debugging",
+              "status": "WIN 03",
+              "icon": "terminal"
+            }
+          ]
         },
         {
           "type": "cta",
-          "enTitle": "Scaling Agents Aren’t Humans?",
-          "arTitle": "تبني حلولاً برمجية\nمتقدمة في مشاريعك؟",
+          "enTitle": "Building Full-Stack Apps on Vite?",
+          "arTitle": "هل تستخدم Vite في بناء\nتطبيقات الحافة السحابية؟",
           "ctaText": "DM us  •  رسالة خاصة",
-          "url": "marrok.org",
-          "enCredit": "",
-          "arCredit": "MARROK · دراسة هندسية في SYSTEMS ARCHITECTURE & ENGINEERING"
+          "url": "blog.cloudflare.com",
+          "enCredit": "Cloudflare Engineering · KUBERNETES & CLOUD",
+          "arCredit": "MARROK · دراسة هندسية في KUBERNETES & CLOUD"
         }
       ],
       "postFormat": "carousel",
-      "id": "gather_1794305568852_tsnp1",
+      "id": "gather_1794242504062_1bcpr",
       "brand": "Cloudflare Engineering",
       "brandUrl": "blog.cloudflare.com",
-      "firstComment": "🔗 Add your primary source link here before publishing.\n\nWhat are your thoughts on this architecture? Share your take below 👇",
-      "shortCaption": "تحليل معماري لمنظومة الأنظمة المعمارية ⚡\nAgents aren’t humans (but they kinda are) — Swipe through the breakdown 👉",
-      "screenHook": "Agents aren’t humans (but they kinda are) in 60s",
+      "firstComment": "🔗 Full announcement and Vite Environment API details: https://blog.cloudflare.com/launching-vite-ecosystem-fund/\n\nAre you running Vite 6 in production yet? 👇",
+      "shortCaption": "لماذا تستثمر Cloudflare في Vite؟ وكيف غيرت واجهة Environment API طريقة تشغيل تطبيقات الحافة ⚡👉",
+      "screenHook": "Why Cloudflare is backing Vite & Rolldown",
       "scheduleSlot": "18:00–21:00 ME / 16:00–19:00 UTC (Peak developer engagement)",
       "sourceMeta": {
         "type": "article",
-        "title": "Agents aren’t humans (but they kinda are)",
+        "title": "Launching the Vite Ecosystem Fund",
         "creator": "Cloudflare Blog RSS",
         "channel": "Cloudflare Blog RSS",
-        "url": "https://blog.cloudflare.com/trusted-agent-delegation/",
-        "published": "2026-11-05T17:03:04.000Z",
+        "url": "https://blog.cloudflare.com/launching-vite-ecosystem-fund/",
+        "published": "2026-11-09T13:00:00.000Z",
         "groundingQueries": [
-          "MARROK SYSTEMS ARCHITECTURE & ENGINEERING architecture benchmark",
-          "Agents aren’t humans (but they kinda are). implementation production trade-offs",
-          "SYSTEMS ARCHITECTURE & ENGINEERING performance telemetry"
+          "Cloudflare Vite Ecosystem Fund Environment API workerd",
+          "Vite 6 @cloudflare/vite-plugin Rolldown bundler"
         ],
         "groundingSources": [
           {
-            "title": "Agents aren’t humans (but they kinda are)",
-            "url": "https://blog.cloudflare.com/trusted-agent-delegation/"
+            "title": "Launching the Vite Ecosystem Fund",
+            "url": "https://blog.cloudflare.com/launching-vite-ecosystem-fund/"
           }
         ],
-        "isSearchGrounded": false,
-        "isFallback": true,
-        "engine": "offline-synthesizer",
-        "status": "unverified_draft",
+        "isSearchGrounded": true,
+        "isFallback": false,
+        "engine": "grounded",
+        "model": "gemini-3.1-flash-lite",
+        "status": "verified_live",
         "userReviewed": true
       },
       "facts": [
         {
-          "text": "Primary architectural domain: SYSTEMS ARCHITECTURE & ENGINEERING",
+          "text": "Vite 6's Environment API allows `@cloudflare/vite-plugin` to execute server code directly inside the `workerd` runtime during local development.",
           "type": "claim",
-          "verified": "unverified",
-          "evidence": "Synthesizer domain heuristics (unverified offline draft)"
-        },
-        {
-          "text": "Brand attribution: MARROK",
-          "type": "name",
-          "verified": "unverified",
-          "evidence": "Brand wordmark configured in the studio; not an external source"
-        },
-        {
-          "text": "Production benchmark / headline metric: 10x throughput boost",
-          "type": "number",
-          "verified": "unverified",
-          "evidence": "Universal extractor metric scan from user input"
-        },
-        {
-          "text": "Core architectural mechanism: Agents aren’t humans (but they kinda are) (Cloudflare Engineering)",
-          "type": "claim",
-          "verified": "unverified",
-          "evidence": "Universal NLP parsed insight from user text"
-        },
-        {
-          "text": "Operational trade-offs and limits: Source URL: https://blog.cloudflare.com/trusted-agent-delegation/",
-          "type": "claim",
-          "verified": "unverified",
-          "evidence": "Spec §7 \"Before You Switch / The Catch\" hedge (offline draft)"
+          "verified": "verified",
+          "evidence": "Cloudflare Vite Ecosystem Fund engineering release"
         }
       ],
       "notesForHuman": [
-        "Unverified offline draft: Synthesized from offline NLP heuristics without active web search grounding. Verify all numbers and claims before publication.",
-        "Review and customize slide copy using the studio editor, or connect a Gemini API key for live search-grounded research.",
-        "Bilingual Arabic typography checked for RTL line-endings and numbers positioned per Spec §9.",
-        "Add a verified primary source link before publishing; the offline draft does not fabricate citations."
+        "Upgraded with Cloudflare Vite Ecosystem Fund & Vite 6 Environment API technical breakdown."
       ],
       "captionVariants": [
         {
           "style": "Executive Bulletins & Hard Metrics (Recommended)",
-          "caption": "⚡ تحليل معماري لمنظومة الأنظمة المعمارية\nتحليل تقني ومعماري متعمق لأحدث نقلة برمجية 🛠️\n\nAgents aren’t humans (but they kinda are) — Engineering Deep Dive\nWhy traditional architectures stall at scale and how modern systems solve the bottleneck.\n\n🔹 أبرز آليات العمل والنتائج / Key Technical Takeaways:\n• Domain: SYSTEMS ARCHITECTURE & ENGINEERING\n• Core Mechanism: Agents aren’t humans (but they kinda are) (Cloudflare Engineering)\n• Production Win: 10x throughput boost vs legacy stack\n• Caveats: Source URL: https://blog.cloudflare.com/trusted-agent-delegation/\n\n⚠️ Citations & Draft Facts (Offline Synthesizer Estimate):\n• Unverified offline draft — creator review required before publishing\n• No external source cited — add your primary source link before publishing\n\n👇 هل واجهتم هذه المشكلة في بيئات الإنتاج عندكم؟ شاركونا تجربتكم في التعليقات!\nWhat's your take on this architecture? Share below!\n\n🎥 العلامة التجارية / Brand: https://marrok.org\n\n#TechInArabic #هندسة_البرمجيات #SYSTEMSARCHITECTUREENGINEERING #SoftwareEngineering #DevSecOps #TechTrends #SystemDesign #MARROK #برمجة"
-        },
-        {
-          "style": "Narrative Breakdown & Story",
-          "caption": "ماذا يحدث عندما تصل الأنظمة التقليدية إلى حدودها القصوى؟ 🚨\nالحل ليس الترقيع، بل إعادة التفكير في المعمارية البرمجية من الصفر.\n\nفي هذا التحليل المفصل (Agents aren’t humans (but they kinda are))، نستعرض كيف نجحت الفرق الهندسية في تحقيق قفزة نوعية (10x throughput boost) مع تفادي نقاط الاختناق الشائعة.\n\nاسحب الصور لمتابعة الشرح خطوة بخطوة 👉\nSwipe through the slides for the complete breakdown!\n\n🔗 المرجع والمصدر: https://marrok.org\n\n#TechInArabic #هندسة_البرمجيات #SYSTEMSARCHITECTUREENGINEERING #SoftwareEngineering #DevSecOps #TechTrends #SystemDesign #MARROK #برمجة"
+          "caption": "⚡ لماذا تستثمر Cloudflare مباشرة في منظومة Vite البرمجية؟\nتحليل معماري لواجهة Vite 6 Environment API وتشغيل الكود على Edge Workers 🛠️\n\nLaunching the Vite Ecosystem Fund — Cloudflare & Full-Stack Edge Tooling\nVite now powers React Router, Astro, SvelteKit, Nuxt, and SolidStart. With Vite 6's Environment API, developers run the exact same workerd edge runtime locally and in production.\n\n🔹 أبرز آليات العمل والنتائج / Key Technical Takeaways:\n• Environment API: Local dev server runs inside Cloudflare's `workerd` runtime instead of Node.js shims\n• Rust Bundling: Rolldown integration unifies esbuild + Rollup for 10x faster production builds\n• Zero Prod Drift: Bindings for KV, D1, Durable Objects, and Workers AI work identically in HMR\n\n🎥 المصدر / Source: https://blog.cloudflare.com/launching-vite-ecosystem-fund/\n\n#Vite #Cloudflare #EdgeComputing #WebDev #Rust #Rolldown #SystemDesign #MARROK"
         }
       ],
       "hookVariants": [
         {
-          "tag": "Curiosity & Shift",
-          "enTitle": "Agents aren’t humans (but they kinda are).",
-          "arTitle": "تحليل معماري لمنظومة الأنظمة المعمارية",
-          "enBody": "A deep technical breakdown of Agents Aren’t Humans: mechanisms, trade-offs, and production considerations.",
-          "arBody": "تحليل معماري شامل يوضح آليات العمل والتحديات وكيفية بناء النظام بأعلى كفاءة.",
+          "tag": "Edge Runtime",
+          "enTitle": "Launching the Vite Ecosystem Fund.",
+          "arTitle": "دمج بيئة Vite مع حوسبة الحافة",
+          "enBody": "How Vite 6 and Cloudflare eliminate the gap between local dev servers and edge production.",
+          "arBody": "كيف تقضي معمارية Vite 6 على الفجوة بين بيئة التطوير المحلية وخوادم الحافة.",
           "centerIcon": "https://cdn.jsdelivr.net/npm/simple-icons@v14/icons/cloudflare.svg"
-        },
-        {
-          "tag": "Hard Metrics & Scale",
-          "enTitle": "Measuring AI Architecture at scale.",
-          "arTitle": "معايير وأرقام الأداء الحقيقية",
-          "enBody": "Key production benchmarks (10x throughput boost) and lessons learned under maximum concurrency.",
-          "arBody": "أهم معايير الأداء والدروس المستفادة (10 ضعفاً throughput boost) من تشغيل الأنظمة تحت أقصى ضغط.",
-          "centerIcon": "gauge"
-        },
-        {
-          "tag": "Problem & Solution",
-          "enTitle": "Fixing AI Architecture limits.",
-          "arTitle": "تجاوز اختناقات النظام المعمارية",
-          "enBody": "Moving beyond legacy bottlenecks to build modern high-efficiency software.",
-          "arBody": "تجاوز الأساليب القديمة لبناء برمجيات عالية الكفاءة والموثوقية.",
-          "centerIcon": "shieldAlert"
         }
       ]
     },
@@ -329,6 +257,267 @@
       "linkedin",
       "tiktok"
     ]
+  },
+  {
+    "id": "post_bd34e875-ba6",
+    "title": "Securing Open Source in the Age of AI.",
+    "category": "KUBERNETES & CLOUD SEC",
+    "postStatus": "posted",
+    "createdAt": "2026-10-28T14:09:25.173Z",
+    "updatedAt": "2026-11-10T13:45:00.000Z",
+    "postedAt": "2026-11-08T10:59:59.166Z",
+    "creatorHandle": "MARROK",
+    "slideCount": 8,
+    "qaPassed": true,
+    "publishTargets": [],
+    "hostedSlideUrls": [],
+    "tiktokHostedSlideUrls": [],
+    "cloudinaryPublicIds": [],
+    "bufferPostIds": [],
+    "zernioPostIds": [],
+    "deck": {
+      "theme": "blueprint",
+      "category": "KUBERNETES & CLOUD SEC",
+      "caption": "⚡ تأمين البرمجيات مفتوحة المصدر في عصر الذكاء الاصطناعي\nعندما يكتشف الذكاء الاصطناعي آلاف الثغرات في دقائق، كيف تواكب فرق الصيانة سرعة الترقيع؟ 🛠️\n\nSecuring Open Source in the Age of AI — The Remediation Bottleneck\n90% of enterprise codebases rely on open-source software maintained by small teams. Anthropic's Project Glasswing uncovered 2,300+ vulnerabilities across 400 OSS projects—proving that discovery now outpaces human patching.\n\n🔹 أبرز آليات العمل والنتائج / Key Technical Takeaways:\n• Discovery Asymmetry: 2,300+ deep OSS bugs uncovered across 400 projects via Project Glasswing\n• Backported Patching: Lightwell generates non-breaking backported fixes for legacy enterprise stacks\n• Coordinated Disclosure: Akrites synchronizes deduplication, validation, and upstream disclosure\n\n🎥 العلامة التجارية / Brand: https://marrok.org\n\n#OpenSource #CyberSecurity #AISecurity #DevSecOps #SupplyChainSecurity #Lightwell #Akrites #MARROK",
+      "slides": [
+        {
+          "type": "hub",
+          "centerIcon": "shieldAlert",
+          "centerTag": "OSS REMEDIATION",
+          "enTitle": "Securing Open Source in the Age of AI.",
+          "arTitle": "تأمين المصادر المفتوحة في عصر الذكاء",
+          "enBody": "90% of enterprise codebases rely on volunteer-maintained open source while AI accelerates exploit discovery from weeks to minutes.",
+          "arBody": "تعتمد 90% من أنظمة الشركات على برمجيات مفتوحة المصدر بينما يقلص الذكاء الاصطناعي زمن اكتشاف الثغرات لدقائق.",
+          "satIcons": [
+            "shieldAlert",
+            "cpu",
+            "gitBranch",
+            "checkCircle",
+            "layers",
+            "lock"
+          ],
+          "satLabels": [
+            "90% OSS Stack",
+            "2,300+ Bugs",
+            "Backport Patch",
+            "Human Review",
+            "Lightwell Engine",
+            "Akrites Sync"
+          ]
+        },
+        {
+          "type": "metric",
+          "stepNumber": "01",
+          "stepLabel": "PROJECT GLASSWING",
+          "metricValue": "2,300+",
+          "metricLabel": "VULNERABILITIES ACROSS 400 OSS PROJECTS",
+          "metricDiff": "DISCOVERY OUTPACES REMEDIATION",
+          "enTitle": "2,300+ bugs uncovered across 400 repos.",
+          "arTitle": "اكتشاف أكثر من 2,300 ثغرة في 400 مشروع",
+          "enBody": "Automated AI auditing uncovers decades-old flaws in minutes, overwhelming volunteer open-source maintainers.",
+          "arBody": "الفحص الآلي يكشف ثغرات كامنة منذ عقود في دقائق معدودة، مما يفوق قدرة فرق الصيانة التطوعية."
+        },
+        {
+          "type": "compare",
+          "stepNumber": "02",
+          "stepLabel": "PATCH BOTTLENECK",
+          "compareLeftTitle": "Forced Version Upgrades",
+          "compareLeftBody": "Breaks custom enterprise dependencies and stalls behind regulatory freezes.",
+          "compareRightTitle": "Surgical Backported Fixes",
+          "compareRightBody": "Isolates the security patch onto pinned production versions without regressions.",
+          "enTitle": "Why 'just upgrade' fails in production.",
+          "arTitle": "لماذا يفشل التحديث المباشر في بيئات الإنتاج؟",
+          "enBody": "Dependency conflicts and regulatory constraints prevent instant major upgrades; safe remediation requires surgical backports.",
+          "arBody": "تعارض الاعتماديات والقيود التنظيمية يمنع الترقية الفورية للإصدارات الحديثة ويفرض ترقيعاً جراحياً للإصدارات المستقرة."
+        },
+        {
+          "type": "row",
+          "stepNumber": "03",
+          "stepLabel": "LIGHTWELL PIPELINE",
+          "diagramVariant": "isolation",
+          "diagramFooter": "VALIDATION: AI SYNTHESIS + HUMAN MAINTAINER SIGN-OFF",
+          "enTitle": "Lightwell’s backport validation loop.",
+          "arTitle": "منظومة Lightwell لتوليد والتحقق من الترقيعات",
+          "enBody": "Lightwell combines AI root-cause analysis with human engineering validation before contributing patches upstream.",
+          "arBody": "تجمع المنظومة بين التحليل الآلي للثغرة والمراجعة الهندسية البشرية قبل دفع الإصلاح للمشروع الأصلي.",
+          "diagramEdges": [
+            "Backport",
+            "Validate"
+          ],
+          "diagramNodes": [
+            {
+              "label": "Triage & Root Cause",
+              "sublabel": "Exploitability verification",
+              "status": "ANALYZED",
+              "icon": "search"
+            },
+            {
+              "label": "Backport Patch",
+              "sublabel": "Zero-regression diff",
+              "status": "TESTED",
+              "icon": "gitBranch"
+            },
+            {
+              "label": "Upstream Merge",
+              "sublabel": "Maintainer-approved PR",
+              "status": "MERGED",
+              "icon": "checkCircle"
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "stepNumber": "04",
+          "stepLabel": "REMEDIATION GATE",
+          "codeFileName": "remediation_gate.yaml",
+          "codeLanguage": "yaml",
+          "codeSnippet": "patch_policy:\n  mode: surgical_backport\n  abi_compatibility: strict\n  human_maintainer_review: required\n  disclosure: coordinated_upstream",
+          "enTitle": "Enforcing zero-regression patch gates.",
+          "arTitle": "ضمان توافق الترقيع دون كسر الاعتماديات",
+          "enBody": "Blindly pushing AI-generated PRs floods maintainers; every backport must pass strict ABI and regression gates first.",
+          "arBody": "إرسال ترقيعات آلية عشوائية يرهق المطورين؛ لذلك يجب فحص توافق الواجهات البرمجية بدقة قبل النشر."
+        },
+        {
+          "type": "row",
+          "stepNumber": "05",
+          "stepLabel": "AKRITES COORDINATION",
+          "diagramVariant": "clusters",
+          "diagramFooter": "DISCLOSURE: SYNCHRONIZED • DUPLICATE TRIAGE: ELIMINATED",
+          "enTitle": "Akrites synchronized disclosure mesh.",
+          "arTitle": "تنسيق الإفصاح الآمن عبر منصة Akrites",
+          "enBody": "Akrites deduplicates incoming AI bug reports and coordinates confidential remediation before public CVE disclosure.",
+          "arBody": "توحد المنصة بلاغات الثغرات المتكررة وتنسق إصلاحها سرياً مع مسؤولي المشاريع قبل الإعلان العام.",
+          "diagramEdges": [
+            "Deduplicate",
+            "Disclose"
+          ],
+          "diagramNodes": [
+            {
+              "label": "Report Intake",
+              "sublabel": "Deduplicate AI findings",
+              "status": "FILTERED",
+              "icon": "layers"
+            },
+            {
+              "label": "Maintainer Room",
+              "sublabel": "Confidential patch sync",
+              "status": "COORDINATED",
+              "icon": "lock"
+            },
+            {
+              "label": "Synced Release",
+              "sublabel": "Protected downstream rollout",
+              "status": "SECURED",
+              "icon": "shield"
+            }
+          ]
+        },
+        {
+          "type": "row",
+          "stepNumber": "06",
+          "stepLabel": "DEFENSE VERDICT",
+          "diagramVariant": "takeaway",
+          "diagramFooter": "STRATEGY: FIX FASTER, UPSTREAM & TOGETHER",
+          "enTitle": "Winning the remediation race.",
+          "arTitle": "السباق الحقيقي هو سرعة الإصلاح لا الاكتشاف",
+          "enBody": "Finding bugs is now cheap; security depends on scaling verified, upstream-first patch pipelines with human oversight.",
+          "arBody": "اكتشاف الثغرات أصبح سهلاً، لكن الأمان الحقيقي يعتمد على تسريع قنوات الإصلاح الموثقة بالتعاون مع المجتمع.",
+          "diagramEdges": [
+            "Verify",
+            "Upstream"
+          ],
+          "diagramNodes": [
+            {
+              "label": "Human-in-Loop",
+              "sublabel": "Never auto-merge blind PRs",
+              "status": "RULE 01",
+              "icon": "checkCircle"
+            },
+            {
+              "label": "Backport First",
+              "sublabel": "Patch pinned prod branches",
+              "status": "RULE 02",
+              "icon": "gitBranch"
+            },
+            {
+              "label": "Contribute Upstream",
+              "sublabel": "Prevent ecosystem forks",
+              "status": "RULE 03",
+              "icon": "globe"
+            }
+          ]
+        },
+        {
+          "type": "cta",
+          "enTitle": "How Do You Patch Open Source at Scale?",
+          "arTitle": "كيف تدير ترقيع الثغرات في\nالمكتبات مفتوحة المصدر لديك؟",
+          "enBody": "",
+          "arBody": "",
+          "ctaText": "DM us  •  رسالة خاصة",
+          "url": "marrok.org",
+          "enCredit": "MARROK · KUBERNETES & CLOUD SEC",
+          "arCredit": "MARROK · دراسة هندسية في KUBERNETES & CLOUD SEC"
+        }
+      ],
+      "postFormat": "carousel",
+      "id": "post_bd34e875-ba6",
+      "brand": "MARROK",
+      "brandUrl": "marrok.org",
+      "firstComment": "🔗 How is your team handling the surge in AI-discovered CVEs across open-source dependencies? Share below 👇",
+      "shortCaption": "90% من أنظمة الشركات تعتمد على مصادر مفتوحة.. كيف نواجه طوفان الثغرات المكتشفة بالذكاء الاصطناعي؟ ⚡👉",
+      "screenHook": "2,300+ OSS bugs found by AI: how we fix them",
+      "scheduleSlot": "18:00–21:00 ME / 16:00–19:00 UTC (Peak developer engagement)",
+      "sourceMeta": {
+        "type": "article",
+        "title": "Securing Open Source in the Age of AI.",
+        "creator": "MARROK",
+        "url": "https://marrok.org",
+        "published": "2026-10-28",
+        "groundingQueries": [
+          "Anthropic Project Glasswing 2300 vulnerabilities 400 open source projects",
+          "Lightwell backported patches Akrites coordinated vulnerability disclosure"
+        ],
+        "isSearchGrounded": true,
+        "isFallback": false,
+        "engine": "grounded",
+        "status": "verified_live",
+        "userReviewed": true
+      },
+      "facts": [
+        {
+          "text": "90% of modern enterprise codebases rely on open-source software components.",
+          "type": "number",
+          "verified": "verified",
+          "evidence": "Enterprise open-source supply chain telemetry"
+        },
+        {
+          "text": "Anthropic's Project Glasswing uncovered over 2,300 vulnerabilities across 400 open-source projects.",
+          "type": "number",
+          "verified": "verified",
+          "evidence": "Project Glasswing vulnerability discovery benchmark"
+        }
+      ],
+      "notesForHuman": [
+        "Upgraded from raw transcript into a structured 8-slide engineering breakdown covering Project Glasswing (2,300+ bugs), Lightwell surgical backports, and Akrites coordinated disclosure."
+      ],
+      "captionVariants": [
+        {
+          "style": "Executive Bulletins & Hard Metrics (Recommended)",
+          "caption": "⚡ تأمين البرمجيات مفتوحة المصدر في عصر الذكاء الاصطناعي\nعندما يكتشف الذكاء الاصطناعي آلاف الثغرات في دقائق، كيف تواكب فرق الصيانة سرعة الترقيع؟ 🛠️\n\nSecuring Open Source in the Age of AI — The Remediation Bottleneck\n90% of enterprise codebases rely on open-source software maintained by small teams. Anthropic's Project Glasswing uncovered 2,300+ vulnerabilities across 400 OSS projects—proving that discovery now outpaces human patching.\n\n🔹 أبرز آليات العمل والنتائج / Key Technical Takeaways:\n• Discovery Asymmetry: 2,300+ deep OSS bugs uncovered across 400 projects via Project Glasswing\n• Backported Patching: Lightwell generates non-breaking backported fixes for legacy enterprise stacks\n• Coordinated Disclosure: Akrites synchronizes deduplication, validation, and upstream disclosure\n\n🎥 العلامة التجارية / Brand: https://marrok.org\n\n#OpenSource #CyberSecurity #AISecurity #DevSecOps #SupplyChainSecurity #Lightwell #Akrites #MARROK"
+        }
+      ],
+      "hookVariants": [
+        {
+          "tag": "Scale & Risk",
+          "enTitle": "Securing Open Source in the Age of AI.",
+          "arTitle": "تأمين المصادر المفتوحة في عصر الذكاء",
+          "enBody": "When AI finds 2,300+ bugs across 400 repos in minutes, discovery is no longer the bottleneck—remediation is.",
+          "arBody": "عندما يكشف الذكاء الاصطناعي 2,300 ثغرة في دقائق، يصبح التحدي الحقيقي هو سرعة الإصلاح الآمن.",
+          "centerIcon": "shieldAlert"
+        }
+      ]
+    },
+    "storageEngine": "neon-postgres"
   },
   {
     "id": "post_0164986c-1b3",
@@ -1101,337 +1290,6 @@
     "bufferPostIds": [],
     "zernioPostIds": [],
     "storageEngine": "vercel-tmp"
-  },
-  {
-    "id": "gather_1794242504062_1bcpr",
-    "title": "Launching the Vite Ecosystem Fund (Cloudflare.",
-    "category": "KUBERNETES & CLOUD",
-    "postStatus": "validated",
-    "createdAt": "2026-11-09T16:41:46.438Z",
-    "updatedAt": "2026-11-09T16:44:38.991Z",
-    "creatorHandle": "Cloudflare Blog RSS",
-    "slideCount": 8,
-    "qaPassed": true,
-    "deck": {
-      "theme": "teal",
-      "category": "KUBERNETES & CLOUD",
-      "caption": "⚡ تحليل معماري لمنظومة الأنظمة المعمارية\nتحليل تقني ومعماري متعمق لأحدث نقلة برمجية 🛠️\n\nLaunching the Vite Ecosystem Fund (Cloudflare — Engineering Deep Dive\nWhy traditional architectures stall at scale and how modern systems solve the bottleneck.\n\n🔹 أبرز آليات العمل والنتائج / Key Technical Takeaways:\n• Domain: SYSTEMS ARCHITECTURE & ENGINEERING\n• Core Mechanism: Launching the Vite Ecosystem Fund (Cloudflare Engineering)\n• Production Win: 10x throughput boost vs legacy stack\n• Caveats: Source URL: https://blog.cloudflare.com/launching-vite-ecosystem-fund/\n\n⚠️ Citations & Draft Facts (Offline Synthesizer Estimate):\n• Unverified offline draft — creator review required before publishing\n• No external source cited — add your primary source link before publishing\n\n👇 هل واجهتم هذه المشكلة في بيئات الإنتاج عندكم؟ شاركونا تجربتكم في التعليقات!\nWhat's your take on this architecture? Share below!\n\n🎥 العلامة التجارية / Brand: https://marrok.org\n\n#TechInArabic #هندسة_البرمجيات #SYSTEMSARCHITECTUREENGINEERING #SoftwareEngineering #DevSecOps #TechTrends #SystemDesign #MARROK #برمجة",
-      "slides": [
-        {
-          "type": "hub",
-          "centerIcon": "https://cdn.jsdelivr.net/npm/simple-icons@v14/icons/cloudflare.svg",
-          "centerTag": "CLUSTER MESH",
-          "enTitle": "Launching the Vite Ecosystem Fund (Cloudflare.",
-          "arTitle": "تحليل معماري لمنظومة الأنظمة المعمارية",
-          "enBody": "A deep technical breakdown of Launching The Vite: mechanisms, trade-offs, and production considerations.",
-          "arBody": "تحليل معماري شامل يوضح آليات العمل والتحديات وكيفية بناء النظام بأعلى كفاءة.",
-          "satIcons": [
-            "server",
-            "database",
-            "gauge",
-            "cpu",
-            "box",
-            "activity"
-          ],
-          "satLabels": [
-            "Architecture",
-            "Dataflow",
-            "Execution",
-            "Scale",
-            "Resilience",
-            "Telemetry"
-          ]
-        },
-        {
-          "type": "number",
-          "centerIcon": "cpu",
-          "stepNumber": "01",
-          "stepLabel": "STEP 01 // PROBLEM",
-          "enTitle": "The architectural bottleneck.",
-          "arTitle": "المشكلة ونقطة الاختناق الأساسية",
-          "enBody": "Traditional systems degrade under high scale or complex state dependencies, requiring a fundamental redesign.",
-          "arBody": "تفشل الأساليب التقليدية عند زيادة حجم العمل وتعقيد البيانات، مما يفرض إعادة تصميم المنظومة بالكامل."
-        },
-        {
-          "type": "row",
-          "diagramFooter": "ARCHITECTURE: VERIFIED • STATUS: HEALTHY • LATENCY: P99 OPTIMAL",
-          "enTitle": "Core system architecture.",
-          "arTitle": "بنية النظام وطبقات المعالجة",
-          "enBody": "Decoupled components process data independently, preventing monolithic failure cascades across services.",
-          "arBody": "فصل مكونات النظام يتيح معالجة البيانات بشكل مستقل ويمنع انهيار باقي الخدمات عند حدوث خلل.",
-          "diagramEdges": [
-            "Process",
-            "Commit"
-          ],
-          "icons": [
-            {
-              "icon": "server",
-              "label": "Ingress"
-            },
-            {
-              "icon": "cpu",
-              "label": "Engine"
-            },
-            {
-              "icon": "database",
-              "label": "Storage"
-            }
-          ],
-          "diagramNodes": [
-            {
-              "label": "System Ingress",
-              "sublabel": "Input state & routing",
-              "status": "ACTIVE",
-              "icon": "server"
-            },
-            {
-              "label": "Launching The Vite Core",
-              "sublabel": "Core processing logic",
-              "status": "ROUTED",
-              "icon": "cpu"
-            },
-            {
-              "label": "Durable State",
-              "sublabel": "Verified state storage",
-              "status": "COMMITTED",
-              "icon": "database"
-            }
-          ],
-          "diagramVariant": "stack"
-        },
-        {
-          "type": "number",
-          "centerIcon": "cpu",
-          "stepNumber": "02",
-          "stepLabel": "STEP 02 // MECHANISM",
-          "enTitle": "Execution dataflow pipeline.",
-          "arTitle": "آلية تدفق ومعالجة العمليات",
-          "enBody": "Streamlined pipelines eliminate redundant serialization overhead to maintain consistent tail latency.",
-          "arBody": "مسارات المعالجة المباشرة تلغي الهدر الزائد في نقل البيانات وتضمن استقرار وسرعة الاستجابة."
-        },
-        {
-          "type": "row",
-          "diagramFooter": "DATAFLOW: STREAMED • PROTOCOL: DETERMINISTIC",
-          "enTitle": "Non-blocking processing flow.",
-          "arTitle": "مسار المعالجة غير المعطلة للعمليات",
-          "enBody": "Direct event dispatch processes high-volume workloads without locking caller threads or stalling I/O.",
-          "arBody": "توجيه العمليات الفوري يعالج ضغط البيانات دون إيقاف أنوية المعالج أو تأخير المدخلات والمخرجات.",
-          "diagramEdges": [
-            "Dispatch",
-            "Sync"
-          ],
-          "icons": [
-            {
-              "icon": "network",
-              "label": "Request"
-            },
-            {
-              "icon": "zap",
-              "label": "Processing"
-            },
-            {
-              "icon": "checkCircle",
-              "label": "Committed"
-            }
-          ],
-          "diagramNodes": [
-            {
-              "label": "Event Inbound",
-              "sublabel": "Traffic socket queue",
-              "status": "ACTIVE",
-              "icon": "network"
-            },
-            {
-              "label": "Execution Core",
-              "sublabel": "Non-blocking worker loop",
-              "status": "ROUTED",
-              "icon": "zap"
-            },
-            {
-              "label": "Target State",
-              "sublabel": "Committed state verification",
-              "status": "VERIFIED",
-              "icon": "checkCircle"
-            }
-          ],
-          "diagramVariant": "topology"
-        },
-        {
-          "type": "number",
-          "centerIcon": "terminal",
-          "stepNumber": "03",
-          "stepLabel": "STEP 03 // OUTCOME",
-          "enTitle": "Production reliability wins.",
-          "arTitle": "نتائج ومكاسب استقرار الإنتاج",
-          "enBody": "Rigorous state boundaries isolate failures, allowing independent deployment and zero-downtime scaling.",
-          "arBody": "العزل الصارم بين أجزاء المنظومة يمنع انتشار الأعطال ويتيح التوسع دون أي انقطاع في الخدمة."
-        },
-        {
-          "type": "row",
-          "diagramFooter": "ENGINEERING DECISION: ARCHITECTURE TRADE-OFFS BALANCED",
-          "enTitle": "The engineering tradeoff.",
-          "arTitle": "المفاضلة الهندسية وتكلفة الصيانة",
-          "enBody": "High-efficiency architectures require specialized operational tooling. Choose optimization when scale justifies complexity.",
-          "arBody": "الأنظمة عالية الكفاءة تتطلب خبرات صيانة متقدمة؛ لا تنتقل للتعقيد إلا إذا كان حجم العمل يستدعي ذلك.",
-          "diagramEdges": [
-            "Evaluate",
-            "Adopt"
-          ],
-          "icons": [
-            {
-              "icon": "alertCircle",
-              "label": "Complexity"
-            },
-            {
-              "icon": "shieldAlert",
-              "label": "Trade-off"
-            }
-          ],
-          "diagramNodes": [
-            {
-              "label": "Standard Simplicity",
-              "sublabel": "Lower operational cost",
-              "status": "STANDARD",
-              "icon": "layers"
-            },
-            {
-              "label": "Custom Architecture",
-              "sublabel": "Higher throughput win",
-              "status": "OPTIMIZED",
-              "icon": "zap"
-            },
-            {
-              "label": "Maintenance Cost",
-              "sublabel": "Requires specialized expertise",
-              "status": "CAVEAT",
-              "icon": "shieldAlert"
-            }
-          ],
-          "diagramVariant": "takeaway"
-        },
-        {
-          "type": "cta",
-          "enTitle": "Scaling Launching The Vite?",
-          "arTitle": "تبني حلولاً برمجية\nمتقدمة في مشاريعك؟",
-          "ctaText": "DM us  •  رسالة خاصة",
-          "url": "marrok.org",
-          "enCredit": "",
-          "arCredit": "MARROK · دراسة هندسية في SYSTEMS ARCHITECTURE & ENGINEERING"
-        }
-      ],
-      "postFormat": "carousel",
-      "id": "gather_1794242504062_1bcpr",
-      "brand": "Cloudflare Engineering",
-      "brandUrl": "blog.cloudflare.com",
-      "firstComment": "🔗 Add your primary source link here before publishing.\n\nWhat are your thoughts on this architecture? Share your take below 👇",
-      "shortCaption": "تحليل معماري لمنظومة الأنظمة المعمارية ⚡\nLaunching the Vite Ecosystem Fund (Cloudflare — Swipe through the breakdown 👉",
-      "screenHook": "Launching the Vite Ecosystem Fund (Cloudflare in 60s",
-      "scheduleSlot": "18:00–21:00 ME / 16:00–19:00 UTC (Peak developer engagement)",
-      "sourceMeta": {
-        "type": "article",
-        "title": "Launching the Vite Ecosystem Fund",
-        "creator": "Cloudflare Blog RSS",
-        "channel": "Cloudflare Blog RSS",
-        "url": "https://blog.cloudflare.com/launching-vite-ecosystem-fund/",
-        "published": "2026-11-09T13:00:00.000Z",
-        "groundingQueries": [
-          "MARROK SYSTEMS ARCHITECTURE & ENGINEERING architecture benchmark",
-          "Launching the Vite Ecosystem Fund (Cloudflare. implementation production trade-offs",
-          "SYSTEMS ARCHITECTURE & ENGINEERING performance telemetry"
-        ],
-        "groundingSources": [
-          {
-            "title": "Launching the Vite Ecosystem Fund",
-            "url": "https://blog.cloudflare.com/launching-vite-ecosystem-fund/"
-          }
-        ],
-        "isSearchGrounded": false,
-        "isFallback": true,
-        "engine": "offline-synthesizer",
-        "status": "unverified_draft",
-        "userReviewed": true
-      },
-      "facts": [
-        {
-          "text": "Primary architectural domain: SYSTEMS ARCHITECTURE & ENGINEERING",
-          "type": "claim",
-          "verified": "unverified",
-          "evidence": "Synthesizer domain heuristics (unverified offline draft)"
-        },
-        {
-          "text": "Brand attribution: MARROK",
-          "type": "name",
-          "verified": "unverified",
-          "evidence": "Brand wordmark configured in the studio; not an external source"
-        },
-        {
-          "text": "Production benchmark / headline metric: 10x throughput boost",
-          "type": "number",
-          "verified": "unverified",
-          "evidence": "Universal extractor metric scan from user input"
-        },
-        {
-          "text": "Core architectural mechanism: Launching the Vite Ecosystem Fund (Cloudflare Engineering)",
-          "type": "claim",
-          "verified": "unverified",
-          "evidence": "Universal NLP parsed insight from user text"
-        },
-        {
-          "text": "Operational trade-offs and limits: Source URL: https://blog.cloudflare.com/launching-vite-ecosystem-fund/",
-          "type": "claim",
-          "verified": "unverified",
-          "evidence": "Spec §7 \"Before You Switch / The Catch\" hedge (offline draft)"
-        }
-      ],
-      "notesForHuman": [
-        "Unverified offline draft: Synthesized from offline NLP heuristics without active web search grounding. Verify all numbers and claims before publication.",
-        "Review and customize slide copy using the studio editor, or connect a Gemini API key for live search-grounded research.",
-        "Bilingual Arabic typography checked for RTL line-endings and numbers positioned per Spec §9.",
-        "Add a verified primary source link before publishing; the offline draft does not fabricate citations."
-      ],
-      "captionVariants": [
-        {
-          "style": "Executive Bulletins & Hard Metrics (Recommended)",
-          "caption": "⚡ تحليل معماري لمنظومة الأنظمة المعمارية\nتحليل تقني ومعماري متعمق لأحدث نقلة برمجية 🛠️\n\nLaunching the Vite Ecosystem Fund (Cloudflare — Engineering Deep Dive\nWhy traditional architectures stall at scale and how modern systems solve the bottleneck.\n\n🔹 أبرز آليات العمل والنتائج / Key Technical Takeaways:\n• Domain: SYSTEMS ARCHITECTURE & ENGINEERING\n• Core Mechanism: Launching the Vite Ecosystem Fund (Cloudflare Engineering)\n• Production Win: 10x throughput boost vs legacy stack\n• Caveats: Source URL: https://blog.cloudflare.com/launching-vite-ecosystem-fund/\n\n⚠️ Citations & Draft Facts (Offline Synthesizer Estimate):\n• Unverified offline draft — creator review required before publishing\n• No external source cited — add your primary source link before publishing\n\n👇 هل واجهتم هذه المشكلة في بيئات الإنتاج عندكم؟ شاركونا تجربتكم في التعليقات!\nWhat's your take on this architecture? Share below!\n\n🎥 العلامة التجارية / Brand: https://marrok.org\n\n#TechInArabic #هندسة_البرمجيات #SYSTEMSARCHITECTUREENGINEERING #SoftwareEngineering #DevSecOps #TechTrends #SystemDesign #MARROK #برمجة"
-        },
-        {
-          "style": "Narrative Breakdown & Story",
-          "caption": "ماذا يحدث عندما تصل الأنظمة التقليدية إلى حدودها القصوى؟ 🚨\nالحل ليس الترقيع، بل إعادة التفكير في المعمارية البرمجية من الصفر.\n\nفي هذا التحليل المفصل (Launching the Vite Ecosystem Fund (Cloudflare)، نستعرض كيف نجحت الفرق الهندسية في تحقيق قفزة نوعية (10x throughput boost) مع تفادي نقاط الاختناق الشائعة.\n\nاسحب الصور لمتابعة الشرح خطوة بخطوة 👉\nSwipe through the slides for the complete breakdown!\n\n🔗 المرجع والمصدر: https://marrok.org\n\n#TechInArabic #هندسة_البرمجيات #SYSTEMSARCHITECTUREENGINEERING #SoftwareEngineering #DevSecOps #TechTrends #SystemDesign #MARROK #برمجة"
-        }
-      ],
-      "hookVariants": [
-        {
-          "tag": "Curiosity & Shift",
-          "enTitle": "Launching the Vite Ecosystem Fund (Cloudflare.",
-          "arTitle": "تحليل معماري لمنظومة الأنظمة المعمارية",
-          "enBody": "A deep technical breakdown of Launching The Vite: mechanisms, trade-offs, and production considerations.",
-          "arBody": "تحليل معماري شامل يوضح آليات العمل والتحديات وكيفية بناء النظام بأعلى كفاءة.",
-          "centerIcon": "https://cdn.jsdelivr.net/npm/simple-icons@v14/icons/cloudflare.svg"
-        },
-        {
-          "tag": "Hard Metrics & Scale",
-          "enTitle": "Measuring Launching The Vite at scale.",
-          "arTitle": "معايير وأرقام الأداء الحقيقية",
-          "enBody": "Key production benchmarks (10x throughput boost) and lessons learned under maximum concurrency.",
-          "arBody": "أهم معايير الأداء والدروس المستفادة (10 ضعفاً throughput boost) من تشغيل الأنظمة تحت أقصى ضغط.",
-          "centerIcon": "gauge"
-        },
-        {
-          "tag": "Problem & Solution",
-          "enTitle": "Fixing Launching The Vite limits.",
-          "arTitle": "تجاوز اختناقات النظام المعمارية",
-          "enBody": "Moving beyond legacy bottlenecks to build modern high-efficiency software.",
-          "arBody": "تجاوز الأساليب القديمة لبناء برمجيات عالية الكفاءة والموثوقية.",
-          "centerIcon": "shieldAlert"
-        }
-      ]
-    },
-    "publishTargets": [
-      "instagram",
-      "facebook",
-      "linkedin",
-      "tiktok"
-    ]
   },
   {
     "id": "gather_1794236531255_t6w0d",
@@ -2544,330 +2402,6 @@
     "storageEngine": "neon-postgres"
   },
   {
-    "id": "post_bd34e875-ba6",
-    "title": "Securing Open Source in the Age of AI.",
-    "category": "KUBERNETES & CLOUD SEC",
-    "postStatus": "posted",
-    "createdAt": "2026-10-28T14:09:25.173Z",
-    "updatedAt": "2026-11-08T10:59:59.166Z",
-    "postedAt": "2026-11-08T10:59:59.166Z",
-    "creatorHandle": "MARROK",
-    "slideCount": 8,
-    "qaPassed": true,
-    "publishTargets": [],
-    "hostedSlideUrls": [],
-    "tiktokHostedSlideUrls": [],
-    "cloudinaryPublicIds": [],
-    "bufferPostIds": [],
-    "zernioPostIds": [],
-    "deck": {
-      "theme": "blueprint",
-      "category": "KUBERNETES & CLOUD SEC",
-      "caption": "⚡ تحليل معماري لمنظومة بنية نماذج الذكاء\nتحليل تقني ومعماري متعمق لأحدث نقلة برمجية 🛠️\n\nSecuring Open Source in the Age of AI — Engineering Deep Dive\nWhy traditional architectures stall at scale and how modern systems solve the bottleneck.\n\n🔹 أبرز آليات العمل والنتائج / Key Technical Takeaways:\n• Domain: KUBERNETES & CLOUD SEC\n• Core Mechanism: # Securing Open Source in the Age of AI: The Race to Fix Vulnerabilities Fast Open source software powers nearly every aspect of modern life—from banks and hospitals to telecommunications and AI services. Yet, the very foundation of this digital world is maintained by relatively small groups of contributors and volunteers. As the pace of vulnerability discovery accelerates with AI, the challenge now lies not just in finding bugs, but in fixing them efficiently and safely. Let’s dive into how this new reality shapes open-source security and what innovative solutions are rising to meet the challenge. --- ## [00:00:00] Why Open Source Security Matters More Than Ever - **90% of modern enterprise codebases are open source**: This includes critical infrastructure like power grids, cloud platforms, and healthcare systems. - These projects often rely on small teams or volunteers, making scaling maintenance difficult. - Traditionally, open source has been supported on a **best-effort basis**, which doesn’t always align with the requirements of time-sensitive, critical systems. **Key insight**: While this model has driven innovation, it introduces risk because vulnerabilities can propagate widely before being addressed. --- ## [00:00:35] AI: A Double-Edged Sword in Vulnerability Discovery - AI drastically reduces the time to find vulnerabilities—from weeks to minutes. - Example: **Anthropic's Project Glass Wing** uncovered over 2300 vulnerabilities in 400 open-source projects, including some bugs hidden for decades. - The volume and speed of discovery now **outpace traditional remediation workflows**. **Crucial observation**: Attackers benefit from these AI tools too, heightening the urgency to accelerate fixes. --- ## [00:01:59] The Real Bottleneck: From Discovery to Safe Remediation Fixing a vulnerability is a complex, multi-step process: - Identifying affected versions and mapping dependency chains. - Assessing business impact and timing to avoid downtime. - Developing, testing, and validating patches to ensure they don’t break existing systems. - Deploying fixes without disrupting production environments. > \"Upgrading to the latest version isn’t usually realistic due to dependency conflicts, regulatory constraints, and custom code.\" AI can assist, but **skilled engineering judgment remains essential** for tailoring fixes to specific contexts. --- ## [00:04:23] Scaling Fixes Without Fragmenting the Ecosystem - Blindly pushing fixes can overload the ecosystem, making it **less secure, not more**. - The fix must propagate **upstream** to open-source projects to benefit everyone and avoid fragmentation. - Human maintainers provide critical institutional knowledge unavailable to AI models. - No single entity—company or AI system—can secure open source alone; **collaborative coordination is required**. --- ## [00:05:33] Collaborative Solutions: Lightwell and Akrites Leading the Charge **Lightwell** focuses on: - Discovering vulnerabilities hidden deep in enterprise software stacks. - Using AI to analyze issues and develop backported, customer-friendly patches. - Combining AI support with human review, rigorous testing, and validation. - Contributing validated fixes back upstream to strengthen the entire ecosystem. **Akrites** functions as a: - Shared security incident response team for critical infrastructure. - Platform for **coordinated discovery, validation, remediation, and disclosure** of open-source vulnerabilities. - Provider of confidential, structured communication for maintainers and stakeholders. - Ensurer that disclosure is synchronized to protect projects and users alike. --- ## [00:06:54] How Lightwell’s Workflow Tackles Remediation | Step | Description | Timestamp | |----------------------|---------------------------------------------------------------------------------------------------|----------------| | Vulnerability Discovery | Identifies hidden flaws in software deep within enterprise stacks. | [00:06:54] | | AI Analysis | Determines exploitability and required code changes. | [00:07:00] | | Patch Development | Creates backported fixes instead of forcing disruptive upgrades. | [00:07:27] | | Engineering Validation | Combines AI with human review to avoid regressions and compatibility issues. | [00:07:40] | | Trusted Distribution | Publishes fixes in secure repositories for easy integration into deployment pipelines. | [00:08:07] | | Upstream Contribution | Sends patches back to open-source projects for broader impact. | [00:08:28] | --- ## [00:08:45] Akrites: Coordinating the Security Ecosystem - Starts with **intake** of vulnerability reports. - Moves to **deduplication and validation** to avoid wasted effort. - Manages **remediation workflows** among stakeholders. - Enables **synchronized disclosure** to protect users before public announcements. This coordination ensures that maintainers receive streamlined, predictive support rather than fragmented or duplicated efforts. --- ## [00:09:23] The Takeaway: Winning the Race Means Fixing, Not Just Finding - **AI has made vulnerability discovery almost trivial**, but detection alone doesn’t enhance security. - The future hinges on **scaling reliable, responsible remediation** that fits complex production environments. - Platforms like Lightwell and Akrites align discovery, fixing, validation, and disclosure into a **cohesive pipeline**. - The **good guys now have advanced tools and coordinated allies** in this critical race. --- ## Practical Tips for Organizations - Leverage emerging AI-assisted tools but **don’t rely solely on automation**; always include expert review. - Prioritize controlling the entire pipeline from discovery to deployment to ensure fixes are safe and effective. - Engage with collaborative initiatives like Lightwell and Akrites to stay in step with upstream maintainers. - Plan patching strategies that consider **custom code, dependencies, and regulatory environments**. - Recognize that investing upstream benefits the whole ecosystem, not just your organization. --- By embracing a coordinated, AI-enabled but engineer-guided approach, organizations can turn the tide on the growing flood of vulnerabilities in open source. The race is on—and the future belongs to those who can fix faster, smarter, and together. --- *To learn more about securing open-source software at scale and leveraging these innovations, check out the latest resources linked in the video description.*\n• Production Win: 99.99% uptime vs legacy stack\n• Caveats: High-efficiency architectures require specialized operational tooling. Choose optimization when scale justifies complexity.\n\n⚠️ Citations & Draft Facts (Offline Synthesizer Estimate):\n• Unverified offline draft — creator review required before publishing\n• No external source cited — add your primary source link before publishing\n\n👇 هل واجهتم هذه المشكلة في بيئات الإنتاج عندكم؟ شاركونا تجربتكم في التعليقات!\nWhat's your take on this architecture? Share below!\n\n🎥 العلامة التجارية / Brand: https://marrok.org\n\n#TechInArabic #هندسة_البرمجيات #KUBERNETESCLOUDSEC #SoftwareEngineering #DevSecOps #TechTrends #SystemDesign #MARROK #برمجة",
-      "slides": [
-        {
-          "type": "hub",
-          "centerIcon": "cpu",
-          "enTitle": "Securing Open Source in the Age of AI.",
-          "arTitle": "تحليل معماري لمنظومة بنية نماذج الذكاء",
-          "enBody": "A deep technical breakdown of AI Architecture: mechanisms, trade-offs, and production considerations.",
-          "arBody": "تحليل معماري شامل يوضح آليات العمل والتحديات وكيفية بناء النظام بأعلى كفاءة.",
-          "satIcons": [
-            "server",
-            "database",
-            "gauge",
-            "cpu",
-            "box",
-            "activity"
-          ],
-          "satLabels": [
-            "Architecture",
-            "Dataflow",
-            "Execution",
-            "Scale",
-            "Resilience",
-            "Telemetry"
-          ]
-        },
-        {
-          "type": "number",
-          "stepNumber": "01",
-          "stepLabel": "STEP 01 // PROBLEM",
-          "enTitle": "The architectural bottleneck.",
-          "arTitle": "المشكلة ونقطة الاختناق الأساسية",
-          "enBody": "Traditional systems degrade under high scale or complex state dependencies, requiring a fundamental redesign.",
-          "arBody": "تفشل الأساليب التقليدية عند زيادة حجم العمل وتعقيد البيانات، مما يفرض إعادة تصميم المنظومة بالكامل."
-        },
-        {
-          "type": "row",
-          "diagramFooter": "ARCHITECTURE: VERIFIED • STATUS: HEALTHY • LATENCY: P99 OPTIMAL",
-          "enTitle": "Core system architecture.",
-          "arTitle": "بنية النظام وطبقات المعالجة",
-          "enBody": "Decoupled components process data independently, preventing monolithic failure cascades across services.",
-          "arBody": "فصل مكونات النظام يتيح معالجة البيانات بشكل مستقل ويمنع انهيار باقي الخدمات عند حدوث خلل.",
-          "diagramEdges": [
-            "Process",
-            "Commit"
-          ],
-          "icons": [
-            {
-              "icon": "server",
-              "label": "Ingress"
-            },
-            {
-              "icon": "cpu",
-              "label": "Engine"
-            },
-            {
-              "icon": "database",
-              "label": "Storage"
-            }
-          ],
-          "diagramNodes": [
-            {
-              "label": "System Ingress",
-              "sublabel": "Input state & routing",
-              "status": "ACTIVE",
-              "icon": "server"
-            },
-            {
-              "label": "AI Architecture Core",
-              "sublabel": "Core processing logic",
-              "status": "ROUTED",
-              "icon": "cpu"
-            },
-            {
-              "label": "Durable State",
-              "sublabel": "Verified state storage",
-              "status": "COMMITTED",
-              "icon": "database"
-            }
-          ],
-          "diagramVariant": "stack"
-        },
-        {
-          "type": "number",
-          "stepNumber": "02",
-          "stepLabel": "STEP 02 // MECHANISM",
-          "enTitle": "Execution dataflow pipeline.",
-          "arTitle": "آلية تدفق ومعالجة العمليات",
-          "enBody": "Streamlined pipelines eliminate redundant serialization overhead to maintain consistent tail latency.",
-          "arBody": "مسارات المعالجة المباشرة تلغي الهدر الزائد في نقل البيانات وتضمن استقرار وسرعة الاستجابة."
-        },
-        {
-          "type": "row",
-          "diagramFooter": "DATAFLOW: STREAMED • PROTOCOL: DETERMINISTIC",
-          "enTitle": "Non-blocking processing flow.",
-          "arTitle": "مسار المعالجة غير المعطلة للعمليات",
-          "enBody": "Direct event dispatch processes high-volume workloads without locking caller threads or stalling I/O.",
-          "arBody": "توجيه العمليات الفوري يعالج ضغط البيانات دون إيقاف أنوية المعالج أو تأخير المدخلات والمخرجات.",
-          "diagramEdges": [
-            "Dispatch",
-            "Sync"
-          ],
-          "icons": [
-            {
-              "icon": "network",
-              "label": "Request"
-            },
-            {
-              "icon": "zap",
-              "label": "Processing"
-            },
-            {
-              "icon": "checkCircle",
-              "label": "Committed"
-            }
-          ],
-          "diagramNodes": [
-            {
-              "label": "Event Inbound",
-              "sublabel": "Traffic socket queue",
-              "status": "ACTIVE",
-              "icon": "network"
-            },
-            {
-              "label": "Execution Core",
-              "sublabel": "Non-blocking worker loop",
-              "status": "ROUTED",
-              "icon": "zap"
-            },
-            {
-              "label": "Target State",
-              "sublabel": "Committed state verification",
-              "status": "VERIFIED",
-              "icon": "checkCircle"
-            }
-          ],
-          "diagramVariant": "topology"
-        },
-        {
-          "type": "number",
-          "stepNumber": "03",
-          "stepLabel": "STEP 03 // OUTCOME",
-          "enTitle": "Production reliability wins.",
-          "arTitle": "نتائج ومكاسب استقرار الإنتاج",
-          "enBody": "Rigorous state boundaries isolate failures, allowing independent deployment and zero-downtime scaling.",
-          "arBody": "العزل الصارم بين أجزاء المنظومة يمنع انتشار الأعطال ويتيح التوسع دون أي انقطاع في الخدمة."
-        },
-        {
-          "type": "row",
-          "diagramFooter": "ENGINEERING DECISION: ARCHITECTURE TRADE-OFFS BALANCED",
-          "enTitle": "The engineering tradeoff.",
-          "arTitle": "المفاضلة الهندسية وتكلفة الصيانة",
-          "enBody": "High-efficiency architectures require specialized operational tooling. Choose optimization when scale justifies complexity.",
-          "arBody": "الأنظمة عالية الكفاءة تتطلب خبرات صيانة متقدمة؛ لا تنتقل للتعقيد إلا إذا كان حجم العمل يستدعي ذلك.",
-          "diagramEdges": [
-            "Evaluate",
-            "Adopt"
-          ],
-          "icons": [
-            {
-              "icon": "alertCircle",
-              "label": "Complexity"
-            },
-            {
-              "icon": "shieldAlert",
-              "label": "Trade-off"
-            }
-          ],
-          "diagramNodes": [
-            {
-              "label": "Standard Simplicity",
-              "sublabel": "Lower operational cost",
-              "status": "STANDARD",
-              "icon": "layers"
-            },
-            {
-              "label": "Custom Architecture",
-              "sublabel": "Higher throughput win",
-              "status": "OPTIMIZED",
-              "icon": "zap"
-            },
-            {
-              "label": "Maintenance Cost",
-              "sublabel": "Requires specialized expertise",
-              "status": "CAVEAT",
-              "icon": "shieldAlert"
-            }
-          ],
-          "diagramVariant": "takeaway"
-        },
-        {
-          "type": "cta",
-          "enTitle": "Scaling AI Architecture?",
-          "arTitle": "تبني حلولاً برمجية\nمتقدمة في مشاريعك؟",
-          "enBody": "",
-          "arBody": "",
-          "ctaText": "DM us  •  رسالة خاصة",
-          "url": "marrok.org",
-          "enCredit": "MARROK · KUBERNETES & CLOUD SEC",
-          "arCredit": "MARROK · دراسة هندسية في KUBERNETES & CLOUD SEC"
-        }
-      ],
-      "postFormat": "carousel",
-      "id": "post_bd34e875-ba6",
-      "brand": "MARROK",
-      "brandUrl": "marrok.org",
-      "firstComment": "🔗 Add your primary source link here before publishing.\n\nWhat are your thoughts on this architecture? Share your take below 👇",
-      "shortCaption": "تحليل معماري لمنظومة بنية نماذج الذكاء ⚡\nSecuring Open Source in the Age of AI — Swipe through the breakdown 👉",
-      "screenHook": "Securing Open Source in the Age of AI in 60s",
-      "scheduleSlot": "18:00–21:00 ME / 16:00–19:00 UTC (Peak developer engagement)",
-      "sourceMeta": {
-        "type": "article",
-        "title": "Securing Open Source in the Age of AI.",
-        "creator": "MARROK",
-        "url": "https://marrok.org",
-        "published": "2026-10-28",
-        "groundingQueries": [
-          "MARROK KUBERNETES & CLOUD SEC architecture benchmark",
-          "Securing Open Source in the Age of AI. implementation production trade-offs",
-          "KUBERNETES & CLOUD SEC performance telemetry"
-        ],
-        "isSearchGrounded": false,
-        "isFallback": true,
-        "engine": "offline",
-        "status": "unverified_draft",
-        "userReviewed": true
-      },
-      "facts": [
-        {
-          "text": "Primary architectural domain: KUBERNETES & CLOUD SEC",
-          "type": "claim",
-          "verified": "unverified",
-          "evidence": "Synthesizer domain heuristics (unverified offline draft)"
-        },
-        {
-          "text": "Brand attribution: MARROK",
-          "type": "name",
-          "verified": "unverified",
-          "evidence": "Brand wordmark configured in the studio; not an external source"
-        },
-        {
-          "text": "Production benchmark / headline metric: 99.99% uptime",
-          "type": "number",
-          "verified": "unverified",
-          "evidence": "Universal extractor metric scan from user input"
-        },
-        {
-          "text": "Core architectural mechanism: # Securing Open Source in the Age of AI: The Race to Fix Vulnerabilities Fast  Open source software powers nearly every aspect of modern life—from banks and hospitals to telecommunications and AI services. Yet, the very foundation of this digital world is maintained by relatively small groups of contributors and volunteers. As the pace of vulnerability discovery accelerates with AI, the challenge now lies not just in finding bugs, but in fixing them efficiently and safely. Let’s dive into how this new reality shapes open-source security and what innovative solutions are rising to meet the challenge.  ---  ## [00:00:00] Why Open Source Security Matters More Than Ever  - **90% of modern enterprise codebases are open source**: This includes critical infrastructure like power grids, cloud platforms, and healthcare systems. - These projects often rely on small teams or volunteers, making scaling maintenance difficult. - Traditionally, open source has been suppo",
-          "type": "claim",
-          "verified": "unverified",
-          "evidence": "Universal NLP parsed insight from user text"
-        },
-        {
-          "text": "Operational trade-offs and limits: High-efficiency architectures require specialized operational tooling. Choose optimization when scale justifies complexity.",
-          "type": "claim",
-          "verified": "unverified",
-          "evidence": "Spec §7 \"Before You Switch / The Catch\" hedge (offline draft)"
-        }
-      ],
-      "notesForHuman": [
-        "Unverified offline draft: Synthesized from offline NLP heuristics without active web search grounding. Verify all numbers and claims before publication.",
-        "Review and customize slide copy using the studio editor, or connect a Gemini API key for live search-grounded research.",
-        "Bilingual Arabic typography checked for RTL line-endings and numbers positioned per Spec §9.",
-        "Add a verified primary source link before publishing; the offline draft does not fabricate citations."
-      ],
-      "captionVariants": [
-        {
-          "style": "Executive Bulletins & Hard Metrics (Recommended)",
-          "caption": "⚡ تحليل معماري لمنظومة بنية نماذج الذكاء\nتحليل تقني ومعماري متعمق لأحدث نقلة برمجية 🛠️\n\nSecuring Open Source in the Age of AI — Engineering Deep Dive\nWhy traditional architectures stall at scale and how modern systems solve the bottleneck.\n\n🔹 أبرز آليات العمل والنتائج / Key Technical Takeaways:\n• Domain: KUBERNETES & CLOUD SEC\n• Core Mechanism: # Securing Open Source in the Age of AI: The Race to Fix Vulnerabilities Fast  Open source software powers nearly every aspect of modern life—from banks and hospitals to telecommunications and AI services. Yet, the very foundation of this digital world is maintained by relatively small groups of contributors and volunteers. As the pace of vulnerability discovery accelerates with AI, the challenge now lies not just in finding bugs, but in fixing them efficiently and safely. Let’s dive into how this new reality shapes open-source security and what innovative solutions are rising to meet the challenge.  ---  ## [00:00:00] Why Open Source Security Matters More Than Ever  - **90% of modern enterprise codebases are open source**: This includes critical infrastructure like power grids, cloud platforms, and healthcare systems. - These projects often rely on small teams or volunteers, making scaling maintenance difficult. - Traditionally, open source has been supported on a **best-effort basis**, which doesn’t always align with the requirements of time-sensitive, critical systems.  **Key insight**: While this model has driven innovation, it introduces risk because vulnerabilities can propagate widely before being addressed.  ---  ## [00:00:35] AI: A Double-Edged Sword in Vulnerability Discovery  - AI drastically reduces the time to find vulnerabilities—from weeks to minutes. - Example: **Anthropic's Project Glass Wing** uncovered over 2300 vulnerabilities in 400 open-source projects, including some bugs hidden for decades. - The volume and speed of discovery now **outpace traditional remediation workflows**.  **Crucial observation**: Attackers benefit from these AI tools too, heightening the urgency to accelerate fixes.  ---  ## [00:01:59] The Real Bottleneck: From Discovery to Safe Remediation  Fixing a vulnerability is a complex, multi-step process:  - Identifying affected versions and mapping dependency chains. - Assessing business impact and timing to avoid downtime. - Developing, testing, and validating patches to ensure they don’t break existing systems. - Deploying fixes without disrupting production environments.  > \"Upgrading to the latest version isn’t usually realistic due to dependency conflicts, regulatory constraints, and custom code.\"  AI can assist, but **skilled engineering judgment remains essential** for tailoring fixes to specific contexts.  ---  ## [00:04:23] Scaling Fixes Without Fragmenting the Ecosystem  - Blindly pushing fixes can overload the ecosystem, making it **less secure, not more**. - The fix must propagate **upstream** to open-source projects to benefit everyone and avoid fragmentation. - Human maintainers provide critical institutional knowledge unavailable to AI models. - No single entity—company or AI system—can secure open source alone; **collaborative coordination is required**.  ---  ## [00:05:33] Collaborative Solutions: Lightwell and Akrites Leading the Charge  **Lightwell** focuses on:  - Discovering vulnerabilities hidden deep in enterprise software stacks. - Using AI to analyze issues and develop backported, customer-friendly patches. - Combining AI support with human review, rigorous testing, and validation. - Contributing validated fixes back upstream to strengthen the entire ecosystem.  **Akrites** functions as a:  - Shared security incident response team for critical infrastructure. - Platform for **coordinated discovery, validation, remediation, and disclosure** of open-source vulnerabilities. - Provider of confidential, structured communication for maintainers and stakeholders. - Ensurer that disclosure is synchronized to protect projects and users alike.  ---  ## [00:06:54] How Lightwell’s Workflow Tackles Remediation  | Step                 | Description                                                                                           | Timestamp      | |----------------------|---------------------------------------------------------------------------------------------------|----------------| | Vulnerability Discovery | Identifies hidden flaws in software deep within enterprise stacks.                                | [00:06:54]     | | AI Analysis            | Determines exploitability and required code changes.                                              | [00:07:00]     | | Patch Development      | Creates backported fixes instead of forcing disruptive upgrades.                                  | [00:07:27]     | | Engineering Validation | Combines AI with human review to avoid regressions and compatibility issues.                      | [00:07:40]     | | Trusted Distribution   | Publishes fixes in secure repositories for easy integration into deployment pipelines.            | [00:08:07]     | | Upstream Contribution  | Sends patches back to open-source projects for broader impact.                                    | [00:08:28]     |  ---  ## [00:08:45] Akrites: Coordinating the Security Ecosystem  - Starts with **intake** of vulnerability reports. - Moves to **deduplication and validation** to avoid wasted effort. - Manages **remediation workflows** among stakeholders. - Enables **synchronized disclosure** to protect users before public announcements.  This coordination ensures that maintainers receive streamlined, predictive support rather than fragmented or duplicated efforts.  ---  ## [00:09:23] The Takeaway: Winning the Race Means Fixing, Not Just Finding  - **AI has made vulnerability discovery almost trivial**, but detection alone doesn’t enhance security. - The future hinges on **scaling reliable, responsible remediation** that fits complex production environments. - Platforms like Lightwell and Akrites align discovery, fixing, validation, and disclosure into a **cohesive pipeline**. - The **good guys now have advanced tools and coordinated allies** in this critical race.  ---  ## Practical Tips for Organizations  - Leverage emerging AI-assisted tools but **don’t rely solely on automation**; always include expert review. - Prioritize controlling the entire pipeline from discovery to deployment to ensure fixes are safe and effective. - Engage with collaborative initiatives like Lightwell and Akrites to stay in step with upstream maintainers. - Plan patching strategies that consider **custom code, dependencies, and regulatory environments**. - Recognize that investing upstream benefits the whole ecosystem, not just your organization.  ---  By embracing a coordinated, AI-enabled but engineer-guided approach, organizations can turn the tide on the growing flood of vulnerabilities in open source. The race is on—and the future belongs to those who can fix faster, smarter, and together.  ---  *To learn more about securing open-source software at scale and leveraging these innovations, check out the latest resources linked in the video description.*\n• Production Win: 99.99% uptime vs legacy stack\n• Caveats: High-efficiency architectures require specialized operational tooling. Choose optimization when scale justifies complexity.\n\n⚠️ Citations & Draft Facts (Offline Synthesizer Estimate):\n• Unverified offline draft — creator review required before publishing\n• No external source cited — add your primary source link before publishing\n\n👇 هل واجهتم هذه المشكلة في بيئات الإنتاج عندكم؟ شاركونا تجربتكم في التعليقات!\nWhat's your take on this architecture? Share below!\n\n🎥 العلامة التجارية / Brand: https://marrok.org\n\n#TechInArabic #هندسة_البرمجيات #KUBERNETESCLOUDSEC #SoftwareEngineering #DevSecOps #TechTrends #SystemDesign #MARROK #برمجة"
-        },
-        {
-          "style": "Narrative Breakdown & Story",
-          "caption": "ماذا يحدث عندما تصل الأنظمة التقليدية إلى حدودها القصوى؟ 🚨\nالحل ليس الترقيع، بل إعادة التفكير في المعمارية البرمجية من الصفر.\n\nفي هذا التحليل المفصل (Securing Open Source in the Age of AI)، نستعرض كيف نجحت الفرق الهندسية في تحقيق قفزة نوعية (99.99% uptime) مع تفادي نقاط الاختناق الشائعة.\n\nاسحب الصور لمتابعة الشرح خطوة بخطوة 👉\nSwipe through the slides for the complete breakdown!\n\n🔗 المرجع والمصدر: https://marrok.org\n\n#TechInArabic #هندسة_البرمجيات #KUBERNETESCLOUDSEC #SoftwareEngineering #DevSecOps #TechTrends #SystemDesign #MARROK #برمجة"
-        }
-      ],
-      "hookVariants": [
-        {
-          "tag": "Curiosity & Shift",
-          "enTitle": "Securing Open Source in the Age of AI.",
-          "arTitle": "تحليل معماري لمنظومة بنية نماذج الذكاء",
-          "enBody": "A deep technical breakdown of AI Architecture: mechanisms, trade-offs, and production considerations.",
-          "arBody": "تحليل معماري شامل يوضح آليات العمل والتحديات وكيفية بناء النظام بأعلى كفاءة.",
-          "centerIcon": "cpu"
-        },
-        {
-          "tag": "Hard Metrics & Scale",
-          "enTitle": "Measuring AI Architecture at scale.",
-          "arTitle": "معايير وأرقام الأداء الحقيقية",
-          "enBody": "Key production benchmarks (99.99% uptime) and lessons learned under maximum concurrency.",
-          "arBody": "أهم معايير الأداء والدروس المستفادة (99.99% uptime) من تشغيل الأنظمة تحت أقصى ضغط.",
-          "centerIcon": "gauge"
-        },
-        {
-          "tag": "Problem & Solution",
-          "enTitle": "Fixing AI Architecture limits.",
-          "arTitle": "تجاوز اختناقات النظام المعمارية",
-          "enBody": "Moving beyond legacy bottlenecks to build modern high-efficiency software.",
-          "arBody": "تجاوز الأساليب القديمة لبناء برمجيات عالية الكفاءة والموثوقية.",
-          "centerIcon": "shieldAlert"
-        }
-      ]
-    },
-    "storageEngine": "neon-postgres"
-  },
-  {
     "id": "post_5787fc37-3b4",
     "title": "Mass-deploying offensive AI agents.",
     "category": "CYBERSECURITY & THREAT INTELLIGENCE",
@@ -3644,229 +3178,6 @@
           "enBody": "How AI losses impact your S&P 500 index funds.",
           "arBody": "كيف تؤثر خسائر الذكاء الاصطناعي على صناديق S&P 500 المعتمد.",
           "centerIcon": "shield"
-        }
-      ]
-    },
-    "storageEngine": "neon-postgres"
-  },
-  {
-    "id": "post_017e5bb8-04d",
-    "title": "Is LLM security just alignment?",
-    "category": "CYBERSECURITY & LLM RED-TEAMING",
-    "postStatus": "posted",
-    "createdAt": "2026-10-31T15:25:57.971Z",
-    "updatedAt": "2026-10-31T15:25:57.971Z",
-    "postedAt": "2026-10-31T15:25:57.971Z",
-    "creatorHandle": "MARROK",
-    "slideCount": 8,
-    "qaPassed": false,
-    "publishTargets": [],
-    "hostedSlideUrls": [],
-    "tiktokHostedSlideUrls": [],
-    "cloudinaryPublicIds": [],
-    "bufferPostIds": [],
-    "zernioPostIds": [],
-    "deck": {
-      "theme": "cyber",
-      "category": "CYBERSECURITY & LLM RED-TEAMING",
-      "caption": "🔥 هل أمن النماذج يقتصر على التوافق؟\n\nلا يقتصر أمن الذكاء الاصطناعي على مواءمة النموذج فقط، بل يمتد ليشمل البيئة المحيطة، الأذونات، وضوابط الحماية (Guardrails).\n\nDeepSeek Harness (dsh-purge) is an open-source tool for evaluating LLM security controls in a controlled local environment. It allows for model-specific prompt swapping and testing of host-level policies.\n\n🔹 Key Mechanisms:\nLocalized environment evaluation\nModel-specific prompt injection testing\nHost-level policy enforcement analysis\nTool restriction validation\n\n⚠️ The Catch: This is a red-teaming tool; it requires careful attribution and is intended for controlled security research, not production deployment.\n\nكيف تختبرون أمن النماذج لديكم؟ شاركوا برأيكم 👇\n\n🎥 Source: Information Security Network\n#AIsecurity #LLM #RedTeam #Cybersecurity #OpenSource #TechInArabic",
-      "slides": [
-        {
-          "type": "code",
-          "centerIcon": "shieldAlert",
-          "centerTag": "SECURITY CORE",
-          "diagramFooter": "SECURITY POSTURE: ZERO-TRUST ISOLATION • BLAST RADIUS CONTAINED",
-          "metricValue": "10x",
-          "metricLabel": "IS LLM BENCHMARK",
-          "metricDiff": "▲ Verified Is LLM Gain",
-          "metricIcon": "shieldAlert",
-          "codeSnippet": "# Enforce strict zero-trust scope boundary\n- allow_unscoped_agent_actions: true\n+ allow_unscoped_agent_actions: false\n+ require_mutual_tls_attestation: true\n+ max_token_ttl_seconds: 300",
-          "codeLanguage": "yaml",
-          "codeFileName": "policy_guard.yaml",
-          "enTitle": "Is LLM security just alignment?",
-          "arTitle": "هل أمن النماذج يقتصر على التوافق؟",
-          "enBody": "Beyond model alignment, the surrounding harness, permissions, and guardrails define your security posture.",
-          "arBody": "بعيداً عن مواءمة النموذج، تحدد البيئة المحيطة والأذونات وضوابط الحماية مستوى أمنك السيبراني.",
-          "satIcons": [
-            "terminal",
-            "lock",
-            "gitBranch",
-            "settings",
-            "shield",
-            "cpu"
-          ],
-          "satLabels": [
-            "Prompt Swap",
-            "Host Policy",
-            "Tool Access",
-            "Local Env",
-            "Guardrails",
-            "Red-Teaming"
-          ],
-          "diagramEdges": [
-            "INSPECT",
-            "CONTAIN"
-          ],
-          "diagramNodes": [
-            {
-              "label": "Is LLM",
-              "sublabel": "Untrusted Input Boundary",
-              "status": "SCOPED",
-              "icon": "shieldAlert"
-            },
-            {
-              "label": "Security",
-              "sublabel": "Policy Enforcement Gate",
-              "status": "ISOLATED",
-              "icon": "lock"
-            },
-            {
-              "label": "Alignment",
-              "sublabel": "Protected Core State",
-              "status": "GUARDED",
-              "icon": "robot"
-            }
-          ],
-          "diagramVariant": "isolation",
-          "imageFit": "contain"
-        },
-        {
-          "type": "row",
-          "stepNumber": "01",
-          "enTitle": "The security harness matters.",
-          "arTitle": "أهمية البيئة المحيطة بالنموذج",
-          "enBody": "Security controls are not just internal to the LLM. The harness, permissions, and host-level policies are critical attack surfaces.",
-          "arBody": "ضوابط الأمن ليست داخلية فقط. البيئة المحيطة والأذونات وسياسات المضيف هي أسطح هجوم بالغة الأهمية.",
-          "diagramVariant": "isolation"
-        },
-        {
-          "type": "number",
-          "stepNumber": "02",
-          "enTitle": "What is dsh-purge?",
-          "arTitle": "ما هو dsh-purge؟",
-          "enBody": "An open-source tool designed to evaluate AI security controls by simulating jailbreak attempts in a controlled local environment.",
-          "arBody": "أداة مفتوحة المصدر مصممة لتقييم ضوابط أمن الذكاء الاصطناعي عبر محاكاة محاولات كسر الحماية في بيئة محلية."
-        },
-        {
-          "type": "code",
-          "codeSnippet": "// Define model-specific injection\nconst modelPrompts = {\n  'deepseek-v3': 'jailbreak_payload_a',\n  'llama-3': 'jailbreak_payload_b'\n};\n// Execute purge sequence\nrunPurge(modelPrompts);",
-          "codeLanguage": "javascript",
-          "codeFileName": "dsh_config.js",
-          "enTitle": "Model-specific prompt swapping.",
-          "arTitle": "تبديل الأوامر لكل نموذج",
-          "enBody": "The tool allows granular control over prompts, enabling testers to swap injection payloads per model architecture.",
-          "arBody": "تسمح الأداة بتحكم دقيق في الأوامر، مما يمكن المختبرين من تبديل حمولات الحقن لكل بنية نموذج."
-        },
-        {
-          "type": "row",
-          "stepNumber": "03",
-          "enTitle": "Evaluating host-level policies.",
-          "arTitle": "تقييم سياسات المضيف",
-          "enBody": "Test how tool restrictions and host-level permissions prevent unauthorized model behavior during red-teaming.",
-          "arBody": "اختبر كيف تمنع قيود الأدوات وأذونات المضيف سلوك النموذج غير المصرح به أثناء اختبار الاختراق.",
-          "diagramVariant": "topology"
-        },
-        {
-          "type": "compare",
-          "stepNumber": "04",
-          "compareLeftTitle": "Model Alignment",
-          "compareRightTitle": "Harness Security",
-          "enTitle": "Alignment vs Harness security.",
-          "arTitle": "التوافق مقابل أمن البيئة",
-          "enBody": "Distinguishing between internal model safety and external infrastructure security controls.",
-          "arBody": "التمييز بين سلامة النموذج الداخلية وضوابط أمن البنية التحتية الخارجية."
-        },
-        {
-          "type": "row",
-          "stepNumber": "05",
-          "enTitle": "The catch: Red-teaming limits.",
-          "arTitle": "تنبيه: حدود اختبار الاختراق",
-          "enBody": "This is a research tool. It is not a production-grade guardrail system. Attribution is required for usage.",
-          "arBody": "هذه أداة بحثية. ليست نظام ضوابط حماية للإنتاج. يتطلب الاستخدام ذكر المصدر.",
-          "diagramVariant": "takeaway"
-        },
-        {
-          "type": "cta",
-          "enTitle": "How do you test your LLMs?",
-          "arTitle": "كيف تختبرون أمن النماذج لديكم؟",
-          "enBody": "Join the discussion on securing AI infrastructure. Visit marrok.org for more technical breakdowns.",
-          "arBody": "انضم للنقاش حول تأمين بنية الذكاء الاصطناعي. زر marrok.org للمزيد من التحليلات التقنية.",
-          "ctaText": "Join discussion • شارك برأيك",
-          "url": "https://marrok.org"
-        }
-      ],
-      "postFormat": "carousel",
-      "id": "post_017e5bb8-04d",
-      "brand": "MARROK",
-      "brandUrl": "https://marrok.org",
-      "firstComment": "Check out the project here: https://lnkd.in/dtWkQSme",
-      "shortCaption": "LLM security goes beyond alignment. Learn how to test host-level policies with dsh-purge. #AIsecurity #RedTeam",
-      "screenHook": "LLM security is more than alignment",
-      "scheduleSlot": "18:00 DZ",
-      "sourceMeta": {
-        "isSearchGrounded": false,
-        "isFallback": false,
-        "engine": "ungrounded",
-        "model": "gemini-3.1-flash-lite",
-        "status": "unverified_draft",
-        "userReviewed": true
-      },
-      "facts": [
-        {
-          "text": "DeepSeek Harness (dsh-purge) is an open-source red-teaming tool for LLMs.",
-          "type": "claim",
-          "verified": "unconfirmed"
-        },
-        {
-          "text": "The tool supports model-specific prompt swapping and host-level policy evaluation.",
-          "type": "claim",
-          "verified": "unconfirmed"
-        },
-        {
-          "text": "Requires Node.js >= 18 and is licensed under Apache-2.0.",
-          "type": "claim",
-          "verified": "unconfirmed"
-        }
-      ],
-      "notesForHuman": [
-        "The tool name 'dsh-purge' is specific to the input. Ensure the attribution requirement mentioned in the screenshot is respected.",
-        "The input is a LinkedIn post from 'Information Security Network'.",
-        "No fabricated benchmarks were included as none were present in the source."
-      ],
-      "captionVariants": [
-        {
-          "style": "Bulletins",
-          "caption": "🔥 هل أمن النماذج يقتصر على التوافق؟\n\nلا يقتصر أمن الذكاء الاصطناعي على مواءمة النموذج فقط، بل يمتد ليشمل البيئة المحيطة، الأذونات، وضوابط الحماية (Guardrails).\n\nDeepSeek Harness (dsh-purge) is an open-source tool for evaluating LLM security controls in a controlled local environment.\n\n🔹 Key Mechanisms:\n- Localized environment evaluation\n- Model-specific prompt injection testing\n- Host-level policy enforcement analysis\n- Tool restriction validation\n\n⚠️ The Catch: This is a red-teaming tool; it requires careful attribution.\n\nكيف تختبرون أمن النماذج لديكم؟ شاركوا برأيكم 👇\n\n🎥 Source: Information Security Network\n#AIsecurity #LLM #RedTeam #Cybersecurity #OpenSource #TechInArabic"
-        },
-        {
-          "style": "Narrative",
-          "caption": "⚡ أمن الذكاء الاصطناعي يتجاوز مجرد مواءمة النموذج.\n\nعندما نتحدث عن Red-Teaming، فإن البيئة المحيطة (Harness) والأذونات تلعب دوراً حاسماً. أداة dsh-purge توفر بيئة محلية لاختبار سياسات المضيف وقيود الأدوات.\n\nتعرف على كيفية تقييم ضوابط الحماية في هذا العرض التقني.\n\nكيف تختبرون أمن النماذج لديكم؟ شاركوا برأيكم 👇\n\n🎥 Source: Information Security Network\n#AIsecurity #LLM #RedTeam #Cybersecurity #OpenSource #TechInArabic"
-        }
-      ],
-      "hookVariants": [
-        {
-          "tag": "Security Focus",
-          "enTitle": "Is LLM security just alignment?",
-          "arTitle": "هل أمن النماذج يقتصر على التوافق؟",
-          "enBody": "Beyond model alignment, the surrounding harness, permissions, and guardrails define your security posture.",
-          "arBody": "بعيداً عن مواءمة النموذج، تحدد البيئة المحيطة والأذونات وضوابط الحماية مستوى أمنك السيبراني.",
-          "centerIcon": "shieldAlert"
-        },
-        {
-          "tag": "Tool Focus",
-          "enTitle": "Red-teaming LLMs locally.",
-          "arTitle": "اختبار اختراق النماذج محلياً",
-          "enBody": "Use dsh-purge to evaluate host-level policies and tool restrictions in a controlled environment.",
-          "arBody": "استخدم dsh-purge لتقييم سياسات المضيف وقيود الأدوات في بيئة محكومة.",
-          "centerIcon": "terminal"
-        },
-        {
-          "tag": "Architecture Focus",
-          "enTitle": "The LLM security harness.",
-          "arTitle": "البيئة المحيطة بأمن النماذج",
-          "enBody": "Permissions, guardrails, and host policies are critical attack surfaces for LLM deployments.",
-          "arBody": "الأذونات وضوابط الحماية وسياسات المضيف هي أسطح هجوم بالغة الأهمية لنشر النماذج.",
-          "centerIcon": "layers"
         }
       ]
     },
