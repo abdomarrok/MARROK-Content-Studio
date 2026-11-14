@@ -353,11 +353,11 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
           </button>
         </div>
 
-        {/* Engine Provenance Status */}
+        {/* Engine Provenance Status (Unboxed Editorial Label) */}
         <button
           type="button"
           onClick={onInspectEngine}
-          className={`hidden md:inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] font-mono font-bold transition-colors cursor-pointer shrink-0 ${engineBadge.cls}`}
+          className={`hidden xl:inline-flex items-center gap-1 px-1.5 py-1 text-[10px] font-mono font-semibold hover:text-white transition-colors cursor-pointer shrink-0 ${engineBadge.cls}`}
           title="Active synthesis engine & verification status (click to inspect in Publish tab)"
         >
           <span>{engineBadge.label}</span>

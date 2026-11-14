@@ -5,10 +5,93 @@ import {
   ThemePalette,
   VisualSystemOptions,
 } from '../../types.ts';
+import { detectMentionedThirdPartyBrands } from '../techLogos.ts';
 import { CANVAS_DIMENSION_PRESET_LIST, getCanvasDimensionSpec } from './constants.ts';
 import { renderSlideToCanvas } from './renderSlide.ts';
 
 export type ExportBundleMode = 'active' | 'dual' | 'all' | CanvasDimensionPreset;
+
+export const DEFAULT_EXPORT_JPEG_QUALITY = 0.92;
+
+export function buildTopicSlugForExport(carousel: CarouselData): string {
+  const raw =
+    carousel.slides?.[0]?.enTitle ||
+    carousel.category ||
+    'engineering';
+  const slug = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 36);
+  return slug || 'engineering';
+}
+
+export function formatBilingualExportCaptionWithHashtags(carousel: CarouselData): string {
+  const firstSlide = carousel.slides?.[0];
+  const enHook = (firstSlide?.enTitle || '').trim();
+  const arHook = (firstSlide?.arTitle || '').trim();
+  const enSummary = (firstSlide?.enBody || '').trim();
+  const arSummary = (firstSlide?.arBody || '').trim();
+  const rawCaption = (carousel.caption || '').trim();
+
+  const topicWords = (carousel.category || enHook || 'SystemDesign')
+    .split(/[^A-Za-z0-9]+/)
+    .filter((w: string) => w.length >= 3);
+  const topicTag =
+    topicWords.length > 0
+      ? `#${topicWords.map((w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join('')}`
+      : '#SystemArchitecture';
+
+  const enHashtags = ['#MARROK', topicTag, '#SystemDesign', '#SoftwareEngineering', '#TechInArabic'];
+  const arHashtags = ['#ماروك', '#هندسة_البرمجيات', '#تصميم_الأنظمة', '#تقنية', '#برمجة'];
+  const hashtagBlock = `${Array.from(new Set(enHashtags)).join(' ')}\n${arHashtags.join(' ')}`;
+
+  let body = rawCaption;
+  if (!body) {
+    const parts: string[] = [];
+    if (enHook) parts.push(`${enHook}${enSummary ? `\n${enSummary}` : ''}`);
+    if (arHook) parts.push(`${arHook}${arSummary ? `\n${arSummary}` : ''}`);
+    body = parts.join('\n\n');
+  } else if (arHook && !/[\u0600-\u06FF]/.test(body)) {
+    body = `${body}\n\n${arHook}${arSummary ? `\n${arSummary}` : ''}`;
+  }
+
+  // Rule 9: When any third-party company is named or its logo is shown,
+  // auto-add "Not affiliated with <Company>. Source: <name>." in EN + AR
+  const deckText = [
+    carousel.caption || '',
+    carousel.category || '',
+    ...(carousel.slides || []).map(
+      (s) => `${s.enTitle || ''} ${s.enBody || ''} ${s.arTitle || ''} ${s.arBody || ''} ${s.brandLogoConfig?.brandKey || ''}`
+    ),
+  ].join(' ');
+  const mentionedBrands = detectMentionedThirdPartyBrands(deckText);
+  const sourceName =
+    carousel.sourceMeta?.creator?.trim() ||
+    carousel.sourceMeta?.channel?.trim() ||
+    carousel.sourceMeta?.title?.trim() ||
+    carousel.channel?.trim() ||
+    (mentionedBrands[0]?.title ? `${mentionedBrands[0].title} Engineering Blog` : 'Public Technical Report');
+
+  if (mentionedBrands.length > 0) {
+    const brandNames = mentionedBrands.map((b) => b.title).join(', ');
+    const enAffiliationLine = `Not affiliated with ${brandNames}. Source: ${sourceName}.`;
+    const arAffiliationLine = `غير تابع لـ ${brandNames}. المصدر: ${sourceName}.`;
+    if (!body.toLowerCase().includes('not affiliated with')) {
+      body = `${body}\n\n${enAffiliationLine}\n${arAffiliationLine}`;
+    }
+  } else if (sourceName && !/source:/i.test(body)) {
+    body = `${body}\n\nSource: ${sourceName}.\nالمصدر: ${sourceName}.`;
+  }
+
+  const hasArHashtag = /#[\u0600-\u06FF]/.test(body);
+  const hasEnHashtag = /#[A-Za-z]/.test(body);
+  if (!hasEnHashtag || !hasArHashtag) {
+    body = `${body}\n\n${hashtagBlock}`;
+  }
+
+  return body.replace(/\u00A0/g, ' ').trim();
+}
 
 export function getPresetExportFolderName(preset: CanvasDimensionPreset): string {
   switch (preset) {
@@ -95,6 +178,8 @@ export async function shareSlide(
   visualOptions?: VisualSystemOptions
 ): Promise<boolean> {
   const canvas = await renderSlideToCanvas(carousel, slideIndex, undefined, customPalette, visualOptions);
+  const topicSlug = buildTopicSlugForExport(carousel);
+  const paddedIndex = String(slideIndex + 1).padStart(2, '0');
 
   return new Promise((resolve) => {
     canvas.toBlob(async (blob) => {
@@ -103,7 +188,7 @@ export async function shareSlide(
         return;
       }
       try {
-        const file = new File([blob], `MARROK_Slide_${slideIndex + 1}.jpg`, { type: 'image/jpeg' });
+        const file = new File([blob], `marrok_${topicSlug}_${paddedIndex}.jpg`, { type: 'image/jpeg' });
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
           await navigator.share({
             files: [file],
@@ -118,12 +203,12 @@ export async function shareSlide(
         console.warn('Web Share failed:', err);
         resolve(false);
       }
-    }, 'image/jpeg', 0.95);
+    }, 'image/jpeg', DEFAULT_EXPORT_JPEG_QUALITY);
   });
 }
 
 /**
- * Trigger immediate download of single slide as JPG at active or overridden dimension preset
+ * Trigger immediate download of single slide as JPG (quality 92) at active or overridden dimension preset
  */
 export async function downloadSingleSlidePng(
   carousel: CarouselData,
@@ -136,21 +221,20 @@ export async function downloadSingleSlidePng(
   const targetCarousel: CarouselData = dimensionPresetOverride
     ? { ...carousel, dimensionPreset: dimensionPresetOverride }
     : carousel;
-  const spec = getCanvasDimensionSpec(targetCarousel.dimensionPreset);
+  const topicSlug = buildTopicSlugForExport(targetCarousel);
+  const paddedIndex = String(slideIndex + 1).padStart(2, '0');
   const canvas = await renderSlideToCanvas(targetCarousel, slideIndex, undefined, customPalette, visualOptions);
-  const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+  const dataUrl = canvas.toDataURL('image/jpeg', DEFAULT_EXPORT_JPEG_QUALITY);
   const a = document.createElement('a');
   a.href = dataUrl;
-  a.download =
-    filename ||
-    `MARROK_Slide_${slideIndex + 1}_${spec.shortLabel.replace(/[^a-zA-Z0-9]/g, '_')}_${spec.width}x${spec.height}_${carousel.theme}.jpg`;
+  a.download = filename || `marrok_${topicSlug}_${paddedIndex}.jpg`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
 }
 
 /**
- * 1-click Download All Slides as ZIP containing high-resolution JPGs
+ * 1-click Download All Slides as ZIP containing high-resolution JPGs (quality 92)
  * Spec §9.8: Complete Metricool bundle for TikTok & Instagram across active, dual, or all 5 social media formats.
  * Yields via microtask setTimeout(0) between slide renders so the browser UI never freezes.
  */
@@ -172,14 +256,16 @@ export async function downloadAllSlidesZip(
   const { default: JSZip } = await import('jszip');
   const zip = new JSZip();
   const total = carousel.slides.length;
+  const topicSlug = buildTopicSlugForExport(carousel);
   const targetPresets = resolveExportTargetPresets(exportMode, carousel.dimensionPreset);
   const primarySpec = getCanvasDimensionSpec(targetPresets[0]);
   const totalSteps = total * targetPresets.length;
   let stepCounter = 0;
 
   // Spec §18 Complete Deliverables: Caption, Pinned First Comment, Short Caption, Metadata, and Claims Citations
-  // 1. Formatted Bilingual Caption
-  let fullCaptionText = carousel.caption || '';
+  // 1. Formatted Bilingual Caption (EN + AR + Hashtags)
+  const bilingualCaptionWithTags = formatBilingualExportCaptionWithHashtags(carousel);
+  let fullCaptionText = bilingualCaptionWithTags;
   if (carousel.facts && carousel.facts.length > 0 && !fullCaptionText.includes('Verified Facts:')) {
     const factsBlock = carousel.facts
       .map(
@@ -192,8 +278,13 @@ export async function downloadAllSlidesZip(
   const cleanCaptionTxt = fullCaptionText.replace(/\u00A0/g, ' ');
   zip.file('caption.txt', cleanCaptionTxt);
 
+  // Also copy EN + AR caption and hashtags to system clipboard automatically when exporting
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(bilingualCaptionWithTags).catch(() => {});
+  }
+
   // ── Metricool & Ready-to-Share Publishing Bundle ──
-  const mainCaption = carousel.captionVariants?.[0]?.caption || carousel.caption || '';
+  const mainCaption = carousel.captionVariants?.[0]?.caption || bilingualCaptionWithTags;
   const ctaLine = carousel.slides[carousel.slides.length - 1]?.ctaText || 'DM us  •  رسالة خاصة';
   const screenHookText = carousel.screenHook || carousel.hookVariants?.[0]?.enTitle || carousel.slides[0]?.enTitle || '';
 
@@ -208,7 +299,7 @@ export async function downloadAllSlidesZip(
   }
 
   if (!metricoolCaption.includes('#')) {
-    metricoolCaption += `\n#SoftwareEngineering #SystemDesign #DevOps #MARROK #TechInArabic`;
+    metricoolCaption += `\n#SoftwareEngineering #SystemDesign #DevOps #MARROK #TechInArabic #هندسة_البرمجيات #تصميم_الأنظمة`;
   }
 
   const cleanBilingualCaption = metricoolCaption.replace(/\u00A0/g, ' ').trim();
@@ -229,6 +320,8 @@ export async function downloadAllSlidesZip(
     for (let i = 0; i < total; i++) {
       stepCounter += 1;
       if (onProgress) onProgress(stepCounter, totalSteps);
+      const paddedNum = String(i + 1).padStart(2, '0');
+      const numberedFileName = `marrok_${topicSlug}_${paddedNum}.jpg`;
       // Reuse 1080x1920 (9:16) rendered slide blob across tiktok-9:16 and ig-9:16 in 5-in-1 'all' bundle mode
       const dimensionCacheKey =
         exportMode === 'all' && presetSpec.width === 1080 && presetSpec.height === 1920
@@ -240,7 +333,9 @@ export async function downloadAllSlidesZip(
         // Microtask yielding to keep browser UI responsive and allow progress re-renders
         await new Promise((resolve) => setTimeout(resolve, 0));
         const canvas = await renderSlideToCanvas(presetCarousel, i, sharedCanvas, customPalette, visualOptions);
-        blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.95));
+        blob = await new Promise<Blob | null>((resolve) =>
+          canvas.toBlob(resolve, 'image/jpeg', DEFAULT_EXPORT_JPEG_QUALITY)
+        );
         if (blob) {
           renderedBlobCache.set(dimensionCacheKey, blob);
         }
@@ -248,9 +343,11 @@ export async function downloadAllSlidesZip(
 
       if (blob) {
         if (pIdx === 0) {
+          zip.file(numberedFileName, blob);
           zip.file(`slide${i + 1}.jpg`, blob);
         }
         if (targetPresets.length > 1 || exportMode !== 'active') {
+          zip.file(`${folderName}/${numberedFileName}`, blob);
           zip.file(`${folderName}/slide${i + 1}.jpg`, blob);
         }
       }
@@ -428,13 +525,7 @@ HOW TO PUBLISH TO METRICOOL / TIKTOK / INSTAGRAM:
   const url = URL.createObjectURL(content);
   const a = document.createElement('a');
   a.href = url;
-  const suffix =
-    exportMode === 'all'
-      ? 'AllSocialFormats'
-      : exportMode === 'dual'
-      ? 'DualPack'
-      : primarySpec.shortLabel.replace(/[^a-zA-Z0-9]/g, '_');
-  a.download = `MARROK_${carousel.category.replace(/[^a-zA-Z0-9]/g, '_')}_${suffix}_Carousel.zip`;
+  a.download = `marrok_${topicSlug}.zip`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -483,7 +574,7 @@ export async function downloadContactSheetJpg(
   mctx.fillStyle = '#9BA5AB';
   mctx.font = '500 20px "Plus Jakarta Sans", monospace';
   mctx.fillText(
-    `Deck: ${carousel.category}   •   Theme: ${carousel.theme}   •   ${total} Slides (${spec.width}×${spec.height} ${spec.aspectRatioLabel})   •   Format: JPG Q95`,
+    `Deck: ${carousel.category}   •   Theme: ${carousel.theme}   •   ${total} Slides (${spec.width}×${spec.height} ${spec.aspectRatioLabel})   •   Format: JPG Q92`,
     pad,
     pad + 74
   );
@@ -514,7 +605,7 @@ export async function downloadContactSheetJpg(
     mctx.fillText(`SLIDE ${String(i + 1).padStart(2, '0')}`, x + 20, y + 31);
   }
 
-  const dataUrl = master.toDataURL('image/jpeg', 0.95);
+  const dataUrl = master.toDataURL('image/jpeg', DEFAULT_EXPORT_JPEG_QUALITY);
   const a = document.createElement('a');
   a.href = dataUrl;
   a.download = `MARROK_ContactSheet_${carousel.category.replace(/[^a-zA-Z0-9]/g, '_')}_${spec.shortLabel.replace(/[^a-zA-Z0-9]/g, '_')}.jpg`;

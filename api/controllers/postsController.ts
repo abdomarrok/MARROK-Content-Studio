@@ -604,6 +604,8 @@ export interface ValidatePostInput {
   postStatus?: SavedPostStatus;
   allowOverride?: boolean;
   existingRecord?: SavedPostRecord;
+  isAutomatedRun?: boolean;
+  humanApproved?: boolean;
 }
 
 export function validateAndBuildPostRecord(
@@ -622,16 +624,36 @@ export function validateAndBuildPostRecord(
   }
 
   const sanitizedDeck: CarouselData = sanitizeFullCarousel(parsedDeck);
-  // Saving a post as Validated or Posted explicitly confirms human review
+  const humanApproved =
+    input.humanApproved !== undefined
+      ? input.humanApproved
+      : input.isAutomatedRun
+      ? false
+      : true;
+
   sanitizedDeck.sourceMeta = {
     ...sanitizedDeck.sourceMeta,
-    userReviewed: true,
+    userReviewed: humanApproved,
+    humanApproved,
   };
 
   const qaReport = runQAChecks(sanitizedDeck);
   const riskReport = runPlatformRiskChecks(sanitizedDeck);
+  const qualityPassed = qaReport.canExport && riskReport.status !== 'BLOCK';
+  const groundingVerified = Boolean(
+    sanitizedDeck.sourceMeta?.groundingVerified ??
+      (sanitizedDeck.sourceMeta?.isSearchGrounded &&
+        (sanitizedDeck.sourceMeta?.groundingSources?.length ?? 0) > 0)
+  );
 
-  if ((!qaReport.canExport || riskReport.status === 'BLOCK') && !input.allowOverride) {
+  sanitizedDeck.sourceMeta = {
+    ...sanitizedDeck.sourceMeta,
+    qualityPassed,
+    groundingVerified,
+    humanApproved,
+  };
+
+  if (!qualityPassed && !input.allowOverride) {
     const failMessages = [
       ...qaReport.results.filter((r) => r.severity === 'fail').map((r) => r.message),
       ...riskReport.items.filter((i) => i.status === 'BLOCK').map((i) => i.message),
@@ -686,7 +708,10 @@ export function validateAndBuildPostRecord(
         : input.existingRecord?.postedAt,
     creatorHandle: creatorHandle.slice(0, 100),
     slideCount: sanitizedDeck.slides.length,
-    qaPassed: qaReport.canExport && riskReport.status !== 'BLOCK',
+    qaPassed: qualityPassed,
+    qualityPassed,
+    groundingVerified,
+    humanApproved,
     deck: sanitizedDeck,
     scheduledFor: input.existingRecord?.scheduledFor,
     publishTargets: input.existingRecord?.publishTargets,

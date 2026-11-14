@@ -369,8 +369,7 @@ export default function App() {
         isSavingPost={isSavingPost}
         onOpenSavedPostsDrawer={() => {
           refreshVaultPosts(false);
-          setPublishHubTab('posts');
-          setActivePhase('publish');
+          setIsSavedPostsDrawerOpen(true);
         }}
         savedPostsCount={savedPosts.length}
         pendingReviewCount={
@@ -385,17 +384,8 @@ export default function App() {
         lastSavedTime={lastSavedTime}
         onResetDraft={handleResetDraft}
         activePhase={activePhase}
-        isPeakProgramActive={activePhase === 'publish' && publishHubTab === 'program'}
         onPhaseChange={(phase) => {
-          if (phase === 'publish' && publishHubTab === 'program') {
-            setPublishHubTab('single');
-          }
           setActivePhase(phase);
-        }}
-        onOpenPeakProgram={() => {
-          refreshVaultPosts(false);
-          setPublishHubTab('program');
-          setActivePhase('publish');
         }}
       />
 

@@ -10,6 +10,8 @@ import {
   LayoutTemplate,
   Hash,
   Wand2,
+  Lock,
+  Unlock,
 } from 'lucide-react';
 import {
   CarouselData,
@@ -22,6 +24,7 @@ import {
 import {
   analyzeSlideTextForArchetype,
   resolveSmartSlideVisuals,
+  explainArchetypeChoice,
 } from '../../lib/synthesis/smartVisualDefaults.ts';
 import { IconPickerPopover } from './IconPickerPopover.tsx';
 import {
@@ -155,6 +158,100 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
   const recommendedArchetype = analyzeSlideTextForArchetype(currentSlide, currentSlideIndex);
   const recommendedVariant = smart.recommendedVariant;
   const activeDiagramVariant = normalizeDiagramVariant(currentSlide.diagramVariant || smart.diagramVariant);
+  const isManualLocked = Boolean(currentSlide.manualLayoutLocked);
+  const activeRationale =
+    currentSlide.layoutRationale ||
+    explainArchetypeChoice(currentSlide, currentSlideIndex, totalSlides);
+
+  const renderArchetypeMiniThumbnail = (type: SlideType, isActive: boolean) => {
+    const stroke = isActive ? theme.accent : '#94a3b8';
+    const fill = isActive ? `${theme.accent}33` : 'rgba(255,255,255,0.06)';
+    switch (type) {
+      case 'hub':
+        return (
+          <svg viewBox="0 0 36 24" className="w-8 h-5 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
+            <circle cx="18" cy="12" r="7.5" fill="none" stroke={stroke} strokeWidth="0.9" strokeDasharray="1.5 1.5" opacity="0.65" />
+            <rect x="14.5" y="8.5" width="7" height="7" rx="2" fill={fill} stroke={stroke} strokeWidth="1.2" />
+            <circle cx="18" cy="3.5" r="1.6" fill={stroke} />
+            <circle cx="26" cy="9" r="1.6" fill={stroke} />
+            <circle cx="23.5" cy="18.5" r="1.6" fill={stroke} />
+            <circle cx="12.5" cy="18.5" r="1.6" fill={stroke} />
+            <circle cx="10" cy="9" r="1.6" fill={stroke} />
+          </svg>
+        );
+      case 'row':
+        return (
+          <svg viewBox="0 0 36 24" className="w-8 h-5 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
+            <rect x="3" y="7" width="7.5" height="10" rx="1.5" fill={fill} stroke={stroke} strokeWidth="1.1" />
+            <line x1="10.5" y1="12" x2="14" y2="12" stroke={stroke} strokeWidth="1.1" />
+            <rect x="14" y="7" width="8" height="10" rx="1.5" fill={fill} stroke={stroke} strokeWidth="1.1" />
+            <line x1="22" y1="12" x2="25.5" y2="12" stroke={stroke} strokeWidth="1.1" />
+            <rect x="25.5" y="7" width="7.5" height="10" rx="1.5" fill={fill} stroke={stroke} strokeWidth="1.1" />
+          </svg>
+        );
+      case 'compare':
+        return (
+          <svg viewBox="0 0 36 24" className="w-8 h-5 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
+            <rect x="3" y="4" width="13.5" height="16" rx="2" fill="rgba(244,63,94,0.18)" stroke="#fb7185" strokeWidth="1.1" />
+            <rect x="19.5" y="4" width="13.5" height="16" rx="2" fill={fill} stroke={stroke} strokeWidth="1.1" />
+          </svg>
+        );
+      case 'code':
+        return (
+          <svg viewBox="0 0 36 24" className="w-8 h-5 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
+            <rect x="3" y="3.5" width="30" height="17" rx="2" fill="rgba(0,0,0,0.65)" stroke={stroke} strokeWidth="1.1" />
+            <line x1="6" y1="8.5" x2="19" y2="8.5" stroke="#fb7185" strokeWidth="1.4" />
+            <line x1="6" y1="12" x2="27" y2="12" stroke={stroke} strokeWidth="1.4" />
+            <line x1="6" y1="15.5" x2="23" y2="15.5" stroke="#34d399" strokeWidth="1.4" />
+          </svg>
+        );
+      case 'metric':
+        return (
+          <svg viewBox="0 0 36 24" className="w-8 h-5 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
+            <rect x="3.5" y="4" width="29" height="16" rx="2" fill={fill} stroke={stroke} strokeWidth="1.1" />
+            <text x="18" y="14.5" textAnchor="middle" fill={stroke} fontSize="7.5" fontWeight="bold" fontFamily="monospace">
+              99%
+            </text>
+          </svg>
+        );
+      case 'number':
+        return (
+          <svg viewBox="0 0 36 24" className="w-8 h-5 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
+            <rect x="4" y="4.5" width="12" height="15" rx="2" fill={fill} stroke={stroke} strokeWidth="1.1" />
+            <text x="10" y="14.5" textAnchor="middle" fill={stroke} fontSize="7.5" fontWeight="bold" fontFamily="monospace">
+              01
+            </text>
+            <line x1="19" y1="9.5" x2="31" y2="9.5" stroke={stroke} strokeWidth="1.3" />
+            <line x1="19" y1="14" x2="28" y2="14" stroke={stroke} strokeWidth="1.1" opacity="0.6" />
+          </svg>
+        );
+      case 'image':
+        return (
+          <svg viewBox="0 0 36 24" className="w-8 h-5 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
+            <rect x="4" y="3.5" width="28" height="17" rx="2" fill="#f8fafc" stroke={stroke} strokeWidth="1.1" />
+            <circle cx="11" cy="9" r="1.8" fill="#0f172a" />
+            <path d="M6.5 18 L13.5 11.5 L19 16 L24.5 10 L30 18 Z" fill={stroke} opacity="0.85" />
+          </svg>
+        );
+      case 'poster':
+        return (
+          <svg viewBox="0 0 36 24" className="w-8 h-5 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
+            <rect x="4" y="3.5" width="28" height="8" rx="1.5" fill={fill} stroke={stroke} strokeWidth="1.1" />
+            <line x1="5" y1="14.5" x2="31" y2="14.5" stroke={stroke} strokeWidth="1.2" />
+            <line x1="5" y1="17.5" x2="26" y2="17.5" stroke={stroke} strokeWidth="1.1" opacity="0.7" />
+            <line x1="5" y1="20.5" x2="29" y2="20.5" stroke={stroke} strokeWidth="1.1" opacity="0.5" />
+          </svg>
+        );
+      case 'cta':
+      default:
+        return (
+          <svg viewBox="0 0 36 24" className="w-8 h-5 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
+            <line x1="7" y1="8" x2="29" y2="8" stroke="#f8fafc" strokeWidth="1.4" />
+            <rect x="8" y="12.5" width="20" height="6.5" rx="3.2" fill={stroke} />
+          </svg>
+        );
+    }
+  };
 
   const handleSelectVariant = (variantId: DiagramVariant) => {
     const nextSmart = resolveSmartSlideVisuals(
@@ -162,15 +259,22 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
       currentSlideIndex,
       true
     );
+    const nextRationale = explainArchetypeChoice(
+      { ...currentSlide, diagramVariant: variantId },
+      currentSlideIndex,
+      totalSlides
+    );
     if (onUpdateSlideFields) {
       onUpdateSlideFields({
         diagramVariant: variantId,
         diagramNodes: nextSmart.diagramNodes,
         diagramEdges: nextSmart.diagramEdges,
         diagramFooter: nextSmart.diagramFooter,
+        layoutRationale: nextRationale,
       });
     } else {
       onUpdateField('diagramVariant', variantId);
+      onUpdateField('layoutRationale', nextRationale);
     }
   };
 
@@ -182,6 +286,11 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
       { ...currentSlide, type: targetType },
       currentSlideIndex,
       true
+    );
+    const rationale = explainArchetypeChoice(
+      { ...currentSlide, type: targetType, diagramVariant: refreshed.diagramVariant },
+      currentSlideIndex,
+      totalSlides
     );
 
     if (onSmartMatchVisuals) {
@@ -216,11 +325,13 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
       compareLeftBody: refreshed.compareLeftBody,
       compareRightTitle: refreshed.compareRightTitle,
       compareRightBody: refreshed.compareRightBody,
+      layoutRationale: rationale,
     };
 
     if (onUpdateSlideFields) {
       onUpdateSlideFields(updatedFields);
     } else {
+      onUpdateField('layoutRationale', rationale);
       if (targetType === 'metric') {
         onUpdateField('metricValue', refreshed.metricValue);
         onUpdateField('metricLabel', refreshed.metricLabel);
@@ -266,13 +377,37 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              type="button"
+              data-testid="toggle-cascade-lock-btn"
+              onClick={() => onUpdateField('manualLayoutLocked', !isManualLocked)}
+              className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                isManualLocked
+                  ? 'bg-amber-500/20 border-amber-400/50 text-amber-200'
+                  : 'bg-white/[0.04] hover:bg-white/[0.08] border-white/15 text-slate-300 hover:text-white'
+              }`}
+              title="Cascade Lock: Protect this slide's manually edited layout when running Diversify Deck or Sync Deck"
+            >
+              {isManualLocked ? (
+                <>
+                  <Lock className="w-3 h-3 text-amber-300" />
+                  <span>Cascade Locked</span>
+                </>
+              ) : (
+                <>
+                  <Unlock className="w-3 h-3 text-slate-400" />
+                  <span>Cascade Lock</span>
+                </>
+              )}
+            </button>
+
             {onDiversifyDeckVisuals && totalSlides > 1 && (
               <button
                 type="button"
                 onClick={onDiversifyDeckVisuals}
                 className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/35 text-[11px] font-semibold text-amber-200 transition-colors cursor-pointer whitespace-nowrap"
-                title="Auto-diversify Slides 2–7 across Compare, Code, Metric, and varied Diagram schematics matched to each slide's copy"
+                title="Auto-diversify unlocked slides across Compare, Code, Metric, and varied Diagram schematics matched to each slide's copy"
               >
                 <Wand2 className="w-3 h-3" />
                 <span>Diversify Deck (2–7)</span>
@@ -290,7 +425,27 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5 bg-black/60 p-1.5 rounded-xl border border-white/10">
+        {/* One-Line Layout Rationale Banner */}
+        <div
+          data-testid="layout-rationale-banner"
+          className="px-3 py-1.5 rounded-xl bg-black/50 border border-white/10 flex items-center justify-between gap-2 text-[11px] font-mono text-slate-300"
+        >
+          <span className="truncate">
+            <strong className="text-cyan-300 uppercase">{currentSlide.type}</strong>
+            {currentSlide.type === 'row' && activeDiagramVariant
+              ? ` (${activeDiagramVariant})`
+              : ''}
+            {' — '}
+            {activeRationale}
+          </span>
+          {isManualLocked && (
+            <span className="text-[10px] text-amber-300 shrink-0 font-bold">
+              LOCKED
+            </span>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 bg-black/60 p-1.5 rounded-xl border border-white/10">
           {ARCHETYPES.map((arch) => {
             const Icon = arch.icon;
             const isSelected = currentSlide.type === arch.id;
@@ -300,7 +455,7 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
                 key={arch.id}
                 type="button"
                 onClick={() => onSetSlideType(arch.id)}
-                className={`relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                className={`relative flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
                   isSelected
                     ? 'bg-white/20 text-white shadow-sm border border-white/25'
                     : isRecommended
@@ -308,11 +463,14 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
                     : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04] border border-transparent'
                 }`}
               >
-                <Icon
-                  className="w-3.5 h-3.5 shrink-0"
-                  style={{ color: isSelected || isRecommended ? theme.accent : undefined }}
-                />
-                <span className="truncate">{arch.label}</span>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <Icon
+                    className="w-3.5 h-3.5 shrink-0"
+                    style={{ color: isSelected || isRecommended ? theme.accent : undefined }}
+                  />
+                  <span className="truncate">{arch.label}</span>
+                </div>
+                {renderArchetypeMiniThumbnail(arch.id, isSelected)}
               </button>
             );
           })}

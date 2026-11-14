@@ -162,7 +162,7 @@ export function synthesizeCarousel(input: SynthesisInput): CarouselData {
   const userPoint1 = lines[0] || slides[1]?.enBody || slides[2]?.enBody || `Scaling ${cleanSubject} requires rethinking state isolation and memory allocation patterns.`;
   const userPoint2 = lines[1] || slides[slides.length - 2]?.enBody || `Decoupled authoritative state ensures compute resources scale with actual payload size.`;
 
-  // 6. Universal Hook Variants (A/B testing) adhering strictly to Spec §8
+  // 6. Universal Hook Variants (A/B testing) adhering strictly to Spec §8 with dynamic cover archetypes
   const hookVariants: HookVariant[] = [
     {
       tag: 'Curiosity & Shift',
@@ -171,22 +171,28 @@ export function synthesizeCarousel(input: SynthesisInput): CarouselData {
       enBody: slides[0]?.enBody || `How architectural redesign solved scalability bottlenecks in ${domainCategory.toLowerCase()}.`,
       arBody: slides[0]?.arBody || `كيف أدت التحديات الهندسية إلى إعادة التفكير بالكامل في بنية النظام.`,
       centerIcon: slides[0]?.centerIcon || centerIcon,
+      coverArchetype: 'hub',
+      hookKicker: slides[0]?.hookKicker || `ARCHITECTURE SHIFT • ${cleanSubject.toUpperCase().slice(0, 16)}`,
     },
     {
       tag: 'Hard Metrics & Scale',
-      enTitle: enforceHeadlineSpecRule(`Measuring ${cleanSubject} at scale`, { isHook: true }),
-      arTitle: `معايير وأرقام الأداء الحقيقية`,
+      enTitle: enforceHeadlineSpecRule(`How ${cleanSubject} hits ${metric1}`, { isHook: true }),
+      arTitle: `معايير وأرقام الأداء الحقيقية (${arMetric1})`,
       enBody: `Key production benchmarks (${metric1}) and lessons learned under maximum concurrency.`,
       arBody: `أهم معايير الأداء والدروس المستفادة (${arMetric1}) من تشغيل الأنظمة تحت أقصى ضغط.`,
       centerIcon: 'gauge',
+      coverArchetype: 'metric',
+      hookKicker: `BENCHMARK SHOCK • ${metric1.toUpperCase().slice(0, 14)}`,
     },
     {
-      tag: 'Problem & Solution',
-      enTitle: enforceHeadlineSpecRule(`Fixing ${cleanSubject} limits`, { isHook: true }),
+      tag: 'Architecture Showdown',
+      enTitle: enforceHeadlineSpecRule(`Why ${cleanSubject} beats legacy limits`, { isHook: true }),
       arTitle: `تجاوز اختناقات النظام المعمارية`,
       enBody: `Moving beyond legacy bottlenecks to build modern high-efficiency software.`,
       arBody: `تجاوز الأساليب القديمة لبناء برمجيات عالية الكفاءة والموثوقية.`,
       centerIcon: 'shieldAlert',
+      coverArchetype: 'compare',
+      hookKicker: `PARADIGM VS LEGACY • ${cleanSubject.toUpperCase().slice(0, 14)}`,
     },
   ];
 
@@ -236,29 +242,54 @@ export function synthesizeCarousel(input: SynthesisInput): CarouselData {
     },
   ];
 
-  const slide1ArHeader = (slides[0]?.arTitle || `تحليل معماري لمنظومة ${arSubject}`).replace(/[:.]\s*\n+/g, ' — ').replace(/\n+/g, ' — ').trim();
+  const slide1ArHeader = (slides[0]?.arTitle || `كيف تعمل منظومة ${arSubject}`).replace(/[:.]\s*\n+/g, ' — ').replace(/\n+/g, ' — ').trim();
   const slide1EnHeader = (slides[0]?.enTitle || headline).replace(/[:.]\s*\n+/g, ' — ').replace(/\n+/g, ' — ').replace(/[:.]\s*$/, '').trim();
+  const slide2Mechanism = (slides[1]?.enTitle || userPoint1).replace(/[.?!]+$/, '').trim();
+  const slide2ArMechanism = (slides[1]?.arTitle || slides[1]?.arBody || '').split(/[.؟!،]/)[0].trim();
 
-  const formattedBilingualCaption = `⚡ ${slide1ArHeader}
-تحليل تقني ومعماري متعمق لأحدث نقلة برمجية 🛠️
+  const topicSeed = Array.from(slide1EnHeader).reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  const openerVariants = [
+    {
+      arLead: `${slide2ArMechanism || slide1ArHeader}: أين يكمن الاختناق الفعلي في بيئات الإنتاج؟`,
+      enLead: `Inside ${cleanSubject}: why ${slide2Mechanism.toLowerCase()} changes the production calculus (${metric1}).`,
+    },
+    {
+      arLead: `الأرقام وراء ${arSubject} (${metric1}): قراءة في البنية التنفيذية وحدود التوسع.`,
+      enLead: `When ${cleanSubject} hits production scale, ${slide2Mechanism.toLowerCase()} becomes the deciding factor.`,
+    },
+    {
+      arLead: `بعيداً عن العناوين السطحية — كيف تعالج منظومة ${arSubject} مشكلة ${slide2ArMechanism || 'الأداء'}؟`,
+      enLead: `Breaking down the engineering mechanics behind ${cleanSubject} and ${slide2Mechanism.toLowerCase()}.`,
+    },
+    {
+      arLead: `من النظرية إلى التشغيل الفعلي: ما الذي يكشفه تحليل ${arSubject} عند مستوى ${metric1}؟`,
+      enLead: `From architecture to reality: how ${cleanSubject} handles ${slide2Mechanism.toLowerCase()} under load.`,
+    },
+    {
+      arLead: `معادلة التكلفة والأداء في ${arSubject}: قراءة تقنية في ${slide2ArMechanism || 'آليات التنفيذ'}.`,
+      enLead: `What the ${metric1} benchmark in ${cleanSubject} reveals about ${slide2Mechanism.toLowerCase()}.`,
+    },
+  ];
+  const chosenOpener = openerVariants[topicSeed % openerVariants.length];
 
-${slide1EnHeader} — Engineering Deep Dive
-Why traditional architectures stall at scale and how modern systems solve the bottleneck.
+  const formattedBilingualCaption = `${chosenOpener.arLead}
 
-🔹 أبرز آليات العمل والنتائج / Key Technical Takeaways:
+${chosenOpener.enLead}
+
+🔹 أبرز الآليات والنتائج / Key Engineering Takeaways:
 • Domain: ${domainCategory}
 • Core Mechanism: ${userPoint1}
-• Production Win: ${metric1} vs legacy stack
-• Caveats: ${userPoint2}
+• Production Metric: ${metric1}
+• Operational Trade-off: ${userPoint2}
 
 ⚠️ Citations & Draft Facts (Offline Synthesizer Estimate):
 • Unverified offline draft — creator review required before publishing
 • No external source cited — add your primary source link before publishing
 
-👇 هل واجهتم هذه المشكلة في بيئات الإنتاج عندكم؟ شاركونا تجربتكم في التعليقات!
-What's your take on this architecture? Share below!
+👇 ${slides[slides.length - 1]?.arTitle || 'كيف تتعاملون مع هذا التحدي في بيئات الإنتاج لديكم؟'}
+${slides[slides.length - 1]?.enTitle || "What's your take on this architecture?"}
 
-🎥 العلامة التجارية / Brand: ${brandUrl ? `https://${brandUrl}` : 'https://marrok.org'}
+🎥 العلامة التجارية / Brand: https://marrok.org
 
 ${hashtags}`;
 
@@ -269,23 +300,23 @@ ${hashtags}`;
     },
     {
       style: 'Narrative Breakdown & Story',
-      caption: `ماذا يحدث عندما تصل الأنظمة التقليدية إلى حدودها القصوى؟ 🚨
-الحل ليس الترقيع، بل إعادة التفكير في المعمارية البرمجية من الصفر.
+      caption: `${chosenOpener.arLead}
+الحل لا يكمن في الحلول المؤقتة، بل في إعادة تصميم المسار الهندسي من الجذور.
 
-في هذا التحليل المفصل (${slide1EnHeader})، نستعرض كيف نجحت الفرق الهندسية في تحقيق قفزة نوعية (${metric1}) مع تفادي نقاط الاختناق الشائعة.
+في هذه المراجعة التقنية لمنظومة ${cleanSubject}، نفكك كيف تتكامل آلية (${slide2Mechanism}) لتحقيق نتائج ملموسة (${metric1}) مع موازنة قيود التشغيل.
 
-اسحب الصور لمتابعة الشرح خطوة بخطوة 👉
-Swipe through the slides for the complete breakdown!
+اسحب الشرائح لمتابعة التفصيل المعماري 👉
+Swipe through the slides for the full engineering breakdown.
 
-🔗 المرجع والمصدر: https://${brandUrl}
+🔗 https://marrok.org
 
 ${hashtags}`,
     },
   ];
 
-  const firstComment = `🔗 Add your primary source link here before publishing.\n\nWhat are your thoughts on this architecture? Share your take below 👇`;
-  const shortCaption = `${slide1ArHeader} ⚡\n${slide1EnHeader} — Swipe through the breakdown 👉`;
-  const screenHook = `${slide1EnHeader} in 60s`;
+  const firstComment = `🔗 Add your primary source link here before publishing.\n\n${slides[slides.length - 1]?.enTitle || 'What are your thoughts on this architecture?'} Share your take below 👇`;
+  const shortCaption = `${chosenOpener.arLead}\n${chosenOpener.enLead} 👉`;
+  const screenHook = `${cleanSubject}: ${metric1}`;
 
   const sourceMeta: PostSourceMeta = {
     type: (input.inputMode === 'upload' || Boolean(input.imageFileName)) ? 'screenshot' : (rawText.length > 400 ? 'article' : 'notes'),

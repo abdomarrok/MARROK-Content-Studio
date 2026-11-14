@@ -213,6 +213,9 @@ export function safeDrawImage(
   }
 }
 
+let tintScratchCanvas: HTMLCanvasElement | null = null;
+let tintScratchCtx: CanvasRenderingContext2D | null = null;
+
 /**
  * Tinted image drawer helper (replaces non-transparent pixels with theme color via source-in)
  */
@@ -233,21 +236,31 @@ export function drawTintedImage(
     return;
   }
   try {
-    const offCanvas = document.createElement('canvas');
-    offCanvas.width = Math.max(1, Math.round(w));
-    offCanvas.height = Math.max(1, Math.round(h));
-    const offCtx = offCanvas.getContext('2d');
-    if (!offCtx) {
+    const targetW = Math.max(1, Math.round(w));
+    const targetH = Math.max(1, Math.round(h));
+    if (!tintScratchCanvas) {
+      tintScratchCanvas = document.createElement('canvas');
+      tintScratchCtx = tintScratchCanvas.getContext('2d');
+    }
+    if (!tintScratchCtx) {
       safeDrawImage(ctx, img, x, y, w, h);
       return;
     }
-    offCtx.drawImage(img, 0, 0, offCanvas.width, offCanvas.height);
-    offCtx.globalCompositeOperation = 'source-in';
-    offCtx.fillStyle = tintColor;
-    offCtx.fillRect(0, 0, offCanvas.width, offCanvas.height);
+    if (tintScratchCanvas.width !== targetW || tintScratchCanvas.height !== targetH) {
+      tintScratchCanvas.width = targetW;
+      tintScratchCanvas.height = targetH;
+    } else {
+      tintScratchCtx.clearRect(0, 0, targetW, targetH);
+    }
+    tintScratchCtx.globalCompositeOperation = 'source-over';
+    tintScratchCtx.drawImage(img, 0, 0, targetW, targetH);
+    tintScratchCtx.globalCompositeOperation = 'source-in';
+    tintScratchCtx.fillStyle = tintColor;
+    tintScratchCtx.fillRect(0, 0, targetW, targetH);
 
-    ctx.drawImage(offCanvas, x, y, w, h);
+    ctx.drawImage(tintScratchCanvas, x, y, w, h);
   } catch (_err) {
     safeDrawImage(ctx, img, x, y, w, h);
   }
 }
+

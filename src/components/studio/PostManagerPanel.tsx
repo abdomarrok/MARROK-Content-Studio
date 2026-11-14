@@ -45,7 +45,6 @@ import {
   WeeklyCadencePreset,
 } from '../../lib/publish/publishClient.ts';
 import { syncLocalVaultAfterManage } from '../../lib/storage/postsVaultClient.ts';
-import { WeeklyProgramReviewPanel } from './WeeklyProgramReviewPanel.tsx';
 
 interface PostManagerPanelProps {
   savedPosts: SavedPostRecord[];
@@ -60,7 +59,7 @@ interface PostManagerPanelProps {
 }
 
 type StatusFilterTab = 'all' | 'draft' | 'scheduled' | 'posted' | 'attention';
-type ManagerViewMode = 'list' | 'program-peak' | 'calendar' | 'bulk';
+type ManagerViewMode = 'list' | 'calendar' | 'bulk';
 
 const PLATFORM_BADGES: Record<
   PublishTargetPlatform,
@@ -542,7 +541,7 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
       {/* Unified Control Bar: View Switcher (List | Calendar | Bulk) + Status Filter Pills + Search */}
       <div className="rounded-2xl border border-white/10 bg-[#0b1218]/95 p-3 sm:p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2.5">
-          {/* Segmented View Switcher: List vs Peak 10·12·18 & Program vs Calendar vs Bulk Schedule */}
+          {/* Segmented View Switcher: List vs Calendar vs Bulk Schedule */}
           <div className="flex flex-wrap items-center gap-1 bg-black/40 p-1 rounded-xl border border-white/10">
             <button
               type="button"
@@ -558,18 +557,6 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => setViewMode('program-peak')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                viewMode === 'program-peak'
-                  ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-400/40'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Clock className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Peak 10 · 12 · 18 & Program</span>
-            </button>
-            <button
-              type="button"
               onClick={() => setViewMode('calendar')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                 viewMode === 'calendar'
@@ -578,7 +565,7 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
               }`}
             >
               <CalendarDays className="w-3.5 h-3.5" />
-              <span>Calendar ({counts.scheduled})</span>
+              <span>Calendar · {counts.scheduled}</span>
             </button>
             <button
               type="button"
@@ -588,7 +575,7 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                 }
                 setViewMode('bulk');
               }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 viewMode === 'bulk'
                   ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-400/40'
                   : 'text-slate-400 hover:text-white'
@@ -665,7 +652,7 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
 
         {/* Status Filter Tabs (Shown in List View) */}
         {viewMode === 'list' && (
-          <div className="flex items-center gap-1.5 overflow-x-auto pt-2 border-t border-white/10">
+          <div className="flex items-center gap-1.5 overflow-x-auto pt-2 border-t border-white/[0.08]">
             {(
               [
                 { id: 'all', label: 'All', count: counts.all },
@@ -692,8 +679,8 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                   }`}
                 >
                   <span>{tab.label}</span>
-                  <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-black/40 text-slate-200">
-                    {tab.count}
+                  <span className="text-[11px] font-mono tabular-nums text-slate-300">
+                    · {tab.count}
                   </span>
                 </button>
               );
@@ -701,19 +688,6 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
           </div>
         )}
       </div>
-
-      {/* VIEW 0: PEAK (10 · 12 · 18) SCHEDULE REVIEW, WEEKLY PROGRAM & AUTO-GATHER */}
-      {viewMode === 'program-peak' && (
-        <WeeklyProgramReviewPanel
-          savedPosts={savedPosts}
-          activeCarouselId={activeCarouselId}
-          theme={theme}
-          onEditInStudio={onEditInStudio}
-          onRefreshVault={onRefreshVault}
-          onRefreshStatus={onRefreshStatus}
-          onShowToast={onShowToast}
-        />
-      )}
 
       {/* VIEW 1: CALENDAR VIEW */}
       {viewMode === 'calendar' && (
@@ -1082,13 +1056,13 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                     }`}
                   >
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                      {/* Left: Title + 3 Clean Metadata Pills */}
+                      {/* Left: Title + Clean Unboxed Editorial Metadata Line */}
                       <div className="space-y-1 min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          {/* Pill 1: Lifecycle Status */}
+                        <div className="flex items-center gap-1.5 flex-wrap text-[11px] font-mono tabular-nums text-slate-400">
+                          {/* Lifecycle Status */}
                           {stage === 'scheduled' && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold tabular-nums bg-amber-500/20 text-amber-200 border border-amber-400/40">
-                              <Clock className="w-2.5 h-2.5" />
+                            <span className="inline-flex items-center gap-1 font-bold text-amber-300">
+                              <Clock className="w-3 h-3" />
                               Scheduled
                               {scheduleParts
                                 ? ` · ${scheduleParts.datePart} · ${scheduleParts.timeShort}`
@@ -1096,91 +1070,85 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                             </span>
                           )}
                           {stage === 'posted' && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-200 border border-emerald-400/30">
-                              <CheckCircle2 className="w-2.5 h-2.5" />
+                            <span className="inline-flex items-center gap-1 font-bold text-emerald-400">
+                              <CheckCircle2 className="w-3 h-3" />
                               Posted{postedParts ? ` · ${postedParts.datePart}` : ''}
                             </span>
                           )}
                           {stage === 'draft' && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-slate-500/20 text-slate-300 border border-slate-400/30">
-                              Draft
-                            </span>
+                            <span className="font-bold text-slate-300">Draft</span>
                           )}
                           {stage === 'attention' && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-rose-500/20 text-rose-200 border border-rose-400/30">
-                              <AlertTriangle className="w-2.5 h-2.5" />
+                            <span className="inline-flex items-center gap-1 font-bold text-rose-400">
+                              <AlertTriangle className="w-3 h-3" />
                               Needs Review
                             </span>
                           )}
 
-                          {/* Pill 2: Format & Slides */}
-                          <span className="px-2 py-0.5 rounded-md text-[10px] font-mono bg-white/[0.05] text-slate-400 border border-white/10 uppercase">
+                          <span aria-hidden="true">·</span>
+                          <span className="uppercase text-slate-300">
                             {postFormat} · {post.slideCount}s
                           </span>
 
-                          {/* Pill 3: Compact Target Channels */}
-                          <div className="flex items-center gap-1">
-                            {postTargets.map((plat) => {
-                              const meta = PLATFORM_BADGES[plat];
-                              if (!meta) return null;
-                              return (
-                                <span
-                                  key={plat}
-                                  title={meta.label}
-                                  className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold text-white"
-                                  style={{
-                                    backgroundColor: `${meta.color}28`,
-                                    border: `1px solid ${meta.color}55`,
-                                  }}
-                                >
-                                  {meta.short}
-                                </span>
-                              );
-                            })}
-                          </div>
+                          <span aria-hidden="true">·</span>
+                          <span className="text-slate-300">
+                            {postTargets
+                              .map((plat) => PLATFORM_BADGES[plat]?.short)
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </span>
 
-                          {/* Pill 4: Cloudinary Staging & Auto-Purge (+1h) Lifecycle */}
+                          {/* Cloudinary Staging & Auto-Purge (+1h) Lifecycle */}
                           {post.cloudinaryPublicIds &&
                             post.cloudinaryPublicIds.length > 0 &&
                             !post.cloudinaryCleanedAt && (
-                              <span
-                                title="Staged in Cloudinary marrok_staging/* — automatically destroyed +1h after publication"
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono bg-sky-500/15 text-sky-200 border border-sky-400/30"
-                              >
-                                <span>
-                                  Cloudinary ({post.cloudinaryPublicIds.length}) · Auto-purge +1h
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span
+                                  title="Staged in Cloudinary marrok_staging/* — automatically destroyed +1h after publication"
+                                  className="inline-flex items-center gap-1 text-sky-300"
+                                >
+                                  <span>
+                                    Staged ({post.cloudinaryPublicIds.length})
+                                  </span>
+                                  {stage !== 'scheduled' && (
+                                    <button
+                                      type="button"
+                                      disabled={isPostBusy}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void handlePurgePostCloudinary(post);
+                                      }}
+                                      className="ml-1 underline hover:text-white cursor-pointer"
+                                    >
+                                      Purge
+                                    </button>
+                                  )}
                                 </span>
-                                {stage !== 'scheduled' && (
-                                  <button
-                                    type="button"
-                                    disabled={isPostBusy}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      void handlePurgePostCloudinary(post);
-                                    }}
-                                    className="ml-1 underline hover:text-white cursor-pointer"
-                                  >
-                                    Purge now
-                                  </button>
-                                )}
-                              </span>
+                              </>
                             )}
                           {post.cloudinaryCleanedAt && (
-                            <span
-                              title={`Cloudinary staging purged at ${post.cloudinaryCleanedAt}`}
-                              className="px-2 py-0.5 rounded-md text-[10px] font-mono bg-white/[0.04] text-slate-400 border border-white/10"
-                            >
-                              Staging Purged
-                            </span>
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span
+                                title={`Cloudinary staging purged at ${post.cloudinaryCleanedAt}`}
+                                className="text-slate-500"
+                              >
+                                Staging Purged
+                              </span>
+                            </>
                           )}
                           {hasBoilerplateOutline && (
-                            <span
-                              title="This post contains generic offline outline slides — click Deep Re-Synthesize to scrape the source article and generate authentic technical slides"
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-amber-500/20 text-amber-200 border border-amber-400/40"
-                            >
-                              <AlertTriangle className="w-2.5 h-2.5" />
-                              Generic Outline · Upgrade Ready
-                            </span>
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span
+                                title="This post contains generic offline outline slides — click Deep Re-Synthesize to scrape the source article and generate authentic technical slides"
+                                className="inline-flex items-center gap-1 font-bold text-amber-300"
+                              >
+                                <AlertTriangle className="w-3 h-3" />
+                                Generic Outline
+                              </span>
+                            </>
                           )}
                         </div>
 

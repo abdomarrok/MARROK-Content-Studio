@@ -63,10 +63,11 @@ const PLATFORM_BADGES: Record<
 
 const SOURCE_FILTERS = [
   { id: 'all', label: 'All Sources' },
+  { id: 'github', label: 'GitHub Trending' },
   { id: 'reddit', label: 'Reddit Tech' },
   { id: 'hn', label: 'Hacker News' },
   { id: 'lobsters', label: 'Lobsters' },
-  { id: 'blogs', label: 'Engineering RSS & Blogs' },
+  { id: 'blogs', label: 'Engineering & AI RSS' },
 ] as const;
 
 const DOMAIN_FILTERS = [
@@ -495,6 +496,17 @@ export const TopicRadarGatherView: React.FC<TopicRadarGatherViewProps> = ({
 
                     <div className="space-y-1.5 min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-mono">
+                        {(candidate.topic.viralityScore || candidate.deck.sourceMeta?.viralityScore) && (
+                          <span
+                            className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/45 text-amber-200 font-extrabold uppercase tracking-tight"
+                            title="Computed Virality Score & Primary Hook Angle"
+                          >
+                            ⚡ VIRAL {candidate.topic.viralityScore || candidate.deck.sourceMeta?.viralityScore}
+                            {(candidate.topic.viralAngle || candidate.deck.sourceMeta?.viralAngle)
+                              ? ` · ${candidate.topic.viralAngle || candidate.deck.sourceMeta?.viralAngle}`
+                              : ''}
+                          </span>
+                        )}
                         <span className="px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 font-bold uppercase">
                           {candidate.topic.sourceName || candidate.topic.sourceType}
                         </span>

@@ -552,6 +552,116 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
     expect(sweep.cleanedPostIds).toEqual([]);
     expect(promoted?.cloudinaryPublicIds).toEqual(['local_staging/due_s1', 'local_staging/due_s2']);
   });
+
+  it('never deletes Cloudinary assets when publishFailed=true, when humanApproved=false, or on un-dispatched slot reservations, and persists publishFailed when Buffer/Zernio dispatch fails', async () => {
+    const threeHoursAgoIso = new Date(Date.now() - 3 * 3600_000).toISOString();
+    const seedPosts: SavedPostRecord[] = [
+      {
+        id: 'post_failed_publish',
+        title: 'Failed Scheduled Publish',
+        category: 'AI',
+        postStatus: 'validated',
+        publishFailed: true,
+        createdAt: threeHoursAgoIso,
+        updatedAt: threeHoursAgoIso,
+        creatorHandle: '@MARROK',
+        slideCount: 2,
+        qaPassed: true,
+        deck: DEFAULT_STARTER_DECK,
+        scheduledFor: threeHoursAgoIso,
+        cloudinaryPublicIds: ['local_staging/fail_s1', 'local_staging/fail_s2'],
+      },
+      {
+        id: 'post_unapproved_auto',
+        title: 'Unapproved Automated Draft',
+        category: 'AI',
+        postStatus: 'validated',
+        humanApproved: false,
+        createdAt: threeHoursAgoIso,
+        updatedAt: threeHoursAgoIso,
+        creatorHandle: '@MARROK',
+        slideCount: 2,
+        qaPassed: true,
+        deck: {
+          ...DEFAULT_STARTER_DECK,
+          sourceMeta: {
+            ...DEFAULT_STARTER_DECK.sourceMeta,
+            humanApproved: false,
+            userReviewed: false,
+          },
+        },
+        scheduledFor: threeHoursAgoIso,
+        cloudinaryPublicIds: ['local_staging/unapproved_s1'],
+      },
+      {
+        id: 'post_slot_only_reservation',
+        title: 'Telegram Slot Reservation Without Staged Media',
+        category: 'AI',
+        postStatus: 'validated',
+        createdAt: threeHoursAgoIso,
+        updatedAt: threeHoursAgoIso,
+        creatorHandle: '@MARROK',
+        slideCount: 2,
+        qaPassed: true,
+        deck: DEFAULT_STARTER_DECK,
+        scheduledFor: threeHoursAgoIso,
+        cloudinaryPublicIds: [],
+      },
+    ];
+
+    await saveStoredPosts(seedPosts);
+    const sweep = await sweepExpiredCloudinaryAssets();
+    expect(sweep.cleanedPostIds).toEqual([]);
+    const failedPost = sweep.updatedPosts.find((p) => p.id === 'post_failed_publish');
+    const unapprovedPost = sweep.updatedPosts.find((p) => p.id === 'post_unapproved_auto');
+    const slotOnlyPost = sweep.updatedPosts.find((p) => p.id === 'post_slot_only_reservation');
+    expect(failedPost?.postStatus).toBe('validated');
+    expect(failedPost?.cloudinaryPublicIds).toEqual(['local_staging/fail_s1', 'local_staging/fail_s2']);
+    expect(unapprovedPost?.postStatus).toBe('validated');
+    expect(unapprovedPost?.cloudinaryPublicIds).toEqual(['local_staging/unapproved_s1']);
+    expect(slotOnlyPost?.postStatus).toBe('validated');
+    expect(slotOnlyPost?.scheduledFor).toBe(threeHoursAgoIso);
+
+    // Verify handleDispatchPublish marks publishFailed=true and keeps postStatus='validated' when Buffer API fails
+    process.env.BUFFER_API_KEY = 'buf_failing_key';
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ errors: [{ message: 'Buffer upstream outage' }] }), {
+        status: 502,
+      })
+    );
+
+    let dispatchBody: any = null;
+    const res = {
+      status() {
+        return this;
+      },
+      json(payload: unknown) {
+        dispatchBody = payload;
+        return this;
+      },
+    } as any;
+
+    await handleDispatchPublish(
+      {
+        body: {
+          postId: 'post_dispatch_err_1',
+          deck: DEFAULT_STARTER_DECK,
+          title: 'Failing Dispatch Test',
+          mode: 'shareNow',
+          targets: ['instagram'],
+          imageUrls: ['https://cdn.example.com/s1.jpg'],
+          cloudinaryPublicIds: ['local_staging/disp_err_s1'],
+        },
+      } as any,
+      res
+    );
+
+    expect(dispatchBody.bufferFailedCount).toBe(1);
+    expect(dispatchBody.post.publishFailed).toBe(true);
+    expect(dispatchBody.post.postStatus).toBe('validated');
+    expect(dispatchBody.post.postedAt).toBeUndefined();
+  });
 });
+
 
 

@@ -187,7 +187,7 @@ export async function drawCtaSlide(
 
     // 4. Brand Wordmark & Domain Hook Badge directly below emblem
     ctx.save();
-    const ctaBrand = carousel.brand || 'MARROK';
+    const ctaBrand = 'MARROK';
     const fitBrand = fitTextInBox(ctx, ctaBrand, 850, 50, '"Plus Jakarta Sans", sans-serif', '800', {
       minFontSize: 28,
     });
@@ -329,7 +329,7 @@ export async function drawCtaSlide(
   const cardW = attr.width;
   const cardH = attr.height;
 
-  const displayUrl = carousel.brandUrl || slide.url || 'marrok.org';
+  const displayUrl = 'marrok.org';
   const urlY = Math.max(pillY + pillH + 28, cardY - Math.round(16 * ctaFontScale));
 
   if (!attr.hidden) {

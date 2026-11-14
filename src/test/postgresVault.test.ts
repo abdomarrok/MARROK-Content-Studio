@@ -60,7 +60,17 @@ describe('Neon PostgreSQL Vault Persistence & Safe Fallbacks', () => {
       cloudinary_cleaned_at: new Date(nowIso),
       buffer_post_ids: ['buf_123'],
       zernio_post_ids: ['zern_456'],
-      deck: DEFAULT_STARTER_DECK,
+      deck: {
+        ...DEFAULT_STARTER_DECK,
+        sourceMeta: {
+          ...DEFAULT_STARTER_DECK.sourceMeta,
+          qualityPassed: true,
+          groundingVerified: true,
+          humanApproved: false,
+          userReviewed: false,
+          publishFailed: true,
+        },
+      },
       created_at: new Date(nowIso),
       updated_at: new Date(nowIso),
       posted_at: null,
@@ -86,6 +96,10 @@ describe('Neon PostgreSQL Vault Persistence & Safe Fallbacks', () => {
       creatorHandle: 'MARROK',
       slideCount: 8,
       qaPassed: true,
+      qualityPassed: true,
+      groundingVerified: true,
+      humanApproved: false,
+      publishFailed: true,
       publishTargets: ['instagram', 'tiktok'],
       hostedSlideUrls: ['https://res.cloudinary.com/test/image/upload/slide1.jpg'],
       cloudinaryPublicIds: [],
@@ -98,12 +112,20 @@ describe('Neon PostgreSQL Vault Persistence & Safe Fallbacks', () => {
     expect(saved.storageEngine).toBe('neon-postgres');
     expect(saved.title).toBe('Distributed Consensus Architecture');
     expect(saved.cloudinaryCleanedAt).toBe(nowIso);
+    expect(saved.qualityPassed).toBe(true);
+    expect(saved.groundingVerified).toBe(true);
+    expect(saved.humanApproved).toBe(false);
+    expect(saved.publishFailed).toBe(true);
     expect(saved.deck.theme).toBe(DEFAULT_STARTER_DECK.theme);
 
     const queried = await queryPostgresPosts(mockPool);
     expect(queried).toHaveLength(1);
     expect(queried[0].id).toBe('post_test_neon_1');
     expect(queried[0].cloudinaryCleanedAt).toBe(nowIso);
+    expect(queried[0].qualityPassed).toBe(true);
+    expect(queried[0].groundingVerified).toBe(true);
+    expect(queried[0].humanApproved).toBe(false);
+    expect(queried[0].publishFailed).toBe(true);
     expect(queried[0].storageEngine).toBe('neon-postgres');
   });
 

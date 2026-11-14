@@ -20,6 +20,9 @@ export interface ServerConfig {
   bufferApiKey: string;
   zernioApiKey: string;
   databaseUrl: string;
+  telegramBotToken: string;
+  telegramWebhookSecret: string;
+  telegramAllowedChatIds: string[];
 }
 
 export interface CandidateGeminiKey {
@@ -202,6 +205,12 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
   const bufferApiKey = (env.BUFFER_API_KEY || '').trim();
   const zernioApiKey = (env.ZERNIO_API_KEY || '').trim();
   const databaseUrl = (env.DATABASE_URL || env.POSTGRES_URL || '').trim();
+  const telegramBotToken = (env.TELEGRAM_BOT_TOKEN || '').trim();
+  const telegramWebhookSecret = (env.TELEGRAM_WEBHOOK_SECRET || '').trim();
+  const telegramAllowedChatIds = (env.TELEGRAM_ALLOWED_CHAT_IDS || '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean);
 
   return {
     geminiApiKey,
@@ -223,6 +232,9 @@ export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCon
     bufferApiKey,
     zernioApiKey,
     databaseUrl,
+    telegramBotToken,
+    telegramWebhookSecret,
+    telegramAllowedChatIds,
   };
 }
 

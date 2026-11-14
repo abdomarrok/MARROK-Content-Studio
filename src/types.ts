@@ -92,6 +92,7 @@ export interface SlideData {
   // Key Takeaway Bullets (Single-Slide & Dense Infographic Posters)
   takeaways?: SlideTakeawayItem[];
   // Titles & Body
+  hookKicker?: string; // Viral hook kicker badge above English headline (e.g. "BENCHMARK SHOCK • 93.3% DROP")
   enTitle?: string;
   arTitle?: string;
   enBody?: string;
@@ -103,7 +104,28 @@ export interface SlideData {
   // Slide composition & Direct Graphical Control Overrides (Spec §21)
   compositionPreset?: SlideCompositionPreset;
   freeMoveLayout?: boolean;
+  manualLayoutLocked?: boolean; // Cascade Lock: protects manually edited slide from deck-wide layout sync/diversify
+  layoutRationale?: string;     // One-line explanation for why Smart Match / Diversify Deck picked this layout
   layoutOverrides?: Partial<Record<GraphicalElementId, ElementLayoutOverride>>;
+  // Story Arc Role, Dynamic Corner Tag, Before/After Metric & Chart Integrity, and Brand IP Safety
+  storyRole?: 'hook' | 'problem' | 'mechanism' | 'proof' | 'takeaway' | 'cta';
+  cornerTag?: string;
+  metricBeforeValue?: string;
+  chartDirection?: 'up' | 'down' | 'bar' | 'none';
+  numbersVerified?: boolean;
+  brandLogoConfig?: {
+    company?: string;
+    brandKey?: string;
+    mode?: 'text' | 'official_icon';
+    showOfficialIcon?: boolean;
+    colorMode?: 'official' | 'mono';
+    sizePct?: number;
+    maxWidthPct?: number;
+    placement?: 'corner_label' | 'center' | 'hero';
+    countOnSlide?: number;
+    isEdited?: boolean;
+    isNonLibrarySource?: boolean;
+  };
 }
 
 export type GraphicalElementId =
@@ -142,6 +164,8 @@ export interface HookVariant {
   enBody: string;
   arBody: string;
   centerIcon?: string;
+  hookKicker?: string;
+  coverArchetype?: SlideType;
 }
 
 export interface CaptionVariant {
@@ -163,6 +187,18 @@ export interface GroundingSource {
   url: string;
 }
 
+export interface NumericEvidenceDiscrepancy {
+  slideIndex: number;
+  slideRawMetric: string;
+  normalizedSlideValue: number;
+  unitCategory: 'currency' | 'percent' | 'multiplier' | 'duration_ms' | 'bytes' | 'rate' | 'scalar';
+  closestSourceMetric?: string;
+  normalizedSourceValue?: number;
+  reason: 'scale_mismatch' | 'unmatched_metric' | 'unit_conflict';
+  severity: 'WARN' | 'BLOCK';
+  message: string;
+}
+
 export interface PostSourceMeta {
   type?: 'article' | 'screenshot' | 'youtube' | 'notes';
   inputMode?: string;
@@ -179,6 +215,15 @@ export interface PostSourceMeta {
   model?: string;
   status?: 'verified_live' | 'unverified_draft';
   userReviewed?: boolean;
+  verifiedNumbers?: boolean;
+  extractedSourceMetrics?: string[];
+  numericDiscrepancies?: NumericEvidenceDiscrepancy[];
+  qualityPassed?: boolean;
+  groundingVerified?: boolean;
+  humanApproved?: boolean;
+  publishFailed?: boolean;
+  viralityScore?: number;
+  viralAngle?: string;
 }
 
 export type PostFormat = 'carousel' | 'single' | 'meme' | 'reel';
@@ -305,6 +350,8 @@ export interface CarouselData {
   slides: SlideData[];
   reelConfig?: MotionReelData;
   visualOptions?: VisualSystemOptions; // Phase 1-3 visual graphics system toggles
+  syncDeckEnabled?: boolean;
+  officialBrandIcons?: Record<string, boolean | { enabled: boolean; colorMode: 'official' | 'mono' }>;
 }
 
 export interface VisualSystemOptions {
@@ -372,6 +419,10 @@ export interface SavedPostRecord {
   creatorHandle: string;
   slideCount: number;
   qaPassed: boolean;
+  qualityPassed?: boolean;
+  groundingVerified?: boolean;
+  humanApproved?: boolean;
+  publishFailed?: boolean;
   storageEngine?: SavedPostStorageEngine;
   deck: CarouselData;
   // Publishing, Scheduling & Cloudinary Auto-Cleanup Metadata

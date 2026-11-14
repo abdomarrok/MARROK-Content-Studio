@@ -47,12 +47,18 @@ export function wrapTextLines(
     return [...cached];
   }
 
-  // Protect units and metrics from being split across lines (e.g. "510 GB", "10 ms")
+  // Protect units and metrics from being split across lines (e.g. "510 GB", "125 ms", "15 مللي ثانية", "105 عقدة")
   let textWithNbsp = rawText
-    .replace(/\b(\d+(?:\.\d+)?)\s+(GB|TB|MB|KB|ms|s|μs|req|rps|x|X)\b/gi, '$1\u00A0$2')
-    .replace(/\b(\d+(?:\.\d+)?)\s+(جيجابايت|تيرابايت|ميجابايت|مللي ثانية|ثواني|ضعفاً)\b/g, '$1\u00A0$2');
+    .replace(/\b(\d+(?:\.\d+)?)\s+(GB|TB|MB|KB|ms|s|μs|ns|req|rps|qps|x|X|%|nodes|checkouts|servers|clusters|shards|cores)\b/gi, '$1\u00A0$2')
+    .replace(/\b(\d+(?:\.\d+)?)\s+(مللي\s+ثانية|جيجابايت|تيرابايت|ميجابايت|مللي|ثانية|ثواني|ضعفاً|ضعف|مليون|مليار|عقدة|خادم)\b/g, (_, num, unit) => `${num}\u00A0${unit.replace(/\s+/g, '\u00A0')}`);
 
-  // Prevent isolated Latin technical terms from wrapping as orphans in Arabic text (e.g. "منظومة Zero-Trust")
+  // Prevent isolated Latin technical terms and 2-word English phrases (e.g. "Durable Objects") from splitting across lines in Arabic text
+  if (/[\u0600-\u06FF]/.test(textWithNbsp)) {
+    textWithNbsp = textWithNbsp.replace(
+      /\b([A-Za-z][A-Za-z0-9_+-]*)\s+([A-Za-z][A-Za-z0-9_+-]*)\b/g,
+      '$1\u00A0$2'
+    );
+  }
   textWithNbsp = textWithNbsp.replace(/([\u0600-\u06FF]+)\s+([A-Za-z0-9_\-]+)\b/g, '$1\u00A0$2');
 
   const paragraphs = textWithNbsp.split('\n');
@@ -203,11 +209,15 @@ export function fitTextInBox(
 
   let currentSize = initialFontSize;
 
+  const hasArabicGlyphs = /[\u0600-\u06FF]/.test(cleanText);
+  // Give Arabic cursive glyphs a 4% safety buffer inside maxWidth so edge overhangs never clip
+  const effectiveMaxWidth = hasArabicGlyphs ? Math.floor(maxWidth * 0.96) : maxWidth;
+
   if (maxLines === 1) {
     while (currentSize >= minFontSize) {
       ctx.font = `${fontWeight} ${currentSize}px ${fontFamily}`;
       const width = ctx.measureText(cleanText).width;
-      if (width <= maxWidth) {
+      if (width <= effectiveMaxWidth) {
         const result = { fontSize: currentSize, lines: [cleanText], lineHeight: currentSize * lineHeightFactor };
         setBoundedCache(fitTextCache, cacheKey, result);
         return { fontSize: result.fontSize, lines: [...result.lines], lineHeight: result.lineHeight };
@@ -215,10 +225,17 @@ export function fitTextInBox(
       currentSize -= 0.5;
     }
 
-    // If still overflows at minFontSize, truncate with ellipsis
-    ctx.font = `${fontWeight} ${minFontSize}px ${fontFamily}`;
-    const truncated = ellipsis ? truncateTextToWidth(ctx, cleanText, maxWidth) : cleanText;
-    const result = { fontSize: minFontSize, lines: [truncated], lineHeight: minFontSize * lineHeightFactor };
+    // Never silently clip: scale down slightly further if needed before falling back to ellipsis
+    let emergencySize = minFontSize;
+    while (emergencySize > 11 && ctx.measureText(cleanText).width > effectiveMaxWidth) {
+      emergencySize -= 0.5;
+      ctx.font = `${fontWeight} ${emergencySize}px ${fontFamily}`;
+    }
+    const finalLine =
+      ctx.measureText(cleanText).width > effectiveMaxWidth && ellipsis
+        ? truncateTextToWidth(ctx, cleanText, effectiveMaxWidth)
+        : cleanText;
+    const result = { fontSize: emergencySize, lines: [finalLine], lineHeight: emergencySize * lineHeightFactor };
     setBoundedCache(fitTextCache, cacheKey, result);
     return { fontSize: result.fontSize, lines: [...result.lines], lineHeight: result.lineHeight };
   }
@@ -226,8 +243,9 @@ export function fitTextInBox(
   // Multi-line wrap with font-size scale down if needed
   while (currentSize >= minFontSize) {
     ctx.font = `${fontWeight} ${currentSize}px ${fontFamily}`;
-    const wrapped = wrapTextLines(ctx, cleanText, maxWidth);
-    if (wrapped.length <= maxLines) {
+    const wrapped = wrapTextLines(ctx, cleanText, effectiveMaxWidth);
+    const allLinesFitWidth = wrapped.every((line) => ctx.measureText(line).width <= effectiveMaxWidth);
+    if (wrapped.length <= maxLines && allLinesFitWidth) {
       const result = { fontSize: currentSize, lines: wrapped, lineHeight: currentSize * lineHeightFactor };
       setBoundedCache(fitTextCache, cacheKey, result);
       return { fontSize: result.fontSize, lines: [...result.lines], lineHeight: result.lineHeight };
@@ -235,25 +253,45 @@ export function fitTextInBox(
     currentSize -= 1;
   }
 
-  // Truncate to maxLines with ellipsis on final line
-  ctx.font = `${fontWeight} ${minFontSize}px ${fontFamily}`;
-  const allLines = wrapTextLines(ctx, cleanText, maxWidth);
+  // If still more than maxLines at minFontSize, step down slightly further so text shrinks to fit instead of clipping
+  let fallbackSize = minFontSize;
+  while (fallbackSize > 18) {
+    ctx.font = `${fontWeight} ${fallbackSize}px ${fontFamily}`;
+    const candidateLines = wrapTextLines(ctx, cleanText, effectiveMaxWidth);
+    if (
+      candidateLines.length <= maxLines &&
+      candidateLines.every((l) => ctx.measureText(l).width <= effectiveMaxWidth)
+    ) {
+      const result = {
+        fontSize: fallbackSize,
+        lines: candidateLines,
+        lineHeight: Math.round(fallbackSize * lineHeightFactor),
+      };
+      setBoundedCache(fitTextCache, cacheKey, result);
+      return { fontSize: result.fontSize, lines: [...result.lines], lineHeight: result.lineHeight };
+    }
+    fallbackSize -= 1;
+  }
+
+  // Truncate to maxLines with ellipsis on final line only as last resort
+  ctx.font = `${fontWeight} ${fallbackSize}px ${fontFamily}`;
+  const allLines = wrapTextLines(ctx, cleanText, effectiveMaxWidth);
   const wrapped = allLines.slice(0, maxLines);
   if (wrapped.length === maxLines && ellipsis) {
     const last = wrapped[maxLines - 1];
     wrapped[maxLines - 1] = allLines.length > maxLines
-      ? truncateTextToWidth(ctx, last, maxWidth, '…', true)
+      ? truncateTextToWidth(ctx, last, effectiveMaxWidth, '…', true)
       : last;
   }
 
-  // Hard safety: guarantee no individual line escapes maxWidth
+  // Hard safety: guarantee no individual line escapes effectiveMaxWidth
   for (let i = 0; i < wrapped.length; i++) {
-    if (ctx.measureText(wrapped[i]).width > maxWidth) {
-      wrapped[i] = truncateTextToWidth(ctx, wrapped[i], maxWidth, '…', true);
+    if (ctx.measureText(wrapped[i]).width > effectiveMaxWidth) {
+      wrapped[i] = truncateTextToWidth(ctx, wrapped[i], effectiveMaxWidth, '…', true);
     }
   }
 
-  const result = { fontSize: minFontSize, lines: wrapped, lineHeight: Math.round(minFontSize * lineHeightFactor) };
+  const result = { fontSize: fallbackSize, lines: wrapped, lineHeight: Math.round(fallbackSize * lineHeightFactor) };
   setBoundedCache(fitTextCache, cacheKey, result);
   return { fontSize: result.fontSize, lines: [...result.lines], lineHeight: result.lineHeight };
 }

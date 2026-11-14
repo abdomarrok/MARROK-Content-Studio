@@ -46,6 +46,8 @@ export interface GatheredTopicItem {
     | 'DISTRIBUTED SYSTEMS';
   publishedAt: string;
   score: number;
+  viralityScore?: number;
+  viralAngle?: string;
   summary: string;
   extractedMetrics: string[];
   recommendedFormat: 'carousel' | 'single' | 'reel';
@@ -205,13 +207,16 @@ export function isTopicAlreadyInVault(
 
   for (const post of savedPosts) {
     const postBrandUrl = (post.deck?.brandUrl || '').trim().toLowerCase().replace(/\/+$/, '');
+    const postMetaUrl = (post.deck?.sourceMeta?.url || '').trim().toLowerCase().replace(/\/+$/, '');
     const postSourceUrls = (post.deck?.sourceMeta?.groundingSources || []).map((s) =>
       (s.url || '').trim().toLowerCase().replace(/\/+$/, '')
     );
 
     if (
       cleanTopicUrl &&
-      (postBrandUrl === cleanTopicUrl || postSourceUrls.includes(cleanTopicUrl))
+      (postBrandUrl === cleanTopicUrl ||
+        postMetaUrl === cleanTopicUrl ||
+        postSourceUrls.includes(cleanTopicUrl))
     ) {
       return post;
     }
@@ -261,6 +266,11 @@ export function buildCandidateFromTopicSync(
 
   if (targetFormat === 'single' && deck.slides.length > 1) {
     deck = condenseCarouselToSingleSlide(deck);
+  } else if (deck.slides.length > 2) {
+    deck = {
+      ...deck,
+      slides: diversifyDeckArchetypesAndVisuals(deck.slides, { dynamicCover: true }),
+    };
   }
   deck = autoFinalizeCarouselDeck(deck);
 
@@ -270,8 +280,9 @@ export function buildCandidateFromTopicSync(
     id: `candidate_${topic.id}`,
     theme: assignedThemeId,
     category: topic.domainCategory || deck.category || 'SYSTEMS ARCHITECTURE',
-    brand: topic.brand || deck.brand || 'MARROK',
-    brandUrl: topic.brandUrl || deck.brandUrl || 'marrok.org',
+    brand: 'MARROK',
+    brandUrl: 'marrok.org',
+    channel: topic.brand || topic.sourceName || deck.channel,
     postFormat: targetFormat,
     sourceMeta: {
       ...deck.sourceMeta,
@@ -280,6 +291,8 @@ export function buildCandidateFromTopicSync(
       channel: topic.sourceName,
       published: topic.publishedAt,
       url: topic.url,
+      viralityScore: topic.viralityScore,
+      viralAngle: topic.viralAngle,
       userReviewed: false,
       groundingSources: [
         { title: topic.title, url: topic.url },
@@ -443,8 +456,9 @@ export async function synthesizeCandidateWithFullAi(
     id: candidate.deck.id || `candidate_${enrichedTopic.id}`,
     theme: candidate.themeId,
     category: enrichedTopic.domainCategory || aiDeck.category || 'SYSTEMS ARCHITECTURE',
-    brand: enrichedTopic.brand || aiDeck.brand || 'MARROK',
-    brandUrl: enrichedTopic.brandUrl || aiDeck.brandUrl || 'marrok.org',
+    brand: 'MARROK',
+    brandUrl: 'marrok.org',
+    channel: enrichedTopic.brand || enrichedTopic.sourceName || aiDeck.channel,
     postFormat: targetFormat,
     sourceMeta: {
       ...aiDeck.sourceMeta,
@@ -629,8 +643,9 @@ export async function synthesizeGatheredTopicsForReview(
         id: `gather_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         theme: assignedThemeId,
         category: topic.domainCategory || deck.category || 'SYSTEMS ARCHITECTURE',
-        brand: topic.brand || deck.brand || 'MARROK',
-        brandUrl: topic.brandUrl || deck.brandUrl || 'marrok.org',
+        brand: 'MARROK',
+        brandUrl: 'marrok.org',
+        channel: topic.brand || topic.sourceName || deck.channel,
         postFormat: targetFormat,
         sourceMeta: {
           ...deck.sourceMeta,
@@ -685,6 +700,10 @@ const LEGACY_BOILERPLATE_SLIDE_TITLES = new Set([
   'production reliability wins',
   'the engineering tradeoff.',
   'the engineering tradeoff',
+  'the core trade-off.',
+  'the core trade-off',
+  'join the discussion.',
+  'join the discussion',
 ]);
 
 /**
@@ -852,8 +871,9 @@ export async function resynthesizeSavedPostWithDeepAi(
     id: post.id,
     theme: post.deck?.theme || upgradedDeck.theme || 'blueprint',
     category: post.category || upgradedDeck.category || 'DISTRIBUTED SYSTEMS',
-    brand: scrapedBrand,
-    brandUrl: scrapedBrandUrl,
+    brand: 'MARROK',
+    brandUrl: 'marrok.org',
+    channel: scrapedBrand !== 'MARROK' ? scrapedBrand : post.deck?.channel || scrapedAuthor,
     postFormat: targetFormat,
     sourceMeta: {
       ...upgradedDeck.sourceMeta,

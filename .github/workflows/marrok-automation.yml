@@ -1,0 +1,67 @@
+name: MARROK Automation & Cloudinary Cleanup
+
+on:
+  schedule:
+    # Daily Radar Autopilot at 08:00 DZ (Africa/Algiers = UTC+1 -> 07:00 UTC)
+    - cron: '0 7 * * *'
+    # Hourly Staged Cloudinary Media Sweep (+1h post-publish safety buffer)
+    - cron: '15 * * * *'
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'Task to execute (autopilot or cleanup)'
+        required: true
+        default: 'autopilot'
+        type: choice
+        options:
+          - autopilot
+          - cleanup
+
+concurrency:
+  group: marrok-automation-${{ github.event.schedule || github.event.inputs.task || 'manual' }}
+  cancel-in-progress: false
+
+jobs:
+  run-automation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate Required Repository Secrets
+        env:
+          MARROK_APP_ORIGIN: ${{ secrets.MARROK_APP_ORIGIN }}
+          API_SHARED_SECRET: ${{ secrets.API_SHARED_SECRET }}
+        run: |
+          if [ -z "$MARROK_APP_ORIGIN" ]; then
+            echo "::error::Missing required GitHub secret MARROK_APP_ORIGIN"
+            exit 1
+          fi
+          if [ -z "$API_SHARED_SECRET" ]; then
+            echo "::error::Missing required GitHub secret API_SHARED_SECRET"
+            exit 1
+          fi
+
+      - name: Trigger Daily 08:00 DZ Quality-Gated Autopilot
+        if: github.event.schedule == '0 7 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.task == 'autopilot')
+        env:
+          MARROK_APP_ORIGIN: ${{ secrets.MARROK_APP_ORIGIN }}
+          API_SHARED_SECRET: ${{ secrets.API_SHARED_SECRET }}
+        run: |
+          RESPONSE=$(curl --fail --silent --show-error --max-time 180 -X POST "${MARROK_APP_ORIGIN%/}/api/gather/autopilot" \
+            -H "Content-Type: application/json" \
+            -H "x-api-secret: ${API_SHARED_SECRET}" \
+            -d '{"mode":"radar","limit":3,"allowOfflineFallback":false}')
+          echo "$RESPONSE"
+          echo "$RESPONSE" | jq -e '.ok == true' > /dev/null
+
+      - name: Trigger Hourly Cloudinary Expired Asset Sweep
+        if: github.event.schedule == '15 * * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.task == 'cleanup')
+        env:
+          MARROK_APP_ORIGIN: ${{ secrets.MARROK_APP_ORIGIN }}
+          API_SHARED_SECRET: ${{ secrets.API_SHARED_SECRET }}
+        run: |
+          RESPONSE=$(curl --fail --silent --show-error --max-time 60 -X POST "${MARROK_APP_ORIGIN%/}/api/publish/cleanup-media" \
+            -H "Content-Type: application/json" \
+            -H "x-api-secret: ${API_SHARED_SECRET}" \
+            -d '{}')
+          echo "$RESPONSE"
+          echo "$RESPONSE" | jq -e '.cleanedPublicIds != null' > /dev/null

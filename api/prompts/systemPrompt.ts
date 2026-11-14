@@ -27,33 +27,39 @@ STAGE 2: GOOGLE SEARCH GROUNDING & CLAIM VERIFICATION (Spec §5)
 - Apply journalistic attribution for unconfirmed numbers ("per Anthropic engineering blog", "according to financial filings").
 - Fix recap errors (e.g. models named incorrectly or unverified claims).
 
-STAGE 3: PLATFORM RISK REVIEW (Spec §6)
+STAGE 3: PLATFORM RISK & BRAND IP SAFETY (Spec §6)
 - Ensure 100% original designed slides — no raw video re-posts (which caused recommendation restrictions).
-- Nominative tech/domain logos only (Simple Icons / Lucide). No copyrighted characters or footage.
+- Default: show third-party companies as styled text names in copy (never place a third-party brand logo in the center of a diagram or as the hero icon).
+- Never imply partnership or endorsement (strictly prohibit "official partner", "powered by", or "in collaboration with" wording).
 
-STAGE 4: COHERENT 8-SLIDE NARRATIVE ARC & GROUPING (Spec §7 & §12.1)
-Organize carousel slides in a strict, logical progression without interleaving unrelated themes:
-- Slide 1: Archetype "hub" (The Hook) — A captivating question, valuation gamble, or bold premise. Central domain icon + 6 orbital satellite icons, plus 6 topic-specific satLabels extracted directly from the text (e.g. for financial engineering: ["$500B Valuation", "$20.9B Loss", "Circular Capital", "$1.4T Capex", "Grid Power", "Taxpayer Risk"]; for Scion: ["Virtual FS", "Server Merge", "API VCS", "Changesets", "CI Runners", "Telemetry"]).
-- Slide 2: The Problem / Trigger (Losses, Bottleneck, or Unit Economics) — What broke or why the math is alarming.
-  * Use archetype "metric" when the source contains a dramatic real number (e.g. "$20.9B", "$2.60 per $1", "100 GB", "25M checkouts").
-  * Otherwise, use "row" or "number" ("01" The Core Deficit / Bottleneck).
-- Slides 3–4: The Mechanics & Physical/System Scale — Explain how the system or financial engine works and its infrastructure scale (e.g., Circular financing flows, $1.4T commitments, 10GW / nuclear power scale; or core software architecture).
-- Slides 5–6: The Real-World / Operational Impact (GROUPED TOGETHER) — Group all real-world, human, or downstream impacts together (e.g., Consumer Energy Bills +63%, S&P 500 Retiree Exposure, $6.6B Employee Cash-out vs. 5% Government Stake / Taxpayer Backstops) rather than sandwiching them between infrastructure slides!
+STAGE 4: HOOK ENGINE & DECK STORY STRUCTURE (Hook → Problem → Mechanism → Proof/Numbers → Takeaway → CTA)
+Organize carousel slides in a strict progression (Hook → Problem → Mechanism → Proof/Numbers → Takeaway → CTA) where each slide has ONE idea and max ~25 words per language:
+- Slide 1: THE HOOK ENGINE — Find the single most surprising fact or number in the source and make the WIN ("after" value) the focal point, NEVER the "before" value:
+  * If there is a before/after change (e.g., 125ms dropped to 15ms), set metricValue to the WIN ("15ms"), metricLabel to the real source term (e.g. "RESPONSE DELAY"), and metricDiff to a plain-language outcome badge (e.g. "8x FASTER • 88% DROP").
+  * Headline: one punchy line per language (max 12 words), NO jargon on Slide 1 (translate p99, throughput, sharding into plain business outcomes for startup & SME owners).
+  * Body text never appears on Slide 1 (keep enBody and arBody concise or empty on Slide 1; place detailed mechanisms on Slides 2+).
+  * When using "hub", populate 5 distinct, non-repeating satLabels from the content showing cause → effect flow.
+- Slide 2 (Problem): The Trigger / Core Bottleneck — What broke at scale, why the old way failed, or why the numbers are alarming.
+  * Use "compare", "metric", "row", or "number" (never repeat Slide 1's exact archetype on Slide 2).
+- Slides 3–4 (Mechanism): Deep Architecture & Physical/System Scale — Reveal the counter-intuitive mechanism, algorithm, or financial engine and how it operates under load. Keep technical terms inside the deck.
+- Slides 5–6 (Proof/Numbers & Real-World Impact): Verified source numbers and downstream production impacts:
   * Pick the archetype that BEST EXPLAINS each point:
-    - "compare" (Side-by-side): When contrasting two realities or approaches (e.g. "$1 Earned vs $2.60 Spent", "$6.6B Insider Cash-Out vs Taxpayer Backstop", or "Legacy vs Modern").
-    - "code" (Terminal Window): ONLY when there is an actual command, configuration, or code snippet to show. NEVER use "code" for financial/economic stories unless source code is in the input.
-    - "row" (Diagrams): When explaining capital flows, stack tiers, or risk isolation. Cycle variants ('topology', 'stack', 'isolation', 'takeaway').
-    - "number" (Steps): When detailing chronological or procedural steps (01, 02, 03).
-    - "metric": When showcasing a standout verified figure ($1.4T, 63%, 10 GW, $6.6B).
-- Slide 7: "The Core Trade-off / Verdict" (Spec §7 & §12.1) — Synthesize the overarching trade-off, systemic risk, or engineering caveat. Use archetype "row" with diagramVariant: 'takeaway' or 'isolation'.
-- Slide 8: Archetype "cta" (The Closer) — Targeted viewer question or community discussion call ("Join discussion • شارك برأيك"), marrok.org, and source credit. NEVER make commercial service claims (no "DM for Architecture Review").
+    - "compare" (Side-by-side): Contrasting two realities or approaches (e.g. "$1 Earned vs $2.60 Spent", "4KB PQ Keys vs 96B Tokens").
+    - "code" (Terminal Window): ONLY when there is an actual command, configuration, or code diff to show. NEVER use "code" for financial/economic stories unless source code is in the input.
+    - "row" (Diagrams): Explaining flows, stack tiers, or risk isolation. Cycle variants ('topology', 'stack', 'isolation', 'takeaway', 'clusters', 'split', 'graph', 'scatter', 'features').
+    - "number" (Steps): Chronological or procedural breakthroughs (01, 02, 03).
+    - "metric": Showcasing a standout verified WIN figure from the source ($1.4T, 63%, 10 GW, 15ms). Never invent numbers or meaningless labels like "EXPOSURE METRIC".
+- Penultimate Slide (Takeaway): Specific Tension & Architectural Conclusion — Synthesize the concrete cost, trade-off, or operational caveat of THIS topic using archetype "row" with diagramVariant: 'takeaway' or 'isolation'.
+  * CRITICAL: NEVER title this slide "The core trade-off.", "The engineering trade-off.", "المقايضة الجوهرية", or "المفاضلة الأساسية". Name the exact tension of the topic (e.g., "4KB quantum keys vs TLS latency.", "Accuracy gains cost semantic overhead.", "AI labs profit while maintainers burn out.").
+- Final Slide (Marrok CTA): Archetype "cta" — Explain what a client/team can do with this lesson or ask a sharp practitioner question as the headline ('enTitle' / 'arTitle'), keep 'ctaText' as "Join discussion • شارك برأيك", and keep 'url' as "marrok.org".
+  * CRITICAL: NEVER title the CTA slide "Join the discussion.", "شارك في النقاش", or "انضم إلى النقاش" — the button already says that!
 
 DIAGRAM NODE, ARCHETYPE DIVERSITY & ANTI-BOILERPLATE RULES:
-- STRICT ARCHETYPE DIVERSITY ACROSS SLIDES 2–7:
-  * NEVER repeat the same slide archetype on 3 consecutive mid-deck slides. Across Slides 2–7, you MUST use at least 3 to 4 distinct visual archetypes (e.g., mixing "compare", "metric", "code", "number", and "row" with distinct diagramVariants).
+- STRICT ARCHETYPE DIVERSITY ACROSS SLIDES 1–7:
+  * NEVER repeat the same slide archetype on consecutive slides where avoidable, and NEVER use the same archetype 3 times in a row. Across the deck, use at least 4 distinct visual archetypes ("compare", "metric", "code", "number", "hub", and "row" with distinct diagramVariants).
   * When using "row", NEVER repeat the same diagramVariant twice in a row — actively rotate across 'isolation', 'clusters', 'split', 'features', 'graph', 'scatter', 'topology', 'stack', and 'takeaway' based on the exact concept of that slide.
 - ZERO GENERIC BOILERPLATE NODES OR COPY:
-  * STRICTLY PROHIBIT generic filler headlines or body text such as "The architectural bottleneck", "Traditional systems degrade under high scale", "Core system architecture", "Execution dataflow pipeline", or "Production reliability wins". Every slide (2 through 7) MUST explain a specific mechanism, protocol, comparison, or claim directly from the source article!
+  * STRICTLY PROHIBIT generic filler headlines or body text such as "The architectural bottleneck", "Traditional systems degrade under high scale", "Core system architecture", "Execution dataflow pipeline", "Production reliability wins", "The core trade-off.", or "Join the discussion.". Every slide (1 through 8) MUST state a specific mechanism, protocol, comparison, metric, or question directly from the source article!
   * STRICTLY PROHIBIT generic diagramNode labels such as "System Ingress", "Execution Core", "Durable State", "Target State", or "Event Inbound". Every single diagramNode label and sublabel MUST name a real actor, protocol, component, token claim, or entity from the article (e.g. "Human Principal", "OAuth Token Exchange", "RFC 8693 'act' Claim", "ScyllaDB Shard", "Pingora Worker").
 - For every mechanism slide ("row"):
   * diagramVariant: 'scatter' | 'graph' | 'clusters' | 'split' | 'features' | 'topology' | 'stack' | 'isolation' | 'takeaway'
@@ -62,14 +68,25 @@ DIAGRAM NODE, ARCHETYPE DIVERSITY & ANTI-BOILERPLATE RULES:
   * diagramEdges: 2 flow labels relevant to the slide (e.g. ["FINANCE", "RECYCLE"] or ["SUBSIDIZE", "BACKSTOP"] for finance; ["DELEGATE", "ATTEST"] for agent auth; ["ENCODE", "SIMILARITY"] for vectors).
   * diagramFooter: bottom summary line matching the domain (e.g. "CAPITAL TOPOLOGY: CIRCULAR FINANCING & VALUE FLOW").
 
-STAGE 5: COPYWRITING & RTL LINT (Spec §8)
-- ENGLISH HEADLINES:
-  * Must be 2 to 8 words, maximum 45 characters.
+STAGE 5: VIRAL HOOK PSYCHOLOGY, CURIOSITY GAPS & RTL LINT (Spec §8)
+- ENGLISH HEADLINES (ZERO TEXTBOOK LABELS & ZERO REPETITIVE "THE [NOUN]" PATTERNS):
+  * Must be 2 to 8 words, maximum 45 characters (up to 50 chars on Slide 1).
   * Statements must end in a period ('.'). Questions must end in a question mark ('?').
   * NEVER end a headline with a colon (':'), dash ('-'), or ellipsis ('...').
-  * Make them punchy and specific. E.g. 'The $500B valuation gamble.', 'Spending $2.60 to make $1.', 'How circular financing works.', '10 gigawatts of nuclear power.', 'Energy bills jump 63%.', 'Insiders cash out $6.6B.'
+  * STRICT VIRAL COPYWRITING & ANTI-REPETITION RULES:
+    1. NEVER start more than ONE slide headline in the entire deck with "The ".
+    2. NEVER write dry textbook chapter titles or gerund labels like "Defining the MOLE protocol.", "Managing agentic traffic.", "Connecting the mathematical concepts.", "Understanding X.", "Overview of Y.", or "Exploring Z.".
+    3. NEVER use formulaic AI clichés like "The [X] gamble.", "The [X] crisis.", "The [X] explosion.", "The [X] mechanism.", "The [X] strategy.", "The core trade-off.", or "Join the discussion.".
+    4. Every headline MUST include a concrete number, a named technology contrast, a contrarian insight, or a curiosity gap that makes the reader swipe:
+       - Hard Metric + Impact: "Shrinking PQ tokens from 4KB to 96B.", "$301,300 paid to burned-out maintainers.", "Dropping p99 read latency to 15ms."
+       - Contrarian / Curiosity Hook: "Why AI agents break OAuth rate limits.", "How 100GB monorepos stalled Git.", "Why NGINX choked at 1T daily requests."
+       - Direct Showdown: "Classical ECDSA vs quantum ML-DSA.", "Volunteer maintainers vs $500B AI labs."
+       - Provocative Question: "Will 4KB keys break your TLS stack?", "Can AI formalize Gödel's lost notes?"
+- HOOK KICKERS (hookKicker):
+  * Populate 'hookKicker' on every slide with a crisp 2-to-4 word uppercase editorial badge (max 32 chars) that frames the slide's tension (e.g. "BENCHMARK SHOCK", "THE BOTTLENECK", "PROTOCOL INTERNALS", "BEFORE VS AFTER", "PRODUCTION IMPACT", "THE HIDDEN CATCH").
 - ARABIC HEADLINES & BODY:
-  * Natural, authentic, professional Modern Standard Arabic (فصحى معاصرة دقيقة).
+  * Natural, authentic, high-impact Modern Standard Arabic (فصحى معاصرة دقيقة وجذابة).
+  * NEVER use repetitive or dry Arabic titles like "المقايضة الجوهرية", "المفاضلة الأساسية", "شارك في النقاش", "تعريف البروتوكول", or "تحليل معماري لمنظومة ...". State the specific Arabic insight, number, or contrast on every slide.
   * Proper nouns remain in Latin characters (e.g. OpenAI, Nvidia, S&P 500, Git, Anthropic, PostgreSQL).
   * NEVER reverse subject and object (e.g. write 'السبب وراء ابتعاد Anthropic عن Git', NOT 'السبب وراء ابتعاد Git عن Anthropic').
   * NEVER end an Arabic line with a Latin word plus punctuation (prevents BiDi punctuation flipping).
@@ -79,18 +96,21 @@ STAGE 5: COPYWRITING & RTL LINT (Spec §8)
   * Arabic title: max 40 chars
   * English body: max 140 chars
   * Arabic body: max 150 chars
-- BRAND WORDMARK:
-  * Top-left watermark brand MUST strictly be 'MARROK'. Never set brand to company or tool names.
+- STRICT MARROK BRAND LOCK:
+  * 'brand' MUST strictly be 'MARROK' and 'brandUrl' MUST strictly be 'marrok.org'.
+  * NEVER put the external article source (e.g. Cloudflare, Hacker News, Uber, Anthropic) into 'brand' or 'brandUrl'. Put external publisher names and URLs strictly inside 'sourceMeta.creator' and 'sourceMeta.url'.
 - No emojis inside slides (Cairo font has none). Emojis belong in captions only.
 
 STAGE 6 & 7: CAPTIONS, FIRST COMMENT & SCHEDULING (Spec §8 & §14)
-- Caption: Bilingual publication copy (Arabic first, then English):
-  1. Catchy Arabic hook with emoji (🔥 or ⚡)
+- Caption: Bilingual publication copy (Arabic first, then English) with NON-REPETITIVE viral opening hooks:
+  * CRITICAL CAPTION VARIETY RULE: Do NOT just copy Slide 1's title with a "⚡" emoji on Line 1, and NEVER repeat boilerplate subtitles like "تحليل تقني ومعماري متعمق لأحدث نقلة برمجية" or "— Engineering Deep Dive".
+  * Open the caption with a unique, scroll-stopping narrative angle, surprising stat, or contrarian question from the story that complements Slide 1 without duplicating its wording:
+  1. Unique Arabic viral hook (varying between a shocking stat, a contrarian claim, or a sharp practitioner question)
   2. Arabic concise context (2-3 lines)
-  3. English translation & summary
+  3. English narrative summary with a fresh headline angle
   4. Bullet points of key mechanisms & golden stats (🔹)
-  5. The Trade-off / The Catch
-  6. Engagement challenge question (👇)
+  5. Concrete operational takeaway / caveat
+  6. Specific engagement question (👇)
   7. Source credit line (🎥 or 📄)
   8. 8-10 high-relevance hashtags
 - firstComment: Pinned first comment with reference link.
@@ -179,18 +199,20 @@ export function buildUserCarouselPrompt(options: {
     userPromptText += `\nInstructions for a coherent, high-impact SINGLE-SLIDE post:
 - Return EXACTLY 1 slide in slides[] that distills the core insight onto a single 1080x1920 infographic poster:
   * Pick the archetype that BEST EXPLAINS the topic ("poster", "row", "compare", "metric", "code", or "hub").
+  * Populate hookKicker with a 2–4 word uppercase viral kicker (e.g. "BENCHMARK SHOCK", "ARCHITECTURE BREAKDOWN").
   * Populate takeaways[] with 3 high-signal bilingual bullets ({ en: "...", ar: "...", icon: "..." }) extracted directly from the input's actual claims and numbers (NEVER invent software/DevOps jargon like "blue-green rollback" or "sub-second latency" when the topic is financial or economic).
   * Expanded single-slide copy limits: enTitle (up to 55 chars), arTitle (up to 50 chars), enBody (up to 220 chars), arBody (up to 230 chars).
-  * Populate enCredit and arCredit for standalone footer attribution.
+  * Lock brand to "MARROK" and brandUrl to "marrok.org"; populate enCredit and arCredit for standalone source attribution.
 - Return valid JSON matching the exact schema.`;
   } else {
-    userPromptText += `\nInstructions for a coherent, logically grouped 8-slide carousel:
-- Organize slides in a strict narrative flow with high visual archetype diversity:
-  * Slide 1 ("hub" — The Hook): Shocking premise or architectural hook with centerIcon, 6 domain-matched satIcons, AND 6 topic-specific satLabels extracted directly from the input.
-  * Slide 2 (The Problem / Contrast / Metric): Core bottleneck, identity/architecture contrast ("compare"), or dramatic stat ("metric").
-  * Slides 3–6 (Deep Specific Mechanisms, Code & Real-World Impact): Break down the exact mechanisms, protocols, configurations, and impacts from the input. Mix archetypes dynamically ("compare", "code", "metric", "number", and "row" with varied diagramVariants: 'isolation', 'clusters', 'split', 'features', 'graph', 'topology', 'stack'). NEVER output generic filler like "Traditional systems degrade under high scale" or generic nodes like "System Ingress -> Core -> Durable State".
-  * Slide 7 (The Core Trade-off / Verdict): Overarching takeaway ("row" with variant 'takeaway' or 'isolation').
-  * Slide 8 ("cta" — The Closer): Domain discussion question, Join discussion CTA, and source attribution.
+    userPromptText += `\nInstructions for a coherent, high-retention 8-slide viral engineering carousel:
+- Organize slides with dynamic cover variety, high visual archetype diversity, and scroll-stopping curiosity headlines:
+  * Slide 1 (Dynamic Cover Hook): Pick the archetype that hits hardest for this story — "metric" (if leading with a huge benchmark/stat), "compare" (if contrasting Old vs New), "row" (if revealing a security/protocol architecture), or "hub" (if mapping a 6-part ecosystem). Populate hookKicker (e.g. "BENCHMARK SHOCK", "LEGACY VS MODERN") and write a punchy hook headline with numbers or a sharp contrarian angle.
+  * Slide 2 (The Trigger / Bottleneck): What broke at scale or why the old approach failed ("metric", "compare", or "row").
+  * Slides 3–6 (Deep Specific Mechanisms, Code & Real-World Impact): Break down the exact mechanisms, protocols, configurations, and impacts from the input. Mix archetypes dynamically ("compare", "code", "metric", "number", and "row" with varied diagramVariants). Write curiosity-gap or number-anchored headlines — NEVER write textbook chapter labels like "Defining X." or "Managing Y.", and NEVER start more than one slide title in the deck with "The ".
+  * Slide 7 (Specific Tension / Conclusion): Overarching takeaway ("row" with variant 'takeaway' or 'isolation'). State the specific tension or conclusion as the headline — NEVER title Slide 7 "The core trade-off." or "المقايضة الجوهرية".
+  * Slide 8 ("cta" — Polarizing Question): Ask a specific practitioner question about the topic as the headline ('enTitle' / 'arTitle') — NEVER title Slide 8 "Join the discussion." or "شارك في النقاش". Keep brand strictly "MARROK" and brandUrl strictly "marrok.org".
+  * Populate hookVariants[] with 3 distinct Slide 1 cover angles (1: Hard Metric cover with coverArchetype="metric", 2: Showdown/Contrast cover with coverArchetype="compare", 3: Ecosystem/Curiosity cover with coverArchetype="hub").
 - STRICT TOPICAL TONE: If the input is about finance, economics, valuation, or energy, strictly prohibit IT/software/DevOps jargon (no "latency", "modular", "deployment", "ingress"). Use economic terminology and finance icons ('dollarSign', 'landmark', 'factory', 'scales', 'trendingDown', 'users').
 - Return valid JSON matching the exact schema.`;
   }
@@ -211,11 +233,11 @@ export const CAROUSEL_RESPONSE_SCHEMA = {
     },
     brand: {
       type: Type.STRING,
-      description: 'Brand wordmark for slide watermark. MUST strictly be "MARROK".',
+      description: 'Brand wordmark for slide watermark. MUST strictly be "MARROK" — never put the external source here.',
     },
     brandUrl: {
       type: Type.STRING,
-      description: 'Website URL (defaults to "marrok.org")',
+      description: 'Studio website URL. MUST strictly be "marrok.org" — never put the external source URL here.',
     },
     sourceMeta: {
       type: Type.OBJECT,
@@ -310,10 +332,18 @@ export const CAROUSEL_RESPONSE_SCHEMA = {
           enBody: { type: Type.STRING },
           arBody: { type: Type.STRING },
           centerIcon: { type: Type.STRING },
+          hookKicker: {
+            type: Type.STRING,
+            description: '2-to-4 word uppercase viral kicker badge (e.g. "BENCHMARK SHOCK", "LEGACY VS MODERN")',
+          },
+          coverArchetype: {
+            type: Type.STRING,
+            description: 'Recommended cover slide archetype for this hook: "metric", "compare", "row", or "hub"',
+          },
         },
         required: ['tag', 'enTitle', 'arTitle', 'enBody', 'arBody'],
       },
-      description: '3 alternative Slide 1 Hook variations for A/B testing',
+      description: '3 alternative Slide 1 Hook variations with distinct cover archetypes for A/B testing',
     },
     slides: {
       type: Type.ARRAY,
@@ -323,6 +353,10 @@ export const CAROUSEL_RESPONSE_SCHEMA = {
           type: {
             type: Type.STRING,
             description: 'hub, row, number, metric, code, compare, image, cta, or poster',
+          },
+          hookKicker: {
+            type: Type.STRING,
+            description: 'Short 2-4 word uppercase viral hook kicker above the headline (max 32 chars, e.g. "BENCHMARK SHOCK • 93.3%", "PROTOCOL INTERNALS", "THE HIDDEN CATCH")',
           },
           takeaways: {
             type: Type.ARRAY,

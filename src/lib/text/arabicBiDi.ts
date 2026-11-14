@@ -41,28 +41,33 @@ export function sanitizeMetricForArabic(rawMetric: string): string {
 }
 
 /**
- * Fixes Arabic line ending punctuation jump bug (Spec §8).
- * Ensures the line ends with an Arabic word or properly orders punctuation.
+ * Removes legacy artificial "المعتمد" suffixes that were previously appended after English terms
+ * (e.g. "Durable Objects المعتمد." -> "Durable Objects.").
+ */
+export function stripLegacyArabicFiller(arabicText: string): string {
+  if (!arabicText) return '';
+  return arabicText.replace(
+    /([A-Za-z0-9$€£%+._\-/:]+)\s+المعتمد(?=\s*[.?!،؟]*\s*$)/g,
+    '$1'
+  );
+}
+
+/**
+ * Fixes Arabic line ending punctuation without injecting artificial words like "المعتمد".
+ * Strips any legacy "المعتمد" filler and places an invisible Unicode Right-to-Left Mark (\u200F)
+ * between a trailing Latin token and final punctuation so the period stays on the left in RTL.
  */
 export function fixArabicPunctuation(arabicText: string): string {
   if (!arabicText) return '';
-  let text = arabicText.trim();
-
-  // Pattern: Latin token followed by dot/punctuation at the end of the line
-  const regex = /([a-zA-Z0-9_-]+)\s*([.?!])$/;
-  if (regex.test(text)) {
-    // Rephrase to end with an Arabic word like "المعتمد."
-    text = text.replace(regex, '$1 المعتمد$2');
-  }
-
-  return text;
+  const cleaned = stripLegacyArabicFiller(arabicText.trim());
+  return cleaned.replace(/([a-zA-Z0-9_\-]+)\s*([.?!،؟])$/, '$1\u200F$2');
 }
 
 /**
  * Sanitizes Arabic slide titles and body text to prevent BiDi reordering bugs (Spec §8).
  * - Strips raw English markdown headers accidentally prepended (like ":Deepseek 4.1 Flash 1017 #")
  * - Fixes colons touching Latin words (e.g. "رحلة :Scion" -> "رحلة Scion")
- * - Replaces trailing Latin words before periods that cause ".GB" or ".Git" flips
+ * - Replaces trailing Latin unit abbreviations that have natural Arabic equivalents
  * - Strips trailing periods from Arabic slide titles (slide graphic titles never need periods)
  */
 export function sanitizeArabicSlideText(
@@ -73,6 +78,7 @@ export function sanitizeArabicSlideText(
 
   let clean = stripMarkdown(text);
   clean = normalizePunctuation(clean);
+  clean = stripLegacyArabicFiller(clean);
 
   // Remove rogue Latin title copy-pastes at the start of Arabic strings
   // E.g. ":Deepseek 4.1 Flash 1017 # قفزة في الأداء" -> "قفزة في الأداء"
@@ -101,7 +107,6 @@ export function sanitizeArabicSlideText(
     .replace(/>\s*([\$€£]?\s*\d+(?:\.\d+)?)/g, 'أكثر من $1')
     .replace(/\(\s*['"]?([^\)]*?)(أقل من|أكثر من|بحد أقصى|بحد أدنى)([^)]*?)['"]?\s*\)/g, '($1$2$3)');
 
-
   // Fix orphan Latin words on their own line (prevents "Zero-Trust" hanging alone on line 2)
   const lines = clean.split('\n');
   if (lines.length > 1) {
@@ -122,12 +127,100 @@ export function sanitizeArabicSlideText(
   if (options.isTitle) {
     clean = clean.replace(/[.:;،؛\s]+$/, '').trim();
   } else {
-    // If body ends with a Latin token followed by punctuation (Spec §8: .Git bug)
-    const latinEndingRegex = /([a-zA-Z0-9_\-]+)\s*([.?!،؟])$/;
-    if (latinEndingRegex.test(clean)) {
-      clean = clean.replace(latinEndingRegex, '$1 المعتمد$2');
+    clean = clean.replace(/([a-zA-Z0-9_\-]+)\s*([.?!،؟])$/, '$1\u200F$2');
+  }
+
+  return repairTruncatedTextEllipsis(clean);
+}
+
+/**
+ * Wraps embedded Latin words, multi-word technical terms (e.g. "Durable Objects", "Workers"),
+ * and technical metrics inside an RTL Arabic line with Unicode Left-to-Right Isolate
+ * (\u2066 ... \u2069) plus Right-to-Left Marks (\u200F) anchoring line boundaries and trailing
+ * punctuation so Canvas 2D and native text renderers never scramble word order or flip periods.
+ */
+export function isolateEmbeddedLatinInArabic(text: string): string {
+  if (!text) return '';
+  const cleaned = stripLegacyArabicFiller(text);
+  if (!/[\u0600-\u06FF]/.test(cleaned) || !/[A-Za-z0-9]/.test(cleaned)) {
+    return cleaned;
+  }
+  const stripped = cleaned.replace(/[\u200E\u200F\u2066\u2067\u2068\u2069\u202A-\u202E]/g, '');
+  // Isolate each embedded Latin/numeric phrase (without swallowing trailing sentence punctuation)
+  const isolated = stripped.replace(
+    /([A-Za-z0-9$€£%+][A-Za-z0-9$€£%+._\-/:]*[A-Za-z0-9%+]?(?:\s+[A-Za-z0-9$€£%+][A-Za-z0-9$€£%+._\-/:]*[A-Za-z0-9%+]?)*)/g,
+    '\u2066$1\u2069\u200F'
+  );
+  // Anchor both ends of the line with Right-to-Left Marks (\u200F) so leading Latin words stay on the right
+  // and trailing punctuation (e.g. ".") stays on the far left of the RTL line.
+  return `\u200F${isolated}\u200F`;
+}
+
+/**
+ * Splits an Arabic string into segments of RTL Arabic and LTR Latin/numeric runs
+ * so React DOM components can render `dir="rtl"` with `<bdi dir="ltr">` around embedded English.
+ */
+export function splitArabicForBidiRender(
+  text: string
+): Array<{ text: string; isLtr: boolean }> {
+  if (!text) return [];
+  const clean = stripLegacyArabicFiller(
+    text.replace(/[\u200E\u200F\u2066\u2067\u2068\u2069\u202A-\u202E]/g, '')
+  );
+  const regex =
+    /([A-Za-z0-9$€£%+][A-Za-z0-9$€£%+._\-/:]*[A-Za-z0-9%+]?(?:\s+[A-Za-z0-9$€£%+][A-Za-z0-9$€£%+._\-/:]*[A-Za-z0-9%+]?)*)/g;
+  const segments: Array<{ text: string; isLtr: boolean }> = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(clean)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push({ text: clean.slice(lastIndex, match.index), isLtr: false });
+    }
+    segments.push({ text: match[0], isLtr: true });
+    lastIndex = regex.lastIndex;
+  }
+  if (lastIndex < clean.length) {
+    segments.push({ text: clean.slice(lastIndex), isLtr: false });
+  }
+  return segments;
+}
+
+/**
+ * Detects and repairs truncated trailing descriptions like
+ * "core mechanisms, operational boundaries, and..." or "...و"
+ * so slide copy never ends in a dangling conjunction or silent ellipsis.
+ */
+export function repairTruncatedTextEllipsis(text: string): string {
+  if (!text) return '';
+  let clean = text.trim();
+
+  // Case 1: ", item, and..." -> " and item."
+  clean = clean.replace(
+    /,\s*([^,.;:?!…]+?),\s*(?:and|or|with|plus|including|as well as)\s*(?:\.{2,}|…)+\s*$/i,
+    ' and $1.'
+  );
+
+  // Case 2: Trailing English conjunction or preposition before ellipsis ("...and...", "...for...")
+  clean = clean.replace(
+    /[,;:\s]+\b(?:and|or|with|for|to|in|of|by|from|into|including|such as|like|versus|vs\.?)\s*(?:\.{2,}|…)+\s*$/i,
+    '.'
+  );
+
+  // Case 3: Trailing Arabic conjunction before ellipsis ("...و", "و...")
+  clean = clean.replace(/[,،؛\s]+(?:و|أو|مع|في|من|إلى|على)\s*(?:\.{2,}|…)+\s*$/, '.');
+
+  // Case 4: Generic trailing ellipsis after a complete clause
+  if (/(?:\.{3}|…)\s*$/.test(clean)) {
+    clean = clean
+      .replace(/[,;،؛:\s]*(?:\.{3}|…)+\s*$/, '')
+      .replace(/\s+\b(?:and|or|with|for|to|in|of|by|the|a|an)$/i, '')
+      .trim();
+    if (clean && !/[.?!؟]$/.test(clean) && !/[\u0600-\u06FF]$/.test(clean)) {
+      clean = `${clean}.`;
     }
   }
 
   return clean;
 }
+

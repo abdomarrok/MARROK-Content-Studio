@@ -261,7 +261,7 @@ function buildSlideLayoutCacheKey(
   const compPreset = slide.compositionPreset || 'standard';
   const freeMove = slide.freeMoveLayout ? 1 : 0;
   const heroFrame = isFullMemeSlide(slide) ? 'full' : isHeroImageSlide(slide) ? 'hero' : 'std';
-  const ctaAndCreditKey = `${slide.ctaText || ''}|${slide.enCredit || ''}|${slide.arCredit || ''}|${slide.url || ''}|${creatorHandle}`;
+  const ctaAndCreditKey = `${slide.ctaText || ''}|${slide.enCredit || ''}|${slide.arCredit || ''}|${slide.url || ''}|${creatorHandle}|${slide.hookKicker || ''}`;
   return `${hasCtx ? 1 : 0}|${preset}|${compPreset}|${freeMove}|${heroFrame}|${slide.type || ''}|${slide.enTitle || ''}|${slide.arTitle || ''}|${slide.enBody || ''}|${slide.arBody || ''}|${takeawaysKey}|${ctaAndCreditKey}|${overridesKey}`;
 }
 
@@ -389,9 +389,13 @@ export function computeSlideLayoutAwareness(
 
   // 4. Content Slide Text Measurement & Scaling Pass
   const rawEnTitle = (slide.enTitle || '').trim();
-  const rawArTitle = (slide.arTitle || '').trim();
+  const rawArTitle = (slide.arTitle || '')
+    .replace(/([A-Za-z0-9$€£%+._\-/:]+)\s+المعتمد(?=\s*[.?!،؟]*\s*$)/g, '$1')
+    .trim();
   const rawEnBody = (slide.enBody || '').trim();
-  const rawArBody = (slide.arBody || '').trim();
+  const rawArBody = (slide.arBody || '')
+    .replace(/([A-Za-z0-9$€£%+._\-/:]+)\s+المعتمد(?=\s*[.?!،؟]*\s*$)/g, '$1')
+    .trim();
 
   const titleOverride = overrides.titleBlock;
   const arTitleOverride = overrides.arabicTitleBlock;
@@ -405,16 +409,21 @@ export function computeSlideLayoutAwareness(
   const arBodyScale = arBodyOverride?.scale ?? 1;
   const takeawaysScale = Math.min(1, takeawaysOverride?.scale ?? 1);
 
+  const isHookNoBody = slide.storyRole === 'hook';
   const titleHidden = isFullMeme || Boolean(titleOverride?.hidden);
   const arTitleHidden = isFullMeme || Boolean(arTitleOverride?.hidden);
-  const bodyHidden = isFullMeme || Boolean(bodyOverride?.hidden);
-  const arBodyHidden = isFullMeme || Boolean(arBodyOverride?.hidden);
+  const bodyHidden = isFullMeme || isHookNoBody || Boolean(bodyOverride?.hidden);
+  const arBodyHidden = isFullMeme || isHookNoBody || Boolean(arBodyOverride?.hidden);
   const takeawaysHidden = isFullMeme || Boolean(takeawaysOverride?.hidden);
 
   const isCompactAspect = spec.height < 1920;
-  const gapGraphicToTitle = isCompactAspect
+  const hasKicker = !titleHidden && Boolean((slide.hookKicker || '').trim());
+  const baseGapGraphicToTitle = isCompactAspect
     ? Math.max(22, Math.round(MIN_GAP_GRAPHIC_TO_TITLE * spec.graphicScale))
     : MIN_GAP_GRAPHIC_TO_TITLE;
+  const gapGraphicToTitle = hasKicker
+    ? Math.max(baseGapGraphicToTitle, isCompactAspect ? 46 : 56)
+    : baseGapGraphicToTitle;
   const minGapTitles = isCompactAspect
     ? Math.max(12, Math.round(MIN_GAP_TITLES * spec.graphicScale))
     : MIN_GAP_TITLES;
@@ -468,53 +477,58 @@ export function computeSlideLayoutAwareness(
     ? 1.08
     : initialScaleBase;
   let bodyCap = hasTakeaways ? 2 : isCompactAspect && spec.height <= 1080 ? 3 : 4;
-  const minAllowedScale = isCompactAspect ? 0.52 : 0.62;
+  const minAllowedScale = isCompactAspect ? 0.56 : 0.65;
 
   const measureTextPass = (scale: number, cap: number) => {
-    const baseBodyTarget = isCompactAspect ? 40 : 45;
-    const baseBodyMin = isCompactAspect ? 26 : 28;
-    const enTitleTarget = Math.max(28, 74 * scale * titleScale);
-    const arTitleTarget = Math.max(26, 70 * scale * arTitleScale);
-    const enBodyTarget = Math.max(22, baseBodyTarget * scale * bodyScale);
-    const arBodyTarget = Math.max(22, baseBodyTarget * scale * arBodyScale);
+    const baseBodyTarget = isCompactAspect ? 40 : 44;
+    const baseBodyMin = isCompactAspect ? 24 : 26;
+    // Step 5: Arabic has equal size, weight, and spacing to English
+    const enTitleTarget = Math.max(28, 72 * scale * titleScale);
+    const arTitleTarget = Math.max(28, 72 * scale * arTitleScale);
+    const enBodyTarget = Math.max(24, baseBodyTarget * scale * bodyScale);
+    const arBodyTarget = Math.max(24, baseBodyTarget * scale * arBodyScale);
 
-    const enTitleMin = Math.max(24, Math.round((isCompactAspect ? 34 : 42) * Math.min(1, titleScale)));
-    const arTitleMin = Math.max(24, Math.round((isCompactAspect ? 32 : 40) * Math.min(1, arTitleScale)));
-    const enBodyMin = Math.max(20, Math.round(baseBodyMin * Math.min(1, bodyScale)));
-    const arBodyMin = Math.max(20, Math.round(baseBodyMin * Math.min(1, arBodyScale)));
+    const enTitleMin = Math.max(24, Math.round((isCompactAspect ? 34 : 40) * Math.min(1, titleScale)));
+    const arTitleMin = Math.max(24, Math.round((isCompactAspect ? 34 : 40) * Math.min(1, arTitleScale)));
+    const enBodyMin = Math.max(24, Math.round(baseBodyMin * Math.min(1, bodyScale)));
+    const arBodyMin = Math.max(24, Math.round(baseBodyMin * Math.min(1, arBodyScale)));
 
-    let enTitle = { lines: rawEnTitle ? [rawEnTitle] : [], fontSize: enTitleTarget, lineHeight: enTitleTarget * 1.19 };
-    let arTitle = { lines: rawArTitle ? [rawArTitle] : [], fontSize: arTitleTarget, lineHeight: arTitleTarget * 1.457 };
-    let enBody = { lines: rawEnBody ? [rawEnBody] : [], fontSize: enBodyTarget, lineHeight: enBodyTarget * 1.42 };
-    let arBody = { lines: rawArBody ? [rawArBody] : [], fontSize: arBodyTarget, lineHeight: arBodyTarget * 1.526 };
+    let enTitle = { lines: rawEnTitle ? [rawEnTitle] : [], fontSize: enTitleTarget, lineHeight: enTitleTarget * 1.24 };
+    let arTitle = { lines: rawArTitle ? [rawArTitle] : [], fontSize: arTitleTarget, lineHeight: arTitleTarget * 1.24 };
+    let enBody = { lines: rawEnBody ? [rawEnBody] : [], fontSize: enBodyTarget, lineHeight: enBodyTarget * 1.44 };
+    let arBody = { lines: rawArBody ? [rawArBody] : [], fontSize: arBodyTarget, lineHeight: arBodyTarget * 1.44 };
 
     if (ctx) {
       if (rawEnTitle) {
         enTitle = fitTextInBox(ctx, rawEnTitle, spec.safeTextWidthTitle, enTitleTarget, FONT_TITLE_EN, '800', {
-          maxLines: titleScale > 1.15 ? 3 : 2,
+          maxLines: isHookNoBody ? 1 : titleScale > 1.15 ? 3 : 2,
           minFontSize: enTitleMin,
-          lineHeightFactor: 1.19,
+          lineHeightFactor: 1.24,
+          ellipsis: false,
         });
       }
       if (rawArTitle) {
         arTitle = fitTextInBox(ctx, rawArTitle, spec.safeTextWidthTitle, arTitleTarget, FONT_TITLE_AR, '800', {
-          maxLines: arTitleScale > 1.15 ? 3 : 2,
+          maxLines: isHookNoBody ? 1 : arTitleScale > 1.15 ? 3 : 2,
           minFontSize: arTitleMin,
-          lineHeightFactor: 1.457,
+          lineHeightFactor: 1.24,
+          ellipsis: false,
         });
       }
-      if (rawEnBody) {
-        enBody = fitTextInBox(ctx, rawEnBody, spec.safeTextWidthBody, enBodyTarget, FONT_BODY_EN, '400', {
+      if (rawEnBody && !isHookNoBody) {
+        enBody = fitTextInBox(ctx, rawEnBody, spec.safeTextWidthBody, enBodyTarget, FONT_BODY_EN, '500', {
           maxLines: cap,
           minFontSize: enBodyMin,
-          lineHeightFactor: 1.42,
+          lineHeightFactor: 1.44,
+          ellipsis: false,
         });
       }
-      if (rawArBody) {
-        arBody = fitTextInBox(ctx, rawArBody, spec.safeTextWidthBody, arBodyTarget, FONT_BODY_AR, '400', {
+      if (rawArBody && !isHookNoBody) {
+        arBody = fitTextInBox(ctx, rawArBody, spec.safeTextWidthBody, arBodyTarget, FONT_BODY_AR, '500', {
           maxLines: cap,
           minFontSize: arBodyMin,
-          lineHeightFactor: 1.526,
+          lineHeightFactor: 1.44,
+          ellipsis: false,
         });
       }
     }

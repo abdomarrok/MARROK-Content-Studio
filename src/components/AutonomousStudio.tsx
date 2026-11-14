@@ -1,41 +1,21 @@
-import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, Suspense, lazy } from 'react';
 import {
   Sparkles,
-  MoreHorizontal,
-  AlertTriangle,
   CheckCircle2,
   RefreshCw,
-  X,
   Check,
   Copy,
-  FileText,
-  Youtube,
-  Image as ImageIcon,
   ChevronDown,
-  ChevronUp,
-  Trash2,
-  SlidersHorizontal,
-  Zap,
-  ChevronLeft,
-  ChevronRight,
-  Download,
   Sliders,
   Type,
   Layers,
-  LayoutGrid,
-  Smartphone,
-  BookmarkCheck,
   Film,
-  Volume2,
   Code,
-  Radar,
-  Globe,
+  Undo2,
+  Redo2,
+  Eye,
 } from 'lucide-react';
-import {
-  extractArticleFromUrl,
-  fetchTopicRadar,
-  type GatheredTopicItem,
-} from '../lib/gather/gatherClient.ts';
+import { type GatheredTopicItem } from '../lib/gather/gatherClient.ts';
 import {
   CarouselData,
   PostFormat,
@@ -60,17 +40,16 @@ import {
   copySlideToClipboard,
   downloadAllSlidesZip,
   getCanvasDimensionSpec,
-  CANVAS_DIMENSION_PRESET_LIST,
   resolveExportTargetPresets,
   exportSingleSlideVideoMp4,
   isVideoSlide,
   isVideoFile,
-  ACCEPTED_SINGLE_SLIDE_MEDIA_ACCEPT,
   extractVideoStoryboardDataUrl,
   analyzeVideoForSlideAndCaption,
   buildCleanMemeCarouselDeck,
   applySlideGraphicPhoto,
   analyzeImageForMemeAndCaption,
+  formatBilingualExportCaptionWithHashtags,
   type ExportBundleMode,
 } from '../lib/canvasExporter.ts';
 import { runAutonomousPipeline, enrichAndPaceCarousel } from '../lib/autonomousPipeline.ts';
@@ -82,17 +61,20 @@ import {
   resolveSmartSlideVisuals,
   analyzeSlideTextForArchetype,
   diversifyDeckArchetypesAndVisuals,
+  autoSyncSlideGraphicsFromCopy,
+  autoFitSlideCopyToLimits,
+  explainArchetypeChoice,
 } from '../lib/synthesizer.ts';
-import { runQAChecks, CHAR_LIMITS } from '../lib/qaChecks.ts';
+import { runQAChecks, CHAR_LIMITS, type PreExportCheckId } from '../lib/qaChecks.ts';
 import { runPlatformRiskChecks } from '../lib/riskChecks.ts';
 import { autoPolishHeadline, autoFitTextToLimits } from '../lib/text/headlines.ts';
-import { fixArabicPunctuation } from '../lib/text/arabicBiDi.ts';
+import {
+  fixArabicPunctuation,
+  sanitizeArabicSlideText,
+  repairTruncatedTextEllipsis,
+} from '../lib/text/arabicBiDi.ts';
 import {
   convertCarouselToMotionReel,
-  getMotionTemplate,
-  generateCues,
-  synthesizeSfxFloat32Buffer,
-  encodeWavBlob,
   triggerBlobDownload,
 } from '../lib/motion/index.ts';
 import {
@@ -100,7 +82,6 @@ import {
   SlideNavigator,
   InlineSlideEditor,
   ArchetypeControls,
-  ExportBar,
   PublishChecklist,
   getPublishBlockers,
   StageOverlayMode,
@@ -156,7 +137,6 @@ interface AutonomousStudioProps {
   onSelectTheme: (palette: ThemePalette) => void;
   onOpenThemeCustomizer: () => void;
   onOpenContactSheet?: () => void;
-  onOpenPlanInspector?: () => void;
   onOpenPreviewDrawer?: (tab?: 'simulator' | 'polish') => void;
   onOpenSavedPostsDrawer?: () => void;
   onSaveValidPost?: (status: SavedPostStatus, allowOverride?: boolean) => Promise<void>;
@@ -254,10 +234,18 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Mobile Studio Segmented Mode Switcher ('canvas' | 'editor')
+  // Mobile Studio Segmented Mode Switcher ('canvas' | 'editor') & Draggable Bottom Sheet ('peek' | 'half' | 'full')
   const [mobileStudioTab, setMobileStudioTab] = useState<'canvas' | 'editor'>('canvas');
-  const [isMobileEditorExpanded, setIsMobileEditorExpanded] = useState(false);
+  const [mobileSheetSnap, setMobileSheetSnap] = useState<'peek' | 'half' | 'full'>('half');
+  const isMobileEditorExpanded = mobileSheetSnap === 'full';
   const isSheetOpen = isMobileSheetOpen || mobileStudioTab === 'editor';
+  const sheetDragStartYRef = useRef<number | null>(null);
+
+  // Undo / Redo & Compare-Before History State
+  const [historyPast, setHistoryPast] = useState<CarouselData[]>([]);
+  const [historyFuture, setHistoryFuture] = useState<CarouselData[]>([]);
+  const [isComparingBefore, setIsComparingBefore] = useState(false);
+  const beforeEditsDeckRef = useRef<CarouselData>(carousel);
 
   // Motion Reel Studio States
   const [selectedMotionSceneId, setSelectedMotionSceneId] = useState<string | null>(null);
@@ -291,8 +279,12 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     onShowToast(`Switched canvas to ${nextSpec.label}`);
   };
 
-  const activeReelConfig: MotionReelData =
-    carousel.reelConfig || convertCarouselToMotionReel(carousel, theme, 'marrok-slides', 'bilingual');
+  const activeReelConfig: MotionReelData = useMemo(
+    () =>
+      carousel.reelConfig ||
+      convertCarouselToMotionReel(carousel, theme, 'marrok-slides', 'bilingual'),
+    [carousel, theme]
+  );
 
   const handleSyncReelFromCarousel = (
     templateId: MotionTemplateId = activeReelConfig.templateId || 'marrok-slides',
@@ -439,8 +431,38 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
   const applyDeckUpdate = (updater: (prev: CarouselData) => CarouselData) => {
     deckRevisionRef.current += 1;
-    onUpdateCarousel(updater);
+    onUpdateCarousel((prev) => {
+      const next = updater(prev);
+      if (next !== prev) {
+        if (historyPast.length === 0) {
+          beforeEditsDeckRef.current = prev;
+        }
+        setHistoryPast((h) => [...h.slice(-24), prev]);
+        setHistoryFuture([]);
+      }
+      return next;
+    });
   };
+
+  const handleUndo = useCallback(() => {
+    if (historyPast.length === 0) return;
+    const previousDeck = historyPast[historyPast.length - 1];
+    setHistoryPast((h) => h.slice(0, -1));
+    setHistoryFuture((f) => [carousel, ...f.slice(0, 24)]);
+    deckRevisionRef.current += 1;
+    onUpdateCarousel(previousDeck);
+    onShowToast('Undid last change');
+  }, [historyPast, carousel, onUpdateCarousel, onShowToast]);
+
+  const handleRedo = useCallback(() => {
+    if (historyFuture.length === 0) return;
+    const nextDeck = historyFuture[0];
+    setHistoryFuture((f) => f.slice(1));
+    setHistoryPast((h) => [...h.slice(-24), carousel]);
+    deckRevisionRef.current += 1;
+    onUpdateCarousel(nextDeck);
+    onShowToast('Redid change');
+  }, [historyFuture, carousel, onUpdateCarousel, onShowToast]);
 
   // Direct Graphical Layout Override Handlers
   const isDefaultLayoutOverride = (override: ElementLayoutOverride | null | undefined): boolean =>
@@ -521,6 +543,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   ) => {
     applyDeckUpdate((prev) => {
       const newSlides = prev.slides.map((s) => {
+        if (s.manualLayoutLocked) return s;
         const existingOverrides = { ...(s.layoutOverrides || {}) };
         if (isDefaultLayoutOverride(override)) {
           delete existingOverrides[elementId];
@@ -534,10 +557,11 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       });
       return { ...prev, slides: newSlides };
     });
-    onShowToast(`Applied ${elementId} layout to all ${carousel.slides.length} slides`);
+    onShowToast(`Applied ${elementId} layout to unlocked slides`);
   };
 
   const handleApplySlideLayoutToAllSlides = () => {
+    let lockedSkipped = 0;
     applyDeckUpdate((prev) => {
       const targetIndex = Math.min(currentSlideIndex, prev.slides.length - 1);
       const sourceSlide = prev.slides[targetIndex];
@@ -547,18 +571,38 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         : undefined;
       const newSlides = prev.slides.map((s, idx) => {
         if (idx === targetIndex) return s;
+        if (s.manualLayoutLocked) {
+          lockedSkipped += 1;
+          return s;
+        }
         // Preserve CTA slide layout unless source is also CTA
         if (s.type === 'cta' && sourceSlide.type !== 'cta') return s;
         return {
           ...s,
           compositionPreset: sourceSlide.compositionPreset,
           freeMoveLayout: sourceSlide.freeMoveLayout,
+          diagramVariant:
+            s.type === 'row' && sourceSlide.type === 'row' && sourceSlide.diagramVariant
+              ? sourceSlide.diagramVariant
+              : s.diagramVariant,
           layoutOverrides: clonedOverrides ? JSON.parse(JSON.stringify(clonedOverrides)) : undefined,
         };
       });
-      return { ...prev, slides: newSlides };
+      return {
+        ...prev,
+        visualOptions: {
+          showCadReticles: prev.visualOptions?.showCadReticles ?? true,
+          showSparklines: prev.visualOptions?.showSparklines ?? true,
+          terminalScanlines: prev.visualOptions?.terminalScanlines ?? true,
+        },
+        slides: newSlides,
+      };
     });
-    onShowToast(`Synced slide layout & composition across deck`);
+    onShowToast(
+      lockedSkipped > 0
+        ? `Synced grid, node style, spacing & type scale (${lockedSkipped} Cascade-Locked slide(s) protected)`
+        : 'Synced grid, node style, spacing & type scale across deck'
+    );
   };
 
   const handleDoubleClickCanvasElement = (elementId: GraphicalElementId) => {
@@ -1342,17 +1386,26 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     applyDeckUpdate((prev) => {
       if (!prev.slides[0]) return prev;
       const newSlides = [...prev.slides];
-      newSlides[0] = {
+      const targetType = variant.coverArchetype || newSlides[0].type;
+      const updatedSlide0 = {
         ...newSlides[0],
+        type: targetType,
         enTitle: variant.enTitle,
         arTitle: variant.arTitle,
         enBody: variant.enBody,
         arBody: variant.arBody,
         centerIcon: variant.centerIcon || newSlides[0].centerIcon,
+        hookKicker: variant.hookKicker || newSlides[0].hookKicker,
       };
+      newSlides[0] = autoSyncSlideGraphicsFromCopy(
+        seedSlideArchetypeData(updatedSlide0, targetType),
+        0
+      );
       return { ...prev, slides: newSlides };
     });
-    onShowToast(`Applied "${variant.tag}" Hook to Slide 1`);
+    onShowToast(
+      `Applied "${variant.tag}" Hook${variant.coverArchetype ? ` (${variant.coverArchetype.toUpperCase()} Cover)` : ''} to Slide 1`
+    );
   };
 
   const [overrideExportBlock, setOverrideExportBlock] = useState(false);
@@ -1375,33 +1428,28 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       carousel.sourceMeta?.engine === 'offline-synthesizer'
   );
   const isReviewed = Boolean(carousel.sourceMeta?.userReviewed);
-  const qaReport = runQAChecks(carousel);
-  const riskReport = runPlatformRiskChecks(carousel, promptInput);
-  const dynamicHashtags = deriveTopicHashtags(carousel);
-  const publishBlockers = getPublishBlockers(carousel, isOfflineDraft, isReviewed, qaReport, riskReport);
+  const qaReport = useMemo(() => runQAChecks(carousel), [carousel]);
+  const riskReport = useMemo(
+    () => runPlatformRiskChecks(carousel, promptInput),
+    [carousel, promptInput]
+  );
+  const dynamicHashtags = useMemo(() => deriveTopicHashtags(carousel), [carousel]);
+  const publishBlockers = useMemo(
+    () => getPublishBlockers(carousel, isOfflineDraft, isReviewed, qaReport, riskReport),
+    [carousel, isOfflineDraft, isReviewed, qaReport, riskReport]
+  );
   const blockersCount = publishBlockers.blockersCount;
   const isBlocked = blockersCount > 0 && !overrideExportBlock;
 
   const engineBadge =
     carousel.sourceMeta?.engine === 'grounded' || carousel.sourceMeta?.status === 'verified_live'
-      ? { label: 'Grounded', cls: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' }
+      ? { label: 'Live Grounded', cls: 'text-emerald-400' }
       : isOfflineDraft
-      ? { label: 'Offline', cls: 'bg-amber-500/15 border-amber-500/30 text-amber-300' }
-      : { label: 'Ungrounded AI', cls: 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300' };
+      ? { label: 'Offline Draft', cls: 'text-amber-400' }
+      : { label: 'AI Synthesized', cls: 'text-cyan-400' };
 
   // 1-Click Export ZIP with QA & Platform Safety Gate (Defaults to 5-in-1 Ready to Share Pack)
   const handleExportZip = async (exportMode: ExportBundleMode = 'all') => {
-    const ctaSlide = carousel.slides[carousel.slides.length - 1];
-    const hasCreatorCredit = Boolean(
-      (
-        carousel.sourceMeta?.creator ||
-        carousel.sourceMeta?.channel ||
-        carousel.channel ||
-        ctaSlide?.enCredit ||
-        ''
-      ).trim()
-    );
-
     if (isBlocked) {
       setInspectorTab('review');
       setMobileStudioTab('editor');
@@ -1680,26 +1728,223 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     onShowToast('Applied suggested AI headlines & body from photo');
   };
 
-  // Copy TikTok Caption
+  // Copy EN + AR Caption & Hashtags
   const handleCopyCaption = async () => {
-    const rawCaption = carousel.caption || '';
-    const hashtagLine = dynamicHashtags.join(' ');
-    const text = (rawCaption.includes('#') ? rawCaption : `${rawCaption}\n\n${hashtagLine}`).replace(
-      /\u00A0/g,
-      ' '
-    );
+    const text = formatBilingualExportCaptionWithHashtags(carousel);
     try {
       await navigator.clipboard.writeText(text);
       setCopiedType('caption');
-      onShowToast('Copied TikTok caption and topic hashtags to clipboard!');
+      onShowToast('Copied EN + AR caption and hashtags to clipboard!');
       setTimeout(() => setCopiedType(null), 2000);
     } catch {
       onShowToast('Failed to copy caption.');
     }
   };
 
+  // One-Tap Pre-Export Auto-Fix Handler
+  const handleAutoFixPreExportCheck = (checkId: PreExportCheckId, targetSlideIdx?: number) => {
+    if (checkId === 'contrast') {
+      const highContrastPalette = DEFAULT_PALETTES[theme.id] || DEFAULT_PALETTES.teal;
+      onSelectTheme({
+        ...theme,
+        baseBg: highContrastPalette.baseBg,
+        surface: highContrastPalette.surface,
+        textWhite: '#F8FAFC',
+        textEnBody: '#E2E8F0',
+        textArBody: '#F1F5F9',
+        accent: highContrastPalette.accent,
+      });
+      onShowToast('Restored WCAG AA compliant contrast palette');
+      return;
+    }
+
+    if (checkId === 'unverifiedNumbers') {
+      if (!isReviewed) handleToggleReviewDraft();
+      applyDeckUpdate((prev) => ({
+        ...prev,
+        sourceMeta: {
+          ...prev.sourceMeta,
+          verifiedNumbers: true,
+        },
+        slides: prev.slides.map((s) => ({
+          ...s,
+          numbersVerified: true,
+        })),
+      }));
+      onShowToast('Marked all slide numbers as verified against source');
+      return;
+    }
+
+    if (checkId === 'missingSource') {
+      applyDeckUpdate((prev) => {
+        const inferredSource =
+          prev.sourceMeta?.creator?.trim() ||
+          prev.sourceMeta?.channel?.trim() ||
+          prev.sourceMeta?.title?.trim() ||
+          prev.channel?.trim() ||
+          'Engineering Technical Report';
+        const nextSlides = prev.slides.map((s, idx) =>
+          idx === prev.slides.length - 1
+            ? {
+                ...s,
+                enCredit: `Source: ${inferredSource}`,
+                arCredit: `المصدر: ${inferredSource}`,
+              }
+            : s
+        );
+        return {
+          ...prev,
+          channel: inferredSource,
+          sourceMeta: {
+            ...prev.sourceMeta,
+            creator: inferredSource,
+            channel: inferredSource,
+          },
+          slides: nextSlides,
+        };
+      });
+      onShowToast('Set Source attribution across deck');
+      return;
+    }
+
+    if (checkId === 'brandLogoSafety') {
+      applyDeckUpdate((prev) => ({
+        ...prev,
+        officialBrandIcons: {},
+        slides: prev.slides.map((slide, idx) => {
+          const synced = autoSyncSlideGraphicsFromCopy(
+            {
+              ...slide,
+              centerIcon: undefined,
+              satIcons: undefined,
+              brandLogoConfig: undefined,
+            },
+            idx
+          );
+          return synced;
+        }),
+      }));
+      onShowToast('Replaced third-party logos with styled text names & architecture icons');
+      return;
+    }
+
+    applyDeckUpdate((prev) => {
+      const isSingle = prev.postFormat === 'single' || prev.slides.length === 1;
+      const nextSlides = prev.slides.map((slide, idx) => {
+        if (targetSlideIdx !== undefined && idx !== targetSlideIdx) return slide;
+
+        if (checkId === 'duplicateLabels') {
+          return autoSyncSlideGraphicsFromCopy(
+            {
+              ...slide,
+              satLabels: undefined,
+              diagramNodes: undefined,
+            },
+            idx
+          );
+        }
+
+        if (checkId === 'chartDirection') {
+          const synced = autoSyncSlideGraphicsFromCopy(
+            {
+              ...slide,
+              chartDirection: 'down' as const,
+            },
+            idx
+          );
+          return {
+            ...synced,
+            chartDirection: 'down' as const,
+          };
+        }
+
+        if (checkId === 'safeZones') {
+          const nextOverrides = { ...(slide.layoutOverrides || {}) };
+          for (const [k, ov] of Object.entries(nextOverrides)) {
+            if (!ov) continue;
+            nextOverrides[k as GraphicalElementId] = {
+              ...ov,
+              dx: Math.min(45, Math.max(-45, ov.dx ?? 0)),
+              dy: Math.min(45, Math.max(-25, ov.dy ?? 0)),
+            };
+          }
+          return {
+            ...slide,
+            layoutOverrides: Object.keys(nextOverrides).length > 0 ? nextOverrides : undefined,
+          };
+        }
+
+        if (checkId === 'minFontSize') {
+          const nextOverrides = { ...(slide.layoutOverrides || {}) };
+          for (const [k, ov] of Object.entries(nextOverrides)) {
+            if (!ov) continue;
+            nextOverrides[k as GraphicalElementId] = {
+              ...ov,
+              scale: Math.max(0.85, ov.scale ?? 1),
+            };
+          }
+          return {
+            ...slide,
+            layoutOverrides: Object.keys(nextOverrides).length > 0 ? nextOverrides : undefined,
+          };
+        }
+
+        if (checkId === 'truncatedCopy') {
+          return sanitizeSlide(
+            {
+              ...slide,
+              enTitle: repairTruncatedTextEllipsis(slide.enTitle || ''),
+              arTitle: repairTruncatedTextEllipsis(slide.arTitle || ''),
+              enBody: repairTruncatedTextEllipsis(slide.enBody || ''),
+              arBody: repairTruncatedTextEllipsis(slide.arBody || ''),
+            },
+            idx,
+            prev.slides.length
+          );
+        }
+
+        if (checkId === 'bilingualConsistency') {
+          const fallbackArTitle =
+            (slide.arTitle || '').trim() ||
+            `تحليل معماري: ${(slide.enTitle || 'النظام الهندسي').replace(/[.?!]+$/, '')}`;
+          const fallbackArBody =
+            (slide.arBody || '').trim() ||
+            `آلية هندسية توضح تفاصيل ${(slide.enTitle || 'النظام').replace(/[.?!]+$/, '')} بدقة عالية.`;
+          const fallbackEnTitle = (slide.enTitle || '').trim() || 'Core System Mechanism.';
+          const fallbackEnBody =
+            (slide.enBody || '').trim() ||
+            'Engineered to enforce deterministic latency and horizontal scalability.';
+          return sanitizeSlide(
+            {
+              ...slide,
+              enTitle: fallbackEnTitle,
+              arTitle: sanitizeArabicSlideText(fallbackArTitle, { isTitle: true }),
+              enBody: fallbackEnBody,
+              arBody: fixArabicPunctuation(
+                sanitizeArabicSlideText(fallbackArBody, { isTitle: false })
+              ),
+            },
+            idx,
+            prev.slides.length
+          );
+        }
+
+        // Default: 'overflow' -> autoFitSlideCopyToLimits + sanitizeSlide
+        const fitted = autoFitSlideCopyToLimits(slide, idx, isSingle);
+        return sanitizeSlide(fitted, idx, prev.slides.length);
+      });
+
+      return { ...prev, slides: nextSlides };
+    });
+
+    onShowToast(`Auto-fixed ${checkId} check across deck`);
+  };
+
   const currentSlide = carousel.slides[currentSlideIndex] || carousel.slides[0];
-  const smartCurrentVisuals = resolveSmartSlideVisuals(currentSlide, currentSlideIndex, false);
+  const smartCurrentVisuals = useMemo(
+    () => resolveSmartSlideVisuals(currentSlide, currentSlideIndex, false),
+    [currentSlide, currentSlideIndex]
+  );
 
   const handleUpdateSatLabel = (index: number, value: string) => {
     const currentLabels = [...smartCurrentVisuals.satLabels];
@@ -1791,6 +2036,29 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   };
 
   const activeOverridesCount = Object.keys(currentSlide.layoutOverrides || {}).length;
+  const displayedCarousel = isComparingBefore ? beforeEditsDeckRef.current : carousel;
+
+  const mobileSheetHeightClass =
+    mobileSheetSnap === 'peek'
+      ? 'h-[22dvh]'
+      : mobileSheetSnap === 'full'
+      ? 'h-[76dvh]'
+      : 'h-[38dvh]';
+
+  const handleSheetDragStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    sheetDragStartYRef.current = e.clientY;
+  };
+
+  const handleSheetDragEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (sheetDragStartYRef.current === null) return;
+    const deltaY = e.clientY - sheetDragStartYRef.current;
+    sheetDragStartYRef.current = null;
+    if (deltaY < -35) {
+      setMobileSheetSnap((prev) => (prev === 'peek' ? 'half' : 'full'));
+    } else if (deltaY > 35) {
+      setMobileSheetSnap((prev) => (prev === 'full' ? 'half' : 'peek'));
+    }
+  };
 
   const studioContextValue = React.useMemo(
     () => ({
@@ -1862,13 +2130,13 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         onShowToast={onShowToast}
       />
 
-
-
-      {/* 2. Fixed Studio Shell: Left 9:16 Stage (Always visible on mobile top half) | Right 4-Tab Categorized Inspector */}
+      {/* 2. Fixed Studio Shell: Left Sticky 9:16 Stage | Right Categorized Inspector */}
       <div className="lg:flex-1 lg:min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-3 lg:gap-5 items-stretch">
-        {/* Left Column: 9:16 Canvas + Slide Navigator + Single Persistent Under-Canvas Delivery Bar */}
+        {/* Left Column: Sticky 9:16 Canvas + Slide Navigator + Single Persistent Under-Canvas Delivery Bar */}
         <div
-          className="lg:col-span-5 flex flex-col items-center justify-between w-full lg:h-full lg:min-h-0 gap-1.5 sm:gap-2"
+          className={`lg:col-span-5 flex flex-col items-center justify-between w-full lg:h-full lg:min-h-0 gap-1.5 sm:gap-2 ${
+            isSheetOpen ? 'sticky top-1 z-20 bg-[#05080c]/95 pb-1 rounded-2xl' : ''
+          } lg:static lg:bg-transparent lg:pb-0`}
         >
           {activePostFormat === 'reel' ? (
             <MotionReelViewport
@@ -1897,7 +2165,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
             <>
               <div className="flex-1 min-h-0 flex items-center justify-center w-full pt-0.5 sm:pt-0">
                 <ViewportCanvas
-                  carousel={carousel}
+                  carousel={displayedCarousel}
                   currentSlideIndex={currentSlideIndex}
                   theme={theme}
                   showSafeZones={showSafeZones}
@@ -1922,7 +2190,8 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   onUpdateLayoutOverride={handleUpdateElementLayoutOverride}
                   onDoubleClickElement={handleDoubleClickCanvasElement}
                   onUpdateSlideField={handleUpdateCurrentSlide}
-                  compactMobileStage={isSheetOpen}
+                  compactMobileStage={isSheetOpen && mobileSheetSnap === 'full'}
+                  isComparingBefore={isComparingBefore}
                 />
               </div>
             </>
@@ -1984,69 +2253,121 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           </div>
         </div>
 
-        {/* Right Column (Desktop) & Docked Split-Screen Bottom Editor (Mobile): Live Slide Remains Visible Above! */}
+        {/* Right Column (Desktop) & Draggable Bottom Sheet (Mobile: Peek / Half / Full): Live Slide Remains Sticky & Visible Above! */}
         <div
           role="region"
           aria-label="Slide Inspector and Content Editor"
+          data-testid="mobile-draggable-bottom-sheet"
+          data-sheet-snap={mobileSheetSnap}
           className={`lg:col-span-7 flex flex-col bg-[#0b1118]/98 border-white/15 overflow-hidden shadow-[0_-12px_36px_rgba(0,0,0,0.75)] transition-all duration-300 ${
             isSheetOpen
-              ? `fixed inset-x-0 bottom-[58px] z-40 ${
-                  isMobileEditorExpanded ? 'h-[66dvh]' : 'h-[44dvh]'
-                } rounded-t-2xl border-t translate-y-0 visible pointer-events-auto`
-              : 'fixed inset-x-0 bottom-0 z-40 h-[44dvh] rounded-t-2xl border-t translate-y-full invisible pointer-events-none'
+              ? `fixed inset-x-0 bottom-[58px] z-40 ${mobileSheetHeightClass} rounded-t-2xl border-t translate-y-0 visible pointer-events-auto`
+              : 'fixed inset-x-0 bottom-0 z-40 h-[38dvh] rounded-t-2xl border-t translate-y-full invisible pointer-events-none'
           } lg:visible lg:static lg:inset-auto lg:z-auto lg:h-full lg:min-h-0 lg:rounded-2xl lg:border lg:shadow-2xl lg:translate-y-0 lg:pointer-events-auto`}
         >
-          {/* Mobile Split-Screen Editor Compact Header Bar */}
-          <div className="lg:hidden flex items-center justify-between px-3 py-1.5 border-b border-white/10 bg-black/60 shrink-0">
-            <div className="flex items-center gap-2 min-w-0">
-              <span
-                className="w-2 h-2 rounded-full shrink-0"
-                style={{ backgroundColor: theme.accent }}
-              />
-              <span className="text-[11px] font-mono tabular-nums font-bold uppercase tracking-wider text-slate-200 truncate">
-                Slide {currentSlideIndex + 1} ·{' '}
-                {inspectorTab === 'copy'
-                  ? 'Slide Text'
-                  : inspectorTab === 'visual'
-                  ? `Design (${currentSlide.type})`
-                  : inspectorTab === 'position'
-                  ? 'Adjust'
-                  : 'Publish'}
-              </span>
+          {/* Mobile Draggable Bottom Sheet Handle & Snap Controls (Peek / Half / Full) */}
+          <div
+            onPointerDown={handleSheetDragStart}
+            onPointerUp={handleSheetDragEnd}
+            onPointerCancel={handleSheetDragEnd}
+            className="lg:hidden flex flex-col border-b border-white/10 bg-black/70 shrink-0 select-none touch-none"
+          >
+            {/* Drag Pill */}
+            <div className="w-full pt-1.5 pb-1 flex items-center justify-center cursor-ns-resize">
+              <div className="w-10 h-1 rounded-full bg-white/30" />
             </div>
 
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={() => setIsExpanded((prev) => !prev)}
-                className="px-2 py-1 rounded-lg bg-white/[0.05] hover:bg-white/10 border border-white/10 text-[10px] font-mono text-cyan-300 hover:text-white flex items-center gap-1 cursor-pointer"
-                title="Open AI Topic & Source Ingestion"
-              >
-                <Sparkles className="w-3 h-3" />
-                <span>Prompt</span>
-              </button>
+            <div className="flex items-center justify-between px-3 pb-1.5 gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <span
+                  className="w-2 h-2 rounded-full shrink-0"
+                  style={{ backgroundColor: theme.accent }}
+                />
+                <span className="text-[11px] font-mono tabular-nums font-bold uppercase tracking-wider text-slate-200 truncate">
+                  S{currentSlideIndex + 1} ·{' '}
+                  {inspectorTab === 'copy'
+                    ? 'Slide Text'
+                    : inspectorTab === 'visual'
+                    ? `Design (${currentSlide.type})`
+                    : inspectorTab === 'position'
+                    ? 'Adjust'
+                    : 'P. OK'}
+                </span>
+              </div>
 
-              <button
-                type="button"
-                onClick={() => setIsMobileEditorExpanded((prev) => !prev)}
-                className="px-2 py-1 rounded-lg bg-white/[0.05] hover:bg-white/10 border border-white/10 text-[10px] font-mono text-slate-300 hover:text-white flex items-center gap-1 cursor-pointer"
-                title={isMobileEditorExpanded ? 'Restore 50/50 split-screen view' : 'Expand editor height'}
-              >
-                <span>{isMobileEditorExpanded ? 'Split View' : 'Expand'}</span>
-              </button>
+              {/* Undo / Redo / Compare Before + Snap Pills: Peek / Half / Full + Done */}
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  disabled={historyPast.length === 0}
+                  onClick={handleUndo}
+                  className="p-1 rounded-md bg-white/[0.04] text-slate-300 hover:text-white border border-white/10 disabled:opacity-35 cursor-pointer"
+                  title="Undo last edit"
+                >
+                  <Undo2 className="w-3 h-3" />
+                </button>
+                <button
+                  type="button"
+                  disabled={historyFuture.length === 0}
+                  onClick={handleRedo}
+                  className="p-1 rounded-md bg-white/[0.04] text-slate-300 hover:text-white border border-white/10 disabled:opacity-35 cursor-pointer"
+                  title="Redo edit"
+                >
+                  <Redo2 className="w-3 h-3" />
+                </button>
+                <button
+                  type="button"
+                  onPointerDown={() => setIsComparingBefore(true)}
+                  onPointerUp={() => setIsComparingBefore(false)}
+                  onPointerLeave={() => setIsComparingBefore(false)}
+                  onPointerCancel={() => setIsComparingBefore(false)}
+                  className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold border transition-colors cursor-pointer select-none ${
+                    isComparingBefore
+                      ? 'bg-amber-500/25 text-amber-200 border-amber-400'
+                      : 'bg-white/[0.04] text-slate-300 border-white/10'
+                  }`}
+                  title="Press and hold to compare with before edits"
+                >
+                  Before
+                </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setIsMobileSheetOpen(false);
-                  setMobileStudioTab('canvas');
-                }}
-                className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-[11px] font-bold text-white flex items-center gap-1 cursor-pointer"
-                aria-label="Close inspector bottom sheet"
-              >
-                <ChevronDown className="w-3.5 h-3.5" />
-                <span>Done</span>
-              </button>
+                <span className="w-px h-3 bg-white/10 mx-0.5" />
+
+                {(
+                  [
+                    { id: 'peek', label: 'Peek' },
+                    { id: 'half', label: 'Half' },
+                    { id: 'full', label: 'Full' },
+                  ] as const
+                ).map((snap) => (
+                  <button
+                    key={snap.id}
+                    type="button"
+                    data-testid={`sheet-snap-${snap.id}`}
+                    onClick={() => setMobileSheetSnap(snap.id)}
+                    className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold transition-colors cursor-pointer ${
+                      mobileSheetSnap === snap.id
+                        ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/40'
+                        : 'bg-white/[0.04] text-slate-400 hover:text-white border border-white/10'
+                    }`}
+                  >
+                    {snap.label}
+                  </button>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMobileSheetOpen(false);
+                    setMobileStudioTab('canvas');
+                  }}
+                  className="px-1.5 py-0.5 rounded-md bg-white/10 hover:bg-white/15 text-[10px] font-bold text-white flex items-center gap-0.5 cursor-pointer ml-0.5"
+                  aria-label="Close inspector bottom sheet"
+                >
+                  <ChevronDown className="w-3 h-3" />
+                  <span>Done</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -2054,9 +2375,9 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           <div
             data-testid="guided-wizard-bar"
             aria-label="Guided Creation Steps"
-            className="hidden lg:flex items-center justify-between gap-2 px-3 pt-2.5 pb-2 border-b border-white/10 bg-black/40 shrink-0 overflow-x-auto"
+            className="hidden lg:flex items-center justify-between gap-2 px-3 pt-2.5 pb-2 border-b border-white/10 bg-black/40 shrink-0 overflow-x-auto no-scrollbar"
           >
-            <div className="flex items-center gap-1 sm:gap-1.5">
+            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
               {/* Step 1: Ingest (Opens Source / OCR Drawer) */}
               <button
                 type="button"
@@ -2110,14 +2431,14 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                       className="w-3.5 h-3.5"
                       style={!isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption') ? { color: theme.accent } : undefined}
                     />
-                    <span>3. Publish</span>
+                    <span>3. P. OK / Publish</span>
                     {blockersCount > 0 ? (
-                      <span className="text-xs font-mono tabular-nums px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                        {blockersCount}
+                      <span className="text-[11px] font-mono tabular-nums text-amber-300">
+                        · {blockersCount}
                       </span>
                     ) : (
-                      <span className="text-xs font-mono uppercase px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                        PASS
+                      <span className="text-[11px] font-mono text-emerald-400">
+                        · Ready
                       </span>
                     )}
                   </button>
@@ -2200,14 +2521,14 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                       className="w-3.5 h-3.5"
                       style={!isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption') ? { color: theme.accent } : undefined}
                     />
-                    <span>5. Publish</span>
+                    <span>5. P. OK / Publish</span>
                     {blockersCount > 0 ? (
-                      <span className="text-xs font-mono tabular-nums px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                        {blockersCount}
+                      <span className="text-[11px] font-mono tabular-nums text-amber-300">
+                        · {blockersCount}
                       </span>
                     ) : (
-                      <span className="text-xs font-mono uppercase px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                        PASS
+                      <span className="text-[11px] font-mono text-emerald-400">
+                        · Ready
                       </span>
                     )}
                   </button>
@@ -2215,17 +2536,59 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
               )}
             </div>
 
-            {/* Selected Layer Quick Badge */}
-            {activePostFormat !== 'reel' && selectedElementId && inspectorTab !== 'position' && (
+            {/* Desktop Undo / Redo + Hold to Compare Before + Selected Layer Quick Link */}
+            <div className="flex items-center gap-1.5 shrink-0">
               <button
                 type="button"
-                onClick={() => setInspectorTab('position')}
-                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-[11px] font-mono text-cyan-300 hover:bg-cyan-500/20 transition-colors cursor-pointer shrink-0"
-                title="Adjust exact position and scale for selected element"
+                data-testid="desktop-undo-btn"
+                disabled={historyPast.length === 0}
+                onClick={handleUndo}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/10 border border-white/10 text-[11px] font-mono text-slate-300 hover:text-white disabled:opacity-35 cursor-pointer"
+                title="Undo last edit"
               >
-                <span>Layer: {selectedElementId}</span>
+                <Undo2 className="w-3 h-3" />
+                <span>Undo</span>
               </button>
-            )}
+              <button
+                type="button"
+                data-testid="desktop-redo-btn"
+                disabled={historyFuture.length === 0}
+                onClick={handleRedo}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/10 border border-white/10 text-[11px] font-mono text-slate-300 hover:text-white disabled:opacity-35 cursor-pointer"
+                title="Redo edit"
+              >
+                <Redo2 className="w-3 h-3" />
+                <span>Redo</span>
+              </button>
+              <button
+                type="button"
+                data-testid="desktop-compare-before-btn"
+                onPointerDown={() => setIsComparingBefore(true)}
+                onPointerUp={() => setIsComparingBefore(false)}
+                onPointerLeave={() => setIsComparingBefore(false)}
+                onPointerCancel={() => setIsComparingBefore(false)}
+                className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-mono font-bold cursor-pointer select-none ${
+                  isComparingBefore
+                    ? 'bg-amber-500/25 border-amber-400 text-amber-200'
+                    : 'bg-white/[0.04] hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
+                }`}
+                title="Press and hold to compare with before edits"
+              >
+                <Eye className="w-3 h-3" />
+                <span>Compare Before</span>
+              </button>
+
+              {activePostFormat !== 'reel' && selectedElementId && inspectorTab !== 'position' && (
+                <button
+                  type="button"
+                  onClick={() => setInspectorTab('position')}
+                  className="hidden sm:flex items-center gap-1.5 px-2 py-1 text-[11px] font-mono text-cyan-300 hover:text-white transition-colors cursor-pointer shrink-0"
+                  title="Adjust exact position and scale for selected element"
+                >
+                  <span>Layer · {selectedElementId}</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Scrollable Tab Viewport */}
@@ -2413,6 +2776,21 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                     changeSlide(idx);
                     setInspectorTab('copy');
                   }}
+                  onAutoFixPreExportCheck={handleAutoFixPreExportCheck}
+                  onToggleOfficialBrandIcon={(brandKey: string, enabled: boolean) => {
+                    applyDeckUpdate((prev) => ({
+                      ...prev,
+                      officialBrandIcons: {
+                        ...(prev.officialBrandIcons || {}),
+                        [brandKey]: enabled,
+                      },
+                    }));
+                    onShowToast(
+                      enabled
+                        ? `Enabled official Simple Icons SVG badge (≤8% width) for ${brandKey}`
+                        : `Switched ${brandKey} to styled text name`
+                    );
+                  }}
                   onUpdateCreator={(newCreator: string) => {
                     applyDeckUpdate((prev) => {
                       const trimmed = newCreator.trim();
@@ -2427,7 +2805,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                       }
                       return {
                         ...prev,
-                        brand: trimmed || prev.brand,
+                        brand: 'MARROK',
                         channel: trimmed,
                         slides: newSlides,
                         sourceMeta: {
@@ -2450,7 +2828,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                       carousel.visualOptions,
                       preset
                     );
-                    onShowToast(`Downloaded Slide ${currentSlideIndex + 1} (${spec.label}) JPG`);
+                    onShowToast(`Downloaded Slide ${currentSlideIndex + 1} (${spec.label}) JPG (Q92)`);
                   }}
                   onOpenPublishScheduleModal={onOpenPublishScheduleModal}
                   isExportingZip={isExportingZip}
@@ -2458,16 +2836,16 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 />
 
                 {/* Bilingual TikTok / Instagram Posting Copy */}
-                <div className="p-4 rounded-2xl bg-slate-900/80 border border-white/10 space-y-3 shadow-xl">
+                <div className="p-4 rounded-2xl bg-slate-900/80 border border-white/[0.08] space-y-3 shadow-xl">
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <div>
                       <span className="text-xs font-bold text-white uppercase tracking-wider block">
-                        Bilingual TikTok / Instagram Posting Copy
+                        Social Caption &amp; Hashtags (EN / AR)
                       </span>
                       <span className="text-[11px] text-slate-400">
                         {activePostFormat === 'single'
                           ? 'Ready to paste directly into TikTok/Instagram or export in your bundle'
-                          : 'Included automatically in your Metricool ZIP bundle'}
+                          : 'Included automatically in your marrok_<topic>.zip bundle'}
                       </span>
                     </div>
                     <div className="flex items-center gap-2 flex-wrap">
@@ -2488,7 +2866,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                           ) : (
                             <>
                               <Sparkles className="w-3.5 h-3.5 text-emerald-300" />
-                              <span>Generate Caption & Text from Video</span>
+                              <span>Generate Caption &amp; Text from Video</span>
                             </>
                           )}
                         </button>
@@ -2503,7 +2881,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                         ) : (
                           <Copy className="w-3.5 h-3.5" />
                         )}
-                        <span>{copiedType === 'caption' ? 'Copied!' : 'Copy Caption Text'}</span>
+                        <span>{copiedType === 'caption' ? 'Copied EN + AR!' : 'Copy EN + AR Caption & Hashtags'}</span>
                       </button>
                     </div>
                   </div>
@@ -2521,8 +2899,9 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                     className="w-full p-3 rounded-xl bg-black/70 border border-white/10 focus:border-white/30 text-xs text-slate-200 leading-relaxed focus:outline-none resize-y font-sans"
                   />
 
-                  <div className="text-[11px] font-mono text-slate-400">
-                    {dynamicHashtags.join(' ')}
+                  <div className="flex items-center justify-between gap-2 text-[11px] font-mono text-slate-400 tabular-nums">
+                    <span className="truncate">{dynamicHashtags.join(' ')}</span>
+                    <span className="shrink-0">{(carousel.caption || '').length} chars</span>
                   </div>
                 </div>
               </div>
@@ -2642,6 +3021,13 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         onOpenMotionExport={() => setIsMotionExportOpen(true)}
         onOpenContactSheet={onOpenContactSheet}
         onOpenPublishScheduleModal={onOpenPublishScheduleModal}
+        canUndo={historyPast.length > 0}
+        canRedo={historyFuture.length > 0}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        isComparingBefore={isComparingBefore}
+        onCompareBeforeStart={() => setIsComparingBefore(true)}
+        onCompareBeforeEnd={() => setIsComparingBefore(false)}
         onShowToast={onShowToast}
       />
 

@@ -9,7 +9,7 @@
  * 5. Repetition: Flags repeated headlines, repeated diagram variants, or duplicate body copy.
  */
 
-import { CarouselData } from '../types';
+import { CarouselData, NumericEvidenceDiscrepancy } from '../types';
 
 export type RiskStatus = 'PASS' | 'WARN' | 'BLOCK';
 
@@ -145,6 +145,9 @@ function checkOriginality(carousel: CarouselData, rawInput: string = ''): RiskCh
   };
 }
 
+const IMPLIED_PARTNERSHIP_PATTERN =
+  /\b(official\s+partner|powered\s+by|in\s+collaboration\s+with|endorsed\s+by|sponsored\s+by)\b/i;
+
 function checkCopyright(carousel: CarouselData, rawInput: string = ''): RiskCheckItem {
   const combinedText = [
     rawInput,
@@ -171,17 +174,41 @@ function checkCopyright(carousel: CarouselData, rawInput: string = ''): RiskChec
 
     return {
       id: 'copyright',
-      label: 'Copyrighted IP & Audio',
+      label: 'Brand IP & Audio Safety',
       status: 'BLOCK',
       message: `Detected reference to protected franchise/artist ("${matchedWord}"). Remove copyrighted characters or commercial music references.`,
     };
   }
 
+  const partnershipMatch = combinedText.match(IMPLIED_PARTNERSHIP_PATTERN);
+  if (partnershipMatch) {
+    return {
+      id: 'copyright',
+      label: 'Brand IP & Endorsement Safety',
+      status: 'BLOCK',
+      message: `Implied endorsement wording detected ("${partnershipMatch[0]}"). Never imply partnership with third-party brands.`,
+    };
+  }
+
+  for (let i = 0; i < carousel.slides.length; i++) {
+    const cfg = carousel.slides[i].brandLogoConfig;
+    if (cfg && cfg.mode === 'official_icon') {
+      if ((cfg.maxWidthPct ?? 8) > 8 || cfg.placement === 'hero' || cfg.placement === 'center' || (cfg.countOnSlide ?? 1) > 1 || cfg.isEdited || cfg.isNonLibrarySource) {
+        return {
+          id: 'copyright',
+          label: 'Brand IP & Logo Safety',
+          status: 'BLOCK',
+          message: `Slide ${i + 1} violates Brand Logo IP safety (must be ≤8% width, corner label only, max 1 unedited Simple Icons SVG per slide).`,
+        };
+      }
+    }
+  }
+
   return {
     id: 'copyright',
-    label: 'Copyrighted IP & Audio',
+    label: 'Brand IP & Audio Safety',
     status: 'PASS',
-    message: 'No copyrighted characters, franchises, or commercial audio triggers detected.',
+    message: 'No copyrighted IP, implied endorsement, or improper brand logo usage detected.',
   };
 }
 
@@ -225,12 +252,268 @@ function checkFirstFrameQuality(carousel: CarouselData): RiskCheckItem {
   };
 }
 
+export interface NormalizedMetricToken {
+  raw: string;
+  mantissa: number;
+  normalizedValue: number;
+  unitCategory: NumericEvidenceDiscrepancy['unitCategory'];
+}
+
+const METRIC_EXTRACTION_PATTERN =
+  /(?:[$€£]\s*\d[\d,]*(?:\.\d+)?\s*(?:trillion|billion|million|thousand|[tbmk])?\b|\b\d[\d,]*(?:\.\d+)?\s*(?:trillion|billion|million|thousand|[tbmk])?\s*(?:usd|eur|gbp)\b|\b\d[\d,]*(?:\.\d+)?\s*(?:%|x|ms|µs|us|ns|sec|s\b|tb\/s|gb\/s|mb\/s|kb\/s|tbps|gbps|mbps|kbps|tb|gb|mb|kb|req\/s|rps|qps|tps|ops\/s|tokens\/s|(?:trillion|billion|million|thousand|[tbmk])\b))/gi;
+
+/**
+ * Normalizes a quantitative metric string across currencies, magnitudes (K/M/B/T),
+ * percentages, multipliers, durations (ns/µs/ms/s -> ms), data sizes (KB/MB/GB/TB -> bytes), and rates.
+ * Enables exact equivalence across legitimate conversions (e.g. "1.5s" === "1500ms", "2.4GB" === "2400MB", "$20.9B" === "$20.9 billion")
+ * while catching 10x/100x/1000x decimal or scale distortions (e.g. "$20.9B" -> "$209B").
+ */
+export function parseNormalizedMetricToken(rawInput: string): NormalizedMetricToken | null {
+  const cleaned = rawInput.trim();
+  if (!cleaned) return null;
+
+  const lower = cleaned.toLowerCase();
+  const hasCurrencyPrefix = /^[$€£]/.test(lower);
+  const hasCurrencySuffix = /\b(usd|eur|gbp)$/.test(lower);
+  const isCurrency = hasCurrencyPrefix || hasCurrencySuffix;
+
+  const numMatch = lower.match(/\d[\d,]*(?:\.\d+)?/);
+  if (!numMatch) return null;
+  const mantissa = Number.parseFloat(numMatch[0].replace(/,/g, ''));
+  if (!Number.isFinite(mantissa)) return null;
+
+  const afterNum = lower.slice((numMatch.index || 0) + numMatch[0].length).trim();
+
+  // Check currency first
+  if (isCurrency) {
+    let scale = 1;
+    if (/\b(trillion|t)\b/.test(afterNum)) scale = 1e12;
+    else if (/\b(billion|b)\b/.test(afterNum)) scale = 1e9;
+    else if (/\b(million|m)\b/.test(afterNum)) scale = 1e6;
+    else if (/\b(thousand|k)\b/.test(afterNum)) scale = 1e3;
+    return {
+      raw: cleaned,
+      mantissa,
+      normalizedValue: mantissa * scale,
+      unitCategory: 'currency',
+    };
+  }
+
+  if (afterNum.startsWith('%')) {
+    return { raw: cleaned, mantissa, normalizedValue: mantissa, unitCategory: 'percent' };
+  }
+
+  if (/^x\b/.test(afterNum)) {
+    return { raw: cleaned, mantissa, normalizedValue: mantissa, unitCategory: 'multiplier' };
+  }
+
+  // Time duration -> normalize to milliseconds (ms)
+  if (/^(ms|milliseconds?)\b/.test(afterNum)) {
+    return { raw: cleaned, mantissa, normalizedValue: mantissa, unitCategory: 'duration_ms' };
+  }
+  if (/^(µs|us|microseconds?)\b/.test(afterNum)) {
+    return { raw: cleaned, mantissa, normalizedValue: mantissa * 1e-3, unitCategory: 'duration_ms' };
+  }
+  if (/^(ns|nanoseconds?)\b/.test(afterNum)) {
+    return { raw: cleaned, mantissa, normalizedValue: mantissa * 1e-6, unitCategory: 'duration_ms' };
+  }
+  if (/^(s|sec|seconds?)\b/.test(afterNum)) {
+    return { raw: cleaned, mantissa, normalizedValue: mantissa * 1000, unitCategory: 'duration_ms' };
+  }
+
+  // Throughput rates
+  if (/(tb\/s|tbps|gb\/s|gbps|mb\/s|mbps|kb\/s|kbps|req\/s|rps|qps|tps|ops\/s|tokens\/s)\b/.test(afterNum)) {
+    let scale = 1;
+    if (/^(tb\/s|tbps|\bt\b)/.test(afterNum)) scale = 1e12;
+    else if (/^(gb\/s|gbps|\bg\b)/.test(afterNum)) scale = 1e9;
+    else if (/^(mb\/s|mbps|\bm\b)/.test(afterNum)) scale = 1e6;
+    else if (/^(kb\/s|kbps|\bk\b)/.test(afterNum)) scale = 1e3;
+    return { raw: cleaned, mantissa, normalizedValue: mantissa * scale, unitCategory: 'rate' };
+  }
+
+  // Data sizes -> normalize to bytes
+  if (/^(tb|terabytes?)\b/.test(afterNum)) {
+    return { raw: cleaned, mantissa, normalizedValue: mantissa * 1e12, unitCategory: 'bytes' };
+  }
+  if (/^(gb|gigabytes?)\b/.test(afterNum)) {
+    return { raw: cleaned, mantissa, normalizedValue: mantissa * 1e9, unitCategory: 'bytes' };
+  }
+  if (/^(mb|megabytes?)\b/.test(afterNum)) {
+    return { raw: cleaned, mantissa, normalizedValue: mantissa * 1e6, unitCategory: 'bytes' };
+  }
+  if (/^(kb|kilobytes?)\b/.test(afterNum)) {
+    return { raw: cleaned, mantissa, normalizedValue: mantissa * 1e3, unitCategory: 'bytes' };
+  }
+
+  // Scalar magnitudes (K / M / B / T)
+  if (/^(trillion|t)\b/.test(afterNum)) {
+    return { raw: cleaned, mantissa, normalizedValue: mantissa * 1e12, unitCategory: 'scalar' };
+  }
+  if (/^(billion|b)\b/.test(afterNum)) {
+    return { raw: cleaned, mantissa, normalizedValue: mantissa * 1e9, unitCategory: 'scalar' };
+  }
+  if (/^(million|m)\b/.test(afterNum)) {
+    return { raw: cleaned, mantissa, normalizedValue: mantissa * 1e6, unitCategory: 'scalar' };
+  }
+  if (/^(thousand|k)\b/.test(afterNum)) {
+    return { raw: cleaned, mantissa, normalizedValue: mantissa * 1e3, unitCategory: 'scalar' };
+  }
+
+  return null;
+}
+
+export function extractNormalizedMetricsFromText(text: string): NormalizedMetricToken[] {
+  if (!text) return [];
+  const matches = text.match(METRIC_EXTRACTION_PATTERN) || [];
+  const out: NormalizedMetricToken[] = [];
+  for (const m of matches) {
+    const parsed = parseNormalizedMetricToken(m);
+    if (parsed) out.push(parsed);
+  }
+  return out;
+}
+
+function areNormalizedValuesEquivalent(a: number, b: number): boolean {
+  if (a === b) return true;
+  const denom = Math.max(Math.abs(a), Math.abs(b), 1e-12);
+  // Allow up to 2.5% tolerance for binary vs decimal rounding (e.g. 1024MB vs 1GB)
+  return Math.abs(a - b) / denom <= 0.025;
+}
+
+function isOrderOfMagnitudeShift(a: number, b: number, mantissaA: number, mantissaB: number): boolean {
+  if (a <= 0 || b <= 0) return false;
+  const ratio = a / b;
+  const log10 = Math.log10(ratio);
+  const nearestPow = Math.round(log10);
+  if (Math.abs(nearestPow) >= 1 && Math.abs(nearestPow) <= 6 && Math.abs(log10 - nearestPow) < 0.04) {
+    return true;
+  }
+  // Also catch same digits with shifted decimal (e.g. 20.9 vs 209)
+  const digitsA = String(mantissaA).replace(/\./g, '').replace(/0+$/, '');
+  const digitsB = String(mantissaB).replace(/\./g, '').replace(/0+$/, '');
+  if (digitsA.length >= 2 && digitsA === digitsB && !areNormalizedValuesEquivalent(a, b)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Compares all quantitative metrics appearing on slides against the extracted source passage metrics.
+ * Flags 10x/100x/decimal shifts (e.g. $20.9B -> $209B) as BLOCK and unmatched metrics as WARN.
+ */
+export function compareSlideMetricsAgainstSource(
+  carousel: CarouselData,
+  explicitSourceMetrics?: string[]
+): {
+  verifiedCount: number;
+  discrepancies: NumericEvidenceDiscrepancy[];
+} {
+  const rawSourceList = explicitSourceMetrics ?? carousel.sourceMeta?.extractedSourceMetrics ?? [];
+  const sourceTokens: NormalizedMetricToken[] = [];
+  for (const item of rawSourceList) {
+    const parsed = parseNormalizedMetricToken(item);
+    if (parsed) {
+      sourceTokens.push(parsed);
+    } else {
+      sourceTokens.push(...extractNormalizedMetricsFromText(item));
+    }
+  }
+
+  if (sourceTokens.length === 0) {
+    return { verifiedCount: 0, discrepancies: [] };
+  }
+
+  let verifiedCount = 0;
+  const discrepancies: NumericEvidenceDiscrepancy[] = [];
+
+  carousel.slides.forEach((slide, idx) => {
+    const slideText = [slide.metricValue || '', slide.enTitle || '', slide.enBody || ''].join(' ');
+    const slideTokens = extractNormalizedMetricsFromText(slideText);
+    const seenRawOnSlide = new Set<string>();
+
+    for (const sTok of slideTokens) {
+      const dedupKey = `${sTok.unitCategory}:${sTok.normalizedValue}`;
+      if (seenRawOnSlide.has(dedupKey)) continue;
+      seenRawOnSlide.add(dedupKey);
+
+      const sameCategorySources = sourceTokens.filter((src) => src.unitCategory === sTok.unitCategory);
+      const exactMatch = sameCategorySources.find((src) =>
+        areNormalizedValuesEquivalent(sTok.normalizedValue, src.normalizedValue)
+      );
+
+      if (exactMatch) {
+        verifiedCount += 1;
+        continue;
+      }
+
+      // Check for decimal / scale distortion (e.g. $20.9B vs $209B or 15ms vs 15s)
+      const scaleConflict = sameCategorySources.find((src) =>
+        isOrderOfMagnitudeShift(sTok.normalizedValue, src.normalizedValue, sTok.mantissa, src.mantissa)
+      );
+
+      if (scaleConflict) {
+        discrepancies.push({
+          slideIndex: idx,
+          slideRawMetric: sTok.raw,
+          normalizedSlideValue: sTok.normalizedValue,
+          unitCategory: sTok.unitCategory,
+          closestSourceMetric: scaleConflict.raw,
+          normalizedSourceValue: scaleConflict.normalizedValue,
+          reason: 'scale_mismatch',
+          severity: 'BLOCK',
+          message: `Slide ${idx + 1} claims "${sTok.raw}" which conflicts with source metric "${scaleConflict.raw}" (scale/decimal mismatch).`,
+        });
+        continue;
+      }
+
+      // Check if the same mantissa exists in the source with a conflicting unit category (e.g. 42% vs 42ms)
+      const unitConflict = sourceTokens.find(
+        (src) =>
+          src.unitCategory !== sTok.unitCategory &&
+          Math.abs(src.mantissa - sTok.mantissa) < 1e-6 &&
+          sTok.mantissa > 1
+      );
+
+      if (unitConflict) {
+        discrepancies.push({
+          slideIndex: idx,
+          slideRawMetric: sTok.raw,
+          normalizedSlideValue: sTok.normalizedValue,
+          unitCategory: sTok.unitCategory,
+          closestSourceMetric: unitConflict.raw,
+          normalizedSourceValue: unitConflict.normalizedValue,
+          reason: 'unit_conflict',
+          severity: 'BLOCK',
+          message: `Slide ${idx + 1} claims "${sTok.raw}" but source specifies "${unitConflict.raw}" (unit conflict).`,
+        });
+        continue;
+      }
+
+      discrepancies.push({
+        slideIndex: idx,
+        slideRawMetric: sTok.raw,
+        normalizedSlideValue: sTok.normalizedValue,
+        unitCategory: sTok.unitCategory,
+        reason: 'unmatched_metric',
+        severity: 'WARN',
+        message: `Slide ${idx + 1} metric "${sTok.raw}" was not found in extracted source metrics (${sourceTokens
+          .slice(0, 4)
+          .map((t) => t.raw)
+          .join(', ')}).`,
+      });
+    }
+  });
+
+  return { verifiedCount, discrepancies };
+}
+
 function checkUnverifiedNumericClaims(carousel: CarouselData): RiskCheckItem {
   const slidesWithMetrics = carousel.slides.filter(
     (s) =>
       s.type === 'metric' ||
       Boolean(s.metricValue) ||
-      NUMERIC_CLAIM_PATTERN.test(`${s.enTitle} ${s.enBody}`)
+      NUMERIC_CLAIM_PATTERN.test(`${s.enTitle} ${s.enBody}`) ||
+      extractNormalizedMetricsFromText(`${s.metricValue || ''} ${s.enTitle || ''} ${s.enBody || ''}`).length > 0
   );
 
   if (slidesWithMetrics.length === 0) {
@@ -240,6 +523,47 @@ function checkUnverifiedNumericClaims(carousel: CarouselData): RiskCheckItem {
       status: 'PASS',
       message: 'No quantitative benchmark claims requiring external citation.',
     };
+  }
+
+  const isHumanApproved = Boolean(
+    carousel.sourceMeta?.humanApproved ?? carousel.sourceMeta?.userReviewed
+  );
+
+  // Deterministic Numeric Evidence Audit when source metrics are available
+  if (
+    carousel.sourceMeta?.extractedSourceMetrics &&
+    carousel.sourceMeta.extractedSourceMetrics.length > 0
+  ) {
+    const audit = compareSlideMetricsAgainstSource(carousel);
+    const blockDiscrepancies = audit.discrepancies.filter((d) => d.severity === 'BLOCK');
+    const warnDiscrepancies = audit.discrepancies.filter((d) => d.severity === 'WARN');
+
+    if (blockDiscrepancies.length > 0) {
+      return {
+        id: 'unverified-numbers',
+        label: 'Numeric Claims & Benchmarks',
+        status: isHumanApproved ? 'WARN' : 'BLOCK',
+        message: blockDiscrepancies[0].message,
+      };
+    }
+
+    if (warnDiscrepancies.length > 0) {
+      return {
+        id: 'unverified-numbers',
+        label: 'Numeric Claims & Benchmarks',
+        status: 'WARN',
+        message: warnDiscrepancies[0].message,
+      };
+    }
+
+    if (audit.verifiedCount > 0) {
+      return {
+        id: 'unverified-numbers',
+        label: 'Numeric Claims & Benchmarks',
+        status: 'PASS',
+        message: `${audit.verifiedCount} numeric claim(s) deterministically verified against extracted source evidence.`,
+      };
+    }
   }
 
   const isGrounded =
@@ -256,7 +580,7 @@ function checkUnverifiedNumericClaims(carousel: CarouselData): RiskCheckItem {
     };
   }
 
-  if (carousel.sourceMeta?.userReviewed) {
+  if (isHumanApproved) {
     return {
       id: 'unverified-numbers',
       label: 'Numeric Claims & Benchmarks',

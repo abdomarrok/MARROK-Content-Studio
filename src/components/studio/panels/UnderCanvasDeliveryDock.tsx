@@ -135,19 +135,32 @@ export const UnderCanvasDeliveryDock: React.FC<UnderCanvasDeliveryDockProps> = (
             1080×1920 · {activeReelConfig.duration.toFixed(1)}s
           </span>
         ) : (
-          <select
-            aria-label="Social Media Export Format"
-            value={activeDimensionSpec.id}
-            onChange={(e) => onSelectDimensionPreset(e.target.value as CanvasDimensionPreset)}
-            className="px-2 py-1 rounded-lg bg-white/[0.05] hover:bg-white/10 border border-white/15 text-[11px] font-mono tabular-nums text-slate-200 focus:outline-none focus:border-cyan-400 cursor-pointer"
-            title="Select Social Media Format for Slide Export"
-          >
-            {CANVAS_DIMENSION_PRESET_LIST.map((preset) => (
-              <option key={preset.id} value={preset.id} className="bg-[#080d11] text-slate-200">
-                {preset.shortLabel} ({preset.width}×{preset.height})
-              </option>
-            ))}
-          </select>
+          <div className="flex items-center gap-1 bg-black/50 p-0.5 rounded-lg border border-white/15">
+            {(
+              [
+                { id: 'tiktok-9:16', label: '9:16 TikTok' },
+                { id: 'ig-4:5', label: '4:5 IG' },
+                { id: 'ig-1:1', label: '1:1' },
+              ] as const
+            ).map((preset) => {
+              const active = activeDimensionSpec.id === preset.id;
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  data-testid={`dock-preset-${preset.id}`}
+                  onClick={() => onSelectDimensionPreset(preset.id)}
+                  className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold transition-colors cursor-pointer whitespace-nowrap ${
+                    active
+                      ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/40'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              );
+            })}
+          </div>
         )}
       </div>
 
@@ -161,18 +174,16 @@ export const UnderCanvasDeliveryDock: React.FC<UnderCanvasDeliveryDockProps> = (
                 downloadSingleSlidePng(
                   carousel,
                   currentSlideIndex,
-                  activePostFormat === 'single'
-                    ? `MARROK_Post_${activeDimensionSpec.width}x${activeDimensionSpec.height}.jpg`
-                    : `MARROK_Slide_${currentSlideIndex + 1}_${activeDimensionSpec.width}x${activeDimensionSpec.height}.jpg`,
+                  undefined,
                   theme,
                   carousel.visualOptions
                 );
                 onShowToast(
-                  `Downloaded Slide ${currentSlideIndex + 1} (${activeDimensionSpec.width}×${activeDimensionSpec.height}) JPG`
+                  `Downloaded Slide ${currentSlideIndex + 1} (${activeDimensionSpec.width}×${activeDimensionSpec.height}) JPG (Q92)`
                 );
               }}
               className="hidden sm:flex items-center gap-1 py-1.5 px-2.5 rounded-xl bg-white/[0.05] hover:bg-white/10 border border-white/10 text-xs font-semibold text-slate-200 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-              title={`Download Slide ${currentSlideIndex + 1} JPG (${activeDimensionSpec.label})`}
+              title={`Download Slide ${currentSlideIndex + 1} JPG Quality 92 (${activeDimensionSpec.label})`}
             >
               <Download className="w-3.5 h-3.5 text-cyan-400" />
               <span>JPG</span>
@@ -180,16 +191,17 @@ export const UnderCanvasDeliveryDock: React.FC<UnderCanvasDeliveryDockProps> = (
 
             <button
               type="button"
-              onClick={onCopySlide}
+              data-testid="dock-copy-bilingual-caption-btn"
+              onClick={onCopyCaption}
               className="hidden sm:flex items-center gap-1 py-1.5 px-2.5 rounded-xl bg-white/[0.05] hover:bg-white/10 border border-white/10 text-xs font-semibold text-slate-200 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-              title="Copy current slide image to clipboard"
+              title="Copy EN + AR caption and bilingual hashtags to clipboard"
             >
-              {copiedType === 'slide' ? (
+              {copiedType === 'caption' ? (
                 <Check className="w-3.5 h-3.5 text-emerald-400" />
               ) : (
-                <Copy className="w-3.5 h-3.5 text-slate-400" />
+                <Copy className="w-3.5 h-3.5 text-cyan-300" />
               )}
-              <span>{copiedType === 'slide' ? 'Copied' : 'Copy Image'}</span>
+              <span>{copiedType === 'caption' ? 'Copied EN+AR' : 'Caption EN+AR'}</span>
             </button>
           </>
         )}

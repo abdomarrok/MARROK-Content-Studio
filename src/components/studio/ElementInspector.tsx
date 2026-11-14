@@ -112,6 +112,61 @@ export const ElementInspector: React.FC<ElementInspectorProps> = ({
 
   const activePreset: SlideCompositionPreset = slide.compositionPreset || 'standard';
   const isFreeMove = Boolean(slide.freeMoveLayout);
+  const isManualLayoutLocked = Boolean(slide.manualLayoutLocked);
+
+  const renderCompositionPresetThumbnail = (
+    presetId: SlideCompositionPreset,
+    isActive: boolean
+  ) => {
+    const stroke = isActive ? theme.accent : '#94a3b8';
+    const fill = isActive ? `${theme.accent}35` : 'rgba(255,255,255,0.08)';
+    switch (presetId) {
+      case 'headline-first':
+        return (
+          <svg viewBox="0 0 36 28" className="w-8 h-6 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
+            <line x1="6" y1="5" x2="30" y2="5" stroke="#f8fafc" strokeWidth="1.6" />
+            <line x1="9" y1="8.5" x2="27" y2="8.5" stroke={stroke} strokeWidth="1.4" />
+            <rect x="6" y="11.5" width="24" height="9" rx="1.8" fill={fill} stroke={stroke} strokeWidth="1.1" />
+            <line x1="8" y1="23.5" x2="28" y2="23.5" stroke="#94a3b8" strokeWidth="1.1" />
+          </svg>
+        );
+      case 'visual-hero':
+        return (
+          <svg viewBox="0 0 36 28" className="w-8 h-6 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
+            <rect x="4" y="3.5" width="28" height="14" rx="2" fill={fill} stroke={stroke} strokeWidth="1.2" />
+            <line x1="7" y1="20.5" x2="29" y2="20.5" stroke="#f8fafc" strokeWidth="1.5" />
+            <line x1="9" y1="24" x2="27" y2="24" stroke={stroke} strokeWidth="1.2" />
+          </svg>
+        );
+      case 'split-balanced':
+        return (
+          <svg viewBox="0 0 36 28" className="w-8 h-6 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
+            <rect x="5" y="3.5" width="26" height="9.5" rx="1.8" fill={fill} stroke={stroke} strokeWidth="1.1" />
+            <line x1="5" y1="16" x2="21" y2="16" stroke="#f8fafc" strokeWidth="1.5" />
+            <line x1="15" y1="19.5" x2="31" y2="19.5" stroke={stroke} strokeWidth="1.4" />
+            <line x1="5" y1="23" x2="19" y2="23" stroke="#94a3b8" strokeWidth="1.1" />
+          </svg>
+        );
+      case 'compact-editorial':
+        return (
+          <svg viewBox="0 0 36 28" className="w-8 h-6 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
+            <rect x="7" y="5" width="22" height="9" rx="1.8" fill={fill} stroke={stroke} strokeWidth="1.1" />
+            <line x1="9" y1="17" x2="27" y2="17" stroke="#f8fafc" strokeWidth="1.4" />
+            <line x1="11" y1="20" x2="25" y2="20" stroke={stroke} strokeWidth="1.2" />
+          </svg>
+        );
+      case 'standard':
+      default:
+        return (
+          <svg viewBox="0 0 36 28" className="w-8 h-6 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
+            <rect x="6" y="3.5" width="24" height="10.5" rx="1.8" fill={fill} stroke={stroke} strokeWidth="1.1" />
+            <line x1="7" y1="17" x2="29" y2="17" stroke="#f8fafc" strokeWidth="1.5" />
+            <line x1="9" y1="20.5" x2="27" y2="20.5" stroke={stroke} strokeWidth="1.3" />
+            <line x1="8" y1="24" x2="28" y2="24" stroke="#94a3b8" strokeWidth="1.1" />
+          </svg>
+        );
+    }
+  };
 
   const handleUpdate = (updates: Partial<ElementLayoutOverride>) => {
     const desiredDx = updates.dx !== undefined ? updates.dx : dx;
@@ -154,6 +209,13 @@ export const ElementInspector: React.FC<ElementInspectorProps> = ({
     if (!onUpdateSlideFields) return;
     onUpdateSlideFields({
       freeMoveLayout: !isFreeMove,
+    });
+  };
+
+  const handleToggleManualLayoutLock = () => {
+    if (!onUpdateSlideFields) return;
+    onUpdateSlideFields({
+      manualLayoutLocked: !isManualLayoutLocked,
     });
   };
 
@@ -202,12 +264,30 @@ export const ElementInspector: React.FC<ElementInspectorProps> = ({
           {/* 1. Slide Composition Presets & Free Move Mode */}
           {onUpdateSlideFields && slide.type !== 'cta' && (
             <div className="space-y-2 pb-3 border-b border-white/[0.07]">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
                   <LayoutTemplate className="w-3 h-3 text-cyan-400" />
                   <span>Slide Composition Preset</span>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    data-testid="inspector-cascade-lock-btn"
+                    onClick={handleToggleManualLayoutLock}
+                    className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] font-mono font-semibold transition-all cursor-pointer ${
+                      isManualLayoutLocked
+                        ? 'border-amber-400/60 bg-amber-500/20 text-amber-200'
+                        : 'border-white/10 bg-white/[0.03] text-slate-400 hover:text-white'
+                    }`}
+                    title="Cascade Lock: Protect this slide's manual edits when Sync Deck or Diversify Deck runs"
+                  >
+                    {isManualLayoutLocked ? (
+                      <Lock className="w-3 h-3 text-amber-300" />
+                    ) : (
+                      <Unlock className="w-3 h-3" />
+                    )}
+                    <span>{isManualLayoutLocked ? 'Cascade Locked' : 'Cascade Lock'}</span>
+                  </button>
                   <button
                     type="button"
                     onClick={handleToggleFreeMove}
@@ -223,14 +303,15 @@ export const ElementInspector: React.FC<ElementInspectorProps> = ({
                     }
                   >
                     {isFreeMove ? <Unlock className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
-                    <span>{isFreeMove ? 'Free Move: ON' : 'Cascade Lock'}</span>
+                    <span>{isFreeMove ? 'Free Move: ON' : 'Anti-Overlap'}</span>
                   </button>
                   {onApplySlideLayoutToAllSlides && (
                     <button
                       type="button"
+                      data-testid="sync-deck-layout-btn"
                       onClick={onApplySlideLayoutToAllSlides}
                       className="flex items-center gap-1 px-2 py-1 rounded-lg border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 text-[10px] font-mono font-semibold text-cyan-300 hover:text-white transition-colors cursor-pointer"
-                      title="Apply this slide's preset and layout overrides to all slides in the deck"
+                      title="Sync grid, node style, spacing, and type scale across all unlocked slides in the deck"
                     >
                       <Copy className="w-3 h-3" />
                       <span>Sync Deck</span>
@@ -247,20 +328,23 @@ export const ElementInspector: React.FC<ElementInspectorProps> = ({
                       key={preset.id}
                       type="button"
                       onClick={() => handleSelectCompositionPreset(preset.id)}
-                      className={`px-2.5 py-2 rounded-xl border text-left transition-all cursor-pointer ${
+                      className={`px-2.5 py-2 rounded-xl border text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
                         isActive
                           ? 'border-cyan-400/60 bg-cyan-500/15 text-white shadow-sm'
                           : 'border-white/10 bg-white/[0.02] text-slate-300 hover:bg-white/[0.06] hover:border-white/20'
                       }`}
                       title={preset.desc}
                     >
-                      <div
-                        className="font-bold text-[11px] truncate"
-                        style={isActive ? { color: theme.accent } : undefined}
-                      >
-                        {preset.label}
+                      <div className="min-w-0">
+                        <div
+                          className="font-bold text-[11px] truncate"
+                          style={isActive ? { color: theme.accent } : undefined}
+                        >
+                          {preset.label}
+                        </div>
+                        <div className="text-[9px] text-slate-400 truncate mt-0.5">{preset.desc}</div>
                       </div>
-                      <div className="text-[9px] text-slate-400 truncate mt-0.5">{preset.desc}</div>
+                      {renderCompositionPresetThumbnail(preset.id, isActive)}
                     </button>
                   );
                 })}

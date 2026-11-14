@@ -11,6 +11,7 @@ import type {
   HookVariant,
   IconLabelPair,
   MotionReelData,
+  NumericEvidenceDiscrepancy,
   PostFormat,
   PostSourceMeta,
   SlideCompositionPreset,
@@ -21,7 +22,7 @@ import type {
   VisualSystemOptions,
 } from '../../types.ts';
 
-const POST_FORMATS: PostFormat[] = ['carousel', 'single', 'reel'];
+const POST_FORMATS: PostFormat[] = ['carousel', 'single', 'meme', 'reel'];
 
 const DIMENSION_PRESETS: CanvasDimensionPreset[] = [
   'tiktok-9:16',
@@ -274,6 +275,7 @@ function parseSlide(
     ['imageCaption', 'imageCaption', 160],
     ['imagePrompt', 'imagePrompt', 4000],
     ['imageModel', 'imageModel', 120],
+    ['hookKicker', 'hookKicker', 100],
     ['enTitle', 'enTitle', 500],
     ['arTitle', 'arTitle', 500],
     ['enBody', 'enBody', 1200],
@@ -402,6 +404,13 @@ function parseSourceMeta(value: unknown): PostSourceMeta | undefined {
   const isSearchGrounded = readBoolean(value, 'isSearchGrounded');
   const isFallback = readBoolean(value, 'isFallback');
   const userReviewed = readBoolean(value, 'userReviewed');
+  const extractedSourceMetrics = readStringArray(value.extractedSourceMetrics, 40, 120);
+  const qualityPassed = readBoolean(value, 'qualityPassed');
+  const groundingVerified = readBoolean(value, 'groundingVerified');
+  const humanApproved = readBoolean(value, 'humanApproved');
+  const publishFailed = readBoolean(value, 'publishFailed');
+  const viralityScore = readNumber(value, 'viralityScore', 0, 100);
+  const viralAngle = readString(value, 'viralAngle', 100);
 
   if (type) meta.type = type;
   if (inputMode) meta.inputMode = inputMode;
@@ -418,6 +427,16 @@ function parseSourceMeta(value: unknown): PostSourceMeta | undefined {
   if (model) meta.model = model;
   if (status) meta.status = status;
   if (userReviewed !== undefined) meta.userReviewed = userReviewed;
+  if (extractedSourceMetrics) meta.extractedSourceMetrics = extractedSourceMetrics;
+  if (qualityPassed !== undefined) meta.qualityPassed = qualityPassed;
+  if (groundingVerified !== undefined) meta.groundingVerified = groundingVerified;
+  if (humanApproved !== undefined) meta.humanApproved = humanApproved;
+  if (publishFailed !== undefined) meta.publishFailed = publishFailed;
+  if (viralityScore !== undefined) meta.viralityScore = viralityScore;
+  if (viralAngle) meta.viralAngle = viralAngle;
+  if (Array.isArray(value.numericDiscrepancies) && value.numericDiscrepancies.length > 0) {
+    meta.numericDiscrepancies = value.numericDiscrepancies.slice(0, 20) as NumericEvidenceDiscrepancy[];
+  }
 
   return Object.keys(meta).length > 0 ? meta : undefined;
 }
@@ -470,7 +489,11 @@ function parseHookVariants(value: unknown): HookVariant[] | undefined {
     if (!tag || !enTitle || !arTitle || !enBody || !arBody) continue;
     const variant: HookVariant = { tag, enTitle, arTitle, enBody, arBody };
     const centerIcon = readString(item, 'centerIcon', 500);
+    const hookKicker = readString(item, 'hookKicker', 100);
+    const coverArchetype = readEnum(item.coverArchetype, SLIDE_TYPES);
     if (centerIcon) variant.centerIcon = centerIcon;
+    if (hookKicker) variant.hookKicker = hookKicker;
+    if (coverArchetype) variant.coverArchetype = coverArchetype;
     variants.push(variant);
   }
   return variants.length > 0 ? variants.slice(0, 10) : undefined;

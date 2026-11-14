@@ -81,6 +81,26 @@ export async function initPostgresSchema(pool: pg.Pool): Promise<void> {
 }
 
 function rowToSavedPostRecord(row: Record<string, unknown>): SavedPostRecord {
+  const parsedDeck = (
+    typeof row.deck === 'object' && row.deck !== null ? row.deck : JSON.parse(String(row.deck))
+  ) as SavedPostRecord['deck'];
+  const qaPassed = Boolean(row.qa_passed);
+  const sourceMeta = parsedDeck?.sourceMeta;
+  const qualityPassed =
+    sourceMeta?.qualityPassed !== undefined ? Boolean(sourceMeta.qualityPassed) : qaPassed;
+  const groundingVerified =
+    sourceMeta?.groundingVerified !== undefined
+      ? Boolean(sourceMeta.groundingVerified)
+      : undefined;
+  const humanApproved =
+    sourceMeta?.humanApproved !== undefined
+      ? Boolean(sourceMeta.humanApproved)
+      : sourceMeta?.userReviewed !== undefined
+      ? Boolean(sourceMeta.userReviewed)
+      : undefined;
+  const publishFailed =
+    sourceMeta?.publishFailed !== undefined ? Boolean(sourceMeta.publishFailed) : undefined;
+
   return {
     id: String(row.id),
     title: String(row.title),
@@ -95,7 +115,11 @@ function rowToSavedPostRecord(row: Record<string, unknown>): SavedPostRecord {
       : undefined,
     creatorHandle: row.creator_handle ? String(row.creator_handle) : 'MARROK',
     slideCount: Number(row.slide_count) || 1,
-    qaPassed: Boolean(row.qa_passed),
+    qaPassed,
+    qualityPassed,
+    ...(groundingVerified !== undefined ? { groundingVerified } : {}),
+    ...(humanApproved !== undefined ? { humanApproved } : {}),
+    ...(publishFailed !== undefined ? { publishFailed } : {}),
     scheduledFor: row.scheduled_for
       ? row.scheduled_for instanceof Date
         ? row.scheduled_for.toISOString()
@@ -116,7 +140,7 @@ function rowToSavedPostRecord(row: Record<string, unknown>): SavedPostRecord {
       : undefined,
     bufferPostIds: Array.isArray(row.buffer_post_ids) ? (row.buffer_post_ids as string[]) : undefined,
     zernioPostIds: Array.isArray(row.zernio_post_ids) ? (row.zernio_post_ids as string[]) : undefined,
-    deck: (typeof row.deck === 'object' && row.deck !== null ? row.deck : JSON.parse(String(row.deck))) as any,
+    deck: parsedDeck,
     storageEngine: 'neon-postgres',
   };
 }
@@ -156,6 +180,30 @@ export async function upsertPostgresPost(
   titleSignature?: string
 ): Promise<SavedPostRecord> {
   await initPostgresSchema(pool);
+
+  const deckToPersist =
+    post.qualityPassed !== undefined ||
+    post.groundingVerified !== undefined ||
+    post.humanApproved !== undefined ||
+    post.publishFailed !== undefined
+      ? {
+          ...post.deck,
+          sourceMeta: {
+            ...post.deck?.sourceMeta,
+            ...(post.qualityPassed !== undefined ? { qualityPassed: post.qualityPassed } : {}),
+            ...(post.groundingVerified !== undefined
+              ? { groundingVerified: post.groundingVerified }
+              : {}),
+            ...(post.humanApproved !== undefined
+              ? {
+                  humanApproved: post.humanApproved,
+                  userReviewed: post.humanApproved,
+                }
+              : {}),
+            ...(post.publishFailed !== undefined ? { publishFailed: post.publishFailed } : {}),
+          },
+        }
+      : post.deck;
 
   const sql = `
     INSERT INTO saved_posts (
@@ -211,7 +259,7 @@ export async function upsertPostgresPost(
     post.cloudinaryCleanedAt ? new Date(post.cloudinaryCleanedAt) : null,
     JSON.stringify(post.bufferPostIds || []),
     JSON.stringify(post.zernioPostIds || []),
-    JSON.stringify(post.deck),
+    JSON.stringify(deckToPersist),
     post.createdAt ? new Date(post.createdAt) : new Date(),
     post.updatedAt ? new Date(post.updatedAt) : new Date(),
     post.postedAt ? new Date(post.postedAt) : null,

@@ -1,5 +1,6 @@
 import { CarouselData, DEFAULT_PALETTES, THEME_CONFIGS, ThemePalette, VisualSystemOptions } from '../../types.ts';
 import { seedSlideArchetypeData } from '../synthesis/archetypes.ts';
+import { isolateEmbeddedLatinInArabic } from '../text/arabicBiDi.ts';
 import { getCanvasDimensionSpec, getArchetypeGraphicTransform, isFullMemeSlide } from './constants.ts';
 import { computeSlideLayoutAwareness } from './layoutAwareness.ts';
 import {
@@ -63,7 +64,7 @@ export async function renderSlideToCanvas(
     carousel.postFormat === 'meme' || Boolean(slide.standaloneMeme) || isFullMemeSlide(slide);
   const categoryTag = isMemeSlide
     ? ''
-    : carousel.category || (themeMode === 'security' ? 'AI + SECURITY' : 'AI + ENGINEERING');
+    : slide.cornerTag || carousel.category || (themeMode === 'security' ? 'SECURITY' : 'ARCHITECTURE');
   const totalSlides = carousel.slides.length;
 
   // Resolve visual system toggles
@@ -90,7 +91,7 @@ export async function renderSlideToCanvas(
   // Pre-compute layout awareness once for the slide
   const layout = computeSlideLayoutAwareness(slide, carousel);
 
-  // 4. Header: Top-Left Authentic MARROK Vector Badge + Brand Wordmark + Category Tag
+  // 4. Header: Top-Left Authentic MARROK Vector Badge + Brand Wordmark + Slide-Type Corner Tag
   if (!layout.headerBadge.hidden) {
     ctx.save();
     const hCx = layout.headerBadge.x + layout.headerBadge.width / 2;
@@ -182,7 +183,7 @@ export async function renderSlideToCanvas(
       layout.arabicBodyBlock && !layout.arabicBodyBlock.hidden ? layout.arabicBodyBlock.top : ceilingY,
       graphicBottom
     );
-    const clipTop = Math.max(spec.headerY, minTextTop - 16);
+    const clipTop = Math.max(spec.headerY, minTextTop - 52);
 
     const resolveAlignX = (align: 'left' | 'center' | 'right' = 'center', dx: number = 0) => {
       if (align === 'left') return { x: spec.safeMarginLeft + dx, textAlign: 'left' as CanvasTextAlign };
@@ -192,15 +193,67 @@ export async function renderSlideToCanvas(
 
     ctx.save();
     ctx.beginPath();
+    // Use generous horizontal bounds (24px margin) so Arabic cursive overhangs on Slide 1 never get clipped at the edge
     ctx.rect(
-      spec.safeMarginLeft - 8,
+      24,
       clipTop,
-      spec.safeContentWidth + 16,
-      Math.max(0, ceilingY - clipTop + 8)
+      spec.width - 48,
+      Math.max(0, ceilingY - clipTop + 12)
     );
     ctx.clip();
 
-    // 6c. Render English Headline
+    // 6b. Render Viral Hook Kicker Badge above English Headline at >=24px (when present and clearance permits)
+    const rawKicker = (slide.hookKicker || '').trim();
+    if (rawKicker && layout.titleBlock && !layout.titleBlock.hidden && layout.titleBlock.lines.length > 0) {
+      const tb = layout.titleBlock;
+      const kickerFontSize = spec.height < 1920 ? 20 : 24;
+      const kickerPillH = spec.height < 1920 ? 32 : 38;
+      const kickerBottomY = tb.top - (spec.height < 1920 ? 8 : 10);
+      const kickerTopY = kickerBottomY - kickerPillH;
+      const minAllowedKickerTop =
+        layout.compositionPreset === 'headline-first'
+          ? spec.headerY + 48
+          : graphicBottom + 4;
+
+      if (kickerTopY >= minAllowedKickerTop) {
+        const { x, textAlign } = resolveAlignX(tb.align, tb.dx);
+        const kickerText = `◆ ${rawKicker.toUpperCase().slice(0, 34)}`;
+        ctx.save();
+        if (tb.opacity !== undefined && tb.opacity < 1) {
+          ctx.globalAlpha *= Math.max(0.1, Math.min(1, tb.opacity));
+        }
+        ctx.font = `700 ${kickerFontSize}px "JetBrains Mono", monospace`;
+        const textW = ctx.measureText(kickerText).width;
+        const padX = 16;
+        const pillW = Math.min(spec.safeContentWidth, textW + padX * 2);
+        const pillX =
+          textAlign === 'left'
+            ? x
+            : textAlign === 'right'
+            ? x - pillW
+            : x - pillW / 2;
+
+        ctx.fillStyle = `${theme.accent}18`;
+        ctx.strokeStyle = `${theme.accent}66`;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        if (typeof ctx.roundRect === 'function') {
+          ctx.roundRect(pillX, kickerTopY, pillW, kickerPillH, 8);
+        } else {
+          ctx.rect(pillX, kickerTopY, pillW, kickerPillH);
+        }
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = theme.accent;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(kickerText, pillX + pillW / 2, kickerTopY + kickerPillH / 2 + 1);
+        ctx.restore();
+      }
+    }
+
+    // 6c. Render English Headline with Inline Metric & Third-Party Brand Text Highlighting
     if (layout.titleBlock && !layout.titleBlock.hidden && layout.titleBlock.lines.length > 0) {
       const tb = layout.titleBlock;
       const { x, textAlign } = resolveAlignX(tb.align, tb.dx);
@@ -209,19 +262,17 @@ export async function renderSlideToCanvas(
         ctx.globalAlpha *= Math.max(0.1, Math.min(1, tb.opacity));
       }
       ctx.font = `800 ${tb.fontSize}px "Plus Jakarta Sans", sans-serif`;
-      ctx.fillStyle = theme.textWhite;
-      ctx.textAlign = textAlign;
       ctx.textBaseline = 'alphabetic';
       let lineY = tb.firstBaselineY;
       for (const line of tb.lines) {
         if (lineY + tb.lineHeight * 0.7 > ceilingY + 8) break;
-        ctx.fillText(line, x, lineY);
+        drawHeadlineLineWithAccentHighlights(ctx, line, x, lineY, textAlign, theme);
         lineY += tb.lineHeight;
       }
       ctx.restore();
     }
 
-    // 6d. Render Arabic Headline
+    // 6d. Render Arabic Headline (equal font size & weight 800, with Unicode LRI BiDi isolation for embedded English tokens)
     if (layout.arabicTitleBlock && !layout.arabicTitleBlock.hidden && layout.arabicTitleBlock.lines.length > 0) {
       const atb = layout.arabicTitleBlock;
       const { x, textAlign } = resolveAlignX(atb.align, atb.dx);
@@ -237,13 +288,13 @@ export async function renderSlideToCanvas(
       let lineY = atb.firstBaselineY;
       for (const line of atb.lines) {
         if (lineY + atb.lineHeight * 0.7 > ceilingY + 8) break;
-        ctx.fillText(line, x, lineY);
+        ctx.fillText(isolateEmbeddedLatinInArabic(line), x, lineY);
         lineY += atb.lineHeight;
       }
       ctx.restore();
     }
 
-    // 6e. Render English Body Copy
+    // 6e. Render English Body Copy (equal weight 500 to Arabic body)
     if (layout.bodyBlock && !layout.bodyBlock.hidden && layout.bodyBlock.lines.length > 0) {
       const bb = layout.bodyBlock;
       const { x, textAlign } = resolveAlignX(bb.align, bb.dx);
@@ -251,7 +302,7 @@ export async function renderSlideToCanvas(
       if (bb.opacity !== undefined && bb.opacity < 1) {
         ctx.globalAlpha *= Math.max(0.1, Math.min(1, bb.opacity));
       }
-      ctx.font = `400 ${bb.fontSize}px "Plus Jakarta Sans", sans-serif`;
+      ctx.font = `500 ${bb.fontSize}px "Plus Jakarta Sans", sans-serif`;
       ctx.fillStyle = theme.textEnBody;
       ctx.textAlign = textAlign;
       ctx.direction = 'ltr';
@@ -265,7 +316,7 @@ export async function renderSlideToCanvas(
       ctx.restore();
     }
 
-    // 6f. Render Arabic Body Copy
+    // 6f. Render Arabic Body Copy (equal weight 500 to English body, with Unicode LRI BiDi isolation)
     if (layout.arabicBodyBlock && !layout.arabicBodyBlock.hidden && layout.arabicBodyBlock.lines.length > 0) {
       const abb = layout.arabicBodyBlock;
       const { x, textAlign } = resolveAlignX(abb.align, abb.dx);
@@ -273,7 +324,7 @@ export async function renderSlideToCanvas(
       if (abb.opacity !== undefined && abb.opacity < 1) {
         ctx.globalAlpha *= Math.max(0.1, Math.min(1, abb.opacity));
       }
-      ctx.font = `400 ${abb.fontSize}px "Cairo", sans-serif`;
+      ctx.font = `500 ${abb.fontSize}px "Cairo", sans-serif`;
       ctx.fillStyle = theme.textArBody;
       ctx.textAlign = textAlign;
       ctx.direction = 'rtl';
@@ -281,7 +332,7 @@ export async function renderSlideToCanvas(
       let lineY = abb.firstBaselineY;
       for (const line of abb.lines) {
         if (lineY + abb.lineHeight * 0.7 > ceilingY + 8) break;
-        ctx.fillText(line, x, lineY);
+        ctx.fillText(isolateEmbeddedLatinInArabic(line), x, lineY);
         lineY += abb.lineHeight;
       }
       ctx.restore();
@@ -305,9 +356,105 @@ export async function renderSlideToCanvas(
     }
   }
 
-  // 7. Pagination Footer (Dots on multi-slide carousels; standalone attribution bar on single-slide posts)
+  // 7. Safe-Zone Source & Brand Footer (above TikTok bottom 420px UI zone)
   drawPaginationFooter(ctx, slideIndex, totalSlides, theme, carousel, slide, spec);
 
   return canvas;
 }
+
+const KEY_TECH_HIGHLIGHT_TERMS = new Set([
+  'discord', 'anthropic', 'github', 'netflix', 'stripe', 'uber', 'meta', 'google', 'aws', 'apple', 'microsoft',
+  'ebpf', 'grpc', 'mtls', 'tls', 'hnsw', 'ivf', 'raft', 'paxos', 'quic', 'http/3', 'rdma', 'nvme',
+  'simd', 'avx-512', 'wasm', 'webassembly', 'rust', 'zig', 'golang', 'scylladb', 'clickhouse',
+  'postgresql', 'postgres', 'pgvector', 'redis', 'valkey', 'kafka', 'kubernetes', 'k8s', 'docker',
+  'cloudflare', 'openai', 'deepseek', 'claude', 'gemini', 'llama', 'vllm', 'tensorrt', 'cuda',
+  'triton', 'moa', 'mole', 'rag', 'lora', 'qlora', 'fp8', 'int4', 'int8', 'bf16', 'kv-cache',
+  'zero-trust', 'zero-day', 'cve', 'oauth', 'passkeys', 'post-quantum', 'kyber', 'dilithium',
+]);
+
+function isHighlightableHeadlineToken(rawToken: string, isAllCapsLine: boolean): boolean {
+  const clean = rawToken.replace(/^[^A-Za-z0-9$+-]+|[^A-Za-z0-9%+-]+$/g, '');
+  if (!clean || clean.length < 2) return false;
+
+  // 1. Hard numbers, currencies, percentages, multipliers, latencies, byte units
+  if (
+    /^(?:\$\d[\d,.]*[KMBTkmbt]?|\d[\d,.]*(?:%|x|X|ms|µs|ns|s|KB|MB|GB|TB|PB|B|M|T|K|GW|MW|Gbps|Mbps|RPS|QPS|fps)?|v\d+(?:\.\d+)*)$/i.test(
+      clean
+    ) &&
+    /\d/.test(clean)
+  ) {
+    return true;
+  }
+
+  // 2. Known high-signal systems/AI terms
+  if (KEY_TECH_HIGHLIGHT_TERMS.has(clean.toLowerCase())) {
+    return true;
+  }
+
+  // 3. Technical acronyms (e.g. MOLE, HNSW, S3, L4, L7, P99, CVE-2026) when line itself isn't all caps
+  if (!isAllCapsLine && /^[A-Z]{2,6}(?:-[A-Z0-9]+)?$/.test(clean)) {
+    const commonStop = new Set(['THE', 'AND', 'FOR', 'WITH', 'FROM', 'INTO', 'WHY', 'HOW', 'NOT', 'ARE', 'WAS', 'CAN', 'ALL', 'NEW']);
+    if (!commonStop.has(clean)) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Renders a single line of an English headline with inline accent highlighting
+ * for metrics ($301,300, 93.3%, 4KB, 15ms, 10x) and key technical terms (MOLE, eBPF, HNSW, Rust).
+ */
+function drawHeadlineLineWithAccentHighlights(
+  ctx: CanvasRenderingContext2D,
+  line: string,
+  anchorX: number,
+  baselineY: number,
+  textAlign: CanvasTextAlign,
+  theme: ThemePalette
+) {
+  const tokens = line.split(/(\s+)/).filter((t) => t.length > 0);
+  const alphaLetters = line.replace(/[^A-Za-z]/g, '');
+  const isAllCapsLine = alphaLetters.length > 3 && alphaLetters === alphaLetters.toUpperCase();
+
+  let highlightCount = 0;
+  const tokenFlags = tokens.map((tok) => {
+    if (/^\s+$/.test(tok)) return false;
+    if (highlightCount >= 3) return false;
+    const match = isHighlightableHeadlineToken(tok, isAllCapsLine);
+    if (match) highlightCount++;
+    return match;
+  });
+
+  // Fast path if no tokens need highlighting or if ctx lacks measurement support
+  if (highlightCount === 0 || typeof ctx.measureText !== 'function') {
+    ctx.fillStyle = theme.textWhite;
+    ctx.textAlign = textAlign;
+    ctx.fillText(line, anchorX, baselineY);
+    return;
+  }
+
+  const totalWidth = ctx.measureText(line).width;
+  if (!totalWidth || totalWidth <= 0) {
+    ctx.fillStyle = theme.textWhite;
+    ctx.textAlign = textAlign;
+    ctx.fillText(line, anchorX, baselineY);
+    return;
+  }
+
+  let cursorX =
+    textAlign === 'left'
+      ? anchorX
+      : textAlign === 'right'
+      ? anchorX - totalWidth
+      : anchorX - totalWidth / 2;
+
+  ctx.textAlign = 'left';
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    ctx.fillStyle = tokenFlags[i] ? theme.accent : theme.textWhite;
+    ctx.fillText(tok, cursorX, baselineY);
+    cursorX += ctx.measureText(tok).width;
+  }
+}
+
 

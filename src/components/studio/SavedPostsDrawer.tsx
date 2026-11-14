@@ -82,29 +82,29 @@ export const SavedPostsDrawer: React.FC<SavedPostsDrawerProps> = ({
   const storageBadge =
     storageEngine === 'neon-postgres'
       ? {
-          label: 'Neon Postgres Cloud Active',
-          desc: 'Synced permanently across all devices via Neon Serverless PostgreSQL Connection Pooler',
-          cls: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300',
+          label: 'Neon Postgres Cloud',
+          desc: 'Synced permanently across all devices via Neon Serverless PostgreSQL',
+          color: 'text-emerald-300',
           icon: Database,
         }
       : storageEngine === 'cloud-kv'
       ? {
-          label: 'Vercel KV Cloud Active',
-          desc: 'Synced permanently across all devices via Upstash/Vercel KV + IndexedDB Vault',
-          cls: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300',
+          label: 'Cloud KV Synced',
+          desc: 'Synced permanently across all devices via Cloud KV + Browser Vault',
+          color: 'text-emerald-300',
           icon: Cloud,
         }
       : storageEngine === 'local-disk'
       ? {
-          label: 'Server Disk + Browser Vault',
-          desc: 'Saved to backend data/saved-posts.json and mirrored to IndexedDB Vault',
-          cls: 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300',
+          label: 'Local Disk Synced',
+          desc: 'Saved to local workspace and mirrored to Browser Vault',
+          color: 'text-cyan-300',
           icon: HardDrive,
         }
       : {
-          label: 'Vercel Serverless + IndexedDB Vault',
-          desc: 'Persisted in durable Browser IndexedDB (500MB+) & auto-synced with /api/posts across cold starts',
-          cls: 'bg-teal-500/15 border-teal-500/30 text-teal-300',
+          label: 'Browser Vault Synced',
+          desc: 'Persisted in durable Browser IndexedDB and synced with API across sessions',
+          color: 'text-teal-300',
           icon: Cloud,
         };
 
@@ -122,9 +122,9 @@ export const SavedPostsDrawer: React.FC<SavedPostsDrawerProps> = ({
       />
 
       {/* Slide-Over Panel */}
-      <aside className="relative z-10 w-full max-w-xl bg-[#090e14] border-l border-white/15 h-full flex flex-col shadow-2xl animate-fade-in">
+      <aside className="relative z-10 w-full max-w-xl bg-[#090e14] border-l border-white/[0.08] h-full flex flex-col shadow-2xl animate-fade-in">
         {/* Drawer Header */}
-        <div className="px-5 py-4 border-b border-white/10 bg-[#0b1118] flex items-center justify-between gap-3 shrink-0">
+        <div className="px-5 py-4 border-b border-white/[0.08] bg-[#0b1118] flex items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2.5">
             <div
               className="w-8 h-8 rounded-xl flex items-center justify-center border border-white/15"
@@ -135,10 +135,10 @@ export const SavedPostsDrawer: React.FC<SavedPostsDrawerProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-sm font-extrabold text-white font-jakarta tracking-tight">
-                  Post Library
+                  Saved & Posted Vault
                 </h2>
-                <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-white/10 text-white">
-                  {posts.length}
+                <span className="text-xs font-mono tabular-nums text-slate-400">
+                  · {posts.length}
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">
@@ -158,9 +158,9 @@ export const SavedPostsDrawer: React.FC<SavedPostsDrawerProps> = ({
         </div>
 
         {/* Storage Status & Backup Bar */}
-        <div className="px-5 py-2.5 bg-black/40 border-b border-white/10 flex flex-wrap items-center justify-between gap-2 shrink-0">
+        <div className="px-5 py-2.5 bg-black/40 border-b border-white/[0.08] flex flex-wrap items-center justify-between gap-2 shrink-0">
           <div
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] font-mono font-semibold ${storageBadge.cls}`}
+            className={`inline-flex items-center gap-1.5 text-[11px] font-mono ${storageBadge.color}`}
             title={storageBadge.desc}
           >
             <StorageIcon className="w-3 h-3 shrink-0" />
@@ -204,7 +204,7 @@ export const SavedPostsDrawer: React.FC<SavedPostsDrawerProps> = ({
         </div>
 
         {/* Save Current Workspace Post Card */}
-        <div className="px-5 py-3.5 bg-[#0d151e] border-b border-white/10 space-y-2.5 shrink-0">
+        <div className="px-5 py-3.5 bg-[#0d151e] border-b border-white/[0.08] space-y-2.5 shrink-0">
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0">
               <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400 block">
@@ -214,14 +214,14 @@ export const SavedPostsDrawer: React.FC<SavedPostsDrawerProps> = ({
                 {currentCarousel.slides[0]?.enTitle || currentCarousel.category || 'Current Carousel'}
               </p>
             </div>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/5 border border-white/10 text-slate-300 shrink-0">
+            <span className="text-[11px] font-mono tabular-nums text-slate-400 shrink-0">
               {currentCarousel.slides.length} slides
             </span>
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] font-mono text-slate-400">
-              Vault Status: <span className="font-bold uppercase text-white">{activePostRecord?.postStatus || 'Draft (Unsaved)'}</span>
+              Vault Status · <span className="font-bold uppercase text-white">{activePostRecord?.postStatus || 'Draft'}</span>
             </span>
 
             <div className="flex items-center gap-1.5">
@@ -255,7 +255,7 @@ export const SavedPostsDrawer: React.FC<SavedPostsDrawerProps> = ({
         </div>
 
         {/* Filter Tabs & Search Bar */}
-        <div className="px-5 py-3 border-b border-white/10 flex flex-wrap items-center justify-between gap-2 shrink-0">
+        <div className="px-5 py-3 border-b border-white/[0.08] flex flex-wrap items-center justify-between gap-2 shrink-0">
           <div className="flex items-center gap-1 bg-black/50 p-1 rounded-xl border border-white/10">
             <button
               type="button"
@@ -264,7 +264,7 @@ export const SavedPostsDrawer: React.FC<SavedPostsDrawerProps> = ({
                 filterTab === 'all' ? 'bg-white/15 text-white' : 'text-slate-400 hover:text-white'
               }`}
             >
-              All ({posts.length})
+              All · {posts.length}
             </button>
             <button
               type="button"
@@ -275,7 +275,7 @@ export const SavedPostsDrawer: React.FC<SavedPostsDrawerProps> = ({
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              Posted ({postedCount})
+              Posted · {postedCount}
             </button>
             <button
               type="button"
@@ -286,7 +286,7 @@ export const SavedPostsDrawer: React.FC<SavedPostsDrawerProps> = ({
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              Validated ({validatedCount})
+              Validated · {validatedCount}
             </button>
           </div>
 
@@ -314,7 +314,7 @@ export const SavedPostsDrawer: React.FC<SavedPostsDrawerProps> = ({
               </p>
               <p className="text-[11px] text-slate-500 max-w-xs leading-relaxed">
                 {posts.length === 0
-                  ? 'Generate or edit a carousel, verify its copy, and click "Save as Valid Post" or "Save & Mark Posted" above. Your latest saved post will automatically load on startup instead of static starter data.'
+                  ? 'Generate or edit a carousel, verify its copy, and click "Save Draft" or "Mark as Posted" above. Your latest saved post will automatically load on startup.'
                   : 'Try clearing your search query or switching filter tabs.'}
               </p>
             </div>
@@ -333,37 +333,31 @@ export const SavedPostsDrawer: React.FC<SavedPostsDrawerProps> = ({
               return (
                 <div
                   key={record.id}
-                  className={`rounded-2xl border p-4 transition-all space-y-3 ${
+                  className={`rounded-2xl border p-4 transition-all space-y-2.5 ${
                     isCurrent
-                      ? 'bg-white/[0.06] border-cyan-400/50 shadow-lg'
-                      : 'bg-[#0d141d]/90 border-white/10 hover:border-white/20'
+                      ? 'bg-white/[0.05] border-cyan-400/40 shadow-lg'
+                      : 'bg-[#0d141d]/90 border-white/[0.08] hover:border-white/20'
                   }`}
                 >
-                  {/* Top Meta Row */}
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 flex-wrap">
+                  {/* Top Editorial Meta Row */}
+                  <div className="flex items-center justify-between gap-2 text-[11px] font-mono tabular-nums">
+                    <div className="flex items-center gap-1.5 flex-wrap text-slate-400">
                       <span
-                        className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold uppercase tracking-wider border ${
-                          isPosted
-                            ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
-                            : 'bg-cyan-500/15 border-cyan-500/35 text-cyan-300'
+                        className={`font-bold uppercase tracking-wider ${
+                          isPosted ? 'text-emerald-400' : 'text-cyan-400'
                         }`}
                       >
-                        {isPosted ? '✓ POSTED' : '● VALIDATED'}
+                        {isPosted ? '✓ Posted' : '● Validated'}
                       </span>
-
-                      <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-black/50 text-slate-300 border border-white/5">
-                        {record.category}
-                      </span>
-
-                      <span className="text-[10px] font-mono text-slate-400">
-                        {record.slideCount} slides
-                      </span>
-
+                      <span aria-hidden="true">·</span>
+                      <span className="uppercase text-slate-300">{record.category}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>{record.slideCount} slides</span>
                       {isCurrent && (
-                        <span className="text-[10px] font-mono font-bold text-amber-300 bg-amber-500/15 px-2 py-0.5 rounded border border-amber-500/30">
-                          Active in Studio
-                        </span>
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span className="font-bold text-amber-300">Active in Studio</span>
+                        </>
                       )}
                     </div>
 

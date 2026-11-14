@@ -50,7 +50,7 @@ export async function drawMetricSlide(
   ctx.stroke();
   ctx.restore();
 
-  // 4. Header Row: Metric Icon Badge + Category Label
+  // 4. Header Row: Metric Icon Badge + Real Source Term Label (>=24px)
   const smart = resolveSmartSlideVisuals(slide, 1, false);
   const iconBadgeSize = 48;
   const iconBadgeX = cardX + 36;
@@ -61,148 +61,211 @@ export async function drawMetricSlide(
   const iconImg = await loadIconImage(mIcon, theme.accent);
   drawTintedImage(ctx, iconImg, iconBadgeX + 10, iconBadgeY + 10, 28, 28, theme.accent);
 
-  const metricLabel = (slide.metricLabel || smart.metricLabel || 'KEY PERFORMANCE METRIC').toUpperCase();
+  const rawMetricLabel = slide.metricLabel || smart.metricLabel || 'SYSTEM BENCHMARK';
+  const cleanMetricLabel = /EXPOSURE\s+METRIC/i.test(rawMetricLabel)
+    ? smart.metricLabel || 'RESPONSE DELAY'
+    : rawMetricLabel.toUpperCase();
   const metricLabelX = iconBadgeX + iconBadgeSize + 16;
   ctx.save();
   const fitMetricLabel = fitTextInBox(
     ctx,
-    metricLabel,
+    cleanMetricLabel,
     cardX + cardW - metricLabelX - 32,
-    20,
+    24,
     '"Plus Jakarta Sans", monospace',
     '700',
-    { minFontSize: 12 }
+    { minFontSize: 24, ellipsis: false }
   );
-  ctx.font = `700 ${fitMetricLabel.fontSize}px "Plus Jakarta Sans", monospace`;
+  ctx.font = `700 ${Math.max(24, fitMetricLabel.fontSize)}px "Plus Jakarta Sans", monospace`;
   ctx.fillStyle = theme.microLabel;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.letterSpacing = '1px';
-  ctx.fillText(fitMetricLabel.lines[0] || metricLabel, metricLabelX, iconBadgeY + iconBadgeSize / 2);
+  ctx.fillText(fitMetricLabel.lines[0] || cleanMetricLabel, metricLabelX, iconBadgeY + iconBadgeSize / 2);
   ctx.restore();
 
-  // 5. Giant Hero Metric Value with restrained glow
+  // 5. Before (struck-through) + Giant After Hero Value (always the win!)
   const metricVal = slide.metricValue || smart.metricValue || '10x';
+  const beforeVal = (slide.metricBeforeValue || smart.metricBeforeValue || '').trim();
+  const heroY = cardY + 178;
+
   ctx.save();
-  const valFontSize = metricVal.length > 8 ? 86 : metricVal.length > 5 ? 104 : 124;
-  const fitMetricVal = fitTextInBox(
-    ctx,
-    metricVal,
-    cardW - 100,
-    valFontSize,
-    '"Plus Jakarta Sans", sans-serif',
-    '900',
-    { minFontSize: 64 }
-  );
-  ctx.font = `900 ${fitMetricVal.fontSize}px "Plus Jakarta Sans", sans-serif`;
-  ctx.fillStyle = theme.textWhite;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'alphabetic';
-  ctx.shadowColor = `${theme.accent}50`;
-  ctx.shadowBlur = 12;
-  const heroY = cardY + 175;
-  ctx.fillText(fitMetricVal.lines[0] || metricVal, SAFE_CONTENT_CENTER_X, heroY);
-  ctx.shadowBlur = 0;
-  ctx.shadowColor = 'transparent';
-  ctx.restore();
+  if (beforeVal && beforeVal.toLowerCase() !== metricVal.toLowerCase()) {
+    // Draw small struck-through old value + arrow + huge new value
+    const beforeFontSize = 46;
+    const afterFontSize = metricVal.length > 7 ? 88 : 112;
 
-  // 6. SVG/Canvas Acceleration Sparkline Curve & Gauge Meter directly below hero stat
-  if (options.showSparklines) {
-    const meterStartX = cardX + 50;
-    const meterEndX = cardX + cardW - 50;
-    const meterW = meterEndX - meterStartX;
-    const baseY = cardY + 305;
-    const peakY = cardY + 230;
+    ctx.font = `700 ${beforeFontSize}px "Plus Jakarta Sans", sans-serif`;
+    const beforeW = ctx.measureText(beforeVal).width;
 
-    ctx.save();
-    const curveGrad = ctx.createLinearGradient(0, peakY, 0, baseY);
-    curveGrad.addColorStop(0, `${theme.accent}26`);
-    curveGrad.addColorStop(1, `${theme.accent}00`);
+    ctx.font = `800 38px "Plus Jakarta Sans", sans-serif`;
+    const arrowText = '  →  ';
+    const arrowW = ctx.measureText(arrowText).width;
+
+    ctx.font = `900 ${afterFontSize}px "Plus Jakarta Sans", sans-serif`;
+    const afterW = ctx.measureText(metricVal).width;
+
+    const totalW = beforeW + arrowW + afterW;
+    const startX = SAFE_CONTENT_CENTER_X - totalW / 2;
+
+    // 5a. Old "before" value in muted slate with red strike-through line
+    ctx.font = `700 ${beforeFontSize}px "Plus Jakarta Sans", sans-serif`;
+    ctx.fillStyle = '#94A3B8';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    const beforeY = heroY - 14;
+    ctx.fillText(beforeVal, startX, beforeY);
 
     ctx.beginPath();
-    ctx.moveTo(meterStartX, baseY);
-    ctx.bezierCurveTo(
-      meterStartX + meterW * 0.45,
-      baseY - 4,
-      meterStartX + meterW * 0.7,
-      peakY + 18,
-      meterEndX,
-      peakY
-    );
-    ctx.lineTo(meterEndX, baseY);
-    ctx.closePath();
-    ctx.fillStyle = curveGrad;
-    ctx.fill();
-
-    // Sparkline Stroke with restrained glow
-    ctx.beginPath();
-    ctx.moveTo(meterStartX, baseY);
-    ctx.bezierCurveTo(
-      meterStartX + meterW * 0.45,
-      baseY - 4,
-      meterStartX + meterW * 0.7,
-      peakY + 18,
-      meterEndX,
-      peakY
-    );
-    ctx.strokeStyle = theme.accent;
-    ctx.lineWidth = 3;
-    ctx.shadowColor = theme.accent;
-    ctx.shadowBlur = 10;
+    ctx.strokeStyle = '#F43F5E';
+    ctx.lineWidth = 4;
+    ctx.moveTo(startX - 4, beforeY - beforeFontSize * 0.32);
+    ctx.lineTo(startX + beforeW + 4, beforeY - beforeFontSize * 0.32);
     ctx.stroke();
+
+    // 5b. Arrow separator
+    ctx.font = `800 38px "Plus Jakarta Sans", sans-serif`;
+    ctx.fillStyle = theme.accent;
+    ctx.fillText(arrowText, startX + beforeW, beforeY - 4);
+
+    // 5c. Huge "after" win value
+    ctx.font = `900 ${afterFontSize}px "Plus Jakarta Sans", sans-serif`;
+    ctx.fillStyle = theme.textWhite;
+    ctx.shadowColor = `${theme.accent}50`;
+    ctx.shadowBlur = 12;
+    ctx.fillText(metricVal, startX + beforeW + arrowW, heroY);
     ctx.shadowBlur = 0;
     ctx.shadowColor = 'transparent';
+  } else {
+    const valFontSize = metricVal.length > 8 ? 86 : metricVal.length > 5 ? 104 : 120;
+    const fitMetricVal = fitTextInBox(
+      ctx,
+      metricVal,
+      cardW - 100,
+      valFontSize,
+      '"Plus Jakarta Sans", sans-serif',
+      '900',
+      { minFontSize: 64, ellipsis: false }
+    );
+    ctx.font = `900 ${fitMetricVal.fontSize}px "Plus Jakarta Sans", sans-serif`;
+    ctx.fillStyle = theme.textWhite;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.shadowColor = `${theme.accent}50`;
+    ctx.shadowBlur = 12;
+    ctx.fillText(fitMetricVal.lines[0] || metricVal, SAFE_CONTENT_CENTER_X, heroY);
+    ctx.shadowBlur = 0;
+    ctx.shadowColor = 'transparent';
+  }
+  ctx.restore();
 
-    // Focal peak node circle
-    ctx.beginPath();
-    ctx.arc(meterEndX, peakY, 6.5, 0, Math.PI * 2);
-    ctx.fillStyle = theme.accent;
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(meterEndX, peakY, 2.5, 0, Math.PI * 2);
-    ctx.fillStyle = '#081216';
-    ctx.fill();
+  // 6. Data-Integrity Chart: Direction matches the message (downward for drops/cuts, upward for gains, bar for comparisons, none when no data)
+  const rawDiffText = slide.metricDiff || smart.metricDiff || '▲ Measurable architectural speedup';
+  const cleanDiffText = /Dropping\s+Exposure/i.test(rawDiffText)
+    ? smart.metricDiff || '8x FASTER RESPONSE'
+    : rawDiffText;
 
-    // Gauge Baseline Axis
-    ctx.beginPath();
-    ctx.strokeStyle = `${theme.accent}40`;
-    ctx.lineWidth = 1.5;
-    ctx.moveTo(meterStartX, baseY);
-    ctx.lineTo(meterEndX, baseY);
-    ctx.stroke();
+  const combinedMsg = `${slide.enTitle || ''} ${slide.enBody || ''} ${cleanDiffText}`;
+  const isDropMessage =
+    slide.chartDirection === 'down' ||
+    smart.chartDirection === 'down' ||
+    (!slide.chartDirection &&
+      /\b(?:drop(?:ping|ped|s)?|slashed|cut(?:ting)?|reduc(?:ed|ing|tion)|lower(?:ed|ing)?|faster\s+response|from\s+\d+\s*ms\s+to\s+\d+\s*ms)\b/i.test(
+        combinedMsg
+      ));
+  const chartDir = slide.chartDirection || (isDropMessage ? 'down' : smart.chartDirection || 'up');
 
-    // 11 Gauge Tick Marks (0% to 100% in 10% steps)
-    const tickCount = 11;
-    ctx.strokeStyle = `${theme.accent}55`;
-    ctx.lineWidth = 1.5;
-    for (let t = 0; t < tickCount; t++) {
-      const tx = meterStartX + (meterW / (tickCount - 1)) * t;
-      const isMajor = t === 0 || t === 5 || t === 10;
-      const tLen = isMajor ? 8 : 4;
+  if (options.showSparklines && chartDir !== 'none') {
+    const meterStartX = cardX + 56;
+    const meterEndX = cardX + cardW - 56;
+    const meterW = meterEndX - meterStartX;
+    const baseY = cardY + 318;
+    const peakY = cardY + 232;
+
+    ctx.save();
+    if (chartDir === 'bar') {
+      // Before / After Horizontal Comparison Bars (>=24px labels)
+      const barY1 = cardY + 232;
+      const barY2 = cardY + 278;
+      drawRoundRect(ctx, meterStartX, barY1, meterW * 0.88, 30, 8, 'rgba(148, 163, 184, 0.22)', 'rgba(148, 163, 184, 0.45)', 1.2);
+      drawRoundRect(ctx, meterStartX, barY2, meterW * 0.28, 30, 8, `${theme.accent}33`, theme.accent, 1.8);
+    } else {
+      const startY = chartDir === 'down' ? peakY : baseY;
+      const endY = chartDir === 'down' ? baseY - 10 : peakY;
+      const cp1Y = chartDir === 'down' ? peakY + 8 : baseY - 4;
+      const cp2Y = chartDir === 'down' ? baseY - 16 : peakY + 18;
+
+      const curveGrad = ctx.createLinearGradient(0, peakY, 0, baseY);
+      curveGrad.addColorStop(0, `${theme.accent}26`);
+      curveGrad.addColorStop(1, `${theme.accent}00`);
+
       ctx.beginPath();
-      ctx.moveTo(tx, baseY);
-      ctx.lineTo(tx, baseY + tLen);
+      ctx.moveTo(meterStartX, startY);
+      ctx.bezierCurveTo(
+        meterStartX + meterW * 0.42,
+        cp1Y,
+        meterStartX + meterW * 0.68,
+        cp2Y,
+        meterEndX,
+        endY
+      );
+      ctx.lineTo(meterEndX, baseY);
+      ctx.lineTo(meterStartX, baseY);
+      ctx.closePath();
+      ctx.fillStyle = curveGrad;
+      ctx.fill();
+
+      // Sparkline Stroke with restrained glow
+      ctx.beginPath();
+      ctx.moveTo(meterStartX, startY);
+      ctx.bezierCurveTo(
+        meterStartX + meterW * 0.42,
+        cp1Y,
+        meterStartX + meterW * 0.68,
+        cp2Y,
+        meterEndX,
+        endY
+      );
+      ctx.strokeStyle = theme.accent;
+      ctx.lineWidth = 3.5;
+      ctx.shadowColor = theme.accent;
+      ctx.shadowBlur = 10;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.shadowColor = 'transparent';
+
+      // Start & End node circles
+      ctx.beginPath();
+      ctx.arc(meterStartX, startY, 5, 0, Math.PI * 2);
+      ctx.fillStyle = '#94A3B8';
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(meterEndX, endY, 7.5, 0, Math.PI * 2);
+      ctx.fillStyle = theme.accent;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(meterEndX, endY, 3, 0, Math.PI * 2);
+      ctx.fillStyle = '#081216';
+      ctx.fill();
+
+      // Gauge Baseline Axis (Step 6: 12px BASELINE / 50% / PEAK // P99 labels deleted so all text is >=24px)
+      ctx.beginPath();
+      ctx.strokeStyle = `${theme.accent}40`;
+      ctx.lineWidth = 1.5;
+      ctx.moveTo(meterStartX, baseY);
+      ctx.lineTo(meterEndX, baseY);
       ctx.stroke();
     }
-
-    // Gauge Micro Labels
-    ctx.font = '600 12px "JetBrains Mono", monospace';
-    ctx.fillStyle = theme.textMuted;
-    ctx.textAlign = 'left';
-    ctx.fillText('BASELINE', meterStartX, baseY + 20);
-    ctx.textAlign = 'center';
-    ctx.fillText('50%', meterStartX + meterW * 0.5, baseY + 20);
-    ctx.textAlign = 'right';
-    ctx.fillText('PEAK // P99', meterEndX, baseY + 20);
     ctx.restore();
   }
 
-  // 7. Paired Delta Pill (▲ Emerald / ▼ Crimson / Accent)
-  const diffText = slide.metricDiff || smart.metricDiff || '▲ Measurable architectural speedup';
+  // 7. Plain-Language Outcome Badge Pill (>=24px)
   const isPositive =
-    /[▲+]|faster|speedup|drop|gain|reduction|reduced|boost|zero|0\s*(unauthenticated|vulnerabilit|breach|downtime|unauthorized|exploit|error|packet|leak|fail)|mitigat|eliminat|filter|secur|protect|sub-m/i.test(diffText);
+    /[▲+]|faster|speedup|drop|lower|saved|cut|gain|reduction|reduced|boost|zero|0\s*(unauthenticated|vulnerabilit|breach|downtime|unauthorized|exploit|error|packet|leak|fail)|mitigat|eliminat|filter|secur|protect|sub-m/i.test(
+      cleanDiffText
+    );
   const isNegative =
-    (/[▼-]|latency spike|bottleneck|regression|exploit/i.test(diffText) && !isPositive);
+    (/[▼-]|latency spike|bottleneck|regression|exploit/i.test(cleanDiffText) && !isPositive);
 
   const deltaAccent = isPositive ? '#10B981' : isNegative ? '#F43F5E' : theme.accent;
   const deltaBg = isPositive ? 'rgba(16, 185, 129, 0.14)' : isNegative ? 'rgba(244, 63, 94, 0.14)' : `${theme.accent}20`;
@@ -211,21 +274,21 @@ export async function drawMetricSlide(
   ctx.save();
   const fitDiff = fitTextInBox(
     ctx,
-    diffText,
-    712,
-    23,
+    cleanDiffText,
+    720,
+    24,
     '"Plus Jakarta Sans", monospace',
-    '700',
-    { minFontSize: 14 }
+    '800',
+    { minFontSize: 24, ellipsis: false }
   );
-  ctx.font = `700 ${fitDiff.fontSize}px "Plus Jakarta Sans", monospace`;
-  const diffLabel = fitDiff.lines[0] || diffText;
+  ctx.font = `800 ${Math.max(24, fitDiff.fontSize)}px "Plus Jakarta Sans", monospace`;
+  const diffLabel = fitDiff.lines[0] || cleanDiffText;
   const diffMetrics = ctx.measureText(diffLabel);
-  const pillW = Math.min(diffMetrics.width + 48, 760);
-  const pillH = 46;
+  const pillW = Math.min(diffMetrics.width + 52, 768);
+  const pillH = 50;
   const pillX = SAFE_CONTENT_CENTER_X - pillW / 2;
-  const pillY = cardY + cardH - 62;
-  drawRoundRect(ctx, pillX, pillY, pillW, pillH, 23, deltaBg, deltaBorder, 1.5);
+  const pillY = cardY + cardH - 66;
+  drawRoundRect(ctx, pillX, pillY, pillW, pillH, 25, deltaBg, deltaBorder, 1.5);
 
   ctx.fillStyle = deltaAccent;
   ctx.textAlign = 'center';

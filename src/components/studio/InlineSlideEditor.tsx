@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Sliders,
   CheckCircle2,
   Sparkles,
   Plus,
@@ -10,7 +9,6 @@ import {
   Image as ImageIcon,
   Upload,
   Loader2,
-  Eye,
   ChevronDown,
   ChevronUp,
   Layers,
@@ -46,6 +44,8 @@ import {
 import {
   sanitizeArabicSlideText,
   fixArabicPunctuation,
+  splitArabicForBidiRender,
+  repairTruncatedTextEllipsis,
 } from '../../lib/text/arabicBiDi.ts';
 
 interface InlineSlideEditorProps {
@@ -608,25 +608,55 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
           </button>
 
           {isHooksOpen && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 pt-1 animate-fade-in">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 pt-1 animate-fade-in">
               {hookVariants.map((v, i) => (
                 <button
                   key={i}
                   type="button"
                   onClick={() => onApplyHookVariant(v)}
-                  className="p-2 rounded-lg text-left bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 hover:border-white/20 transition-all cursor-pointer group"
+                  className="p-2.5 rounded-lg text-left bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 hover:border-white/20 transition-all cursor-pointer group"
                   title={v.enTitle}
                 >
-                  <div className="text-[10px] font-mono font-bold uppercase truncate" style={{ color: theme.accent }}>
-                    {v.tag}
+                  <div className="flex items-center justify-between gap-1.5">
+                    <span className="text-[10px] font-mono font-bold uppercase truncate" style={{ color: theme.accent }}>
+                      {v.tag}
+                    </span>
+                    {v.coverArchetype && (
+                      <span className="px-1.5 py-0.5 rounded bg-white/10 text-[9px] font-mono uppercase text-slate-300 shrink-0">
+                        {v.coverArchetype}
+                      </span>
+                    )}
                   </div>
-                  <div className="text-xs text-slate-200 group-hover:text-white line-clamp-2 leading-tight mt-0.5">
+                  {v.hookKicker && (
+                    <div className="text-[10px] font-mono text-slate-400 truncate mt-0.5">
+                      ◆ {v.hookKicker}
+                    </div>
+                  )}
+                  <div className="text-xs text-slate-200 group-hover:text-white line-clamp-2 leading-tight mt-1 font-semibold">
                     {v.enTitle}
                   </div>
                 </button>
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Viral Hook Kicker Badge (Rendered above English Headline on Canvas) */}
+      {!hideSlideCopyForMemeStudio && !isCtaSlide && (
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 p-2.5 rounded-xl bg-white/[0.02] border border-white/10">
+          <label className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-300 shrink-0 flex items-center gap-1.5">
+            <span style={{ color: theme.accent }}>◆</span>
+            <span>Hook Kicker Badge:</span>
+          </label>
+          <input
+            type="text"
+            data-slide-editor-field="hookKicker"
+            value={currentSlide.hookKicker || ''}
+            onChange={(e) => onUpdateField('hookKicker', e.target.value)}
+            placeholder="e.g. BENCHMARK SHOCK • 93.3% KV-CACHE"
+            className="flex-1 bg-black/60 border border-white/15 focus:border-white/40 rounded-lg px-2.5 py-1 text-xs font-mono text-white uppercase focus:outline-none"
+          />
         </div>
       )}
 
@@ -767,6 +797,24 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
             placeholder="عنوان تقني دقيق ومختصر."
             className="w-full bg-black/60 border border-white/15 focus:border-white/40 rounded-xl px-3.5 py-2.5 text-sm text-white font-medium focus:outline-none font-cairo text-right transition-colors"
           />
+          {/[A-Za-z]/.test(currentSlide.arTitle || '') && (
+            <div
+              dir="rtl"
+              lang="ar"
+              data-testid="arabic-title-bidi-preview"
+              className="px-2.5 py-1 rounded-lg bg-white/[0.03] border border-white/10 text-xs text-slate-300 font-cairo text-right leading-relaxed"
+            >
+              {splitArabicForBidiRender(currentSlide.arTitle || '').map((seg, idx) =>
+                seg.isLtr ? (
+                  <bdi key={idx} dir="ltr" className="font-mono text-cyan-300 px-0.5">
+                    {seg.text}
+                  </bdi>
+                ) : (
+                  <span key={idx}>{seg.text}</span>
+                )
+              )}
+            </div>
+          )}
         </div>
       </div>
       )}
@@ -821,6 +869,21 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
               )}
             </label>
             <div className="flex items-center gap-1.5">
+              {/\b(?:and|or|with)\s*(?:\.{2,}|…)\s*$/i.test((currentSlide.enBody || '').trim()) && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleEditTextWithReveal(
+                      'enBody',
+                      repairTruncatedTextEllipsis(currentSlide.enBody || '')
+                    )
+                  }
+                  className="px-2 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-[10px] font-mono text-rose-200 cursor-pointer transition-colors"
+                  title="Fix truncated trailing 'and…' sentence"
+                >
+                  Fix &quot;and…&quot;
+                </button>
+              )}
               {enBodyLen > limits.enBody && (
                 <button
                   type="button"
@@ -925,6 +988,24 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
             placeholder="شرح تقني عميق في سطرين."
             className="w-full bg-black/60 border border-white/15 focus:border-white/40 rounded-xl p-3.5 text-xs sm:text-sm text-slate-200 focus:outline-none resize-none leading-relaxed font-cairo text-right transition-colors"
           />
+          {/[A-Za-z]/.test(currentSlide.arBody || '') && (
+            <div
+              dir="rtl"
+              lang="ar"
+              data-testid="arabic-body-bidi-preview"
+              className="px-2.5 py-1.5 rounded-lg bg-white/[0.03] border border-white/10 text-xs text-slate-300 font-cairo text-right leading-relaxed"
+            >
+              {splitArabicForBidiRender(currentSlide.arBody || '').map((seg, idx) =>
+                seg.isLtr ? (
+                  <bdi key={idx} dir="ltr" className="font-mono text-cyan-300 px-0.5">
+                    {seg.text}
+                  </bdi>
+                ) : (
+                  <span key={idx}>{seg.text}</span>
+                )
+              )}
+            </div>
+          )}
         </div>
       </div>
       )}

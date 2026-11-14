@@ -235,9 +235,16 @@ function mergeRecords(
     }
   }
 
-  return Array.from(bySignature.values()).sort(
-    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-  );
+  return Array.from(bySignature.values())
+    .map((post) =>
+      post.deck && Array.isArray(post.deck.slides)
+        ? {
+            ...post,
+            deck: sanitizeFullCarousel(post.deck),
+          }
+        : post
+    )
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 }
 
 const DEFAULT_REMOTE_VAULT_ORIGIN = 'https://marrok-tik-tok-carousel-studio.vercel.app';

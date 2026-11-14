@@ -298,9 +298,24 @@ export async function sweepExpiredCloudinaryAssets(options?: {
       let currentPost = post;
       const scheduledMs = currentPost.scheduledFor ? Date.parse(currentPost.scheduledFor) : NaN;
       const isScheduleDue = Number.isFinite(scheduledMs) && now >= scheduledMs;
+      const hasDispatchedOrStagedMedia =
+        currentPost.postStatus === 'posted' ||
+        Boolean(currentPost.cloudinaryPublicIds && currentPost.cloudinaryPublicIds.length > 0) ||
+        Boolean(currentPost.bufferPostIds && currentPost.bufferPostIds.length > 0) ||
+        Boolean(currentPost.zernioPostIds && currentPost.zernioPostIds.length > 0);
 
-      // 1. As soon as scheduledFor time arrives, promote the post from 'Scheduled' to 'Posted'
-      if (isScheduleDue && (currentPost.postStatus !== 'posted' || currentPost.scheduledFor)) {
+      const isUnapprovedAutomatedDraft =
+        currentPost.humanApproved === false ||
+        currentPost.deck?.sourceMeta?.humanApproved === false;
+
+      // 1. Only promote due scheduled posts to 'posted' if they were actually staged/dispatched, approved, and did not fail
+      if (
+        isScheduleDue &&
+        !currentPost.publishFailed &&
+        !isUnapprovedAutomatedDraft &&
+        hasDispatchedOrStagedMedia &&
+        (currentPost.postStatus !== 'posted' || currentPost.scheduledFor)
+      ) {
         currentPost = {
           ...currentPost,
           postStatus: 'posted',
@@ -316,16 +331,26 @@ export async function sweepExpiredCloudinaryAssets(options?: {
         return currentPost;
       }
 
-      const isScheduleExpired = Number.isFinite(scheduledMs) && now >= scheduledMs + ONE_HOUR_MS;
+      const isTargeted =
+        Boolean(options?.forceAll) ||
+        (Boolean(options?.postId) && currentPost.id === options?.postId);
+
+      // Never auto-destroy Cloudinary assets if publication failed or is unapproved (unless explicitly targeted)
+      if ((currentPost.publishFailed || isUnapprovedAutomatedDraft) && !isTargeted) {
+        remainingStagedCount += pubIds.length;
+        return currentPost;
+      }
+
+      const isScheduleExpired =
+        currentPost.postStatus === 'posted' &&
+        Number.isFinite(scheduledMs) &&
+        now >= scheduledMs + ONE_HOUR_MS;
       const postedMs = currentPost.postedAt ? Date.parse(currentPost.postedAt) : NaN;
       // Keep published Cloudinary images live for 1 hour after publication so Buffer/Zernio async media workers never hit 404
       const isImmediatePublishedExpired =
         currentPost.postStatus === 'posted' &&
         !currentPost.scheduledFor &&
         (!Number.isFinite(postedMs) || now >= postedMs + ONE_HOUR_MS);
-      const isTargeted =
-        Boolean(options?.forceAll) ||
-        (Boolean(options?.postId) && currentPost.id === options?.postId);
 
       if (isTargeted || isScheduleExpired || isImmediatePublishedExpired) {
         await Promise.all(pubIds.map((pid) => destroyCloudinaryAsset(pid, config)));
@@ -610,6 +635,16 @@ export async function handleCleanupPublishMedia(req: Request, res: Response) {
   try {
     const config = getServerConfig();
     const { publicIds, postId, forceAll } = req.body || {};
+
+    if (
+      Boolean(forceAll) &&
+      config.apiSharedSecret &&
+      req.headers['x-api-secret'] !== config.apiSharedSecret
+    ) {
+      return res.status(401).json({
+        error: 'Unauthorized: valid x-api-secret header is required for forceAll cleanup.',
+      });
+    }
 
     const directCleaned: string[] = [];
     if (Array.isArray(publicIds) && publicIds.length > 0) {
@@ -1617,6 +1652,15 @@ export async function handleDispatchPublish(req: Request, res: Response) {
     const cloudinaryCleanedAt: string | undefined = undefined;
     const cleanedIds: string[] = [];
 
+    const bufferFailedCount = channelResults.filter(
+      (r) => (r.provider === 'buffer' || r.provider === 'zernio') && !r.ok
+    ).length;
+    const apiSucceededCount = channelResults.filter(
+      (r) => (r.provider === 'buffer' || r.provider === 'zernio') && r.ok
+    ).length;
+    const hasPublishFailure = bufferFailedCount > 0;
+    const allAttemptedApiChannelsFailed = bufferFailedCount > 0 && apiSucceededCount === 0;
+
     let savedRecord: SavedPostRecord | null = null;
     let nextPosts = existingPosts;
 
@@ -1654,11 +1698,15 @@ export async function handleDispatchPublish(req: Request, res: Response) {
         ? zernioPostIds
         : targetRecord.zernioPostIds;
 
+      const effectivePostStatus =
+        isImmediate && !allAttemptedApiChannelsFailed ? 'posted' : 'validated';
+
       savedRecord = {
         ...targetRecord,
-        postStatus: isImmediate ? 'posted' : 'validated',
+        postStatus: effectivePostStatus,
+        publishFailed: hasPublishFailure,
         updatedAt: nowIso,
-        postedAt: isImmediate ? nowIso : undefined,
+        postedAt: effectivePostStatus === 'posted' ? nowIso : undefined,
         scheduledFor: resolvedScheduledFor,
         publishTargets: mergedPublishTargets,
         hostedSlideUrls:
@@ -1684,6 +1732,13 @@ export async function handleDispatchPublish(req: Request, res: Response) {
           (!mergedZernioPostIds || mergedZernioPostIds.length === 0)
             ? currentMonthKey
             : targetRecord.countedInMetricoolMonth,
+        deck: {
+          ...targetRecord.deck,
+          sourceMeta: {
+            ...targetRecord.deck?.sourceMeta,
+            publishFailed: hasPublishFailure,
+          },
+        },
       };
 
       nextPosts = [
@@ -1694,9 +1749,6 @@ export async function handleDispatchPublish(req: Request, res: Response) {
     }
 
     const quotaStats = computeFreePlanQuotaStats(nextPosts);
-    const bufferFailedCount = channelResults.filter(
-      (r) => (r.provider === 'buffer' || r.provider === 'zernio') && !r.ok
-    ).length;
 
     return res.json({
       ok: true,

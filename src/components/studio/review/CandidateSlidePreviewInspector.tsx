@@ -32,6 +32,7 @@ import {
   seedSlideArchetypeData,
 } from '../../../lib/synthesizer.ts';
 import { GatheredCandidatePost } from '../../../lib/gather/gatherClient.ts';
+import { splitArabicForBidiRender } from '../../../lib/text/arabicBiDi.ts';
 
 const ARCHETYPE_OPTIONS: Array<{
   id: SlideType;
@@ -770,6 +771,23 @@ export const CandidateSlidePreviewInspector: React.FC<
                   onBlur={handleAutoFitActiveSlideOnBlur}
                   className="w-full px-2.5 py-1.5 rounded-lg bg-black/80 border border-white/15 text-xs text-white font-arabic focus:outline-none focus:border-cyan-400"
                 />
+                {/[A-Za-z]/.test(activeSlide.arTitle || '') && (
+                  <div
+                    dir="rtl"
+                    lang="ar"
+                    className="mt-1 px-2 py-0.5 rounded bg-white/[0.03] border border-white/10 text-[11px] text-slate-300 font-arabic text-right"
+                  >
+                    {splitArabicForBidiRender(activeSlide.arTitle || '').map((seg, i) =>
+                      seg.isLtr ? (
+                        <bdi key={i} dir="ltr" className="font-mono text-cyan-300 px-0.5">
+                          {seg.text}
+                        </bdi>
+                      ) : (
+                        <span key={i}>{seg.text}</span>
+                      )
+                    )}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -831,6 +849,23 @@ export const CandidateSlidePreviewInspector: React.FC<
                   onBlur={handleAutoFitActiveSlideOnBlur}
                   className="w-full px-2.5 py-1.5 rounded-lg bg-black/80 border border-white/15 text-xs text-slate-200 font-arabic resize-none focus:outline-none focus:border-cyan-400"
                 />
+                {/[A-Za-z]/.test(activeSlide.arBody || '') && (
+                  <div
+                    dir="rtl"
+                    lang="ar"
+                    className="mt-1 px-2 py-0.5 rounded bg-white/[0.03] border border-white/10 text-[11px] text-slate-300 font-arabic text-right"
+                  >
+                    {splitArabicForBidiRender(activeSlide.arBody || '').map((seg, i) =>
+                      seg.isLtr ? (
+                        <bdi key={i} dir="ltr" className="font-mono text-cyan-300 px-0.5">
+                          {seg.text}
+                        </bdi>
+                      ) : (
+                        <span key={i}>{seg.text}</span>
+                      )
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>

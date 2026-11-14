@@ -124,7 +124,7 @@ export async function drawMultiNodeTopologyFlow(
 
     // Primary Title with bold legibility (28px down to 22px)
     const fitTitle = fitTextInBox(ctx, n.title, nodeW - 32, 28, '"Plus Jakarta Sans", sans-serif', '800', {
-      minFontSize: 22,
+      minFontSize: 24,
       maxLines: 2,
     });
     ctx.font = `800 ${fitTitle.fontSize}px "Plus Jakarta Sans", sans-serif`;

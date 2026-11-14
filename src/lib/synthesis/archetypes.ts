@@ -1,6 +1,6 @@
 import type { SlideData, SlideType } from '../../types.ts';
 import { seedSingleSlideTakeaways } from './singleSlideCondenser.ts';
-import { resolveSmartSlideVisuals } from './smartVisualDefaults.ts';
+import { explainArchetypeChoice, resolveSmartSlideVisuals } from './smartVisualDefaults.ts';
 
 /**
  * Instant Content-Aware Archetype Seeder:
@@ -98,6 +98,10 @@ export function seedSlideArchetypeData(
       updated.centerIcon = smart.numberIcon;
       break;
     }
+  }
+
+  if (forceRefresh || isTypeChange || !updated.layoutRationale) {
+    updated.layoutRationale = explainArchetypeChoice(updated, slideIndex);
   }
 
   return updated;

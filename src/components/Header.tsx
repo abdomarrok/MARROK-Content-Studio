@@ -11,7 +11,7 @@ import {
   FileEdit,
   Send,
   Layers,
-  Radar,
+  FolderOpen,
 } from 'lucide-react';
 import { ThemePalette } from '../types.ts';
 
@@ -55,9 +55,7 @@ export const Header: React.FC<HeaderProps> = ({
   onSaveToVault,
   isSavingPost = false,
   activePhase = 'studio',
-  isPeakProgramActive = false,
   onPhaseChange,
-  onOpenPeakProgram,
 }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -82,9 +80,9 @@ export const Header: React.FC<HeaderProps> = ({
   }, [isMobileMenuOpen]);
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-white/[0.07] bg-[#080d11]/95 backdrop-blur-md px-2.5 sm:px-6 py-2 transition-colors">
+    <header className="sticky top-0 z-40 w-full border-b border-white/[0.08] bg-[#080d11]/95 backdrop-blur-md px-2.5 sm:px-6 py-2 transition-colors">
       <div className="max-w-[1440px] mx-auto flex items-center justify-between gap-2 sm:gap-8">
-        {/* Zone 1: Brand Wordmark + Studio/Publish/Peak Program Switcher */}
+        {/* Zone 1: Brand Wordmark + Clean 2-Phase Workspace Switcher */}
         <div className="flex items-center gap-2 sm:gap-4 min-w-0 shrink-0">
           <a
             href="#"
@@ -108,7 +106,7 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 type="button"
                 onClick={() => onPhaseChange('studio')}
-                className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded-md text-[11px] sm:text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                className={`flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1 rounded-md text-[11px] sm:text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                   activePhase === 'studio'
                     ? 'bg-white/15 text-white shadow-xs'
                     : 'text-slate-400 hover:text-white'
@@ -121,42 +119,27 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 type="button"
                 onClick={() => onPhaseChange('publish')}
-                className={`flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-md text-[11px] sm:text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                  activePhase === 'publish' && !isPeakProgramActive
+                className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-md text-[11px] sm:text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  activePhase === 'publish'
                     ? 'bg-emerald-500/20 text-emerald-200'
                     : 'text-slate-400 hover:text-emerald-300'
                 }`}
+                title="Open Publishing Hub, Schedule Calendar & Gather Radar"
               >
                 <Send className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                 <span className="sm:hidden">Publish</span>
                 <span className="hidden sm:inline">2. Publish & Posts</span>
                 {savedPostsCount > 0 && (
-                  <span className="px-1.5 py-0.5 rounded bg-white/10 text-[10px] font-mono tabular-nums text-white">
-                    {savedPostsCount}
+                  <span className="text-[11px] font-mono tabular-nums text-slate-300">
+                    · {savedPostsCount}
+                  </span>
+                )}
+                {pendingReviewCount > 0 && (
+                  <span className="hidden lg:inline text-[10px] font-mono tabular-nums text-amber-300">
+                    · {pendingReviewCount} review
                   </span>
                 )}
               </button>
-              {onOpenPeakProgram && (
-                <button
-                  type="button"
-                  onClick={onOpenPeakProgram}
-                  className={`flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-md text-[11px] sm:text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                    activePhase === 'publish' && isPeakProgramActive
-                      ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/40'
-                      : 'text-slate-300 hover:text-cyan-300'
-                  }`}
-                  title="Open Daily Peak-Hour (10 · 12 · 18) Schedule Review, Weekly Program Approval & Topic Radar"
-                >
-                  <Radar className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                  <span className="sm:hidden">Peak & Gather</span>
-                  <span className="hidden sm:inline">3. Gather & Peak (10·12·18)</span>
-                  {pendingReviewCount > 0 && (
-                    <span className="px-1.5 py-0.5 rounded bg-amber-500/30 border border-amber-400/40 text-[10px] font-mono tabular-nums text-amber-200">
-                      {pendingReviewCount} review
-                    </span>
-                  )}
-                </button>
-              )}
             </div>
           )}
         </div>
@@ -208,7 +191,7 @@ export const Header: React.FC<HeaderProps> = ({
               className="w-2.5 h-2.5 rounded-full border border-white/30 shrink-0"
               style={{ backgroundColor: currentPalette.accent }}
             />
-            <span>Theme: {currentPalette.name.split(' ')[0]}</span>
+            <span>Theme · {currentPalette.name.split(' ')[0]}</span>
           </button>
 
           {lastSavedTime && (
@@ -233,6 +216,20 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Zone 3: Primary Vault Actions */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {onOpenSavedPostsDrawer && (
+            <button
+              type="button"
+              aria-label="Open Saved Posts Vault"
+              onClick={onOpenSavedPostsDrawer}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 min-h-[36px] sm:min-h-[38px] text-[11px] sm:text-xs font-medium rounded-lg border border-white/10 bg-white/[0.03] text-slate-300 hover:text-white hover:bg-white/[0.07] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              title="Open Saved & Posted Vault Drawer"
+            >
+              <FolderOpen className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+              <span className="hidden sm:inline">Vault</span>
+              <span className="font-mono tabular-nums text-slate-400">{savedPostsCount}</span>
+            </button>
+          )}
+
           {onSaveToVault && (
             <button
               type="button"
@@ -245,7 +242,7 @@ export const Header: React.FC<HeaderProps> = ({
                   ? 'border-teal-400/40 bg-teal-500/15 text-teal-200 hover:bg-teal-500/25'
                   : 'border-white/15 bg-white/[0.05] text-slate-200 hover:bg-white/[0.1] hover:text-white'
               }`}
-              title={`Save current deck to Post Library (Status: ${deckStatus.toUpperCase()})`}
+              title={`Save current deck to Vault (Status: ${deckStatus.toUpperCase()})`}
             >
               {deckStatus === 'posted' ? (
                 <Check className="w-3.5 h-3.5 text-emerald-300" />

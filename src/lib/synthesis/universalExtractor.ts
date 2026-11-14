@@ -716,8 +716,8 @@ function buildDeckFromUserPoints(
     ? `${cleanSubject}, explained.`
     : enforceHeadlineSpecRule(subject, { isHook: true, fallbackSubject: cleanSubject });
   const arHook = isFinancialOrMacro
-    ? `التحليل المالي والاقتصادي لـ ${arSubject}.`
-    : `تحليل معماري لمنظومة ${arSubject}`;
+    ? `الأبعاد المالية والاقتصادية لـ ${arSubject}.`
+    : `كيف تعمل منظومة ${arSubject} تحت الضغط؟`;
 
   // Extract clean, meaningful satLabels from user points
   const satLabels: string[] = [];
@@ -1320,8 +1320,8 @@ function buildDeckFromUserPoints(
             ],
             diagramEdges: ['Leverage', 'Socialize'],
             diagramFooter: 'ECONOMIC VERDICT: PRIVATE GAINS VS PUBLIC & RETIREE EXPOSURE',
-            enTitle: 'The core economic tradeoff.',
-            arTitle: 'المفاضلة الاقتصادية ومن يدفع الثمن.',
+            enTitle: 'Private gains vs. public risk.',
+            arTitle: 'مكاسب المطلعين مقابل مخاطر الجمهور.',
             enBody: 'Insiders lock in billions in liquidity while energy costs, index concentration, and taxpayer backstops shift risk to the public.',
             arBody: 'يضمن المطلعون سيولة مليارية فورية بينما تنتقل فواتير الطاقة ومخاطر السوق والضمانات إلى الجمهور.',
           }
@@ -1336,8 +1336,8 @@ function buildDeckFromUserPoints(
             ],
             diagramEdges: ['Evaluate', 'Adopt'],
             diagramFooter: `ARCHITECTURAL VERDICT: ${cleanSubject.toUpperCase().slice(0, 32)}`,
-            enTitle: `The ${cleanSubject.split(/\s+/).slice(0, 3).join(' ')} tradeoff.`,
-            arTitle: `المفاضلة الهندسية في ${arSubject}.`,
+            enTitle: `${cleanSubject.split(/\s+/).slice(0, 3).join(' ')} vs. operational overhead.`,
+            arTitle: `كفاءة ${arSubject} مقابل تكلفة الحوكمة.`,
             enBody: `Adopting ${cleanSubject} unlocks stronger guarantees and scale, provided teams enforce clear operational boundaries and observability.`,
             arBody: `تطبيق ${arSubject} يمنحك كفاءة وضمانات أعلى بشرط الالتزام بحدود الصلاحيات والمراقبة الدقيقة.`,
           }
@@ -1356,7 +1356,7 @@ function buildDeckFromUserPoints(
         stepNumber: `0${padIdx}`,
         stepLabel: `STEP 0${padIdx} // CAPITAL DEFICIT`,
         centerIcon: 'trendingDown',
-        enTitle: 'The unit economics gap.',
+        enTitle: 'Unit burn vs. operating revenue.',
         arTitle: 'فجوة العوائد والإنفاق الرأسمالي.',
         enBody: 'Capital burn and infrastructure commitments far exceed current operating revenue, requiring massive external financing.',
         arBody: 'تتجاوز الالتزامات الرأسمالية وتكاليف التشغيل العوائد الحالية، مما يفرض الاعتماد على تمويل خارجي مستمر.',

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -75,6 +75,7 @@ interface ViewportCanvasProps {
   onDoubleClickElement?: (id: GraphicalElementId) => void;
   onUpdateSlideField?: <K extends keyof SlideData>(field: K, value: SlideData[K]) => void;
   compactMobileStage?: boolean;
+  isComparingBefore?: boolean;
 }
 
 export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
@@ -82,7 +83,9 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
   currentSlideIndex,
   theme,
   showSafeZones,
+  onToggleSafeZones,
   stageOverlayMode,
+  onSetStageOverlayMode,
   onPreviousSlide,
   onNextSlide,
   canvasRef: externalCanvasRef,
@@ -92,6 +95,7 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
   onDoubleClickElement,
   onUpdateSlideField,
   compactMobileStage = false,
+  isComparingBefore = false,
 }) => {
   const internalCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const activeCanvasRef = externalCanvasRef || internalCanvasRef;
@@ -109,7 +113,6 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
     startY: number;
     initialScale: number;
   } | null>(null);
-  const [mobileNudgeStep, setMobileNudgeStep] = useState<number>(5);
 
   const spec = getCanvasDimensionSpec(carousel.dimensionPreset);
   const prevIndexRef = useRef(currentSlideIndex);
@@ -121,7 +124,9 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
   const renderSequenceRef = useRef(0);
 
   const currentSlide = carousel.slides[currentSlideIndex];
-  const overlayMode: StageOverlayMode = stageOverlayMode || (showSafeZones ? 'safe' : 'clean');
+  const overlayMode: StageOverlayMode = showSafeZones
+    ? 'safe'
+    : stageOverlayMode || 'clean';
   const creatorHandle = (carousel.sourceMeta?.creator || carousel.channel || carousel.brand || 'marrok').toLowerCase().replace(/\s+/g, '');
   const currentOverride = (selectedElementId && currentSlide?.layoutOverrides?.[selectedElementId]) || null;
   const currentDx = currentOverride?.dx ?? 0;
@@ -175,54 +180,63 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
     return gaps;
   }, [boundsMap, isDragging, isResizing, spec.height]);
 
-  const handleNudge = (deltaX: number, deltaY: number) => {
-    if (!selectedElementId || !onUpdateLayoutOverride || !currentSlide) return;
-    const { dx: nextDx, dy: nextDy } = clampElementDrag(
-      selectedElementId,
-      currentDx + deltaX,
-      currentDy + deltaY,
-      currentSlide,
-      carousel
-    );
-    onUpdateLayoutOverride(selectedElementId, {
-      ...(currentOverride || {}),
-      dx: nextDx,
-      dy: nextDy,
-    });
-  };
+  const handleNudge = useCallback(
+    (deltaX: number, deltaY: number) => {
+      if (!selectedElementId || !onUpdateLayoutOverride || !currentSlide) return;
+      const { dx: nextDx, dy: nextDy } = clampElementDrag(
+        selectedElementId,
+        currentDx + deltaX,
+        currentDy + deltaY,
+        currentSlide,
+        carousel
+      );
+      onUpdateLayoutOverride(selectedElementId, {
+        ...(currentOverride || {}),
+        dx: nextDx,
+        dy: nextDy,
+      });
+    },
+    [selectedElementId, onUpdateLayoutOverride, currentSlide, currentDx, currentDy, carousel, currentOverride]
+  );
 
-  const handleQuickScale = (deltaScale: number) => {
-    if (!selectedElementId || !onUpdateLayoutOverride) return;
-    const nextScale = Math.max(0.6, Math.min(1.5, Number((currentScale + deltaScale).toFixed(2))));
-    onUpdateLayoutOverride(selectedElementId, {
-      ...(currentOverride || {}),
-      scale: nextScale,
-    });
-  };
+  const handleQuickScale = useCallback(
+    (deltaScale: number) => {
+      if (!selectedElementId || !onUpdateLayoutOverride) return;
+      const nextScale = Math.max(0.6, Math.min(1.5, Number((currentScale + deltaScale).toFixed(2))));
+      onUpdateLayoutOverride(selectedElementId, {
+        ...(currentOverride || {}),
+        scale: nextScale,
+      });
+    },
+    [selectedElementId, onUpdateLayoutOverride, currentScale, currentOverride]
+  );
 
-  const handleQuickAlign = (align: TextAlignment) => {
-    if (!selectedElementId || !onUpdateLayoutOverride) return;
-    onUpdateLayoutOverride(selectedElementId, {
-      ...(currentOverride || {}),
-      align,
-    });
-  };
+  const handleQuickAlign = useCallback(
+    (align: TextAlignment) => {
+      if (!selectedElementId || !onUpdateLayoutOverride) return;
+      onUpdateLayoutOverride(selectedElementId, {
+        ...(currentOverride || {}),
+        align,
+      });
+    },
+    [selectedElementId, onUpdateLayoutOverride, currentOverride]
+  );
 
-  const handleQuickCenter = () => {
+  const handleQuickCenter = useCallback(() => {
     if (!selectedElementId || !onUpdateLayoutOverride) return;
     onUpdateLayoutOverride(selectedElementId, {
       ...(currentOverride || {}),
       dx: 0,
     });
-  };
+  }, [selectedElementId, onUpdateLayoutOverride, currentOverride]);
 
-  const handleQuickHide = () => {
+  const handleQuickHide = useCallback(() => {
     if (!selectedElementId || !onUpdateLayoutOverride) return;
     onUpdateLayoutOverride(selectedElementId, {
       ...(currentOverride || {}),
       hidden: !currentOverride?.hidden,
     });
-  };
+  }, [selectedElementId, onUpdateLayoutOverride, currentOverride]);
 
   // Instant 60fps canvas rendering for layout/framing manipulation + 150ms debounce strictly for text typing
   useEffect(() => {
@@ -1031,25 +1045,67 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
         </div>
       )}
 
-      {/* Platform Safe Zone Simulator Overlay */}
-      {overlayMode === 'safe' && (
-        <div className="absolute inset-0 pointer-events-none flex flex-col justify-between font-mono text-[9px] select-none">
-          {/* Top Safe Zone */}
-          <div
-            style={{ height: topSafePct, minHeight: '22px' }}
-            className="bg-rose-500/20 border-b border-rose-500/40 flex items-center justify-between px-2.5 text-rose-200 whitespace-nowrap"
+      {/* Compare Before Active Indicator */}
+      {isComparingBefore && (
+        <div className="absolute top-2 left-2 z-30 pointer-events-none">
+          <span
+            data-testid="compare-before-active-badge"
+            className="px-2 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[9px] font-mono font-extrabold uppercase tracking-wider shadow-lg border border-amber-200"
           >
-            <span>TOP {spec.headerY}px SAFE</span>
-            <span>{spec.shortLabel} ({spec.width}×{spec.height})</span>
+            BEFORE EDITS
+          </span>
+        </div>
+      )}
+
+      {/* TikTok Safe-Zone Overlay (Top ~150px, Bottom ~420px, Right ~120px) */}
+      {overlayMode === 'safe' && (
+        <div
+          data-testid="tiktok-safe-zone-overlay"
+          className="absolute inset-0 pointer-events-none font-mono text-[9px] select-none z-20"
+        >
+          {/* Top ~150px TikTok Status & Navigation Bar */}
+          <div
+            data-testid="tiktok-zone-top"
+            style={{ height: `${(150 / spec.height) * 100}%`, minHeight: '22px' }}
+            className="absolute top-0 left-0 right-0 bg-rose-500/20 border-b-2 border-dashed border-rose-400/75 flex items-end justify-between px-2.5 pb-1 text-rose-100 whitespace-nowrap"
+          >
+            <span className="bg-rose-950/85 px-1.5 py-0.5 rounded border border-rose-400/40 font-bold">
+              TOP ~150px TIKTOK UI
+            </span>
+            <span className="bg-rose-950/85 px-1.5 py-0.5 rounded border border-rose-400/30 text-[8px]">
+              {spec.shortLabel} ({spec.width}×{spec.height})
+            </span>
           </div>
 
-          {/* Center Content Bounding Box */}
-          <div className="flex-1 mx-3 border-2 border-dashed border-rose-400/40 rounded-lg flex items-center justify-between p-2 relative">
-            <span className="text-rose-400/70 rotate-90 origin-left text-[8px] tracking-wider">
-              {spec.safeMarginLeft}px..{spec.safeMarginRight}px SAFE
+          {/* Right ~120px TikTok Engagement Column */}
+          <div
+            data-testid="tiktok-zone-right"
+            style={{
+              top: `${(150 / spec.height) * 100}%`,
+              bottom: `${(420 / spec.height) * 100}%`,
+              width: `${(120 / spec.width) * 100}%`,
+            }}
+            className="absolute right-0 bg-rose-500/20 border-l-2 border-dashed border-rose-400/75 flex flex-col items-center justify-center gap-1.5 text-rose-100"
+          >
+            <span className="bg-rose-950/90 px-1.5 py-0.5 rounded border border-rose-400/40 -rotate-90 whitespace-nowrap text-[8px] font-bold">
+              RIGHT ~120px ACTIONS
+            </span>
+          </div>
+
+          {/* Inner Safe Content Area */}
+          <div
+            style={{
+              top: `${(150 / spec.height) * 100}%`,
+              bottom: `${(420 / spec.height) * 100}%`,
+              left: '4%',
+              right: `${(120 / spec.width) * 100}%`,
+            }}
+            className="absolute border border-dashed border-emerald-400/50 rounded-md flex items-start justify-start p-1.5"
+          >
+            <span className="text-emerald-200 bg-emerald-950/80 border border-emerald-400/30 px-1.5 py-0.5 rounded text-[8px] tracking-wider uppercase">
+              Safe Zone ({spec.safeMarginLeft}..{spec.width - 120}px)
             </span>
 
-            {/* 3:4 Profile Grid Crop Indicator on IG 4:5 (anchored at bottom to avoid MARROK header overlap) */}
             {spec.id === 'ig-4:5' && (
               <div className="absolute inset-y-0 left-[3.5%] right-[3.5%] border-x border-dotted border-amber-400/40 flex items-end justify-center pb-1.5">
                 <span className="text-[7px] text-amber-300/90 bg-black/75 border border-amber-400/30 px-1.5 py-0.5 rounded">
@@ -1057,33 +1113,22 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
                 </span>
               </div>
             )}
-
-            {/* Right-side Interaction Rail Indicator (for 9:16 TikTok / IG Reels) */}
-            {spec.aspectRatioLabel === '9:16' && (
-              <div className="h-full flex flex-col justify-end items-center gap-1.5 text-rose-300/80 pr-0.5 pb-1 text-[9px]">
-                <div className="w-4 h-4 rounded-full bg-rose-500/20 border border-rose-400/40 flex items-center justify-center">♥</div>
-                <div className="w-4 h-4 rounded-full bg-rose-500/20 border border-rose-400/40 flex items-center justify-center">💬</div>
-                <div className="w-4 h-4 rounded-full bg-rose-500/20 border border-rose-400/40 flex items-center justify-center">★</div>
-                <div className="w-4 h-4 rounded-full bg-rose-500/20 border border-rose-400/40 flex items-center justify-center">↗</div>
-              </div>
-            )}
           </div>
 
-          {/* Bottom Safe Zone */}
+          {/* Bottom ~420px TikTok Caption, Music & Scrubber Zone */}
           <div
-            style={{ height: bottomSafePct }}
-            className="bg-rose-500/20 border-t border-rose-500/40 flex flex-col justify-center px-2.5 text-rose-200 space-y-0.5"
+            data-testid="tiktok-zone-bottom"
+            style={{ height: `${(420 / spec.height) * 100}%` }}
+            className="absolute bottom-0 left-0 right-0 bg-rose-500/20 border-t-2 border-dashed border-rose-400/75 flex flex-col justify-start px-2.5 pt-1.5 text-rose-100 space-y-0.5"
           >
-            <div className="flex justify-between">
-              <span>CEILING y≤{spec.safeFooterCeilingY}px</span>
-              <span>@{creatorHandle}</span>
+            <div className="flex justify-between items-center">
+              <span className="bg-rose-950/85 px-1.5 py-0.5 rounded border border-rose-400/40 font-bold">
+                BOTTOM ~420px CAPTION &amp; AUDIO (y&gt;{spec.height - 420}px)
+              </span>
+              <span className="text-[8px] text-rose-200">@{creatorHandle}</span>
             </div>
-            <span className="text-[8px] text-rose-400/80 truncate">
-              {spec.platform === 'tiktok'
-                ? 'TikTok Photo Mode Dots, Caption & Sound Drawer'
-                : spec.id === 'ig-9:16'
-                ? 'Instagram Reels Caption & Audio Bar'
-                : 'Instagram Carousel Pagination & Action Bar'}
+            <span className="text-[8px] text-rose-200/85 truncate">
+              TikTok Photo Mode Dots, Caption Drawer &amp; Original Sound Bar
             </span>
           </div>
         </div>

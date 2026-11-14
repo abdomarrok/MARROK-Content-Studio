@@ -1217,20 +1217,3 @@ export function generateMetricoolBulkCsv(rows: MetricoolCsvRowInput[]): string {
   return lines.join('\r\n');
 }
 
-/**
- * Triggers a browser download of the generated Metricool Bulk Schedule CSV.
- */
-export function downloadMetricoolCsvFile(
-  csvContent: string,
-  filename = `Mtr_calendar_template_${new Date().toISOString().slice(0, 10)}.csv`
-): void {
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.setAttribute('download', filename);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
-}

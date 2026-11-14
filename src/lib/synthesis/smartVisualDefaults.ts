@@ -3,6 +3,7 @@ import { TECH_ICONS_LIST } from '../techLogos.ts';
 import { CHAR_LIMITS, SINGLE_SLIDE_CHAR_LIMITS } from '../qaChecks.ts';
 import { autoFitTextToLimits, autoPolishHeadline } from '../text/headlines.ts';
 import { fixArabicPunctuation } from '../text/arabicBiDi.ts';
+import { repairAndDeRepeatSlideHeadlines } from '../text/sanitizer.ts';
 
 const STOP_WORDS = new Set([
   'the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'your', 'are', 'was', 'were',
@@ -18,6 +19,11 @@ const STOP_WORDS = new Set([
   'small', 'long', 'short', 'good', 'bad', 'best', 'worst', 'same', 'different', 'able',
   'make', 'makes', 'made', 'using', 'used', 'uses', 'use', 'allow', 'allows', 'allowed',
   'create', 'creates', 'creating', 'become', 'becoming', 'becomes', 'while', 'where',
+  // Generic meta/filler words that should never become Hub satellite labels
+  'technical', 'breakdown', 'mechanisms', 'mechanism', 'operational', 'boundaries', 'boundary',
+  'stores', 'storing', 'stored', 'runaway', 'stop', 'stops', 'stopping', 'core', 'overview',
+  'exploring', 'understanding', 'defining', 'managing', 'connecting', 'explains', 'explained',
+  'deep', 'dive', 'guide', 'analysis', 'summary', 'modern', 'traditional', 'legacy',
 ]);
 
 const GENERIC_PLACEHOLDER_LABELS = new Set([
@@ -51,6 +57,8 @@ export function isGenericPlaceholderValue(val?: string): boolean {
   if (/^component\s*0?\d+$/i.test(clean) || /^stage\s*0?\d+$/i.test(clean)) return true;
   return false;
 }
+
+import { THIRD_PARTY_COMPANY_NAMES } from '../techLogos.ts';
 
 /**
  * Matches tech brand logos and semantic vector icons mentioned in slide copy.
@@ -132,7 +140,8 @@ export function matchSlideIconsFromText(text: string): string[] {
 }
 
 /**
- * Extracts crisp 1-2 word technical terms/phrases from a slide's title and body.
+ * Extracts crisp, non-overlapping 1-2 word technical terms/phrases from a slide's title and body.
+ * Prevents root-word collisions (e.g. "DISCORD" + "STORES TRILLIONS" + "TRILLIONS" + "STORES" or "CLOUD" + "CLOUDFLARE").
  */
 export function extractKeyPhrasesFromSlide(slide: SlideData): string[] {
   const combined = `${slide.enTitle || ''} ${slide.enBody || ''}`;
@@ -141,26 +150,77 @@ export function extractKeyPhrasesFromSlide(slide: SlideData): string[] {
     .replace(/[—–]/g, ' ');
 
   const phrases: string[] = [];
+  const usedRootTokens = new Set<string>();
+
+  const normalizeRootToken = (word: string): string => {
+    const lower = word.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (lower.length > 5 && lower.endsWith('s')) return lower.slice(0, -1);
+    return lower;
+  };
+
   const addPhrase = (raw: string) => {
-    const trimmed = raw.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9+%$]+$/g, '').trim();
+    const trimmed = raw.replace(/^[^a-zA-Z0-9$]+|[^a-zA-Z0-9+%$]+$/g, '').trim();
     if (trimmed.length < 3) return;
-    if (STOP_WORDS.has(trimmed.toLowerCase())) return;
-    const upper = trimmed.toUpperCase();
+    const words = trimmed
+      .split(/\s+/)
+      .filter((w) => w.length >= 2 && !STOP_WORDS.has(w.toLowerCase()));
+    if (words.length === 0) return;
+
+    const candidate = words.slice(0, 2).join(' ');
+    if (candidate.length < 3) return;
+    if (STOP_WORDS.has(candidate.toLowerCase())) return;
+
+    const candidateRoots = words.slice(0, 2).map(normalizeRootToken).filter((r) => r.length >= 3);
+    if (candidateRoots.length === 0) return;
+
+    // Reject if any root token is already used or is a prefix/substring of an existing root (e.g. CLOUD vs CLOUDFLARE)
+    const hasOverlap = candidateRoots.some((root) => {
+      if (usedRootTokens.has(root)) return true;
+      for (const existing of usedRootTokens) {
+        if (root.length >= 4 && existing.length >= 4) {
+          if (existing.startsWith(root) || root.startsWith(existing)) return true;
+        }
+      }
+      return false;
+    });
+    if (hasOverlap) return;
+
+    const upper = candidate.toUpperCase();
     if (!phrases.some((p) => p.toUpperCase() === upper)) {
-      phrases.push(trimmed);
+      phrases.push(candidate);
+      candidateRoots.forEach((r) => usedRootTokens.add(r));
     }
   };
 
-  // 1. Capitalized multi-word technical terms or acronyms (e.g. "Zero-Trust", "AI Agent", "HNSW Graph", "Scope Creep")
-  const capMatches = clean.match(/\b[A-Z][a-zA-Z0-9+-]*(?:\s+[A-Z][a-zA-Z0-9+-]*)?\b/g) || [];
-  for (const m of capMatches) {
-    const words = m.split(/\s+/).filter((w) => !STOP_WORDS.has(w.toLowerCase()));
-    if (words.length > 0) {
-      addPhrase(words.slice(0, 2).join(' '));
-    }
+  // 1. Hard metrics + noun pairs first (e.g. "93.3% Drop", "100 GB Scale", "4KB Keys")
+  const metricMatches =
+    clean.match(
+      /(?:\$\d[\d,.]*[KMBTkmbt]?|\b\d+(?:\.\d+)?(?:%|x|X|ms|µs|ns|KB|MB|GB|TB|GW|M|B|T))\s+[A-Za-z][A-Za-z0-9-]*/g
+    ) || [];
+  for (const mm of metricMatches) {
+    addPhrase(mm);
   }
 
-  // 2. Meaningful content words from title and body
+  // 2. Capitalized multi-word technical terms or acronyms (e.g. "Zero-Trust", "Durable Objects", "HNSW Graph")
+  const capMatches = clean.match(/\b[A-Z][a-zA-Z0-9+-]*(?:\s+[A-Z][a-zA-Z0-9+-]*)?\b/g) || [];
+  for (const m of capMatches) {
+    addPhrase(m);
+  }
+
+  // 2b. High-signal 2-word technical noun compounds in body/title (e.g. "spending caps", "cloud costs", "signature size")
+  const compoundNounMatches =
+    clean.match(
+      /\b(?:spending\s+caps?|cloud\s+costs?|cost\s+caps?|rate\s+limits?|zero[- ]trust|post[- ]quantum|signature\s+sizes?|privacy\s+pass|agentic\s+traffic|memory\s+safety|vector\s+index|cache\s+eviction|cold\s+starts?|edge\s+workers?|state\s+storage|billing\s+guard|token\s+limits?)\b/gi
+    ) || [];
+  for (const cm of compoundNounMatches) {
+    const titleCased = cm
+      .split(/\s+/)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
+    addPhrase(titleCased);
+  }
+
+  // 3. Meaningful content words from title and body
   const words = clean
     .replace(/[.?!,:;]/g, ' ')
     .split(/\s+/)
@@ -172,17 +232,21 @@ export function extractKeyPhrasesFromSlide(slide: SlideData): string[] {
     addPhrase(formatted);
   }
 
-  // 3. Fallback if slide is purely Arabic or very short
+  // 4. Domain-specific cause -> effect sequence fallback so we always have >= 6 distinct non-overlapping labels
   if (phrases.length < 6) {
     const text = `${slide.enTitle || ''} ${slide.enBody || ''} ${slide.arTitle || ''} ${slide.arBody || ''}`.toLowerCase();
-    if (/\$|\b(?:valuation|billion|trillion|loss|losses|deficit|capital|financing|subsid|taxpayer|retiree|revenue|spend|economy|economic|energy)\b|مليار|تريليون|خسائر|تمويل|تقييم|ضرائب|طاقة|اقتصاد/i.test(text)) {
-      ['Capital Flow', 'Valuation Risk', 'Circular Finance', 'Unit Deficit', 'Grid Demand', 'Public Backstop'].forEach(addPhrase);
-    } else if (/security|breach|threat|ai|permission|اختراق|أمن|ذكاء/i.test(text)) {
-      ['Access Control', 'Scope Policy', 'Threat Guard', 'Audit Log', 'Identity Gate', 'Runtime Sandbox'].forEach(addPhrase);
+    if (/discord|message|scylla|cassandra|trillion/i.test(text)) {
+      ['Write Ingest', 'Request Coalesce', 'Ring Partition', 'SSD Storage', 'Sub-ms Read', 'Zero GC Pause'].forEach(addPhrase);
+    } else if (/cloudflare|worker|durable|spending|cap/i.test(text)) {
+      ['Spending Caps', 'Edge Workers', 'Durable Objects', 'Billing Guard', 'Auto Cutoff', 'Zero Overrun'].forEach(addPhrase);
+    } else if (/\$|\b(?:valuation|billion|trillion|loss|losses|deficit|capital|financing|subsid|taxpayer|retiree|revenue|spend|economy|economic|energy)\b|مليار|تريليون|خسائر|تمويل|تقييم|ضرائب|طاقة|اقتصاد/i.test(text)) {
+      ['Capital Inflow', 'Compute Capex', 'Circular Spend', 'Unit Deficit', 'Grid Demand', 'Public Exposure'].forEach(addPhrase);
+    } else if (/security|breach|threat|ai|permission|quantum|اختراق|أمن|ذكاء/i.test(text)) {
+      ['Request Ingress', 'Identity Check', 'Scope Policy', 'Crypto Verify', 'Audit Telemetry', 'Zero-Trust Gate'].forEach(addPhrase);
     } else if (/vector|embedding|hnsw|ivf|search|متجهات|بحث/i.test(text)) {
-      ['Embedding Vector', 'Index Graph', 'Cosine Top-K', 'Query Router', 'Candidate Scan', 'Memory Buffer'].forEach(addPhrase);
+      ['Input Query', 'Dense Embed', 'Graph Hop', 'Cluster Probe', 'Cosine Rank', 'Top-K Result'].forEach(addPhrase);
     } else {
-      ['Ingress Stage', 'Core Engine', 'State Commit', 'Policy Gate', 'Telemetry Bus', 'Output Sink'].forEach(addPhrase);
+      ['Traffic Ingress', 'Load Router', 'Worker Compute', 'State Commit', 'Read Replica', 'Client Output'].forEach(addPhrase);
     }
   }
 
@@ -373,10 +437,12 @@ export interface SmartSlideVisualDefaults {
   stepLabel: string;
   numberIcon: string;
   // Metric
+  metricBeforeValue?: string;
   metricValue: string;
   metricLabel: string;
   metricDiff: string;
   metricIcon: string;
+  chartDirection: 'up' | 'down' | 'bar' | 'none';
   // Code
   codeFileName: string;
   codeLanguage: string;
@@ -386,6 +452,68 @@ export interface SmartSlideVisualDefaults {
   compareLeftBody: string;
   compareRightTitle: string;
   compareRightBody: string;
+}
+
+/**
+ * Derives a semantic slide corner tag matching the slide's story role and content type
+ * (BENCHMARK, ARCHITECTURE, COST, COMPARISON, BOTTLENECK, TAKEAWAY, ACTION).
+ */
+export function deriveSlideCornerTag(
+  slide: SlideData,
+  slideIndex: number = 0,
+  totalSlides: number = 6
+): string {
+  const fullText = `${slide.enTitle || ''} ${slide.enBody || ''} ${slide.arTitle || ''} ${slide.arBody || ''}`;
+  if (slide.type === 'cta' || (totalSlides > 1 && slideIndex === totalSlides - 1) || slide.storyRole === 'cta') {
+    return 'ACTION';
+  }
+  if (slide.storyRole === 'takeaway' || slide.diagramVariant === 'takeaway') {
+    return 'TAKEAWAY';
+  }
+  if (/\b(?:cost|costs|spend|spending|price|pricing|billing|budget|cap|caps|saving|savings|deficit|burn)\b|\$\d|تكلفة|تكاليف|إنفاق/i.test(fullText)) {
+    return 'COST';
+  }
+  if (slide.type === 'metric' || slide.storyRole === 'proof') {
+    return 'BENCHMARK';
+  }
+  if (slide.type === 'compare') {
+    return 'COMPARISON';
+  }
+  if (slide.storyRole === 'problem') {
+    return 'BOTTLENECK';
+  }
+  if (slideIndex === 0 || slide.storyRole === 'hook') {
+    return /\d/.test(fullText) ? 'BENCHMARK' : 'ARCHITECTURE';
+  }
+  return 'ARCHITECTURE';
+}
+
+/**
+ * Translates technical jargon on Slide 1 Hook into plain business outcomes for startup & SME owners
+ * while enforcing max 12 words per headline and hiding Slide 1 body text.
+ */
+export function translateSlide1JargonToPlainOutcome(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/\bp99\s+(?:tail\s+|read\s+|write\s+)?latency\b/gi, 'response delay')
+    .replace(/\btail\s+latency\b/gi, 'response delay')
+    .replace(/\bread\s+latency\b/gi, 'read delay')
+    .replace(/\blatency\b/gi, 'response delay')
+    .replace(/\bp99\b/gi, 'peak delay')
+    .replace(/\bthroughput\b/gi, 'system capacity')
+    .replace(/\bshard[- ]per[- ]core\b/gi, 'per-core data split')
+    .replace(/\bsharding\b/gi, 'data splitting')
+    .replace(/\bgarbage\s+collection\s+pauses?\b/gi, 'memory freezes')
+    .replace(/\bgc\s+pauses?\b/gi, 'memory freezes');
+}
+
+function capHeadlineToTwelveWords(headline: string, isArabic: boolean = false): string {
+  const cleaned = headline.replace(/(?:\.\.\.|…)+$/g, '').trim();
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  if (words.length <= 12) return cleaned;
+  const sliced = words.slice(0, 12).join(' ').replace(/[,:;—–-]+$/, '');
+  if (isArabic) return fixArabicPunctuation(sliced);
+  return /[.?!]$/.test(sliced) ? sliced : `${sliced}.`;
 }
 
 /**
@@ -400,6 +528,7 @@ export function resolveSmartSlideVisuals(
   const fullText = `${slide.enTitle || ''} ${slide.enBody || ''} ${slide.arTitle || ''} ${slide.arBody || ''}`;
   const lower = fullText.toLowerCase();
   const matchedIcons = matchSlideIconsFromText(fullText);
+  const nonBrandIcons = matchedIcons.filter((ic) => !THIRD_PARTY_COMPANY_NAMES.has(ic.toLowerCase()));
   const phrases = extractKeyPhrasesFromSlide(slide);
 
   const recommendedArchetype = inferBestSlideArchetype(slide, slideIndex);
@@ -412,36 +541,92 @@ export function resolveSmartSlideVisuals(
       lower
     );
 
-  // 1. HUB DEFAULTS
-  const centerIcon =
+  // 1. HUB DEFAULTS (Never place a third-party brand logo in the center of a diagram)
+  const rawCenterIcon =
     !forceRefresh && slide.centerIcon && slide.centerIcon !== 'gitMerge'
       ? slide.centerIcon
-      : matchedIcons[0] || (isFinancialOrMacro ? 'dollarSign' : 'cpu');
+      : nonBrandIcons[0] || (isFinancialOrMacro ? 'dollarSign' : 'cpu');
+  const centerIcon = THIRD_PARTY_COMPANY_NAMES.has(rawCenterIcon.toLowerCase())
+    ? nonBrandIcons[0] || (isFinancialOrMacro ? 'dollarSign' : 'database')
+    : rawCenterIcon;
 
   const derivedCenterTag = (() => {
+    const nonBrandPhrase = phrases.find(
+      (p) => !THIRD_PARTY_COMPANY_NAMES.has(p.trim().toLowerCase()) && p.length >= 3 && p.length <= 18
+    );
+    if (nonBrandPhrase) {
+      return nonBrandPhrase.toUpperCase();
+    }
     if (isFinancialOrMacro) return 'CAPITAL & ECONOMICS';
     if (/security|breach|threat|permission|اختراق|أمن/.test(lower)) return 'SECURITY CORE';
     if (/ai|agent|llm|model|ذكاء/.test(lower)) return 'AI GOVERNANCE';
     if (/vector|embedding|hnsw|search|متجهات/.test(lower)) return 'VECTOR ENGINE';
-    if (/database|sql|storage|cache|بيانات/.test(lower)) return 'DATA ENGINE';
-    if (/cloud|kubernetes|docker|mesh|سحابة/.test(lower)) return 'CLUSTER MESH';
-    return phrases[0] ? phrases[0].toUpperCase().slice(0, 18) : 'SYSTEM CORE';
+    if (/database|sql|storage|cache|message|بيانات|رسائل/.test(lower)) return 'STORAGE ENGINE';
+    if (/cloud|kubernetes|docker|mesh|worker|سحابة/.test(lower)) return 'CLOUD RUNTIME';
+    return 'SYSTEM CORE';
   })();
 
+  const genericCenterTags = new Set(['SYSTEM CORE', 'CLUSTER MESH', 'DATA ENGINE', 'AI GOVERNANCE']);
   const centerTag =
-    !forceRefresh && slide.centerTag && slide.centerTag.trim() && slide.centerTag !== 'SYSTEM CORE'
+    !forceRefresh &&
+    slide.centerTag &&
+    slide.centerTag.trim() &&
+    !genericCenterTags.has(slide.centerTag.trim().toUpperCase()) &&
+    !THIRD_PARTY_COMPANY_NAMES.has(slide.centerTag.trim().toLowerCase())
       ? slide.centerTag
       : derivedCenterTag;
 
+  const centerTagTokens = new Set(
+    centerTag
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t.length >= 3)
+  );
+
+  // Deduplicate any custom satLabels that repeat words or use generic filler ("TECHNICAL", "STORES", "STOP", "RUNAWAY")
+  const cleanCustomSatLabels = (slide.satLabels || []).filter((raw) => {
+    if (!raw || isGenericPlaceholderValue(raw)) return false;
+    const lowerLabel = raw.trim().toLowerCase();
+    if (STOP_WORDS.has(lowerLabel)) return false;
+    return true;
+  });
+
+  const hasOverlappingCustomLabels = (() => {
+    const seenRoots = new Set<string>();
+    for (const lbl of cleanCustomSatLabels) {
+      const tokens = lbl
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((t) => t.length >= 4);
+      for (const tok of tokens) {
+        const stem = tok.endsWith('s') && tok.length > 5 ? tok.slice(0, -1) : tok;
+        if (seenRoots.has(stem)) return true;
+        for (const prev of seenRoots) {
+          if (prev.startsWith(stem) || stem.startsWith(prev)) return true;
+        }
+        seenRoots.add(stem);
+      }
+    }
+    return false;
+  })();
+
   const hasCustomSatLabels =
     !forceRefresh &&
-    slide.satLabels &&
-    slide.satLabels.length >= 2 &&
-    !slide.satLabels.every((l) => isGenericPlaceholderValue(l));
+    cleanCustomSatLabels.length >= 5 &&
+    !hasOverlappingCustomLabels;
+
+  const nonCenterPhrases = phrases.filter((p) => {
+    const pTokens = p
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t.length >= 3);
+    return !pTokens.some((t) => centerTagTokens.has(t));
+  });
+  const sourcePhrasesForHub = nonCenterPhrases.length >= 5 ? nonCenterPhrases : phrases;
 
   const satLabels = hasCustomSatLabels
-    ? slide.satLabels!
-    : phrases.slice(0, 6).map((p) => p.toUpperCase().slice(0, 16));
+    ? cleanCustomSatLabels.slice(0, 5)
+    : sourcePhrasesForHub.slice(0, 5).map((p) => p.toUpperCase().slice(0, 16));
 
   const defaultSatIcons = ['server', 'database', 'gauge', 'users', 'robot', 'gitMerge'];
   const isDefaultSatIcons =
@@ -451,8 +636,12 @@ export function resolveSmartSlideVisuals(
 
   const satIcons =
     !forceRefresh && !isDefaultSatIcons && slide.satIcons
-      ? slide.satIcons
-      : Array.from({ length: Math.max(satLabels.length, 6) }, (_, i) => matchedIcons[(i + 1) % matchedIcons.length] || matchedIcons[0]);
+      ? slide.satIcons.map((ic, i) =>
+          THIRD_PARTY_COMPANY_NAMES.has(ic.toLowerCase())
+            ? nonBrandIcons[(i + 1) % nonBrandIcons.length] || 'server'
+            : ic
+        )
+      : Array.from({ length: Math.max(satLabels.length, 5) }, (_, i) => nonBrandIcons[(i + 1) % nonBrandIcons.length] || nonBrandIcons[0] || 'server');
 
   // 2. MECHANISM (ROW / POSTER) 3-NODE SCHEMATIC DEFAULTS
   const hasCustomNodes =
@@ -552,19 +741,39 @@ export function resolveSmartSlideVisuals(
     ? ['dollarSign', 'landmark', 'factory']
     : ['server', 'cpu', 'database'];
 
-  const diagramNodes: DiagramNode[] = hasCustomNodes
-    ? slide.diagramNodes!.slice(0, 3).map((n, i) => ({
-        label: n.label || phrases[i] || `Stage 0${i + 1}`,
-        sublabel: !isGenericPlaceholderValue(n.sublabel) ? n.sublabel : variantMeta.subs[i],
-        status: n.status || variantMeta.statuses[i],
-        icon: n.icon || matchedIcons[i % matchedIcons.length] || defaultNodeIcons[i],
-      }))
-    : [0, 1, 2].map((i) => ({
-        label: phrases[i] || `Component 0${i + 1}`,
-        sublabel: variantMeta.subs[i],
-        status: variantMeta.statuses[i],
-        icon: matchedIcons[i % matchedIcons.length] || defaultNodeIcons[i],
-      }));
+  const diagramNodes: DiagramNode[] = (() => {
+    const rawNodes = hasCustomNodes
+      ? slide.diagramNodes!.slice(0, 3).map((n, i) => ({
+          label: n.label || phrases[i] || `Stage 0${i + 1}`,
+          sublabel: !isGenericPlaceholderValue(n.sublabel) ? n.sublabel : variantMeta.subs[i],
+          status: n.status || variantMeta.statuses[i],
+          icon:
+            n.icon && !THIRD_PARTY_COMPANY_NAMES.has(n.icon.toLowerCase())
+              ? n.icon
+              : matchedIcons[i % matchedIcons.length] || defaultNodeIcons[i],
+        }))
+      : [0, 1, 2].map((i) => ({
+          label: phrases[i] || `Component 0${i + 1}`,
+          sublabel: variantMeta.subs[i],
+          status: variantMeta.statuses[i],
+          icon: matchedIcons[i % matchedIcons.length] || defaultNodeIcons[i],
+        }));
+
+    // Deduplicate any repeated node labels
+    const seenNodeLabels = new Set<string>();
+    return rawNodes.map((node, i) => {
+      const key = (node.label || '').trim().toUpperCase();
+      if (!key || seenNodeLabels.has(key)) {
+        const replacement =
+          phrases.find((p) => !seenNodeLabels.has(p.trim().toUpperCase())) ||
+          `Stage 0${i + 1}`;
+        seenNodeLabels.add(replacement.trim().toUpperCase());
+        return { ...node, label: replacement };
+      }
+      seenNodeLabels.add(key);
+      return node;
+    });
+  })();
 
   const diagramEdges: [string, string] =
     !forceRefresh &&
@@ -603,8 +812,22 @@ export function resolveSmartSlideVisuals(
       ? (slide.centerIcon || slide.icons?.[0]?.icon)!
       : matchedIcons[0] || (isFinancialOrMacro ? 'dollarSign' : 'cpu');
 
-  // 4. METRIC ARCHETYPE DEFAULTS
+  // 4. METRIC ARCHETYPE DEFAULTS (Rule 1 Hook Engine + Rule 3 Data Integrity)
+  const beforeAfterMatch =
+    fullText.match(
+      /\b(?:from|dropped\s+from|slashed\s+from|reduced\s+from|cut\s+from|shrinking\s+[\w\s]{0,18}from)\s+(\$?\d+(?:[.,]\d+)?\s*(?:x|%|ms|μs|µs|ns|s|GB|MB|KB|TB|PB|B|M|T|K|nodes?|servers?|cores?)?)\s+(?:to|down\s+to|into|->|→)\s+(\$?\d+(?:[.,]\d+)?\s*(?:x|%|ms|μs|µs|ns|s|GB|MB|KB|TB|PB|B|M|T|K|nodes?|servers?|cores?)?)/i
+    ) ||
+    fullText.match(
+      /(\$?\d+(?:[.,]\d+)?\s*(?:ms|μs|µs|ns|s|%|GB|MB|KB|TB|nodes?))\s*(?:->|→|➔)\s*(\$?\d+(?:[.,]\d+)?\s*(?:ms|μs|µs|ns|s|%|GB|MB|KB|TB|nodes?))/i
+    );
+
+  const parsedBeforeValue = slide.metricBeforeValue?.trim() || (beforeAfterMatch ? beforeAfterMatch[1].replace(/\s+/g, '') : undefined);
+  const parsedAfterWinValue = beforeAfterMatch ? beforeAfterMatch[2].replace(/\s+/g, '') : undefined;
+
+  const hasSourceNumber = /\d/.test(fullText) || Boolean(slide.metricValue && /\d/.test(slide.metricValue));
+
   const extractedMetric = (() => {
+    if (parsedAfterWinValue) return parsedAfterWinValue;
     const currencyMatch = fullText.match(/\$\s*(\d+(?:[.,]\d+)?)\s*(trillion|billion|million|T|B|M|K)?/i);
     if (currencyMatch) {
       const unit = currencyMatch[2] ? currencyMatch[2][0].toUpperCase() : '';
@@ -622,38 +845,118 @@ export function resolveSmartSlideVisuals(
     if (gwMatch) {
       return `${gwMatch[1]} GW`;
     }
-    const techMetric = fullText.match(/\b(\d+(?:\.\d+)?\s*(?:x|%|ms|μs|ns|GB|MB|TB|rps|req\/s))\b/i);
-    if (techMetric) {
-      return techMetric[1].replace(/\s+/g, '');
+    // Prefer the WIN / reduction figure when multiple numbers exist
+    const allTechMetrics = Array.from(
+      fullText.matchAll(/\b(\d+(?:\.\d+)?\s*(?:x|%|ms|μs|µs|ns|GB|MB|KB|TB|rps|req\/s|nodes?))\b/gi)
+    ).map((m) => m[1].replace(/\s+/g, ''));
+    if (allTechMetrics.length > 0) {
+      return allTechMetrics[0];
     }
-    return isFinancialOrMacro ? '$1.4T' : '10x';
+    const plainNum = fullText.match(/\b(\d[\d,.]*)\b/);
+    if (plainNum) {
+      return plainNum[1];
+    }
+    return isFinancialOrMacro ? '$1.4T' : '15ms';
   })();
 
-  const isNegativeContext = /breach|loss|losses|deficit|burn|debt|inflation|spike|hack|threat|risk|drop|latency spike|error|vulnerability|خسائر|عجز|تضخم|اختراق|مخاطر|تهديد/i.test(
-    lower
-  );
+  const isDropOrReduction =
+    /\b(?:drop|dropped|dropping|slash|slashed|slashing|cut|cutting|reduce|reduced|reducing|lower|down|shrink|shrinking|fell|eliminat)\b|خفض|تقليص|انخفاض/i.test(
+      lower
+    );
 
-  const metricValue =
-    !forceRefresh && slide.metricValue && slide.metricValue !== '0.4ms' && slide.metricValue !== '10x'
-      ? slide.metricValue
-      : extractedMetric;
+  // Always prefer the "after" / win value over the "before" value!
+  const metricValue = (() => {
+    if (parsedAfterWinValue) {
+      return parsedAfterWinValue;
+    }
+    if (
+      !forceRefresh &&
+      slide.metricValue &&
+      slide.metricValue !== '0.4ms' &&
+      slide.metricValue !== '10x' &&
+      slide.metricValue !== parsedBeforeValue
+    ) {
+      return slide.metricValue;
+    }
+    return extractedMetric;
+  })();
+
+  const metricBeforeValue = parsedBeforeValue && parsedBeforeValue !== metricValue ? parsedBeforeValue : undefined;
+
+  // Derive a clean, authentic domain term from the source (never "125MS TO EXPOSURE METRIC")
+  const derivedRealMetricLabel = (() => {
+    if (/latency|response|delay|ms\b|مللي\s*ثانية|استجابة/i.test(fullText)) return 'RESPONSE DELAY';
+    if (/node|cluster|server|shard|عقدة|خادم/i.test(fullText)) return 'CLUSTER NODES';
+    if (/message|chat|trillion|storage|رسالة|تخزين/i.test(fullText)) return 'MESSAGE STORAGE';
+    if (/cost|spend|bill|price|\$|تكلفة|إنفاق/i.test(fullText)) return 'CLOUD SPEND';
+    if (/memory|ram|buffer|gc\b|ذاكرة/i.test(fullText)) return 'MEMORY FOOTPRINT';
+    if (/token|key|signature|kb\b|bytes?|مفتاح/i.test(fullText)) return 'PAYLOAD SIZE';
+    const cleanPhrase = phrases.find((p) => !/\d/.test(p) && p.length >= 4) || phrases[0] || 'BENCHMARK RESULT';
+    return cleanPhrase.toUpperCase().slice(0, 24);
+  })();
+
+  const isNonsenseMetricLabel = (lbl?: string) =>
+    !lbl ||
+    /EXPOSURE\s+METRIC|SCALE\s+METRIC|PERFORMANCE\s+MULTIPLIER|^p99\s+latency$|\bTO\s+EXPOSURE\b/i.test(lbl);
 
   const metricLabel =
-    !forceRefresh && slide.metricLabel && slide.metricLabel !== 'p99 Latency' && slide.metricLabel !== 'PERFORMANCE MULTIPLIER'
+    !forceRefresh && slide.metricLabel && !isNonsenseMetricLabel(slide.metricLabel)
       ? slide.metricLabel
-      : `${(phrases[0] || (isFinancialOrMacro ? 'CAPITAL' : 'SYSTEM')).toUpperCase()} ${isNegativeContext ? 'EXPOSURE METRIC' : 'SCALE METRIC'}`;
+      : derivedRealMetricLabel;
+
+  // Compute plain-language outcome badge (e.g. "8x FASTER • 88% DROP")
+  const derivedPlainOutcomeBadge = (() => {
+    if (metricBeforeValue && metricValue) {
+      const bNum = parseFloat(metricBeforeValue.replace(/[^0-9.]/g, ''));
+      const aNum = parseFloat(metricValue.replace(/[^0-9.]/g, ''));
+      if (!isNaN(bNum) && !isNaN(aNum) && bNum > aNum && aNum > 0) {
+        const ratio = Math.round(bNum / aNum);
+        const pct = Math.round(((bNum - aNum) / bNum) * 100);
+        if (ratio >= 2) {
+          return `${ratio}x FASTER • ${pct}% DROP`;
+        }
+        return `${pct}% REDUCTION`;
+      }
+    }
+    const pctInText = fullText.match(/\b(\d{1,3}(?:\.\d+)?)%\b/);
+    if (pctInText && isDropOrReduction) {
+      return `${pctInText[1]}% LOWER IN PRODUCTION`;
+    }
+    if (isDropOrReduction) {
+      return `VERIFIED REDUCTION`;
+    }
+    return `VERIFIED OUTCOME`;
+  })();
+
+  const isNonsenseMetricDiff = (diff?: string) =>
+    !diff ||
+    diff === '▲ 94% faster' ||
+    /High\s+.*Exposure|Verified\s+.*Scale/i.test(diff);
 
   const metricDiff =
-    !forceRefresh && slide.metricDiff && slide.metricDiff !== '▲ 94% faster'
+    !forceRefresh && slide.metricDiff && !isNonsenseMetricDiff(slide.metricDiff)
       ? slide.metricDiff
-      : isNegativeContext
-      ? `▼ High ${phrases[1] || (isFinancialOrMacro ? 'Financial' : 'Security')} Exposure`
-      : `▲ Verified ${phrases[0] || (isFinancialOrMacro ? 'Capital' : 'Architecture')} Scale`;
+      : derivedPlainOutcomeBadge;
 
-  const metricIcon =
+  const chartDirection: 'up' | 'down' | 'bar' | 'none' = (() => {
+    if (slide.chartDirection) return slide.chartDirection;
+    if (!hasSourceNumber) return 'none';
+    if (metricBeforeValue) {
+      const bNum = parseFloat(metricBeforeValue.replace(/[^0-9.]/g, ''));
+      const aNum = parseFloat(metricValue.replace(/[^0-9.]/g, ''));
+      if (!isNaN(bNum) && !isNaN(aNum) && bNum > aNum) return 'down';
+    }
+    if (isDropOrReduction) return 'down';
+    return 'up';
+  })();
+
+  const rawMetricIcon =
     !forceRefresh && slide.metricIcon && slide.metricIcon !== 'zap'
       ? slide.metricIcon
       : matchedIcons[0] || (isFinancialOrMacro ? 'dollarSign' : 'zap');
+  const metricIcon = THIRD_PARTY_COMPANY_NAMES.has(rawMetricIcon.toLowerCase())
+    ? matchedIcons[0] || 'zap'
+    : rawMetricIcon;
 
   // 5. CODE DIFF ARCHETYPE DEFAULTS
   const derivedCode = (() => {
@@ -766,10 +1069,12 @@ export function resolveSmartSlideVisuals(
     stepNumber,
     stepLabel,
     numberIcon,
+    metricBeforeValue,
     metricValue,
     metricLabel,
     metricDiff,
     metricIcon,
+    chartDirection,
     codeFileName,
     codeLanguage,
     codeSnippet,
@@ -781,12 +1086,166 @@ export function resolveSmartSlideVisuals(
 }
 
 /**
- * Deck-Wide Dynamic Archetype & Graphic Diversifier:
- * Analyzes Slides 2 through N-1 and assigns a rich variety of visual archetypes
- * (`compare`, `code`, `metric`, `number`, and non-repeating `row` diagramVariants)
- * while seeding content-specific nodes, comparisons, metrics, and code snippets from each slide's copy.
+ * Rule 1: HOOK ENGINE (Slide 1 of any deck)
+ * - Finds the single most surprising fact or number in the source and makes the WIN ("after") the focal point.
+ * - Shows before/after as a small struck-through old value plus a huge new value, with a plain-language badge.
+ * - Translates technical jargon on Slide 1 into plain outcomes for startup and SME owners.
+ * - Enforces max 12 words per headline and sets storyRole: 'hook' so body text never appears on Slide 1.
  */
-export function diversifyDeckArchetypesAndVisuals(slides: SlideData[]): SlideData[] {
+export function applyHookEngineToSlide1(slide: SlideData, isSingleSlide: boolean = false): SlideData {
+  if (isSingleSlide || slide.type === 'poster' || slide.standaloneMeme) {
+    return slide;
+  }
+
+  // First extract visuals while slide.enBody is still available so numbers in body aren't lost
+  const smart = resolveSmartSlideVisuals(slide, 0, true);
+  const plainEnTitle = capHeadlineToTwelveWords(
+    translateSlide1JargonToPlainOutcome(slide.enTitle || ''),
+    false
+  );
+  const plainArTitle = capHeadlineToTwelveWords(slide.arTitle || '', true);
+
+  return {
+    ...slide,
+    storyRole: 'hook',
+    cornerTag: deriveSlideCornerTag(slide, 0, 6),
+    enTitle: plainEnTitle || slide.enTitle,
+    arTitle: plainArTitle || slide.arTitle,
+    metricBeforeValue: smart.metricBeforeValue,
+    metricValue: smart.metricValue,
+    metricLabel: smart.metricLabel,
+    metricDiff: smart.metricDiff,
+    metricIcon: smart.metricIcon,
+    chartDirection: smart.chartDirection,
+  };
+}
+
+/**
+ * Determines the most scroll-stopping Slide 1 cover archetype based on the story angle:
+ * - 'compare' for head-to-head showdowns, replacements, or paradigm shifts
+ * - 'metric' for shocking benchmarks, dollar figures, latency drops, or scale numbers
+ * - 'row' (isolation/topology schematic) for security vulnerabilities, zero-days, or protocol mechanics
+ * - 'hub' for broad ecosystem, architecture, or multi-pillar overviews
+ */
+export function inferDynamicCoverArchetype(slide: SlideData): SlideType {
+  if (slide.type === 'image' && (slide.imageUrl || slide.videoUrl)) return 'image';
+  if (slide.type === 'poster') return 'poster';
+
+  const title = (slide.enTitle || '').trim();
+  const body = (slide.enBody || '').trim();
+  const arTitle = (slide.arTitle || '').trim();
+  const combined = `${title} ${body} ${arTitle}`;
+
+  // 1. Head-to-head comparison / migration / replacement angle -> Compare cover
+  if (
+    /\b(?:vs\.?|versus|compared\s+to|instead\s+of|replaces|replacing|migrating\s+from|ditched|ditching|outperforms|beats)\b/i.test(
+      combined
+    ) ||
+    /مقابل|بدلاً\s+من|مقارنة/.test(arTitle)
+  ) {
+    return 'compare';
+  }
+
+  // 2. Hard benchmark / financial shock / latency / scale number in the hook -> Metric cover
+  if (
+    /(?:\$\d[\d,.]*\s*[KMBTkmbt]?|\b\d+(?:\.\d+)?\s*(?:%|x|X|ms|µs|ns|s|GB\/s|MB\/s|KB|MB|GB|TB|PB|req\/s|RPS|ops\/s|QPS|tokens\/s|GW|MW|billion|trillion|million)\b)/i.test(
+      `${title} ${body}`
+    )
+  ) {
+    return 'metric';
+  }
+
+  // 3. Zero-day / CVE / protocol / kernel / isolation mechanism -> Row schematic cover
+  if (
+    /\b(?:cve-\d{4}|zero[- ]?day|exploit|vulnerability|sandbox|ebpf|kernel|handshake|protocol|wireguard|mtls|post[- ]?quantum|signature\s+size)\b/i.test(
+      combined
+    )
+  ) {
+    return 'row';
+  }
+
+  return 'hub';
+}
+
+/**
+ * Returns a crisp one-line explanation for why "Smart Match" or "Diversify Deck"
+ * selected a slide's layout archetype and schematic variant.
+ */
+export function explainArchetypeChoice(
+  slide: SlideData,
+  slideIndex: number = 0,
+  totalSlides: number = 8
+): string {
+  const fullText = `${slide.enTitle || ''} ${slide.enBody || ''}`;
+  const type = slide.type;
+
+  if (type === 'cta' || (totalSlides > 1 && slideIndex === totalSlides - 1)) {
+    return 'Picked CTA closer for the final slide to drive comments and attribution.';
+  }
+  if (type === 'compare') {
+    const vsMatch = fullText.match(/\b([A-Za-z0-9-]+)\s+(?:vs\.?|versus|instead\s+of|compared\s+to)\s+([A-Za-z0-9-]+)/i);
+    if (vsMatch) {
+      return `Picked Compare layout because copy contrasts "${vsMatch[1]} vs ${vsMatch[2]}".`;
+    }
+    return 'Picked Compare side-by-side layout to contrast baseline vs optimized architecture.';
+  }
+  if (type === 'metric') {
+    const m = fullText.match(/(?:\$\d[\d,.]*[KMBTkmbt]?|\b\d+(?:\.\d+)?\s*(?:%|x|X|ms|µs|ns|KB|MB|GB|TB|GW|rps|req\/s)\b)/i);
+    if (m) {
+      return `Picked Metric card to spotlight the hard "${m[0].trim()}" benchmark figure.`;
+    }
+    return 'Picked Metric card to highlight quantitative performance and scale impact.';
+  }
+  if (type === 'code') {
+    return `Picked Code window (${(slide.codeLanguage || 'spec').toUpperCase()}) for implementation syntax & diff clarity.`;
+  }
+  if (type === 'number') {
+    return `Picked Numbered Stage (${slide.stepNumber || `0${slideIndex + 1}`}) for sequential step-by-step progression.`;
+  }
+  if (type === 'hub') {
+    return 'Picked Orbital Hub diagram with 5 cause → effect nodes for ecosystem overview.';
+  }
+  if (type === 'poster') {
+    return 'Picked Dense Poster layout to pack schematic + 3 bilingual takeaways on one frame.';
+  }
+  if (type === 'image') {
+    return 'Picked Media Card layout to frame custom visual asset with safe-zone chrome.';
+  }
+
+  // Row schematic variants
+  switch (slide.diagramVariant) {
+    case 'isolation':
+      return 'Picked Isolation Grid schematic because copy focuses on security boundaries & blast radius.';
+    case 'graph':
+      return 'Picked Hierarchical Graph schematic to illustrate multi-hop routing and traversal.';
+    case 'clusters':
+      return 'Picked Cluster Partition schematic to show sharding, centroids, and search pruning.';
+    case 'split':
+      return 'Picked Dual-Store Split schematic to contrast hot write buffers vs cold storage.';
+    case 'stack':
+      return 'Picked 3-Tier Stack schematic to visualize vertical execution layers.';
+    case 'scatter':
+      return 'Picked Vector Scatter schematic to illustrate high-dimensional similarity lookup.';
+    case 'takeaway':
+      return 'Picked Architectural Verdict card to summarize the core production trade-off.';
+    case 'features':
+      return 'Picked 3-Pillar Feature cards to present parallel system capabilities.';
+    default:
+      return 'Picked 3-Node Topology flow to map Ingress → Processing → Target state.';
+  }
+}
+
+/**
+ * Deck-Wide Dynamic Archetype & Graphic Diversifier:
+ * Analyzes Slides 1 through N-1 and assigns a rich variety of visual archetypes
+ * (`compare`, `code`, `metric`, `number`, `hub`, and non-repeating `row` diagramVariants)
+ * while seeding content-specific nodes, comparisons, metrics, and code snippets from each slide's copy.
+ * Respects `slide.manualLayoutLocked` (Cascade Lock) so manually edited slides are protected.
+ */
+export function diversifyDeckArchetypesAndVisuals(
+  slides: SlideData[],
+  options?: { dynamicCover?: boolean }
+): SlideData[] {
   if (!slides || slides.length <= 1) return slides;
 
   const variantRotation: DiagramVariant[] = [
@@ -803,28 +1262,126 @@ export function diversifyDeckArchetypesAndVisuals(slides: SlideData[]): SlideDat
   let usedCompare = false;
   let usedCode = false;
   let usedMetric = false;
+  let slide1CoverType: SlideType = 'hub';
 
   return slides.map((slide, idx) => {
-    // Keep Slide 1 as Hub and Last Slide as CTA (with refreshed smart visuals if generic)
-    if (idx === 0) {
-      const smartHub = resolveSmartSlideVisuals(slide, 0, true);
+    const storyRole: SlideData['storyRole'] =
+      idx === 0
+        ? 'hook'
+        : idx === slides.length - 1
+        ? 'cta'
+        : idx === slides.length - 2
+        ? 'takeaway'
+        : idx === 1
+        ? 'problem'
+        : /\d/.test(`${slide.enTitle || ''} ${slide.enBody || ''}`) && idx >= 3
+        ? 'proof'
+        : 'mechanism';
+
+    // Cascade Lock: protect slides edited manually by the user
+    if (slide.manualLayoutLocked) {
+      if (idx === 0) slide1CoverType = slide.type;
+      if (slide.type === 'compare') usedCompare = true;
+      if (slide.type === 'code') usedCode = true;
+      if (slide.type === 'metric') usedMetric = true;
       return {
         ...slide,
-        type: 'hub',
-        centerIcon: smartHub.centerIcon,
-        centerTag: smartHub.centerTag,
-        satLabels: smartHub.satLabels,
-        satIcons: smartHub.satIcons,
+        storyRole: slide.storyRole || storyRole,
+        cornerTag: slide.cornerTag || deriveSlideCornerTag({ ...slide, storyRole }, idx, slides.length),
+        layoutRationale: slide.layoutRationale || 'Locked manually via Cascade Lock (preserved during deck sync).',
       };
     }
 
+    // Slide 1 Cover: preserve explicit cover archetype (from AI or HookVariant) or infer dynamic cover when requested
+    if (idx === 0) {
+      const explicitNonHubCover =
+        slide.type === 'metric' ||
+        slide.type === 'compare' ||
+        slide.type === 'code' ||
+        slide.type === 'row' ||
+        slide.type === 'poster' ||
+        slide.type === 'image';
+
+      const coverType: SlideType = explicitNonHubCover
+        ? slide.type
+        : options?.dynamicCover
+        ? inferDynamicCoverArchetype(slide)
+        : 'hub';
+
+      slide1CoverType = coverType;
+      if (coverType === 'compare') usedCompare = true;
+      if (coverType === 'metric') usedMetric = true;
+      if (coverType === 'code') usedCode = true;
+
+      const coverVariant: DiagramVariant | undefined =
+        coverType === 'row'
+          ? slide.diagramVariant ||
+            (inferBestDiagramVariant(slide) !== 'topology'
+              ? inferBestDiagramVariant(slide)
+              : 'isolation')
+          : slide.diagramVariant;
+
+      const smartCover = resolveSmartSlideVisuals(
+        { ...slide, type: coverType, diagramVariant: coverVariant },
+        0,
+        true
+      );
+
+      if (coverType === 'row') {
+        variantCursor++;
+      }
+
+      const nextCover: SlideData = applyHookEngineToSlide1(
+        {
+          ...slide,
+          type: coverType,
+          storyRole: 'hook',
+          centerIcon: smartCover.centerIcon,
+          centerTag: smartCover.centerTag,
+          satLabels: smartCover.satLabels,
+          satIcons: smartCover.satIcons,
+          metricBeforeValue: smartCover.metricBeforeValue,
+          metricValue: smartCover.metricValue,
+          metricLabel: smartCover.metricLabel,
+          metricDiff: smartCover.metricDiff,
+          metricIcon: smartCover.metricIcon,
+          chartDirection: smartCover.chartDirection,
+          compareLeftTitle: smartCover.compareLeftTitle,
+          compareLeftBody: smartCover.compareLeftBody,
+          compareRightTitle: smartCover.compareRightTitle,
+          compareRightBody: smartCover.compareRightBody,
+          codeFileName: smartCover.codeFileName,
+          codeLanguage: smartCover.codeLanguage,
+          codeSnippet: smartCover.codeSnippet,
+          diagramVariant: coverType === 'row' ? coverVariant || smartCover.diagramVariant : slide.diagramVariant,
+          diagramNodes: smartCover.diagramNodes,
+          diagramEdges: smartCover.diagramEdges,
+          diagramFooter: smartCover.diagramFooter,
+        },
+        false
+      );
+      nextCover.cornerTag = deriveSlideCornerTag(nextCover, 0, slides.length);
+      nextCover.layoutRationale = explainArchetypeChoice(nextCover, 0, slides.length);
+      return nextCover;
+    }
+
     if (idx === slides.length - 1 && slide.type === 'cta') {
-      return slide;
+      return {
+        ...slide,
+        storyRole: 'cta',
+        cornerTag: 'ACTION',
+        layoutRationale: explainArchetypeChoice(slide, idx, slides.length),
+      };
     }
 
     // Preserve explicit custom images/videos
     if (slide.type === 'image' && (slide.imageUrl || slide.videoUrl)) {
-      return slide;
+      return {
+        ...slide,
+        storyRole,
+        cornerTag: deriveSlideCornerTag({ ...slide, storyRole }, idx, slides.length),
+        layoutRationale: explainArchetypeChoice(slide, idx, slides.length),
+      };
     }
 
     // Penultimate slide: Takeaway / Trade-off schematic
@@ -834,17 +1391,26 @@ export function diversifyDeckArchetypesAndVisuals(slides: SlideData[]): SlideDat
         idx,
         true
       );
-      return {
+      const nextTakeaway: SlideData = {
         ...slide,
         type: 'row',
+        storyRole: 'takeaway',
+        cornerTag: 'TAKEAWAY',
         diagramVariant: 'takeaway',
         diagramNodes: smartTakeaway.diagramNodes,
         diagramEdges: smartTakeaway.diagramEdges,
         diagramFooter: smartTakeaway.diagramFooter,
       };
+      nextTakeaway.layoutRationale = explainArchetypeChoice(nextTakeaway, idx, slides.length);
+      return nextTakeaway;
     }
 
     let targetType: SlideType = analyzeSlideTextForArchetype(slide, idx);
+
+    // Prevent Slide 2 from duplicating Slide 1's cover archetype
+    if (idx === 1 && targetType === slide1CoverType && slide1CoverType !== 'row') {
+      targetType = !usedCompare ? 'compare' : !usedMetric ? 'metric' : 'row';
+    }
 
     // Ensure rich archetype variety across mid-deck slides (Slides 2 to N-2)
     if (targetType === 'row') {
@@ -879,55 +1445,77 @@ export function diversifyDeckArchetypesAndVisuals(slides: SlideData[]): SlideDat
     );
 
     if (targetType === 'compare') {
-      return {
+      const nextCompare: SlideData = {
         ...slide,
         type: 'compare',
+        storyRole,
         compareLeftTitle: smart.compareLeftTitle,
         compareLeftBody: smart.compareLeftBody,
         compareRightTitle: smart.compareRightTitle,
         compareRightBody: smart.compareRightBody,
       };
+      nextCompare.cornerTag = deriveSlideCornerTag(nextCompare, idx, slides.length);
+      nextCompare.layoutRationale = explainArchetypeChoice(nextCompare, idx, slides.length);
+      return nextCompare;
     }
 
     if (targetType === 'code') {
-      return {
+      const nextCode: SlideData = {
         ...slide,
         type: 'code',
+        storyRole,
         codeFileName: smart.codeFileName,
         codeLanguage: smart.codeLanguage,
         codeSnippet: smart.codeSnippet,
       };
+      nextCode.cornerTag = deriveSlideCornerTag(nextCode, idx, slides.length);
+      nextCode.layoutRationale = explainArchetypeChoice(nextCode, idx, slides.length);
+      return nextCode;
     }
 
     if (targetType === 'metric') {
-      return {
+      const nextMetric: SlideData = {
         ...slide,
         type: 'metric',
+        storyRole: 'proof',
+        metricBeforeValue: smart.metricBeforeValue,
         metricValue: smart.metricValue,
         metricLabel: smart.metricLabel,
         metricDiff: smart.metricDiff,
         metricIcon: smart.metricIcon,
+        chartDirection: smart.chartDirection,
       };
+      nextMetric.cornerTag = deriveSlideCornerTag(nextMetric, idx, slides.length);
+      nextMetric.layoutRationale = explainArchetypeChoice(nextMetric, idx, slides.length);
+      return nextMetric;
     }
 
     if (targetType === 'number') {
-      return {
+      const nextNum: SlideData = {
         ...slide,
         type: 'number',
+        storyRole,
         stepNumber: smart.stepNumber,
         stepLabel: smart.stepLabel,
         centerIcon: smart.numberIcon,
       };
+      nextNum.cornerTag = deriveSlideCornerTag(nextNum, idx, slides.length);
+      nextNum.layoutRationale = explainArchetypeChoice(nextNum, idx, slides.length);
+      return nextNum;
     }
 
-    return {
+    const nextRow: SlideData = {
       ...slide,
       type: 'row',
+      storyRole,
       diagramVariant: chosenVariant || smart.diagramVariant,
       diagramNodes: smart.diagramNodes,
       diagramEdges: smart.diagramEdges,
       diagramFooter: smart.diagramFooter,
     };
+    nextRow.cornerTag = deriveSlideCornerTag(nextRow, idx, slides.length);
+    nextRow.layoutRationale = explainArchetypeChoice(nextRow, idx, slides.length);
+    return nextRow;
   });
 }
 
@@ -942,7 +1530,7 @@ export function autoFitSlideCopyToLimits(
 ): SlideData {
   const isSingle = isSingleSlide || slide.type === 'poster';
   const limits = isSingle ? SINGLE_SLIDE_CHAR_LIMITS : CHAR_LIMITS;
-  const isHook = slideIndex === 0 && slide.type === 'hub';
+  const isHook = slideIndex === 0 || slide.type === 'hub';
   const enTitleLimit = isHook ? limits.hookTitle : limits.enTitle;
 
   const rawEnTitle = (slide.enTitle || '').trim();
@@ -967,13 +1555,23 @@ export function autoFitSlideCopyToLimits(
       ? fixArabicPunctuation(autoFitTextToLimits(rawArBody, limits.arBody))
       : fixArabicPunctuation(rawArBody);
 
-  return {
-    ...slide,
-    enTitle: fittedEnTitle || slide.enTitle,
-    arTitle: fittedArTitle || slide.arTitle,
-    enBody: fittedEnBody || slide.enBody,
-    arBody: fittedArBody || slide.arBody,
-  };
+  const hooked = !isSingle && slideIndex === 0
+    ? applyHookEngineToSlide1({
+        ...slide,
+        enTitle: fittedEnTitle || slide.enTitle,
+        arTitle: fittedArTitle || slide.arTitle,
+        enBody: fittedEnBody || slide.enBody,
+        arBody: fittedArBody || slide.arBody,
+      })
+    : {
+        ...slide,
+        enTitle: fittedEnTitle || slide.enTitle,
+        arTitle: fittedArTitle || slide.arTitle,
+        enBody: fittedEnBody || slide.enBody,
+        arBody: fittedArBody || slide.arBody,
+      };
+
+  return hooked;
 }
 
 /**
@@ -985,9 +1583,15 @@ export function autoSyncSlideGraphicsFromCopy(
   slide: SlideData,
   slideIndex: number = 0
 ): SlideData {
-  if (slide.type === 'cta') return slide;
+  if (slide.type === 'cta') {
+    return {
+      ...slide,
+      storyRole: 'cta',
+      cornerTag: 'ACTION',
+    };
+  }
   const smart = resolveSmartSlideVisuals(slide, slideIndex, true);
-  return {
+  const synced: SlideData = {
     ...slide,
     diagramVariant: slide.diagramVariant || smart.diagramVariant,
     diagramNodes: smart.diagramNodes,
@@ -1000,10 +1604,12 @@ export function autoSyncSlideGraphicsFromCopy(
     codeFileName: smart.codeFileName,
     codeLanguage: smart.codeLanguage,
     codeSnippet: smart.codeSnippet,
+    metricBeforeValue: smart.metricBeforeValue,
     metricValue: smart.metricValue,
     metricLabel: smart.metricLabel,
     metricDiff: smart.metricDiff,
     metricIcon: smart.metricIcon,
+    chartDirection: smart.chartDirection,
     stepNumber: smart.stepNumber,
     stepLabel: smart.stepLabel,
     centerIcon: smart.centerIcon,
@@ -1011,31 +1617,37 @@ export function autoSyncSlideGraphicsFromCopy(
     satLabels: smart.satLabels,
     satIcons: smart.satIcons,
   };
+  synced.cornerTag = slide.cornerTag || deriveSlideCornerTag(synced, slideIndex, 8);
+  return slideIndex === 0 ? applyHookEngineToSlide1(synced) : synced;
 }
 
 /**
  * Zero-Click Deck Finalizer:
- * Automatically diversifies Slides 2–7 across archetypes & 9 schematic variants,
- * synchronizes every slide's graphic elements from its copy, and auto-fits
- * all bilingual headlines and body text to mobile character limits.
+ * Automatically diversifies Slides across archetypes & schematic variants,
+ * applies the Slide 1 Hook Engine, synchronizes every slide's graphic elements
+ * from its copy, and auto-fits all bilingual headlines and body text to mobile limits.
  */
 export function autoFinalizeCarouselDeck(deck: CarouselData): CarouselData {
   const isSingle = deck.postFormat === 'single' || (deck.slides || []).length === 1;
-  const rawSlides = deck.slides || [];
+  const rawSlides = repairAndDeRepeatSlideHeadlines(deck.slides || []);
   const diversified =
     !isSingle && rawSlides.length > 2
-      ? diversifyDeckArchetypesAndVisuals(rawSlides)
+      ? diversifyDeckArchetypesAndVisuals(rawSlides, { dynamicCover: true })
       : rawSlides;
 
-  const finalizedSlides = diversified.map((slide, idx) => {
+  const finalizedSlides = repairAndDeRepeatSlideHeadlines(diversified).map((slide, idx) => {
     const fitted = autoFitSlideCopyToLimits(slide, idx, isSingle);
     return autoSyncSlideGraphicsFromCopy(fitted, idx);
   });
 
   return {
     ...deck,
+    brand: 'MARROK',
+    brandUrl: 'marrok.org',
+    syncDeckEnabled: deck.syncDeckEnabled ?? true,
     slides: finalizedSlides,
   };
 }
+
 
 

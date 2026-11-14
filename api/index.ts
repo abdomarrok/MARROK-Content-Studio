@@ -5,6 +5,8 @@ import {
   handleSearchMedia,
   handleGetTopicRadar,
   handleExtractUrlContent,
+  handleAutopilotGatherAndSynthesize,
+  handleTelegramWebhook,
 } from './controllers/mediaController.ts';
 import { handleGenerateImage } from './controllers/imageController.ts';
 import { handleGenerateCarousel, handleRefineSlide } from './controllers/generateController.ts';
@@ -41,7 +43,7 @@ app.use((req, res, next) => {
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.header(
     'Access-Control-Allow-Headers',
-    'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-gemini-key, x-gemini-api-key, x-gemini-backup-key, x-api-secret'
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-gemini-key, x-gemini-api-key, x-gemini-backup-key, x-api-secret, x-telegram-bot-api-secret-token'
   );
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
@@ -93,9 +95,11 @@ app.post(['/api/generate-image', '/generate-image'], generationLimiter, handleGe
 app.post(['/api/generate', '/generate'], generationLimiter, handleGenerateCarousel);
 app.post(['/api/refine-slide', '/refine-slide'], generationLimiter, handleRefineSlide);
 
-// Automated Post Gathering & URL Extraction Endpoints
+// Automated Post Gathering, Quality-Gated Autopilot & Telegram Webhook Endpoints
 app.get(['/api/gather/radar', '/gather/radar'], handleGetTopicRadar);
 app.post(['/api/gather/extract-url', '/gather/extract-url'], generationLimiter, handleExtractUrlContent);
+app.post(['/api/gather/autopilot', '/gather/autopilot'], generationLimiter, handleAutopilotGatherAndSynthesize);
+app.post(['/api/gather/telegram-webhook', '/gather/telegram-webhook'], generationLimiter, handleTelegramWebhook);
 
 // Validated & Posted Carousels Vault Endpoints
 app.get(['/api/posts', '/posts'], handleListPosts);

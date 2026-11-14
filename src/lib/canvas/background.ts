@@ -156,17 +156,13 @@ export function drawCadReticles(
     ctx.lineTo(rightX - 6, ty);
   }
   ctx.stroke();
-
-  ctx.font = '500 12px "JetBrains Mono", monospace';
-  ctx.fillStyle = `${theme.accent}66`;
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
-  ctx.fillText(resolved.cadRefLabel, leftX + 16, topY - 4);
+  // Step 6: Deleted 12px SYS_REF text label (all visible text must be >= 24px at 1080x1920)
   ctx.restore();
 }
 
 /**
  * 4. Header: Top-Left Authentic MARROK Vector Badge + Full Wordmark "MARROK" + Pulsing Accent Dot
+ * + Top-Right Slide-Type Corner Tag (BENCHMARK, ARCHITECTURE, COST, PROBLEM, TAKEAWAY, ACTION) at >=24px
  */
 export function drawHeader(
   ctx: CanvasRenderingContext2D,
@@ -177,8 +173,7 @@ export function drawHeader(
 ) {
   const resolved = spec || getCanvasDimensionSpec(carousel?.dimensionPreset);
   ctx.save();
-  const rawBrand = (carousel.brand || 'MARROK').trim();
-  const displayBrandText = rawBrand || 'MARROK';
+  const displayBrandText = 'MARROK';
 
   // Crisp compact authentic MARROK vector logo badge (32x32px)
   const logoBadgeSize = 32;
@@ -222,104 +217,105 @@ export function drawHeader(
   ctx.shadowBlur = 0;
   ctx.shadowColor = 'transparent';
 
-  // Top-Right Category Tag (omitted on Meme posts or when categoryTag is empty)
+  // Top-Right Corner Tag (omitted on Meme posts or when categoryTag is empty)
+  // Enforces >= 24px at 1080x1920 (never shrinks below 24px on 9:16)
   const cleanCategory = (categoryTag || '').trim();
   if (cleanCategory && carousel.postFormat !== 'meme') {
     const headerRightX = resolved.headerMarginRight ?? resolved.safeMarginRight;
-    ctx.font = '400 28px "Plus Jakarta Sans", sans-serif';
+    const minLeftClearanceX = dotX + 26;
+    const maxCategoryW = Math.max(180, headerRightX - minLeftClearanceX);
+    const minTagSize = resolved.height >= 1920 ? 24 : 20;
+    let catFontSize = 26;
+    ctx.font = `700 ${catFontSize}px "Plus Jakarta Sans", sans-serif`;
+    while (catFontSize > minTagSize && ctx.measureText(cleanCategory).width > maxCategoryW) {
+      catFontSize -= 1;
+      ctx.font = `700 ${catFontSize}px "Plus Jakarta Sans", sans-serif`;
+    }
     ctx.fillStyle = theme.categoryTag;
     ctx.textAlign = 'right';
-    ctx.fillText(cleanCategory, headerRightX, logoBadgeY + 28);
+    ctx.fillText(cleanCategory, headerRightX, logoBadgeY + 27);
   }
   ctx.restore();
 }
 
 /**
- * 7. Pagination Footer (Multi-slide dots at spec.paginationDotY, or Standalone Attribution Footer when totalSlides === 1)
+ * 7. Safe-Zone Source & Brand Footer:
+ * - Slide dots and swipe chips removed from artwork (TikTok shows its own).
+ * - Renders "Source: <name>" on the left and "@MARROK" on the right at 24px
+ *   strictly above TikTok's bottom 420px UI zone (y <= 1480 at 1080x1920).
  */
 export function drawPaginationFooter(
   ctx: CanvasRenderingContext2D,
-  slideIndex: number,
-  totalSlides: number,
+  _slideIndex: number,
+  _totalSlides: number,
   theme: ThemePalette,
   carousel?: CarouselData,
   slide?: CarouselData['slides'][number],
   spec?: CanvasDimensionSpec
 ) {
   const resolved = spec || getCanvasDimensionSpec(carousel?.dimensionPreset);
-  const dotY = resolved.paginationDotY;
+  const isFullMediaCard =
+    (slide?.imageFrameMode === 'full' || Boolean(slide?.standaloneMeme)) &&
+    Boolean(slide?.imageUrl || slide?.videoUrl);
 
-  if (totalSlides <= 1) {
-    ctx.save();
-    const rawBrand = (carousel?.brand || 'MARROK').trim() || 'MARROK';
-    const isFullMediaCard =
-      (slide?.imageFrameMode === 'full' || Boolean(slide?.standaloneMeme)) &&
-      Boolean(slide?.imageUrl || slide?.videoUrl);
-    const rawCredit = (
-      isFullMediaCard
-        ? slide?.enCredit || slide?.arCredit || ''
-        : slide?.enCredit ||
-          slide?.arCredit ||
-          carousel?.channel ||
-          carousel?.sourceMeta?.creator ||
-          carousel?.sourceMeta?.channel ||
-          ''
-    )
-      .replace(/^Source:\s*/i, '')
-      .trim();
+  // Place footer above the bottom 420px TikTok UI zone (y = 1472 <= 1480 on 1080x1920)
+  const footerY =
+    resolved.height >= 1920 && !isFullMediaCard
+      ? 1472
+      : resolved.paginationDotY;
 
-    const leftX = resolved.safeMarginLeft;
-    const rightX = resolved.safeMarginRight;
-    const footerY = dotY;
+  const rawBrand = 'MARROK';
+  const lastSlide = carousel?.slides?.[carousel.slides.length - 1];
+  const rawCredit = (
+    isFullMediaCard
+      ? slide?.enCredit || slide?.arCredit || ''
+      : slide?.enCredit ||
+        slide?.arCredit ||
+        carousel?.sourceMeta?.creator ||
+        carousel?.sourceMeta?.channel ||
+        carousel?.channel ||
+        lastSlide?.enCredit ||
+        ''
+  )
+    .replace(/^Source:\s*/i, '')
+    .replace(/^Based on\s+/i, '')
+    .split(/\.\s+The numbers/i)[0]
+    .trim();
 
-    // Left segment: Source credit (or clean spec indicator on technical posters; left clean on full memes)
-    ctx.font = '600 24px "JetBrains Mono", monospace';
-    ctx.textBaseline = 'middle';
-    if (rawCredit) {
-      ctx.fillStyle = theme.accent;
-      ctx.textAlign = 'left';
-      ctx.fillText('SOURCE //', leftX, footerY);
-      const labelW = ctx.measureText('SOURCE // ').width;
-      ctx.fillStyle = theme.textMuted || 'rgba(255, 255, 255, 0.65)';
-      ctx.fillText(rawCredit.slice(0, 36), leftX + labelW, footerY);
-    } else if (!isFullMediaCard) {
-      ctx.fillStyle = `${theme.accent}99`;
-      ctx.textAlign = 'left';
-      ctx.fillText('STANDALONE INFOGRAPHIC SPEC', leftX, footerY);
-    }
-
-    // Right segment: @MARROK handle with accent status indicator dot
-    const handleText = `@${rawBrand.replace(/^@/, '')}`;
-    ctx.font = '700 24px "JetBrains Mono", "Plus Jakarta Sans", monospace';
-    ctx.textAlign = 'right';
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillText(handleText, rightX, footerY);
-
-    const handleW = ctx.measureText(handleText).width;
-    const dotX = rightX - handleW - 14;
-    ctx.beginPath();
-    ctx.arc(dotX, footerY, 5, 0, Math.PI * 2);
-    ctx.fillStyle = theme.accent;
-    ctx.fill();
-
-    ctx.restore();
-    return;
-  }
-
-  // Multi-Slide Footer:
-  // 1. Left segment: Persistent MARROK vector logo badge + @MARROK signature
-  const rawBrand = (carousel?.brand || 'MARROK').trim() || 'MARROK';
-  const handleText = `@${rawBrand.replace(/^@/, '')}`;
-  const badgeSize = 22;
-  const badgeX = resolved.safeMarginLeft;
-  const badgeY = dotY - badgeSize / 2;
+  const leftX = resolved.safeMarginLeft;
+  const rightX = resolved.safeMarginRight;
+  const fontSize = resolved.height >= 1920 ? 24 : 20;
 
   ctx.save();
-  ctx.shadowColor = theme.accent;
-  ctx.shadowBlur = 6;
-  drawRoundRect(ctx, badgeX, badgeY, badgeSize, badgeSize, 6, '#0D0D0D', `${theme.accent}66`, 1);
-  ctx.restore();
+  ctx.textBaseline = 'middle';
 
+  // Left segment: "Source: <name>" at 24px when source is available
+  if (rawCredit && !isFullMediaCard && slide?.type !== 'cta') {
+    const cleanSource = rawCredit.length > 34 ? rawCredit.slice(0, 34).trim() : rawCredit;
+    ctx.font = `700 ${fontSize}px "Plus Jakarta Sans", sans-serif`;
+    ctx.fillStyle = theme.accent;
+    ctx.textAlign = 'left';
+    const prefix = 'Source: ';
+    ctx.fillText(prefix, leftX, footerY);
+    const prefixW = ctx.measureText(prefix).width;
+    ctx.font = `600 ${fontSize}px "Plus Jakarta Sans", sans-serif`;
+    ctx.fillStyle = theme.textEnBody || '#cbd5e1';
+    ctx.fillText(cleanSource, leftX + prefixW, footerY);
+  }
+
+  // Right segment: Persistent MARROK badge + @MARROK at 24px
+  const handleText = `@${rawBrand}`;
+  ctx.font = `700 ${fontSize}px "JetBrains Mono", "Plus Jakarta Sans", monospace`;
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillText(handleText, rightX, footerY);
+
+  const handleW = ctx.measureText(handleText).width;
+  const badgeSize = 24;
+  const badgeX = rightX - handleW - badgeSize - 10;
+  const badgeY = footerY - badgeSize / 2;
+
+  drawRoundRect(ctx, badgeX, badgeY, badgeSize, badgeSize, 6, '#0D0D0D', `${theme.accent}66`, 1);
   drawMarrokVectorBadge(
     ctx,
     badgeX + badgeSize / 2,
@@ -329,42 +325,6 @@ export function drawPaginationFooter(
     'transparent'
   );
 
-  ctx.save();
-  ctx.font = '700 20px "JetBrains Mono", "Plus Jakarta Sans", monospace';
-  ctx.fillStyle = '#FFFFFF';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(handleText, badgeX + badgeSize + 8, dotY);
-
-  // 2. Right segment: Technical slide counter (e.g. 03 / 08)
-  const slideNumText = `${String(slideIndex + 1).padStart(2, '0')} / ${String(totalSlides).padStart(2, '0')}`;
-  ctx.font = '600 20px "JetBrains Mono", monospace';
-  ctx.fillStyle = theme.textMuted || 'rgba(255, 255, 255, 0.45)';
-  ctx.textAlign = 'right';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(slideNumText, resolved.safeMarginRight, dotY);
-  ctx.restore();
-
-  // 3. Center segment: Pagination dots
-  const dotRadius = 8;
-  const dotDiameter = 16;
-  const dotGap = 16;
-  const step = dotDiameter + dotGap;
-  const totalDotsWidth = totalSlides * dotDiameter + (totalSlides - 1) * dotGap;
-  const startDotX = resolved.safeTextCenterX - totalDotsWidth / 2 + dotRadius;
-
-  ctx.save();
-  for (let i = 0; i < totalSlides; i++) {
-    const dx = startDotX + i * step;
-    ctx.beginPath();
-    ctx.arc(dx, dotY, dotRadius, 0, Math.PI * 2);
-    if (i === slideIndex) {
-      ctx.fillStyle = theme.accent;
-    } else {
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.24)';
-    }
-    ctx.fill();
-  }
   ctx.restore();
 }
 

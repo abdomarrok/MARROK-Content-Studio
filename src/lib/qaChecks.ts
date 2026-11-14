@@ -11,7 +11,7 @@
  * - First-frame (Slide 1) readability
  */
 
-import { CarouselData, SlideData } from '../types';
+import { CarouselData, SlideData, ThemePalette } from '../types';
 
 // ─── Character Limits (Spec §8) ────────────────────────────────────
 export const CHAR_LIMITS = {
@@ -547,12 +547,22 @@ function checkFirstFrame(slides: SlideData[], isSingleSlide: boolean = false): Q
   if (slides.length === 0) return results;
 
   const first = slides[0];
-  if (!isSingleSlide && first.type !== 'hub' && first.type !== 'row') {
+  const validCoverTypes: SlideData['type'][] = [
+    'hub',
+    'row',
+    'metric',
+    'compare',
+    'code',
+    'number',
+    'poster',
+    'image',
+  ];
+  if (!isSingleSlide && !validCoverTypes.includes(first.type)) {
     results.push({
       id: 'first-frame-type',
       severity: 'warn',
       slideIndex: 0,
-      message: `Slide 1 type is "${first.type}" — should be "hub" (hook slide) for best thumbnail impact.`,
+      message: `Slide 1 type is "${first.type}" — use a visual cover archetype (hub, metric, compare, or row) for best thumbnail impact.`,
     });
   }
 
@@ -798,6 +808,493 @@ function checkArabicSafeZone(slide: SlideData, idx: number): QACheckResult[] {
   return results;
 }
 
+/**
+ * Check if key text or diagram elements sit inside TikTok UI zones:
+ * - Top ~150px
+ * - Bottom ~420px (y > 1500 at 1080x1920 when manually shifted down)
+ * - Right ~120px (x > 960 at 1080x1920 when manually shifted right)
+ */
+function checkTikTokSafeZoneViolations(slide: SlideData, idx: number): QACheckResult[] {
+  const results: QACheckResult[] = [];
+  const overrides = slide.layoutOverrides;
+  if (!overrides) return results;
+
+  const headerDy = overrides.headerBadge?.dy ?? 0;
+  const graphicDy = overrides.graphicCard?.dy ?? 0;
+  const titleDy = overrides.titleBlock?.dy ?? 0;
+  const arTitleDy = overrides.arabicTitleBlock?.dy ?? 0;
+  const bodyDy = overrides.bodyBlock?.dy ?? 0;
+  const arBodyDy = overrides.arabicBodyBlock?.dy ?? 0;
+
+  if (headerDy < -35 || graphicDy < -75 || titleDy < -140) {
+    results.push({
+      id: `tiktok-safezone-top-${idx}`,
+      severity: 'fail',
+      slideIndex: idx,
+      field: 'layoutOverrides',
+      message: `Slide ${idx + 1}: Key element sits inside the TikTok top ~150px UI zone. Auto-fix to restore top clearance.`,
+    });
+  }
+
+  if (bodyDy > 75 || arBodyDy > 55 || graphicDy > 140 || titleDy > 110 || arTitleDy > 95) {
+    results.push({
+      id: `tiktok-safezone-bottom-${idx}`,
+      severity: 'fail',
+      slideIndex: idx,
+      field: 'layoutOverrides',
+      message: `Slide ${idx + 1}: Key text or diagram sits inside the TikTok bottom ~420px caption/audio zone.`,
+    });
+  }
+
+  for (const [elKey, ov] of Object.entries(overrides)) {
+    if (ov && !ov.hidden && (ov.dx ?? 0) > 65) {
+      results.push({
+        id: `tiktok-safezone-right-${idx}-${elKey}`,
+        severity: 'fail',
+        slideIndex: idx,
+        field: 'layoutOverrides',
+        message: `Slide ${idx + 1}: Element "${elKey}" sits inside the TikTok right ~120px action icons column (dx=+${ov.dx}px).`,
+      });
+      break;
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Check for truncated descriptions ending with trailing "and...", "or...", "with...", or any ellipsis "…" / "..."
+ */
+function checkTruncatedDescriptions(slide: SlideData, idx: number): QACheckResult[] {
+  const results: QACheckResult[] = [];
+  const fields: Array<{ key: 'enTitle' | 'arTitle' | 'enBody' | 'arBody'; label: string }> = [
+    { key: 'enTitle', label: 'EN title' },
+    { key: 'arTitle', label: 'AR title' },
+    { key: 'enBody', label: 'EN body' },
+    { key: 'arBody', label: 'AR body' },
+  ];
+
+  for (const { key, label } of fields) {
+    const val = (slide[key] || '').trim();
+    if (!val) continue;
+    if (
+      /\b(?:and|or|with|to|for|in|of|by)\s*(?:\.{2,}|…)\s*$/i.test(val) ||
+      /,\s*(?:and|or)?\s*(?:\.{2,}|…)\s*$/i.test(val) ||
+      /(?:\.{3}|…)\s*$/.test(val)
+    ) {
+      results.push({
+        id: `truncated-description-${idx}-${key}`,
+        severity: 'fail',
+        slideIndex: idx,
+        field: key,
+        message: `Slide ${idx + 1} ${label}: Truncated text ("${val.slice(-24)}") detected. Never end a line with "…".`,
+        value: val,
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Check minimum font size (min 24px at 1080x1920). Element scale overrides < 0.75 shrink body text below 24px.
+ */
+function checkMinFontSizeViolation(slide: SlideData, idx: number): QACheckResult[] {
+  const results: QACheckResult[] = [];
+  const overrides = slide.layoutOverrides;
+  if (!overrides) return results;
+
+  for (const [elKey, ov] of Object.entries(overrides)) {
+    if (ov && !ov.hidden && ov.scale !== undefined && ov.scale < 0.75) {
+      results.push({
+        id: `min-font-size-${idx}-${elKey}`,
+        severity: 'fail',
+        slideIndex: idx,
+        field: 'layoutOverrides',
+        message: `Slide ${idx + 1}: "${elKey}" scale (${Math.round(ov.scale * 100)}%) shrinks text below the 24px minimum readable floor.`,
+        value: `${Math.round(ov.scale * 100)}%`,
+        limit: '≥ 75% (24px)',
+      });
+    }
+  }
+
+  return results;
+}
+
+function parseHexRgb(hex: string): [number, number, number] {
+  const clean = (hex || '#000000').replace(/[^0-9a-fA-F]/g, '');
+  if (clean.length === 3) {
+    return [
+      parseInt(clean[0] + clean[0], 16),
+      parseInt(clean[1] + clean[1], 16),
+      parseInt(clean[2] + clean[2], 16),
+    ];
+  }
+  const padded = clean.padEnd(6, '0').slice(0, 6);
+  return [
+    parseInt(padded.slice(0, 2), 16),
+    parseInt(padded.slice(2, 4), 16),
+    parseInt(padded.slice(4, 6), 16),
+  ];
+}
+
+function relativeLuminance([r, g, b]: [number, number, number]): number {
+  const toLinear = (c: number) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+}
+
+export function computeWcagContrastRatio(fgHex: string, bgHex: string): number {
+  const lumA = relativeLuminance(parseHexRgb(fgHex));
+  const lumB = relativeLuminance(parseHexRgb(bgHex));
+  const brightest = Math.max(lumA, lumB);
+  const darkest = Math.min(lumA, lumB);
+  return Number(((brightest + 0.05) / (darkest + 0.05)).toFixed(2));
+}
+
+export type PreExportCheckId =
+  | 'overflow'
+  | 'contrast'
+  | 'minFontSize'
+  | 'safeZones'
+  | 'truncatedCopy'
+  | 'bilingualConsistency'
+  | 'duplicateLabels'
+  | 'chartDirection'
+  | 'unverifiedNumbers'
+  | 'missingSource'
+  | 'brandLogoSafety';
+
+export interface PreExportCheckItem {
+  id: PreExportCheckId;
+  label: string;
+  passed: boolean;
+  detail: string;
+  fixLabel: string;
+  slideIndex?: number;
+}
+
+const MEANINGLESS_LABEL_PATTERN =
+  /\b(?:EXPOSURE\s+METRIC|DROPPING\s+EXPOSURE|NODE\s*0[1-9]|SYS_REF|TECHNICAL|STORES\s+TRILLIONS|PLACEHOLDER|SAMPLE\s+METRIC)\b/i;
+
+const DROP_MESSAGE_PATTERN =
+  /\b(?:drop(?:ping|ped|s)?|slashed|cut(?:ting)?|reduc(?:ed|ing|tion)|lower(?:ed|ing)?|fell|down\s+from|from\s+\d+\s*(?:ms|s|%)\s+to\s+\d+)\b/i;
+
+const PARTNERSHIP_CLAIM_PATTERN =
+  /\b(?:official\s+partner|powered\s+by|in\s+collaboration\s+with|endorsed\s+by|sponsored\s+by)\b/i;
+
+export function runPreExportChecklist(
+  carousel: CarouselData,
+  theme?: ThemePalette
+): PreExportCheckItem[] {
+  const qa = runQAChecks(carousel);
+  const slides = carousel.slides || [];
+
+  // 1. Text Overflow
+  const overflowFailure = qa.results.find(
+    (r) =>
+      r.severity === 'fail' &&
+      (r.id.startsWith('char-limit-') ||
+        r.id.startsWith('vertical-overflow-') ||
+        r.id.startsWith('headline-length-'))
+  );
+
+  // 2. Contrast (WCAG AA >= 4.5:1)
+  const bgHex = theme?.baseBg || '#070c10';
+  const bodyHex = theme?.textEnBody || '#cbd5e1';
+  const titleHex = theme?.textWhite || '#f8fafc';
+  const accentHex = theme?.accent || '#2dd4bf';
+  const bodyContrast = computeWcagContrastRatio(bodyHex, bgHex);
+  const titleContrast = computeWcagContrastRatio(titleHex, bgHex);
+  const accentContrast = computeWcagContrastRatio(accentHex, bgHex);
+  const minContrast = Math.min(bodyContrast, titleContrast);
+  const contrastPassed = minContrast >= 4.5 && accentContrast >= 3.0;
+
+  // 3. Minimum Font Size (>= 24px at 1080x1920)
+  const minFontFailure = qa.results.find(
+    (r) => r.severity === 'fail' && r.id.startsWith('min-font-size-')
+  );
+
+  // 4. TikTok Safe Zones (top ~150px, bottom ~420px, right ~120px)
+  const safeZoneFailure = qa.results.find(
+    (r) =>
+      r.severity === 'fail' &&
+      (r.id.startsWith('tiktok-safezone-') || r.id.startsWith('vertical-overflow-'))
+  );
+
+  // 5. Truncated Descriptions ("and…")
+  const truncatedFailure = qa.results.find(
+    (r) => r.severity === 'fail' && r.id.startsWith('truncated-description-')
+  );
+
+  // 6. Arabic / English Consistency & BiDi
+  let bilingualIssueSlide: number | undefined;
+  let bilingualDetail = 'EN & AR copy paired with equal weight & BiDi isolation';
+  const bidiFailure = qa.results.find(
+    (r) =>
+      r.severity === 'fail' &&
+      (r.id.startsWith('arabic-bidi-') || r.id.startsWith('arabic-line-end-'))
+  );
+  if (bidiFailure) {
+    bilingualIssueSlide = bidiFailure.slideIndex;
+    bilingualDetail = bidiFailure.message;
+  } else {
+    for (let i = 0; i < slides.length; i++) {
+      const s = slides[i];
+      if (s.standaloneMeme || s.imageFrameMode === 'full') continue;
+      const hasEnTitle = Boolean((s.enTitle || '').trim());
+      const hasArTitle = Boolean((s.arTitle || '').trim());
+      const hasEnBody = Boolean((s.enBody || '').trim());
+      const hasArBody = Boolean((s.arBody || '').trim());
+      if ((hasEnTitle && !hasArTitle) || (!hasEnTitle && hasArTitle)) {
+        bilingualIssueSlide = i;
+        bilingualDetail = `Slide ${i + 1} is missing ${hasEnTitle ? 'Arabic' : 'English'} headline`;
+        break;
+      }
+      // Slide 1 Hook never shows body text on multi-slide decks
+      const isSlide1Hook = i === 0 && slides.length > 1;
+      if (!isSlide1Hook && s.type !== 'cta' && ((hasEnBody && !hasArBody) || (!hasEnBody && hasArBody))) {
+        bilingualIssueSlide = i;
+        bilingualDetail = `Slide ${i + 1} is missing ${hasEnBody ? 'Arabic' : 'English'} body copy`;
+        break;
+      }
+    }
+  }
+
+  // 7. Distinct Diagram & Metric Labels (No duplicates or meaningless filler labels)
+  let duplicateLabelSlide: number | undefined;
+  let duplicateLabelDetail = 'All diagram nodes & metric labels are distinct source terms';
+  for (let i = 0; i < slides.length; i++) {
+    const s = slides[i];
+    if (MEANINGLESS_LABEL_PATTERN.test(`${s.metricLabel || ''} ${s.metricDiff || ''}`)) {
+      duplicateLabelSlide = i;
+      duplicateLabelDetail = `Slide ${i + 1}: Meaningless metric label ("${s.metricLabel || s.metricDiff}"). Use real source terms.`;
+      break;
+    }
+    const labels: string[] = [];
+    if (s.type === 'hub' && s.satLabels && s.satLabels.length > 0) {
+      labels.push(...s.satLabels);
+    } else if (s.diagramNodes && s.diagramNodes.length > 0) {
+      labels.push(...s.diagramNodes.map((n) => n.label));
+    } else if (s.icons && s.icons.length > 0) {
+      labels.push(...s.icons.map((ic) => ic.label));
+    }
+    const normalized = labels.map((l) => (l || '').trim().toUpperCase()).filter(Boolean);
+    const unique = new Set(normalized);
+    if (normalized.length > 0 && unique.size < normalized.length) {
+      duplicateLabelSlide = i;
+      duplicateLabelDetail = `Slide ${i + 1}: Duplicate node labels detected (${normalized.join(' / ')}). Need distinct labels.`;
+      break;
+    }
+    if (normalized.some((l) => MEANINGLESS_LABEL_PATTERN.test(l))) {
+      duplicateLabelSlide = i;
+      duplicateLabelDetail = `Slide ${i + 1}: Generic filler node label detected. Replace with distinct content terms.`;
+      break;
+    }
+  }
+
+  // 8. Chart Direction vs Message (a "drop" must visibly go down, and focal metric must be the "after" win)
+  let chartMismatchSlide: number | undefined;
+  let chartMismatchDetail = 'Chart direction & after-value win match slide message';
+  for (let i = 0; i < slides.length; i++) {
+    const s = slides[i];
+    if (s.type !== 'metric') continue;
+    const text = `${s.enTitle || ''} ${s.enBody || ''} ${s.metricDiff || ''}`;
+    const isDrop = DROP_MESSAGE_PATTERN.test(text);
+    // Check if text has "from X to Y" where X is shown instead of Y
+    const fromToMatch = `${s.enTitle || ''} ${s.enBody || ''}`.match(
+      /\bfrom\s+(\d+(?:\.\d+)?\s*(?:ms|s|%|x|gb|mb|tb|nodes)?)\s+to\s+(\d+(?:\.\d+)?\s*(?:ms|s|%|x|gb|mb|tb|nodes)?)\b/i
+    );
+    if (
+      fromToMatch &&
+      s.metricValue &&
+      s.metricValue.trim().toLowerCase() === fromToMatch[1].trim().toLowerCase() &&
+      fromToMatch[1].trim().toLowerCase() !== fromToMatch[2].trim().toLowerCase()
+    ) {
+      chartMismatchSlide = i;
+      chartMismatchDetail = `Slide ${i + 1}: Shows "before" value (${fromToMatch[1]}) instead of the "after" win (${fromToMatch[2]}).`;
+      break;
+    }
+    if (isDrop && s.chartDirection === 'up') {
+      chartMismatchSlide = i;
+      chartMismatchDetail = `Slide ${i + 1}: Message describes a drop/reduction, but chart slopes upward.`;
+      break;
+    }
+  }
+
+  // 9. Verify Numbers Against Source
+  let unverifiedNumSlide: number | undefined;
+  let unverifiedNumDetail = 'All slide numbers confirmed against source';
+  const deckNumbersVerified =
+    Boolean(carousel.sourceMeta?.verifiedNumbers) ||
+    Boolean(carousel.sourceMeta?.userReviewed) ||
+    Boolean(carousel.sourceMeta?.humanApproved) ||
+    carousel.sourceMeta?.status === 'verified_live';
+  if (!deckNumbersVerified) {
+    for (let i = 0; i < slides.length; i++) {
+      const s = slides[i];
+      if (s.numbersVerified) continue;
+      const hasNumber = /\b\d+(?:\.\d+)?\s*(?:%|x|ms|s|gb|tb|mb|k|m|b|nodes|checkouts)\b/i.test(
+        `${s.metricValue || ''} ${s.enTitle || ''} ${s.enBody || ''}`
+      );
+      if (hasNumber) {
+        unverifiedNumSlide = i;
+        unverifiedNumDetail = `Slide ${i + 1} contains numeric claims — verify against source to unlock export`;
+        break;
+      }
+    }
+  }
+
+  // 10. Source Attribution Present ("Source: <name>")
+  const sourceName = (
+    carousel.sourceMeta?.creator ||
+    carousel.sourceMeta?.channel ||
+    carousel.channel ||
+    slides[slides.length - 1]?.enCredit ||
+    ''
+  ).trim();
+  const hasAnySourceAttribution = Boolean(sourceName);
+
+  // 11. Brand Assets & IP Safety (<=8% slide width, never hero/center, max 1 per slide, no partnership wording)
+  let brandSafetySlide: number | undefined;
+  let brandSafetyDetail = 'Third-party companies shown safely (styled text or locked ≤8% badge, no endorsement claims)';
+  for (let i = 0; i < slides.length; i++) {
+    const s = slides[i];
+    const combinedText = `${s.enTitle || ''} ${s.enBody || ''} ${s.arTitle || ''} ${s.arBody || ''}`;
+    if (PARTNERSHIP_CLAIM_PATTERN.test(combinedText)) {
+      brandSafetySlide = i;
+      brandSafetyDetail = `Slide ${i + 1}: Contains implied partnership wording ("official", "powered by", "in collaboration with").`;
+      break;
+    }
+    const cfg = s.brandLogoConfig;
+    if (cfg && cfg.mode === 'official_icon') {
+      if ((cfg.maxWidthPct ?? 8) > 8) {
+        brandSafetySlide = i;
+        brandSafetyDetail = `Slide ${i + 1}: Brand icon exceeds 8% max slide width (${cfg.maxWidthPct}%).`;
+        break;
+      }
+      if (cfg.placement === 'hero' || cfg.placement === 'center') {
+        brandSafetySlide = i;
+        brandSafetyDetail = `Slide ${i + 1}: Brand logo cannot be the hero focal point or center of a diagram.`;
+        break;
+      }
+      if ((cfg.countOnSlide ?? 1) > 1) {
+        brandSafetySlide = i;
+        brandSafetyDetail = `Slide ${i + 1}: More than 1 third-party brand icon on slide.`;
+        break;
+      }
+      if (cfg.isEdited || cfg.isNonLibrarySource) {
+        brandSafetySlide = i;
+        brandSafetyDetail = `Slide ${i + 1}: Edited or non-library logo detected. Use official Simple Icons SVG or text name.`;
+        break;
+      }
+    }
+  }
+
+  return [
+    {
+      id: 'overflow',
+      label: 'Text Overflow & Limits',
+      passed: !overflowFailure,
+      detail: overflowFailure
+        ? overflowFailure.message
+        : `All ${slides.length} slide headlines & bodies fit within bounds`,
+      fixLabel: 'Auto-Fit Text',
+      slideIndex: overflowFailure?.slideIndex,
+    },
+    {
+      id: 'contrast',
+      label: 'Contrast (WCAG AA)',
+      passed: contrastPassed,
+      detail: contrastPassed
+        ? `Body ${bodyContrast}:1 · Headline ${titleContrast}:1 · Accent ${accentContrast}:1 (AA Pass)`
+        : `Low contrast (${minContrast}:1 < 4.5:1 AA minimum)`,
+      fixLabel: 'Fix Contrast',
+    },
+    {
+      id: 'minFontSize',
+      label: 'Minimum Font Size (≥24px)',
+      passed: !minFontFailure,
+      detail: minFontFailure
+        ? minFontFailure.message
+        : 'All text & diagram node labels ≥ 24px at 1080×1920',
+      fixLabel: 'Restore ≥24px',
+      slideIndex: minFontFailure?.slideIndex,
+    },
+    {
+      id: 'safeZones',
+      label: 'TikTok Safe Zones',
+      passed: !safeZoneFailure,
+      detail: safeZoneFailure
+        ? safeZoneFailure.message
+        : 'Clear of top 150px, bottom 420px & right 120px TikTok UI zones',
+      fixLabel: 'Auto-Fix Zones',
+      slideIndex: safeZoneFailure?.slideIndex,
+    },
+    {
+      id: 'truncatedCopy',
+      label: 'Truncated Copy ("…")',
+      passed: !truncatedFailure,
+      detail: truncatedFailure
+        ? truncatedFailure.message
+        : 'Zero truncated lines or trailing ellipses ("…")',
+      fixLabel: 'Fix Truncation',
+      slideIndex: truncatedFailure?.slideIndex,
+    },
+    {
+      id: 'bilingualConsistency',
+      label: 'AR / EN Consistency & BiDi',
+      passed: bilingualIssueSlide === undefined && !bidiFailure,
+      detail: bilingualDetail,
+      fixLabel: 'Fix AR/EN BiDi',
+      slideIndex: bilingualIssueSlide,
+    },
+    {
+      id: 'duplicateLabels',
+      label: 'Distinct Diagram & Metric Labels',
+      passed: duplicateLabelSlide === undefined,
+      detail: duplicateLabelDetail,
+      fixLabel: 'Deduplicate Labels',
+      slideIndex: duplicateLabelSlide,
+    },
+    {
+      id: 'chartDirection',
+      label: 'Chart Direction & After-Win',
+      passed: chartMismatchSlide === undefined,
+      detail: chartMismatchDetail,
+      fixLabel: 'Fix Chart Direction',
+      slideIndex: chartMismatchSlide,
+    },
+    {
+      id: 'unverifiedNumbers',
+      label: 'Numbers Verified vs Source',
+      passed: unverifiedNumSlide === undefined,
+      detail: unverifiedNumDetail,
+      fixLabel: 'Verify Numbers',
+      slideIndex: unverifiedNumSlide,
+    },
+    {
+      id: 'missingSource',
+      label: 'Source Attribution ("Source: <name>")',
+      passed: hasAnySourceAttribution,
+      detail: hasAnySourceAttribution
+        ? `Source displayed on slide: ${sourceName.replace(/^Source:\s*/i, '')}`
+        : 'Missing source attribution — add Source: <name> before export',
+      fixLabel: 'Set Source',
+    },
+    {
+      id: 'brandLogoSafety',
+      label: 'Brand Assets & IP Safety (≤8%)',
+      passed: brandSafetySlide === undefined,
+      detail: brandSafetyDetail,
+      fixLabel: 'Replace Logo with Text Name',
+      slideIndex: brandSafetySlide,
+    },
+  ];
+}
+
 export interface QACheckOptions {
   exportFormat?: 'jpg' | 'jpeg' | 'png';
   width?: number;
@@ -860,12 +1357,15 @@ export function runQAChecks(carousel: CarouselData, options: QACheckOptions = {}
 
   // Per-slide checks
   for (let i = 0; i < slides.length; i++) {
-    const isHook = i === 0 && (slides[i].type === 'hub');
+    const isHook = i === 0 || slides[i].type === 'hub';
     results.push(...checkHeadlineSpecRule(slides[i], i, slides.length));
     results.push(...checkBoilerplatePhrases(slides[i], i));
     results.push(...checkCharLimits(slides[i], i, isHook, isSingleSlide));
     results.push(...checkArabicLineEndings(slides[i], i));
     results.push(...checkArabicSafeZone(slides[i], i));
+    results.push(...checkTikTokSafeZoneViolations(slides[i], i));
+    results.push(...checkTruncatedDescriptions(slides[i], i));
+    results.push(...checkMinFontSizeViolation(slides[i], i));
     results.push(...checkArchetypeFields(slides[i], i));
     results.push(...checkMarkdownAndPunctuation(slides[i], i));
     results.push(...checkPlaceholders(slides[i], i));

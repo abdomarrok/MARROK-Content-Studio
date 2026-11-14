@@ -520,13 +520,13 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
   return (
     <div className="flex-1 flex flex-col min-h-0 gap-3 text-slate-200">
       {/* Streamlined 3-Tab Navigation Bar */}
-      <div className="rounded-2xl border border-white/10 bg-[#0b1218]/95 px-3 sm:px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 shadow-lg">
+      <div className="rounded-2xl border border-white/[0.08] bg-[#0b1218]/95 px-3 sm:px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 shadow-lg">
         {/* Primary 3-Tab Segmented Switcher */}
         <div className="flex flex-wrap items-center gap-1.5 bg-black/40 p-1 rounded-xl border border-white/10">
           <button
             type="button"
             onClick={() => setHubMode('single')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               hubMode === 'single'
                 ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/40 shadow-xs'
                 : 'text-slate-400 hover:text-white'
@@ -538,15 +538,16 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
           <button
             type="button"
             onClick={() => setHubMode('program')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               hubMode === 'program'
                 ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-400/40 shadow-xs'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
             <Radar className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Gather & Peak (10 · 12 · 18) Program</span>
-            <span className="px-1.5 py-0.5 rounded bg-black/40 text-[10px] font-mono text-cyan-200 tabular-nums">
+            <span>Gather & Peak (10 · 12 · 18)</span>
+            <span className="text-[11px] font-mono text-cyan-300 tabular-nums">
+              ·{' '}
               {
                 savedPosts.filter(
                   (p) => p.postStatus !== 'posted' && p.deck?.sourceMeta?.userReviewed === false
@@ -558,7 +559,7 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
           <button
             type="button"
             onClick={() => setHubMode('posts')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               hubMode === 'posts'
                 ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/40 shadow-xs'
                 : 'text-slate-400 hover:text-white'
@@ -566,23 +567,21 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
           >
             <Calendar className="w-3.5 h-3.5" />
             <span>Posts & Calendar</span>
-            <span className="px-1.5 py-0.5 rounded bg-black/40 text-[10px] font-mono text-white tabular-nums">
-              {savedPosts.length}
+            <span className="text-[11px] font-mono text-slate-300 tabular-nums">
+              · {savedPosts.length}
             </span>
           </button>
         </div>
 
-        {/* Right: Direct API Connection Badges (Database + Buffer + Zernio) */}
-        <div className="hidden sm:flex items-center gap-2 text-[11px] font-mono">
+        {/* Right: Quiet Editorial Connection Status (Database · Buffer · Zernio · Cloudinary) */}
+        <div className="hidden md:flex items-center gap-2 text-[11px] font-mono text-slate-400 tabular-nums">
           <span
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border ${
-              storageEngine === 'neon-postgres'
-                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                : storageEngine === 'cloud-kv'
-                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+            className={`inline-flex items-center gap-1.5 ${
+              storageEngine === 'neon-postgres' || storageEngine === 'cloud-kv'
+                ? 'text-emerald-300'
                 : storageEngine === 'local-disk'
-                ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300'
-                : 'border-white/10 bg-white/[0.03] text-slate-400'
+                ? 'text-cyan-300'
+                : 'text-slate-400'
             }`}
             title={
               storageEngine === 'neon-postgres'
@@ -590,38 +589,29 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
                 : 'Local vault storage'
             }
           >
-            <Database className="w-3 h-3" />
-            {storageEngine === 'neon-postgres'
-              ? 'Neon Postgres'
-              : storageEngine === 'cloud-kv'
-              ? 'Vercel KV'
-              : storageEngine === 'local-disk'
-              ? 'Local Disk'
-              : 'Local Vault'}
+            <Database className="w-3 h-3 shrink-0" />
+            <span>
+              {storageEngine === 'neon-postgres'
+                ? 'Neon Postgres'
+                : storageEngine === 'cloud-kv'
+                ? 'Cloud KV'
+                : storageEngine === 'local-disk'
+                ? 'Local Disk'
+                : 'Local Vault'}
+            </span>
           </span>
-          <span
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border ${
-              status?.bufferApiConfigured
-                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                : 'border-white/10 bg-white/[0.03] text-slate-400'
-            }`}
-          >
-            {status?.bufferApiConfigured ? 'Buffer Connected' : 'Buffer: Off'}
+          <span aria-hidden="true" className="text-slate-600">·</span>
+          <span className={status?.bufferApiConfigured ? 'text-emerald-300' : 'text-slate-500'}>
+            {status?.bufferApiConfigured ? 'Buffer Ready' : 'Buffer Off'}
           </span>
-          <span
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border ${
-              status?.zernioApiConfigured
-                ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300'
-                : 'border-white/10 bg-white/[0.03] text-slate-400'
-            }`}
-          >
-            {status?.zernioApiConfigured ? 'Zernio Connected' : 'Zernio: Off'}
+          <span aria-hidden="true" className="text-slate-600">·</span>
+          <span className={status?.zernioApiConfigured ? 'text-cyan-300' : 'text-slate-500'}>
+            {status?.zernioApiConfigured ? 'Zernio Ready' : 'Zernio Off'}
           </span>
+          <span aria-hidden="true" className="text-slate-600">·</span>
           <span
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border ${
-              status?.cloudinaryConfigured
-                ? 'border-purple-500/30 bg-purple-500/10 text-purple-300'
-                : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+            className={`inline-flex items-center gap-1 ${
+              status?.cloudinaryConfigured ? 'text-slate-300' : 'text-amber-300'
             }`}
             title={
               status?.cloudinaryConfigured
@@ -629,10 +619,12 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
                 : 'Cloudinary environment variables missing on Vercel'
             }
           >
-            <Cloud className="w-3 h-3" />
-            {status?.cloudinaryConfigured
-              ? `Cloudinary: ${status.cloudinaryCloudName || 'Ready'}`
-              : 'Cloudinary: Missing Env'}
+            <Cloud className="w-3 h-3 shrink-0" />
+            <span>
+              {status?.cloudinaryConfigured
+                ? status.cloudinaryCloudName || 'Cloudinary'
+                : 'Staging Ephemeral'}
+            </span>
           </span>
         </div>
       </div>

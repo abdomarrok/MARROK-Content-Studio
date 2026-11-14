@@ -18,8 +18,10 @@ import { CanvasDimensionPreset, CarouselData, ThemePalette } from '../../types.t
 import { getCanvasDimensionSpec } from '../../lib/canvas/constants.ts';
 import type { ExportBundleMode } from '../../lib/canvas/exporter.ts';
 import { isThirdPartySource, getAttributionCredit, isValidCreatorCredit } from '../../lib/riskChecks.ts';
-import { QAReport } from '../../lib/qaChecks.ts';
+import { QAReport, runPreExportChecklist, PreExportCheckId } from '../../lib/qaChecks.ts';
 import { RiskReport } from '../../lib/riskChecks.ts';
+
+import { detectMentionedThirdPartyBrands } from '../../lib/techLogos.ts';
 
 export interface PublishChecklistProps {
   carousel: CarouselData;
@@ -39,6 +41,8 @@ export interface PublishChecklistProps {
   onExportZip?: (exportMode: ExportBundleMode) => void;
   onDownloadSingleSlide?: (preset: CanvasDimensionPreset) => void;
   onOpenPublishScheduleModal?: (tab?: 'single' | 'bulk' | 'storage') => void;
+  onAutoFixPreExportCheck?: (checkId: PreExportCheckId, slideIndex?: number) => void;
+  onToggleOfficialBrandIcon?: (brandKey: string, enabled: boolean) => void;
   isExportingZip?: boolean;
   onShowToast?: (msg: string) => void;
 }
@@ -132,6 +136,8 @@ export const PublishChecklist: React.FC<PublishChecklistProps> = ({
   onExportZip,
   onDownloadSingleSlide,
   onOpenPublishScheduleModal,
+  onAutoFixPreExportCheck,
+  onToggleOfficialBrandIcon,
   isExportingZip = false,
   onShowToast,
 }) => {
@@ -142,6 +148,16 @@ export const PublishChecklist: React.FC<PublishChecklistProps> = ({
 
   const isSinglePost = carousel.postFormat === 'single' || carousel.slides.length === 1;
   const activeDimensionSpec = getCanvasDimensionSpec(carousel.dimensionPreset);
+  const preExportChecks = runPreExportChecklist(carousel, theme);
+  const failedPreExportCount = preExportChecks.filter((c) => !c.passed).length;
+  const mentionedBrands = detectMentionedThirdPartyBrands(
+    [
+      carousel.category || '',
+      carousel.caption || '',
+      ...carousel.slides.map((s) => `${s.enTitle || ''} ${s.enBody || ''} ${s.arTitle || ''} ${s.arBody || ''}`),
+    ].join(' ')
+  );
+
   const {
     engineType,
     creatorCredit,
@@ -150,9 +166,10 @@ export const PublishChecklist: React.FC<PublishChecklistProps> = ({
     creditStatus,
     riskStatus,
     structureStatus,
-    blockersCount,
+    blockersCount: baseBlockersCount,
   } = getPublishBlockers(carousel, isOfflineDraft, isReviewed, qaReport, riskReport);
 
+  const blockersCount = baseBlockersCount + failedPreExportCount;
   const needsHumanReview = (isOfflineDraft || engineType !== 'grounded') && !isReviewed;
   const qaFailures = qaReport.results.filter(
     (r) => r.severity === 'fail' && r.id !== 'fallback-draft-blocker'
@@ -242,15 +259,15 @@ ${facts.length > 0 ? `\nFACTS:\n${facts.map((f, i) => `${i + 1}. [${f.verified.t
             <div className="flex items-start gap-2.5 min-w-0">
               <div className="pt-0.5">{renderBadge(sourcesStatus)}</div>
               <div className="min-w-0">
-                <div className="text-xs font-bold text-white">1. Sources Reviewed</div>
+                <div className="text-xs font-bold text-white">1. Sources & Numbers Verified</div>
                 <div className="text-xs text-slate-400 truncate">
                   {engineType === 'grounded'
                     ? 'Verified live via Google Search grounding sources.'
                     : isReviewed
-                    ? 'Draft copy and technical claims confirmed by creator.'
+                    ? 'Draft copy and numeric claims confirmed against source.'
                     : isOfflineDraft
-                    ? 'Offline draft — verify claims before publishing.'
-                    : 'Generated without live web search — review technical claims.'}
+                    ? 'Verify every number against source before publishing.'
+                    : 'Generated without live web search — verify numbers against source.'}
                 </div>
               </div>
             </div>
@@ -277,7 +294,7 @@ ${facts.length > 0 ? `\nFACTS:\n${facts.map((f, i) => `${i + 1}. [${f.verified.t
                   }`}
                 >
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>{isReviewed ? 'Reviewed (Unmark)' : 'I reviewed'}</span>
+                  <span>{isReviewed ? 'Verified (Unmark)' : 'Verify against source'}</span>
                 </button>
               )}
             </div>
@@ -289,10 +306,10 @@ ${facts.length > 0 ? `\nFACTS:\n${facts.map((f, i) => `${i + 1}. [${f.verified.t
               <div className="flex items-center gap-2.5 min-w-0">
                 {renderBadge(creditStatus)}
                 <div className="min-w-0">
-                  <div className="text-xs font-bold text-white">2. Creator Credit</div>
+                  <div className="text-xs font-bold text-white">2. Source Attribution ("Source: &lt;name&gt;")</div>
                   <div className="text-xs text-slate-400 truncate">
                     {hasCreatorCredit
-                      ? `Credited: ${creatorCredit} (${isSinglePost ? 'Footer' : 'CTA Slide'})`
+                      ? `Source: ${creatorCredit} (Rendered above bottom 420px safe zone)`
                       : isThirdPartySource(carousel)
                       ? 'Attribution required for third-party source (brand-only name does not qualify).'
                       : 'Original MARROK publication (no third-party source).'}
@@ -304,11 +321,11 @@ ${facts.length > 0 ? `\nFACTS:\n${facts.map((f, i) => `${i + 1}. [${f.verified.t
                 {!hasCreatorCredit && onUpdateCreator && (
                   <button
                     type="button"
-                    onClick={() => onUpdateCreator('@MARROK')}
+                    onClick={() => onUpdateCreator('Engineering Blog')}
                     className="px-2 py-1 rounded-md bg-white/[0.06] hover:bg-white/10 border border-white/10 text-[11px] font-mono text-slate-200 cursor-pointer transition-colors"
-                    title="Auto-fill default @MARROK channel attribution"
+                    title="Auto-fill source attribution"
                   >
-                    Use @MARROK
+                    Set Source
                   </button>
                 )}
                 <button
@@ -317,7 +334,7 @@ ${facts.length > 0 ? `\nFACTS:\n${facts.map((f, i) => `${i + 1}. [${f.verified.t
                   onClick={() => setIsEditingCredit(!isEditingCredit)}
                   className="text-xs text-cyan-300 hover:text-white font-medium cursor-pointer shrink-0"
                 >
-                  {isEditingCredit ? 'Done' : hasCreatorCredit ? 'Edit' : 'Add Credit'}
+                  {isEditingCredit ? 'Done' : hasCreatorCredit ? 'Edit' : 'Add Source'}
                 </button>
               </div>
             </div>
@@ -327,7 +344,7 @@ ${facts.length > 0 ? `\nFACTS:\n${facts.map((f, i) => `${i + 1}. [${f.verified.t
                 type="text"
                 value={creatorCredit}
                 onChange={(e) => onUpdateCreator?.(e.target.value)}
-                placeholder="Enter creator or channel handle (e.g. Anthropic Engineering, NIST)"
+                placeholder="Enter source name (e.g. Discord Engineering, Anthropic Engineering)"
                 className="w-full bg-black/70 border border-white/15 focus:border-cyan-400 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 outline-none transition-all font-mono"
                 autoFocus={!hasCreatorCredit}
               />
@@ -339,13 +356,13 @@ ${facts.length > 0 ? `\nFACTS:\n${facts.map((f, i) => `${i + 1}. [${f.verified.t
             <div className="flex items-start gap-2.5 min-w-0">
               <div className="pt-0.5">{renderBadge(riskStatus)}</div>
               <div className="min-w-0">
-                <div className="text-xs font-bold text-white">3. Platform Risk & Safety</div>
+                <div className="text-xs font-bold text-white">3. Platform Risk & Recommendation Eligibility</div>
                 <div className="text-xs text-slate-400 truncate">
                   {riskBlocks.length > 0
                     ? `${riskBlocks[0].label}: ${riskBlocks[0].message}`
                     : riskWarns.length > 0
                     ? `${riskWarns[0].label}: ${riskWarns[0].message}`
-                    : 'Originality, audio/IP, and first-frame retention checks passed.'}
+                    : 'Safe from "ineligible for recommendation" flags (no logo misuse, unverified claims, or repost frames).'}
                 </div>
               </div>
             </div>
@@ -373,7 +390,7 @@ ${facts.length > 0 ? `\nFACTS:\n${facts.map((f, i) => `${i + 1}. [${f.verified.t
                 <div className="text-xs text-slate-400 truncate">
                   {qaFailures.length > 0
                     ? `${qaFailures[0].message}${qaFailures.length > 1 ? ` (+${qaFailures.length - 1} more)` : ''}`
-                    : '1080×1920 safe zones, line heights, and character limits passed.'}
+                    : '1080×1920 safe zones, ≥24px typography, and story structure passed.'}
                 </div>
               </div>
             </div>
@@ -405,6 +422,80 @@ ${facts.length > 0 ? `\nFACTS:\n${facts.map((f, i) => `${i + 1}. [${f.verified.t
             )}
           </div>
         </div>
+
+        {/* Brand Assets & IP Safety Panel (shown when third-party companies are detected) */}
+        {mentionedBrands.length > 0 && (
+          <div
+            data-testid="brand-ip-safety-panel"
+            className="pt-3 border-t border-white/10 space-y-2"
+          >
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <span className="text-[11px] font-mono uppercase tracking-wider font-bold text-teal-300">
+                Brand Assets & IP Safety ({mentionedBrands.length} Company Detected)
+              </span>
+              <span className="text-[10px] text-slate-400">
+                Default: styled text name · Optional: official Simple Icons SVG (≤8% width, corner label only)
+              </span>
+            </div>
+
+            <div className="space-y-1.5">
+              {mentionedBrands.map((brand) => {
+                const rawCfg = carousel.officialBrandIcons?.[brand.name];
+                const isIconEnabled = typeof rawCfg === 'object' ? Boolean(rawCfg?.enabled) : Boolean(rawCfg);
+                return (
+                  <div
+                    key={brand.name}
+                    className="p-2.5 rounded-xl bg-black/40 border border-white/10 flex flex-wrap items-center justify-between gap-2"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span
+                        className="px-2 py-0.5 rounded text-xs font-bold border border-teal-500/30 bg-teal-500/10 text-teal-300"
+                      >
+                        {brand.title}
+                      </span>
+                      <span className="text-[11px] text-slate-300">
+                        {isIconEnabled
+                          ? 'Official unedited SVG badge enabled (≤8% width, 1 max/slide)'
+                          : `Showing as styled text "${brand.title}" in accent color`}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {brand.guidelinesUrl && (
+                        <a
+                          href={brand.guidelinesUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white/[0.04] hover:bg-white/10 border border-white/10 text-[10px] font-mono text-cyan-300 hover:text-white transition-colors"
+                        >
+                          <span>Brand guidelines</span>
+                          <ExternalLink className="w-2.5 h-2.5" />
+                        </a>
+                      )}
+                      {onToggleOfficialBrandIcon && (
+                        <button
+                          type="button"
+                          data-testid={`toggle-brand-icon-${brand.name}`}
+                          onClick={() => onToggleOfficialBrandIcon(brand.name, !isIconEnabled)}
+                          className={`px-2.5 py-1 rounded-lg border text-[10px] font-mono font-bold cursor-pointer transition-colors ${
+                            isIconEnabled
+                              ? 'bg-teal-500/20 border-teal-400/50 text-teal-200'
+                              : 'bg-white/[0.05] border-white/10 text-slate-300 hover:text-white'
+                          }`}
+                        >
+                          {isIconEnabled ? 'Official Icon: ON' : 'Official Brand Icon: OFF'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              <p className="text-[10px] text-slate-400 italic">
+                Note: Third-party brand guidelines vary by company — please review them before publishing. Caption automatically includes "Not affiliated with {mentionedBrands.map((b) => b.title).join(', ')}."
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Override Toggle (shown only when blocked) */}
         {!isReady && onToggleOverrideBlock && (
@@ -442,7 +533,7 @@ ${facts.length > 0 ? `\nFACTS:\n${facts.map((f, i) => `${i + 1}. [${f.verified.t
                 <ul className="space-y-1.5 pl-3 border-l-2 border-amber-500/40">
                   {sourcesStatus === 'BLOCK' && (
                     <li className="text-xs text-amber-200 font-mono">
-                      • Sources: Unreviewed offline draft requires human review (click "I reviewed")
+                      • Sources: Unreviewed offline draft requires human review (click "Verify against source")
                     </li>
                   )}
                   {creditStatus === 'BLOCK' && (
@@ -493,15 +584,110 @@ ${facts.length > 0 ? `\nFACTS:\n${facts.map((f, i) => `${i + 1}. [${f.verified.t
             </div>
           </div>
         )}
-        {/* Active Stage Format Summary & Schedule Trigger */}
-        <div className="pt-2.5 border-t border-white/[0.08] flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
-          <div className="flex items-center gap-2 font-mono tabular-nums">
-            <Smartphone className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-            <span className="text-slate-300 font-semibold">{activeDimensionSpec.label}</span>
-            <span aria-hidden="true">·</span>
-            <span>
-              {activeDimensionSpec.width}×{activeDimensionSpec.height}
+        {/* Pre-Export Quality, Data Integrity & Safe-Zone Checks with One-Tap Fixes */}
+        <div
+          data-testid="pre-export-checklist-grid"
+          className="pt-3 border-t border-white/10 space-y-2"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-mono uppercase tracking-wider font-bold text-cyan-300">
+              Pre-Export Gate (11 Automated Checks · One-Tap Fixes)
             </span>
+            <span className="text-[10px] font-mono text-slate-400">
+              {preExportChecks.filter((c) => c.passed).length} / {preExportChecks.length} Passed
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {preExportChecks.map((check) => (
+              <div
+                key={check.id}
+                data-testid={`pre-export-check-${check.id}`}
+                className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 ${
+                  check.passed
+                    ? 'bg-black/40 border-white/5'
+                    : 'bg-rose-950/20 border-rose-500/35'
+                }`}
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    {check.passed ? (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                    )}
+                    <span className="text-xs font-bold text-white truncate">
+                      {check.label}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-400 truncate mt-0.5 pl-5">
+                    {check.detail}
+                  </div>
+                </div>
+
+                {!check.passed && (
+                  <button
+                    type="button"
+                    data-testid={`one-tap-fix-${check.id}`}
+                    onClick={() => {
+                      if (onAutoFixPreExportCheck) {
+                        onAutoFixPreExportCheck(check.id, check.slideIndex);
+                      } else if (check.slideIndex !== undefined && onJumpToSlide) {
+                        onJumpToSlide(check.slideIndex);
+                      }
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/45 text-[10px] font-mono font-bold text-cyan-200 hover:text-white shrink-0 cursor-pointer transition-colors"
+                  >
+                    {check.fixLabel}
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Active Stage Format Summary, Presets Row (9:16 TikTok, 4:5 IG, 1:1) & Schedule Trigger */}
+        <div className="pt-2.5 border-t border-white/[0.08] flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 font-mono tabular-nums">
+              <Smartphone className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+              <span className="text-slate-300 font-semibold">JPG (Q92)</span>
+              <span aria-hidden="true">·</span>
+              <span>
+                {activeDimensionSpec.width}×{activeDimensionSpec.height}
+              </span>
+            </div>
+
+            {onSelectDimensionPreset && (
+              <div
+                data-testid="publish-dimension-presets-row"
+                className="flex items-center gap-1 bg-black/50 p-0.5 rounded-lg border border-white/10"
+              >
+                {(
+                  [
+                    { id: 'tiktok-9:16', label: '9:16 TikTok' },
+                    { id: 'ig-4:5', label: '4:5 IG' },
+                    { id: 'ig-1:1', label: '1:1' },
+                  ] as const
+                ).map((preset) => {
+                  const active = (carousel.dimensionPreset || 'tiktok-9:16') === preset.id;
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => onSelectDimensionPreset(preset.id)}
+                      className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold transition-colors cursor-pointer ${
+                        active
+                          ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/40'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
           {onOpenPublishScheduleModal ? (
             <button
