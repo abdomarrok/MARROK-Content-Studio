@@ -3,6 +3,11 @@
   publish = "dist"
   functions = "netlify/functions"
 
+[build.environment]
+  # Omit public/identifier env vars (e.g. ADMIN_USERNAME="admin") from false-positive literal matching
+  # while keeping strict secret scanning active for all keys, hashes, and tokens.
+  SECRETS_SCAN_OMIT_KEYS = "ADMIN_USERNAME,CLOUDINARY_CLOUD_NAME"
+
 [functions]
   node_bundler = "esbuild"
 
