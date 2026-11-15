@@ -25,6 +25,7 @@
           "type": "hub",
           "centerIcon": "shieldAlert",
           "centerTag": "OSS REMEDIATION",
+          "hookKicker": "SECURITY POSTMORTEM",
           "enTitle": "Securing Open Source in the Age of AI.",
           "arTitle": "تأمين المصادر المفتوحة في عصر الذكاء",
           "enBody": "90% of enterprise codebases rely on volunteer-maintained open source while AI accelerates exploit discovery from weeks to minutes.",
@@ -53,6 +54,7 @@
           "metricValue": "2,300+",
           "metricLabel": "VULNERABILITIES ACROSS 400 OSS PROJECTS",
           "metricDiff": "DISCOVERY OUTPACES REMEDIATION",
+          "hookKicker": "PRODUCTION BENCHMARK",
           "enTitle": "2,300+ bugs uncovered across 400 repos.",
           "arTitle": "اكتشاف أكثر من 2,300 ثغرة في 400 مشروع",
           "enBody": "Automated AI auditing uncovers decades-old flaws in minutes, overwhelming volunteer open-source maintainers.",
@@ -66,6 +68,7 @@
           "compareLeftBody": "Breaks custom enterprise dependencies and stalls behind regulatory freezes.",
           "compareRightTitle": "Surgical Backported Fixes",
           "compareRightBody": "Isolates the security patch onto pinned production versions without regressions.",
+          "hookKicker": "HEAD-TO-HEAD CONTRAST",
           "enTitle": "Why 'just upgrade' fails in production.",
           "arTitle": "لماذا يفشل التحديث المباشر في بيئات الإنتاج؟",
           "enBody": "Dependency conflicts and regulatory constraints prevent instant major upgrades; safe remediation requires surgical backports.",
@@ -73,10 +76,10 @@
         },
         {
           "type": "row",
+          "diagramFooter": "VALIDATION: AI SYNTHESIS + HUMAN MAINTAINER SIGN-OFF",
           "stepNumber": "03",
           "stepLabel": "LIGHTWELL PIPELINE",
-          "diagramVariant": "isolation",
-          "diagramFooter": "VALIDATION: AI SYNTHESIS + HUMAN MAINTAINER SIGN-OFF",
+          "hookKicker": "BLAST RADIUS & ISOLATION",
           "enTitle": "Lightwell’s backport validation loop.",
           "arTitle": "منظومة Lightwell لتوليد والتحقق من الترقيعات",
           "enBody": "Lightwell combines AI root-cause analysis with human engineering validation before contributing patches upstream.",
@@ -104,15 +107,17 @@
               "status": "MERGED",
               "icon": "checkCircle"
             }
-          ]
+          ],
+          "diagramVariant": "isolation"
         },
         {
           "type": "code",
           "stepNumber": "04",
           "stepLabel": "REMEDIATION GATE",
-          "codeFileName": "remediation_gate.yaml",
-          "codeLanguage": "yaml",
           "codeSnippet": "patch_policy:\n  mode: surgical_backport\n  abi_compatibility: strict\n  human_maintainer_review: required\n  disclosure: coordinated_upstream",
+          "codeLanguage": "yaml",
+          "codeFileName": "remediation_gate.yaml",
+          "hookKicker": "IMPLEMENTATION • YAML",
           "enTitle": "Enforcing zero-regression patch gates.",
           "arTitle": "ضمان توافق الترقيع دون كسر الاعتماديات",
           "enBody": "Blindly pushing AI-generated PRs floods maintainers; every backport must pass strict ABI and regression gates first.",
@@ -120,10 +125,10 @@
         },
         {
           "type": "row",
+          "diagramFooter": "DISCLOSURE: SYNCHRONIZED • DUPLICATE TRIAGE: ELIMINATED",
           "stepNumber": "05",
           "stepLabel": "AKRITES COORDINATION",
-          "diagramVariant": "clusters",
-          "diagramFooter": "DISCLOSURE: SYNCHRONIZED • DUPLICATE TRIAGE: ELIMINATED",
+          "hookKicker": "SCALE TOPOLOGY",
           "enTitle": "Akrites synchronized disclosure mesh.",
           "arTitle": "تنسيق الإفصاح الآمن عبر منصة Akrites",
           "enBody": "Akrites deduplicates incoming AI bug reports and coordinates confidential remediation before public CVE disclosure.",
@@ -151,14 +156,15 @@
               "status": "SECURED",
               "icon": "shield"
             }
-          ]
+          ],
+          "diagramVariant": "clusters"
         },
         {
           "type": "row",
+          "diagramFooter": "STRATEGY: FIX FASTER, UPSTREAM & TOGETHER",
           "stepNumber": "06",
           "stepLabel": "DEFENSE VERDICT",
-          "diagramVariant": "takeaway",
-          "diagramFooter": "STRATEGY: FIX FASTER, UPSTREAM & TOGETHER",
+          "hookKicker": "ARCHITECTURAL VERDICT",
           "enTitle": "Winning the remediation race.",
           "arTitle": "السباق الحقيقي هو سرعة الإصلاح لا الاكتشاف",
           "enBody": "Finding bugs is now cheap; security depends on scaling verified, upstream-first patch pipelines with human oversight.",
@@ -186,10 +192,12 @@
               "status": "RULE 03",
               "icon": "globe"
             }
-          ]
+          ],
+          "diagramVariant": "takeaway"
         },
         {
           "type": "cta",
+          "hookKicker": "ENGINEERING DEBATE",
           "enTitle": "How Do You Patch Open Source at Scale?",
           "arTitle": "كيف تدير ترقيع الثغرات في\nالمكتبات مفتوحة المصدر لديك؟",
           "enBody": "",
@@ -205,7 +213,7 @@
       "brand": "MARROK",
       "brandUrl": "marrok.org",
       "firstComment": "🔗 How is your team handling the surge in AI-discovered CVEs across open-source dependencies? Share below 👇",
-      "shortCaption": "90% من أنظمة الشركات تعتمد على مصادر مفتوحة.. كيف نواجه طوفان الثغرات المكتشفة بالذكاء الاصطناعي؟ ⚡👉",
+      "shortCaption": "90% من أنظمة الشركات تعتمد على مصادر مفتوحة. كيف نواجه طوفان الثغرات المكتشفة بالذكاء الاصطناعي؟ ⚡👉",
       "screenHook": "2,300+ OSS bugs found by AI: how we fix them",
       "scheduleSlot": "18:00–21:00 ME / 16:00–19:00 UTC (Peak developer engagement)",
       "sourceMeta": {
@@ -258,7 +266,8 @@
         }
       ]
     },
-    "storageEngine": "neon-postgres"
+    "storageEngine": "neon-postgres",
+    "offlineDraft": false
   },
   {
     "id": "post_0164986c-1b3",
@@ -278,10 +287,11 @@
         {
           "type": "hub",
           "centerIcon": "shieldAlert",
+          "hookKicker": "SECURITY POSTMORTEM",
           "enTitle": "The 948 Root Exploit Gamble.",
           "arTitle": "رهان الثغرات الجذرية الـ 948",
           "enBody": "OpenAI's GPT6 Cyber model has redefined the speed of vulnerability discovery in the Linux kernel.",
-          "arBody": "نموذج GPT6 Cyber من OpenAI يعيد تعريف سرعة اكتشاف الثغرات في نواة Linux المعتمد.",
+          "arBody": "نموذج GPT6 Cyber من OpenAI يعيد تعريف سرعة اكتشاف الثغرات في نواة Linux‏.",
           "satIcons": [
             "cpu",
             "search",
@@ -304,6 +314,7 @@
           "stepNumber": "01",
           "stepLabel": "UNIT COST",
           "metricValue": "$1,280",
+          "hookKicker": "PRODUCTION METRIC • 5X",
           "enTitle": "1,280 Dollars Per Exploit.",
           "arTitle": "1,280 دولاراً لكل ثغرة",
           "enBody": "The cost of discovery has plummeted while the volume of exploits has surged 5x since July.",
@@ -313,7 +324,8 @@
           "type": "row",
           "stepNumber": "02",
           "stepLabel": "PIPELINE",
-          "enTitle": "The Swarm Pipeline Mechanics.",
+          "hookKicker": "EXECUTION STACK",
+          "enTitle": "Swarm Pipeline Mechanics.",
           "arTitle": "آلية عمل خط أنابيب الذكاء الاصطناعي",
           "enBody": "A multi-agent pipeline automates the entire lifecycle of vulnerability research.",
           "arBody": "خط أنابيب متعدد الوكلاء يقوم بأتمتة دورة حياة أبحاث الثغرات بالكامل.",
@@ -337,6 +349,7 @@
           "type": "row",
           "stepNumber": "03",
           "stepLabel": "EXECUTION",
+          "hookKicker": "BLAST RADIUS & ISOLATION",
           "enTitle": "Weaponizing the Kernel.",
           "arTitle": "تسليح نواة النظام",
           "enBody": "Exploit agents bypass KASLR and SMEP protections to gain root access.",
@@ -363,7 +376,8 @@
           "stepLabel": "ECONOMICS",
           "compareLeftTitle": "AI Discovery Cost",
           "compareRightTitle": "Bounty Market Value",
-          "enTitle": "The Market Value Shift.",
+          "hookKicker": "HEAD-TO-HEAD CONTRAST",
+          "enTitle": "Market Value Shift.",
           "arTitle": "تحول القيمة السوقية",
           "enBody": "Comparing AI-driven discovery costs against traditional bounty payouts.",
           "arBody": "مقارنة تكاليف الاكتشاف بالذكاء الاصطناعي مقابل مكافآت الثغرات التقليدية."
@@ -373,6 +387,7 @@
           "stepNumber": "05",
           "stepLabel": "VALUATION",
           "metricValue": "$50M",
+          "hookKicker": "PRODUCTION BENCHMARK",
           "enTitle": "50 Million Dollar Market.",
           "arTitle": "سوق بقيمة 50 مليون دولار",
           "enBody": "The total bounty market value for these exploits is massive.",
@@ -382,8 +397,9 @@
           "type": "row",
           "stepNumber": "06",
           "stepLabel": "VERDICT",
-          "enTitle": "The Core Trade-off.",
-          "arTitle": "المقايضة الجوهرية",
+          "hookKicker": "ARCHITECTURAL VERDICT",
+          "enTitle": "Automated defense vs.",
+          "arTitle": "الدفاع الآلي مقابل الهجوم الآلي",
           "enBody": "AI can be a powerful defender or a relentless attacker.",
           "arBody": "الذكاء الاصطناعي يمكن أن يكون مدافعاً قوياً أو مهاجماً لا يرحم.",
           "diagramVariant": "takeaway",
@@ -404,8 +420,9 @@
         },
         {
           "type": "cta",
-          "enTitle": "Join the Discussion.",
-          "arTitle": "شارك برأيك",
+          "hookKicker": "ENGINEERING DEBATE",
+          "enTitle": "Is AI-driven security the end?",
+          "arTitle": "هل الأمن المدعوم بالذكاء الاصطناعي هو؟",
           "enBody": "Is AI-driven security the end of traditional pen-testing?",
           "arBody": "هل الأمن المدعوم بالذكاء الاصطناعي هو نهاية اختبار الاختراق التقليدي؟",
           "ctaText": "Join Discussion • شارك برأيك",
@@ -481,7 +498,7 @@
           "enTitle": "948 Root Exploits Found.",
           "arTitle": "اكتشاف 948 ثغرة جذرية",
           "enBody": "OpenAI's GPT6 Cyber is rewriting the rules of Linux kernel security.",
-          "arBody": "نموذج GPT6 Cyber من OpenAI يعيد كتابة قواعد أمن نواة Linux المعتمد.",
+          "arBody": "نموذج GPT6 Cyber من OpenAI يعيد كتابة قواعد أمن نواة Linux‏.",
           "centerIcon": "shieldAlert"
         },
         {
@@ -497,7 +514,7 @@
           "enTitle": "The AI Swarm Pipeline.",
           "arTitle": "خط أنابيب الذكاء الاصطناعي",
           "enBody": "How OpenAI's multi-agent system weaponizes Linux vulnerabilities.",
-          "arBody": "كيف يقوم نظام OpenAI متعدد الوكلاء بتسليح ثغرات Linux المعتمد.",
+          "arBody": "كيف يقوم نظام OpenAI متعدد الوكلاء بتسليح ثغرات Linux‏.",
           "centerIcon": "cpu"
         }
       ]
@@ -538,7 +555,8 @@
     ],
     "zernioPostIds": [
       "6af2e2de4450751ac10ef03d"
-    ]
+    ],
+    "offlineDraft": false
   },
   {
     "id": "post_7db75668-828",
@@ -595,6 +613,7 @@
           "metricDiff": "",
           "imageUrl": "/assets/aistudio/1793547809949_4a78bc04.jpg",
           "imageCaption": "",
+          "hookKicker": "ENGINEERING BREAKDOWN",
           "enTitle": "The Nvidia spy scandal gamble.",
           "arTitle": "مقامرة Nvidia وفضيحة التجسس",
           "enBody": "A personal betrayal meets global espionage. Is the AI leader compromised?",
@@ -617,7 +636,8 @@
           "stepNumber": "01",
           "stepLabel": "INVESTIGATION",
           "metricValue": "100%",
-          "enTitle": "The security integrity deficit.",
+          "hookKicker": "STAGE 01 • MECHANISM",
+          "enTitle": "Security integrity deficit.",
           "arTitle": "عجز النزاهة الأمنية",
           "enBody": "The scandal triggers a massive internal investigation into potential leaks of sensitive AI chip designs.",
           "arBody": "تثير الفضيحة تحقيقاً داخلياً واسع النطاق حول تسريبات محتملة لتصاميم رقائق الذكاء الاصطناعي الحساسة."
@@ -626,7 +646,8 @@
           "type": "row",
           "stepNumber": "02",
           "stepLabel": "MECHANISM",
-          "enTitle": "The MSS espionage apparatus.",
+          "hookKicker": "SYSTEM ARCHITECTURE",
+          "enTitle": "MSS espionage apparatus.",
           "arTitle": "جهاز التجسس التابع لـ MSS",
           "enBody": "China’s Ministry of State Security operates through corporate fronts to influence global tech leaders.",
           "arBody": "تعمل وزارة أمن الدولة الصينية عبر واجهات تجارية للتأثير على قادة التكنولوجيا العالميين.",
@@ -652,6 +673,7 @@
           "diagramFooter": "LAYERED STACK: DETERMINISTIC VERTICAL EXECUTION",
           "stepNumber": "03",
           "stepLabel": "MECHANISM",
+          "hookKicker": "STAGE 03 • MECHANISM",
           "enTitle": "Lobbying and export controls.",
           "arTitle": "الضغط السياسي وضوابط التصدير",
           "enBody": "Huang’s influence on U.S. export policies is now under intense scrutiny by White House officials.",
@@ -688,6 +710,7 @@
           "stepLabel": "IMPACT",
           "compareLeftTitle": "Corporate Strategy",
           "compareRightTitle": "National Security",
+          "hookKicker": "HEAD-TO-HEAD CONTRAST",
           "enTitle": "Corporate vs national interests.",
           "arTitle": "المصالح التجارية مقابل الوطنية",
           "enBody": "The tension between maintaining global market access and safeguarding U.S. technological supremacy.",
@@ -697,7 +720,8 @@
           "type": "row",
           "stepNumber": "05",
           "stepLabel": "IMPACT",
-          "enTitle": "The political fallout.",
+          "hookKicker": "BLAST RADIUS & ISOLATION",
+          "enTitle": "Political fallout.",
           "arTitle": "التداعيات السياسية",
           "enBody": "Congressional briefings aim to uncover the scope of potential damage to the wider tech ecosystem.",
           "arBody": "تهدف جلسات الإحاطة في الكونجرس إلى كشف حجم الضرر المحتمل على النظام البيئي التكنولوجي الأوسع.",
@@ -706,7 +730,8 @@
         {
           "type": "row",
           "diagramFooter": "ARCHITECTURAL PRINCIPLE: AUDITED & PRODUCTION-VERIFIED",
-          "enTitle": "Transparency vs. global access.",
+          "hookKicker": "ARCHITECTURAL VERDICT",
+          "enTitle": "Transparency vs global access.",
           "arTitle": "الشفافية وإصلاح الحوكمة لاستعادة الثقة",
           "enBody": "Restoring trust requires transparency, regulatory reform, and a clear separation of interests.",
           "arBody": "استعادة الثقة تتطلب الشفافية، الإصلاح التنظيمي، وفصلاً واضحاً للمصالح.",
@@ -738,6 +763,7 @@
         },
         {
           "type": "cta",
+          "hookKicker": "ENGINEERING DEBATE",
           "enTitle": "Will this reshape tech security?",
           "arTitle": "هل تعيد هذه القضية تعريف الأمن القومي؟",
           "enBody": "Could this scandal redefine how tech companies handle national security?",
@@ -845,7 +871,8 @@
       }
     },
     "storageEngine": "neon-postgres",
-    "cloudinaryCleanedAt": "2026-11-09T21:39:25.088Z"
+    "cloudinaryCleanedAt": "2026-11-09T21:39:25.088Z",
+    "offlineDraft": false
   },
   {
     "id": "post_004f0244-968",
@@ -894,6 +921,7 @@
         {
           "type": "hub",
           "centerIcon": "shieldAlert",
+          "hookKicker": "ENGINEERING BREAKDOWN",
           "enTitle": "Mass-deploying offensive AI agents.",
           "arTitle": "انتشار وكلاء الذكاء الاصطناعي الهجومي",
           "enBody": "1,418 exposed instances detected globally. The infrastructure for automated attacks is scaling rapidly.",
@@ -920,6 +948,7 @@
           "stepNumber": "01",
           "stepLabel": "THE TRIGGER",
           "metricValue": "1,418",
+          "hookKicker": "PRODUCTION BENCHMARK",
           "enTitle": "1,418 exposed control panels.",
           "arTitle": "1,418 لوحة تحكم مكشوفة",
           "enBody": "Shodan scans reveal a distributed network of autonomous penetration-testing tools across multiple countries.",
@@ -929,6 +958,7 @@
           "type": "row",
           "stepNumber": "02",
           "stepLabel": "MECHANICS",
+          "hookKicker": "EXECUTION STACK",
           "enTitle": "Standardized attack infrastructure.",
           "arTitle": "بنية تحتية هجومية موحدة",
           "enBody": "Identical ETag and Content-Length headers suggest a common Docker image template used for rapid deployment.",
@@ -939,16 +969,18 @@
           "type": "row",
           "stepNumber": "03",
           "stepLabel": "SCALE",
+          "hookKicker": "SCALE TOPOLOGY",
           "enTitle": "Infrastructure footprint.",
           "arTitle": "بصمة البنية التحتية",
           "enBody": "Clusters identified on Cogent and ColoCrossing, with additional presence across DigitalOcean, Vultr, and Linode.",
-          "arBody": "تم تحديد تجمعات على Cogent و ColoCrossing، مع وجود إضافي عبر DigitalOcean و Vultr و Linode المعتمد.",
+          "arBody": "تم تحديد تجمعات على Cogent و ColoCrossing، مع وجود إضافي عبر DigitalOcean و Vultr و Linode‏.",
           "diagramVariant": "clusters"
         },
         {
           "type": "row",
           "stepNumber": "04",
           "stepLabel": "IMPACT",
+          "hookKicker": "BLAST RADIUS & ISOLATION",
           "enTitle": "Real-world attack campaigns.",
           "arTitle": "حملات هجومية واقعية",
           "enBody": "Tools like ARTEX, Cairn, and CyberStrikeAI are actively targeting financial institutions.",
@@ -960,6 +992,7 @@
           "codeSnippet": "DeviceNetworkEvents\n| where RemoteIP in (ThreatIntel)\n| where ActionType == 'InboundConnection'\n| project Timestamp, DeviceName, RemoteIP",
           "codeLanguage": "sql",
           "codeFileName": "kql_detection.kql",
+          "hookKicker": "IMPLEMENTATION • SQL",
           "enTitle": "Detection in Microsoft Defender.",
           "arTitle": "الكشف عبر Microsoft Defender",
           "enBody": "Use DeviceNetworkEvents to hunt for inbound connections from known offensive AI threat intelligence.",
@@ -967,7 +1000,8 @@
         },
         {
           "type": "row",
-          "enTitle": "The systemic risk.",
+          "hookKicker": "ARCHITECTURAL VERDICT",
+          "enTitle": "Systemic risk.",
           "arTitle": "المخاطر النظامية",
           "enBody": "The ease of replicating and distributing offensive capabilities creates a new baseline for systemic security risk.",
           "arBody": "سهولة تكرار وتوزيع القدرات الهجومية تخلق معياراً جديداً للمخاطر الأمنية النظامية.",
@@ -975,6 +1009,7 @@
         },
         {
           "type": "cta",
+          "hookKicker": "ENGINEERING DEBATE",
           "enTitle": "How do we defend at scale?",
           "arTitle": "كيف ندافع على نطاق واسع؟",
           "enBody": "Join the discussion on securing against automated offensive AI agents.",
@@ -1071,7 +1106,8 @@
         }
       ]
     },
-    "storageEngine": "neon-postgres"
+    "storageEngine": "neon-postgres",
+    "offlineDraft": false
   },
   {
     "id": "post_fc946187-e1a",
@@ -1125,6 +1161,7 @@
           "type": "row",
           "centerIcon": "cpu",
           "diagramFooter": "SYSTEM TOPOLOGY: END-TO-END DETERMINISTIC PIPELINE",
+          "hookKicker": "ENGINEERING BREAKDOWN",
           "enTitle": "The future of Java in AI.",
           "arTitle": "مستقبل Java في عصر الذكاء الاصطناعي",
           "enBody": "Java is evolving beyond CPU-centric models to embrace AI and heterogeneous hardware.",
@@ -1169,29 +1206,32 @@
           "stepNumber": "01",
           "stepLabel": "THE PROBLEM",
           "metricValue": "100%",
-          "enTitle": "The CPU-centric bottleneck.",
+          "hookKicker": "PRODUCTION BENCHMARK",
+          "enTitle": "CPU-centric bottleneck.",
           "arTitle": "عنق الزجاجة في الحوسبة التقليدية",
           "enBody": "Java traditionally targets CPU computation, but modern AI requires massive tensor operations on GPUs.",
-          "arBody": "تستهدف Java تقليدياً عمليات المعالج المركزي، بينما تتطلب نماذج AI الحديثة عمليات مصفوفات ضخمة على وحدات GPU المعتمد."
+          "arBody": "تستهدف Java تقليدياً عمليات المعالج المركزي، بينما تتطلب نماذج AI الحديثة عمليات مصفوفات ضخمة على وحدات GPU‏."
         },
         {
           "type": "row",
           "stepNumber": "02",
           "stepLabel": "MECHANICS",
+          "hookKicker": "SYSTEM ARCHITECTURE",
           "enTitle": "Bridging native AI runtimes.",
           "arTitle": "ربط بيئات تشغيل AI الأصلية",
           "enBody": "The Foreign Function & Memory API (FFM) allows Java to interact with C/C++ AI runtimes without JNI complexity.",
-          "arBody": "تسمح واجهة FFM لـ Java بالتفاعل مع بيئات تشغيل AI المكتوبة بـ C/C++ دون تعقيدات JNI المعتمد.",
+          "arBody": "تسمح واجهة FFM لـ Java بالتفاعل مع بيئات تشغيل AI المكتوبة بـ C/C++ دون تعقيدات JNI‏.",
           "diagramVariant": "topology"
         },
         {
           "type": "row",
           "stepNumber": "03",
           "stepLabel": "MECHANICS",
+          "hookKicker": "EXECUTION STACK",
           "enTitle": "Project Babylon's code reflection.",
           "arTitle": "انعكاس الكود في مشروع Babylon",
           "enBody": "Treating Java code as symbolic models allows transformation into foreign programming models like ONNX.",
-          "arBody": "معاملة كود Java كنماذج رمزية يسمح بتحويله إلى نماذج برمجية خارجية مثل ONNX المعتمد.",
+          "arBody": "معاملة كود Java كنماذج رمزية يسمح بتحويله إلى نماذج برمجية خارجية مثل ONNX‏.",
           "diagramVariant": "stack"
         },
         {
@@ -1200,6 +1240,7 @@
           "stepLabel": "IMPACT",
           "compareLeftTitle": "Legacy JNI",
           "compareRightTitle": "FFM API",
+          "hookKicker": "HEAD-TO-HEAD CONTRAST",
           "enTitle": "Legacy vs modern integration.",
           "arTitle": "التكامل التقليدي مقابل الحديث",
           "enBody": "Moving from complex JNI bridges to native, high-throughput memory access.",
@@ -1209,6 +1250,7 @@
           "type": "row",
           "stepNumber": "05",
           "stepLabel": "IMPACT",
+          "hookKicker": "SYSTEM ARCHITECTURE",
           "enTitle": "Automating the AI pipeline.",
           "arTitle": "أتمتة خط أنابيب الذكاء الاصطناعي",
           "enBody": "Tools like Obgen and Protogen eliminate boilerplate, keeping AI-integrated Java code concise.",
@@ -1217,7 +1259,8 @@
         },
         {
           "type": "row",
-          "enTitle": "Ecosystem stability vs. AI speed.",
+          "hookKicker": "ARCHITECTURAL VERDICT",
+          "enTitle": "Ecosystem stability vs AI speed.",
           "arTitle": "استقرار بيئة Java مقابل متطلبات عتاد AI",
           "enBody": "Balancing Java's ecosystem stability with the performance demands of heterogeneous AI hardware.",
           "arBody": "الموازنة بين استقرار نظام Java ومتطلبات الأداء لأجهزة AI غير المتجانسة.",
@@ -1225,6 +1268,7 @@
         },
         {
           "type": "cta",
+          "hookKicker": "ENGINEERING DEBATE",
           "enTitle": "Is Java ready for AI workloads?",
           "arTitle": "كيف ستغير هذه النماذج استراتيجيتك للـ AI؟",
           "enBody": "How will these new programming models change your enterprise AI strategy?",
@@ -1323,12 +1367,13 @@
           "enTitle": "Java meets native AI.",
           "arTitle": "Java تلتقي بالذكاء الاصطناعي الأصلي",
           "enBody": "Unlocking high-throughput AI inference without leaving the Java ecosystem.",
-          "arBody": "فتح آفاق استنتاج AI عالي الإنتاجية دون مغادرة بيئة Java المعتمد.",
+          "arBody": "فتح آفاق استنتاج AI عالي الإنتاجية دون مغادرة بيئة Java‏.",
           "centerIcon": "cpu"
         }
       ]
     },
-    "storageEngine": "neon-postgres"
+    "storageEngine": "neon-postgres",
+    "offlineDraft": false
   },
   {
     "id": "post_de02d787-d55",
@@ -1377,6 +1422,7 @@
           "compareLeftBody": "• Legacy AI Agent Tooling MCP constraints\n• Higher operational overhead\n• Limited elasticity under load",
           "compareRightTitle": "UTCP",
           "compareRightBody": "• Optimized UTCP path\n• Sub-millisecond execution\n• Deterministic scaling guarantees",
+          "hookKicker": "ARCHITECTURE SHOWDOWN",
           "enTitle": "AI Agent Tooling MCP vs UTCP.",
           "arTitle": "ربط وكلاء الذكاء الاصطناعي بالأدوات",
           "enBody": "How do AI agents interact with external services? We compare the two primary protocols for seamless tool calling.",
@@ -1400,7 +1446,8 @@
         },
         {
           "type": "number",
-          "enTitle": "The Integration Bottleneck.",
+          "hookKicker": "STAGE 01 • MECHANISM",
+          "enTitle": "Integration Bottleneck.",
           "arTitle": "عنق زجاجة التكامل",
           "enBody": "AI models cannot talk to APIs directly. They require a protocol to translate intent into actionable tool calls.",
           "arBody": "نماذج الذكاء الاصطناعي لا تتحدث مع واجهات البرمجة مباشرة. تحتاج لبروتوكول يترجم النوايا إلى أوامر تنفيذية."
@@ -1408,6 +1455,7 @@
         {
           "type": "row",
           "stepNumber": "01",
+          "hookKicker": "SYSTEM ARCHITECTURE",
           "enTitle": "MCP: The Middleware Approach.",
           "arTitle": "نهج الوسيط البرمجي",
           "enBody": "MCP uses a server as an intermediary to handle authentication and API complexity, providing a standardized interface.",
@@ -1417,6 +1465,7 @@
         {
           "type": "row",
           "stepNumber": "02",
+          "hookKicker": "SYSTEM ARCHITECTURE",
           "enTitle": "UTCP: Direct API Execution.",
           "arTitle": "التنفيذ المباشر",
           "enBody": "UTCP eliminates the middleman by using API manuals to call services directly, offering a lightweight integration.",
@@ -1428,6 +1477,7 @@
           "stepNumber": "03",
           "compareLeftTitle": "MCP (Middleware)",
           "compareRightTitle": "UTCP (Direct)",
+          "hookKicker": "HEAD-TO-HEAD CONTRAST",
           "enTitle": "Architecture Comparison.",
           "arTitle": "مقارنة البنية الهيكلية",
           "enBody": "Choosing between MCP and UTCP depends on your infrastructure requirements and maintenance capacity.",
@@ -1456,6 +1506,7 @@
         },
         {
           "type": "row",
+          "hookKicker": "ARCHITECTURAL VERDICT",
           "enTitle": "Operational Trade-offs.",
           "arTitle": "المقايضات التشغيلية",
           "enBody": "MCP simplifies multi-service integration but adds server overhead. UTCP offers control but requires manual upkeep.",
@@ -1464,6 +1515,7 @@
         },
         {
           "type": "row",
+          "hookKicker": "ARCHITECTURAL VERDICT",
           "enTitle": "Verdict: Which to choose?",
           "arTitle": "الخلاصة: ماذا تختار؟",
           "enBody": "Use MCP for standardized, multi-tool environments. Use UTCP for high-control, lightweight, direct API integrations.",
@@ -1472,6 +1524,7 @@
         },
         {
           "type": "cta",
+          "hookKicker": "ENGINEERING DEBATE",
           "enTitle": "MCP or UTCP for your agents?",
           "arTitle": "أي بروتوكول يناسب بنيتك التقنية؟",
           "enBody": "Are you building AI agents? Which protocol fits your stack better?",
@@ -1574,7 +1627,8 @@
         "terminalScanlines": true
       }
     },
-    "storageEngine": "neon-postgres"
+    "storageEngine": "neon-postgres",
+    "offlineDraft": false
   },
   {
     "id": "post_787318fd-8c1",
@@ -1603,6 +1657,7 @@
           "centerIcon": "clickhouse",
           "centerTag": "elevenlabs",
           "stepNumber": "01",
+          "hookKicker": "ENGINEERING BREAKDOWN",
           "enTitle": "Is Your Voice Still Yours?",
           "arTitle": "هل صوتك ملكك فعلاً؟",
           "enBody": "AI voice cloning is evolving faster than legal frameworks. Here is the reality of digital identity theft.",
@@ -1619,7 +1674,8 @@
         {
           "type": "number",
           "stepNumber": "01",
-          "enTitle": "The Reality of Voice Cloning.",
+          "hookKicker": "STAGE 01 • MECHANISM",
+          "enTitle": "Reality of Voice Cloning.",
           "arTitle": "واقع استنساخ الصوت",
           "enBody": "AI tools like Eleven Labs can now capture unique regional accents and speech quirks with unsettling precision.",
           "arBody": "أدوات الذكاء الاصطناعي قادرة الآن على محاكاة اللهجات الإقليمية وسمات الكلام بدقة مقلقة."
@@ -1627,7 +1683,8 @@
         {
           "type": "row",
           "stepNumber": "02",
-          "enTitle": "The Identity Fingerprint.",
+          "hookKicker": "BLAST RADIUS & ISOLATION",
+          "enTitle": "Identity Fingerprint.",
           "arTitle": "بصمة الهوية الصوتية",
           "enBody": "Your voice is a unique biometric fingerprint. AI cloning creates a 'masquerade' that undermines personal credibility.",
           "arBody": "صوتك هو بصمة بيومترية فريدة. استنساخ الذكاء الاصطناعي يخلق 'تنكراً' يضعف المصداقية الشخصية.",
@@ -1652,7 +1709,8 @@
           "stepNumber": "03",
           "compareLeftTitle": "Platform Metric",
           "compareRightTitle": "Human Perception",
-          "enTitle": "The Similarity Threshold.",
+          "hookKicker": "HEAD-TO-HEAD CONTRAST",
+          "enTitle": "Similarity Threshold.",
           "arTitle": "عتبة التشابه التقني",
           "enBody": "Platforms use ENCAPA-TDNN tests to measure voice similarity, but these metrics often fail to detect regional nuance.",
           "arBody": "تستخدم المنصات اختبارات ENCAPA-TDNN لقياس التشابه، لكنها غالباً تفشل في رصد الفروق الدقيقة للهجات."
@@ -1660,6 +1718,7 @@
         {
           "type": "row",
           "stepNumber": "04",
+          "hookKicker": "ARCHITECTURAL VERDICT",
           "enTitle": "Legal Protection Gaps.",
           "arTitle": "فجوات الحماية القانونية",
           "enBody": "No federal law explicitly protects voices. We rely on state-level 'Right of Publicity' laws to fight misappropriation.",
@@ -1683,6 +1742,7 @@
         {
           "type": "number",
           "stepNumber": "05",
+          "hookKicker": "STAGE 05 • MECHANISM",
           "enTitle": "Steps to Protect Yourself.",
           "arTitle": "خطوات لحماية هويتك",
           "enBody": "1. Collect evidence (links/screenshots). 2. Request platform similarity tests. 3. Consult IP legal counsel.",
@@ -1690,7 +1750,8 @@
         },
         {
           "type": "row",
-          "enTitle": "The Hard Truth.",
+          "hookKicker": "ARCHITECTURAL VERDICT",
+          "enTitle": "Hard Truth.",
           "arTitle": "الحقيقة المرة",
           "enBody": "There is currently no impartial referee for voice identity online. You are often left with only support emails.",
           "arBody": "لا يوجد حالياً حكم محايد للهوية الصوتية عبر الإنترنت. غالباً ما تترك وحيداً مع رسائل دعم العملاء.",
@@ -1712,6 +1773,7 @@
         },
         {
           "type": "cta",
+          "hookKicker": "ENGINEERING DEBATE",
           "enTitle": "Stay Vigilant.",
           "arTitle": "ابقَ يقظاً",
           "enBody": "AI will only get better. Document evidence, ask questions, and support stronger digital identity laws.",
@@ -1817,7 +1879,8 @@
         "terminalScanlines": true
       }
     },
-    "storageEngine": "neon-postgres"
+    "storageEngine": "neon-postgres",
+    "offlineDraft": false
   },
   {
     "id": "post_5787fc37-3b4",
@@ -1856,6 +1919,7 @@
           "compareLeftBody": "• Unchecked Mass-deploying expansion\n• Implicit trust across Offensive\n• Blind spots in runtime auditing",
           "compareRightTitle": "GOVERNED / ZERO-TRUST",
           "compareRightBody": "• Least-privilege Mass-deploying bounds\n• Explicit Offensive attestation\n• Continuous Agents telemetry",
+          "hookKicker": "ENGINEERING BREAKDOWN",
           "enTitle": "Mass-deploying offensive AI agents.",
           "arTitle": "انتشار وكلاء الذكاء الاصطناعي الهجومي",
           "enBody": "1,418 exposed instances detected globally. The infrastructure for automated attacks is scaling rapidly.",
@@ -1997,7 +2061,8 @@
         }
       ]
     },
-    "storageEngine": "neon-postgres"
+    "storageEngine": "neon-postgres",
+    "offlineDraft": false
   },
   {
     "id": "post_cefc19e0-30e",
@@ -2029,6 +2094,7 @@
           "metricDiff": "",
           "imageUrl": "/assets/aistudio/1793547809949_4a78bc04.jpg",
           "imageCaption": "",
+          "hookKicker": "ENGINEERING BREAKDOWN",
           "enTitle": "The Alpine Linux root bypass.",
           "arTitle": "ثغرة الوصول للجذر في Alpine Linux",
           "enBody": "A simple input overflow grants full root access.",
@@ -2057,7 +2123,8 @@
           "stepNumber": "01",
           "stepLabel": "TRIGGER",
           "metricValue": "257-1024",
-          "enTitle": "The 257-character trigger.",
+          "hookKicker": "PRODUCTION BENCHMARK",
+          "enTitle": "257-character trigger.",
           "arTitle": "مفتاح الثغرة 257 حرفاً",
           "enBody": "Inputting between 257 and 1024 characters triggers the authentication bypass.",
           "arBody": "إدخال ما بين 257 إلى 1024 حرفاً يؤدي إلى تجاوز التحقق من الهوية."
@@ -2066,6 +2133,7 @@
           "type": "row",
           "stepNumber": "02",
           "stepLabel": "MECHANICS",
+          "hookKicker": "SYSTEM ARCHITECTURE",
           "enTitle": "How the bypass functions.",
           "arTitle": "كيفية عمل الثغرة",
           "enBody": "The system fails to validate input length, leading to memory corruption.",
@@ -2091,7 +2159,8 @@
           "codeSnippet": "$ ssh root@alpine-cloud\npassword: [257+ chars]\n# id\nuid=0(root) gid=0(root)",
           "codeLanguage": "bash",
           "codeFileName": "exploit.sh",
-          "enTitle": "The exploit demonstration.",
+          "hookKicker": "IMPLEMENTATION • BASH",
+          "enTitle": "Exploit demonstration.",
           "arTitle": "محاكاة الاستغلال",
           "enBody": "The authentication process accepts the overflow and grants root.",
           "arBody": "عملية التحقق تقبل التدفق الزائد وتمنح صلاحيات الجذر."
@@ -2100,6 +2169,7 @@
           "type": "row",
           "stepNumber": "03",
           "stepLabel": "IMPACT",
+          "hookKicker": "BLAST RADIUS & ISOLATION",
           "enTitle": "Systemic security impact.",
           "arTitle": "الأثر الأمني على النظام",
           "enBody": "Unauthorized root access compromises the entire container environment.",
@@ -2126,6 +2196,7 @@
           "stepLabel": "COMPARISON",
           "compareLeftTitle": "Standard Auth",
           "compareRightTitle": "Exploited State",
+          "hookKicker": "HEAD-TO-HEAD CONTRAST",
           "enTitle": "Security posture comparison.",
           "arTitle": "مقارنة الوضع الأمني",
           "enBody": "Standard authentication vs. the exploited state.",
@@ -2133,7 +2204,8 @@
         },
         {
           "type": "row",
-          "enTitle": "The mitigation verdict.",
+          "hookKicker": "ARCHITECTURAL VERDICT",
+          "enTitle": "Mitigation verdict.",
           "arTitle": "خلاصة المعالجة",
           "enBody": "Patching and strict input validation are mandatory.",
           "arBody": "التحديث والتحقق الصارم من المدخلات أمر إلزامي.",
@@ -2141,6 +2213,7 @@
         },
         {
           "type": "cta",
+          "hookKicker": "ENGINEERING DEBATE",
           "enTitle": "How are you securing Alpine?",
           "arTitle": "كيف تقوم بتأمين بيئات Alpine الخاصة بك؟",
           "enBody": "How are you securing your Alpine instances?",
@@ -2221,7 +2294,8 @@
         }
       ]
     },
-    "storageEngine": "neon-postgres"
+    "storageEngine": "neon-postgres",
+    "offlineDraft": false
   },
   {
     "id": "post_28a59c39-836",
@@ -2248,6 +2322,7 @@
         {
           "type": "hub",
           "centerIcon": "cpu",
+          "hookKicker": "ENGINEERING BREAKDOWN",
           "enTitle": "Stop dumping your entire codebase.",
           "arTitle": "توقف عن إغراق الـ AI بكامل الكود",
           "enBody": "Context curation beats volume. Master the inputs that actually drive agentic coding performance.",
@@ -2274,6 +2349,7 @@
           "stepNumber": "01",
           "stepLabel": "THE PROBLEM",
           "metricValue": "80%",
+          "hookKicker": "PRODUCTION BENCHMARK",
           "enTitle": "Why generic prompts fail.",
           "arTitle": "لماذا تفشل الأوامر العامة؟",
           "enBody": "AI models prioritize input start and end. Buried context is ignored noise.",
@@ -2283,7 +2359,8 @@
           "type": "row",
           "stepNumber": "02",
           "stepLabel": "MECHANICS",
-          "enTitle": "The six critical inputs.",
+          "hookKicker": "EXECUTION STACK",
+          "enTitle": "Six critical inputs.",
           "arTitle": "المدخلات الستة الحاسمة",
           "enBody": "Empower your agent with structured, targeted data to ensure code alignment.",
           "arBody": "زود وكيلك ببيانات منظمة وموجهة لضمان توافق الكود مع مشروعك.",
@@ -2307,6 +2384,7 @@
           "type": "row",
           "stepNumber": "03",
           "stepLabel": "MECHANICS",
+          "hookKicker": "SYSTEM ARCHITECTURE",
           "enTitle": "Building the feedback loop.",
           "arTitle": "بناء حلقة التغذية الراجعة",
           "enBody": "Use tests and documentation to define what 'good' looks like for your agent.",
@@ -2333,6 +2411,7 @@
           "stepLabel": "IMPACT",
           "compareLeftTitle": "The Old Way",
           "compareRightTitle": "The Agentic Way",
+          "hookKicker": "HEAD-TO-HEAD CONTRAST",
           "enTitle": "The 'Interview' strategy.",
           "arTitle": "استراتيجية المقابلة",
           "enBody": "Don't guess what the agent needs. Let it ask you.",
@@ -2342,6 +2421,7 @@
           "type": "row",
           "stepNumber": "05",
           "stepLabel": "IMPACT",
+          "hookKicker": "BLAST RADIUS & ISOLATION",
           "enTitle": "Curation over volume.",
           "arTitle": "الانتقائية فوق الكمية",
           "enBody": "Clear noise from prior sessions. Start fresh for every task.",
@@ -2364,7 +2444,8 @@
         },
         {
           "type": "row",
-          "enTitle": "Control vs. blind automation.",
+          "hookKicker": "ARCHITECTURAL VERDICT",
+          "enTitle": "Control vs blind automation.",
           "arTitle": "التحكم البشري مقابل الأتمتة الكاملة",
           "enBody": "Control vs. Automation. Keep the human in the driver's seat.",
           "arBody": "التحكم مقابل الأتمتة. ابقَ أنت في مقعد القيادة.",
@@ -2372,6 +2453,7 @@
         },
         {
           "type": "cta",
+          "hookKicker": "ENGINEERING DEBATE",
           "enTitle": "How do you curate agent context?",
           "arTitle": "كيف تدير سياق عمل وكلاء الـ AI لديك؟",
           "enBody": "How do you manage context for your AI agents? Share your tips below.",
@@ -2451,7 +2533,8 @@
         }
       ]
     },
-    "storageEngine": "neon-postgres"
+    "storageEngine": "neon-postgres",
+    "offlineDraft": false
   },
   {
     "id": "post_9db57808-d85",
@@ -2487,6 +2570,7 @@
           "compareRightBody": "• Optimized Enterprise Reality path\n• Sub-millisecond execution\n• Deterministic scaling guarantees",
           "imageUrl": "/assets/aistudio/1793547809949_4a78bc04.jpg",
           "imageCaption": "",
+          "hookKicker": "ARCHITECTURE SHOWDOWN",
           "enTitle": "AI Expectations vs Enterprise Reality.",
           "arTitle": "توقعات الذكاء الاصطناعي مقابل الواقع الفعلي",
           "enBody": "Everyone expects to boss AI models around—until enterprise dependencies flip the power dynamic.",
@@ -2594,12 +2678,13 @@
           "enTitle": "Is Your Retirement at Risk?",
           "arTitle": "هل مدخرات تقاعدك في خطر؟",
           "enBody": "How AI losses impact your S&P 500 index funds.",
-          "arBody": "كيف تؤثر خسائر الذكاء الاصطناعي على صناديق S&P 500 المعتمد.",
+          "arBody": "كيف تؤثر خسائر الذكاء الاصطناعي على صناديق S&P 500‏.",
           "centerIcon": "shield"
         }
       ]
     },
-    "storageEngine": "neon-postgres"
+    "storageEngine": "neon-postgres",
+    "offlineDraft": false
   },
   {
     "id": "post_d1474633-bd0",
@@ -2627,6 +2712,7 @@
           "type": "image",
           "centerIcon": "shieldAlert",
           "imageUrl": "/assets/aistudio/1793547809949_4a78bc04.jpg",
+          "hookKicker": "BENCHMARK SHOCK • $63B",
           "enTitle": "The $63B Binance Breach Analysis.",
           "arTitle": "تحليل اختراق Binance بقيمة 6.3 مليار دولار",
           "enBody": "A technical breakdown of the largest crypto hack in history, covering the attack vector and recovery efforts.",
@@ -2647,16 +2733,18 @@
           "stepNumber": "01",
           "stepLabel": "IMPACT",
           "metricValue": "6.3B",
+          "hookKicker": "PRODUCTION METRIC • $63B",
           "enTitle": "Record-Breaking $63B Impact.",
           "arTitle": "خسائر قياسية بلغت 6.3 مليار دولار",
           "enBody": "The breach spanned 10 networks, occurring within a 20-minute window. It is 4x larger than the 2025 Bybit hack.",
-          "arBody": "طال الاختراق 10 شبكات خلال 20 دقيقة فقط، وهو ما يعادل 4 أضعاف حجم اختراق Bybit عام 2025 المعتمد."
+          "arBody": "طال الاختراق 10 شبكات خلال 20 دقيقة فقط، وهو ما يعادل 4 أضعاف حجم اختراق Bybit عام 2025‏."
         },
         {
           "type": "row",
           "stepNumber": "02",
           "stepLabel": "MECHANISM",
-          "enTitle": "The Attack Vector.",
+          "hookKicker": "BLAST RADIUS & ISOLATION",
+          "enTitle": "Attack Vector.",
           "arTitle": "ناقل الهجوم التقني",
           "enBody": "Evidence suggests a compromise of the hot wallet signing system, potentially originating from a compromised engineer workstation.",
           "arBody": "تشير الأدلة إلى اختراق نظام التوقيع في المحافظ الساخنة، ربما عبر جهاز حاسوب خاص بأحد المهندسين.",
@@ -2680,6 +2768,7 @@
           "type": "row",
           "stepNumber": "03",
           "stepLabel": "RESPONSE",
+          "hookKicker": "SYSTEM ARCHITECTURE",
           "enTitle": "Rapid Asset Freeze.",
           "arTitle": "آلية تجميد الأصول",
           "enBody": "Binance and stablecoin issuers (Tether/Circle) successfully froze ~3 billion USD, preventing further movement.",
@@ -2704,6 +2793,7 @@
           "type": "row",
           "stepNumber": "04",
           "stepLabel": "THREAT",
+          "hookKicker": "SCALE TOPOLOGY",
           "enTitle": "Attribution Analysis.",
           "arTitle": "تحليل الجهة المهاجمة",
           "enBody": "TRM Labs and Chainalysis attribute the breach with high confidence to the North Korean group 'TraderTraitor'.",
@@ -2728,6 +2818,7 @@
           "type": "number",
           "stepNumber": "05",
           "stepLabel": "MARKET",
+          "hookKicker": "STAGE 05 • MECHANISM",
           "enTitle": "Market Consequences.",
           "arTitle": "تداعيات السوق",
           "enBody": "Bitcoin dropped below $80k, with over $1 billion in liquidations recorded within 24 hours of the incident.",
@@ -2735,7 +2826,8 @@
         },
         {
           "type": "row",
-          "enTitle": "Critical Trade-offs.",
+          "hookKicker": "ARCHITECTURAL VERDICT",
+          "enTitle": "Data remains fluid figures change hourly.",
           "arTitle": "تحديات وقيود التحقيق",
           "enBody": "Data remains fluid; figures change hourly. Attribution is based on forensic patterns, not official government statements.",
           "arBody": "البيانات متغيرة لحظياً. التقديرات مبنية على أنماط جنائية وليست تصريحات رسمية من الحكومات.",
@@ -2757,8 +2849,9 @@
         },
         {
           "type": "cta",
-          "enTitle": "Join the Discussion.",
-          "arTitle": "شارك برأيك",
+          "hookKicker": "ENGINEERING DEBATE",
+          "enTitle": "How can exchanges better secure their?",
+          "arTitle": "كيف يمكن للبورصات تأمين بنية التوقيع؟",
           "enBody": "How can exchanges better secure their signing infrastructure against workstation compromises?",
           "arBody": "كيف يمكن للبورصات تأمين بنية التوقيع بشكل أفضل ضد اختراق أجهزة المهندسين؟",
           "ctaText": "Join discussion • شارك برأيك",
@@ -2836,12 +2929,13 @@
           "enTitle": "Is Your Exchange Secure?",
           "arTitle": "هل بورصتك آمنة؟",
           "enBody": "Lessons from the $6.3B Binance incident.",
-          "arBody": "دروس مستفادة من حادثة Binance المعتمد.",
+          "arBody": "دروس مستفادة من حادثة Binance‏.",
           "centerIcon": "lock"
         }
       ]
     },
-    "storageEngine": "neon-postgres"
+    "storageEngine": "neon-postgres",
+    "offlineDraft": false
   },
   {
     "id": "post_7fe52441-5c4",
@@ -2868,6 +2962,7 @@
         {
           "type": "hub",
           "centerIcon": "shieldAlert",
+          "hookKicker": "ENGINEERING BREAKDOWN",
           "enTitle": "Is your approved AI becoming a threat?",
           "arTitle": "هل أدوات الذكاء الاصطناعي المعتمدة آمنة؟",
           "enBody": "Approved AI tools can evolve beyond their original scope, creating new security risks.",
@@ -2892,6 +2987,7 @@
         {
           "type": "number",
           "stepNumber": "01",
+          "hookKicker": "STAGE 01 • MECHANISM",
           "enTitle": "Shadow AI vs Shady AI.",
           "arTitle": "الفرق بين Shadow AI و Shady AI",
           "enBody": "Shadow AI is unauthorized usage. Shady AI is authorized usage that evolves into unauthorized behavior.",
@@ -2901,7 +2997,8 @@
           "type": "compare",
           "compareLeftTitle": "Initial Approval",
           "compareRightTitle": "Expanded State",
-          "enTitle": "The evolution of approved AI.",
+          "hookKicker": "HEAD-TO-HEAD CONTRAST",
+          "enTitle": "Evolution of approved AI.",
           "arTitle": "تطور أدوات الذكاء الاصطناعي المعتمدة",
           "enBody": "AI tools start with limited scope but gain permissions over time, becoming a different beast.",
           "arBody": "تبدأ الأدوات بنطاق محدود، لكنها تكتسب صلاحيات مع الوقت لتصبح كياناً مختلفاً تماماً.",
@@ -2916,7 +3013,8 @@
         {
           "type": "row",
           "stepLabel": "STEP 02",
-          "enTitle": "The compound authorization risk.",
+          "hookKicker": "SYSTEM ARCHITECTURE",
+          "enTitle": "Compound authorization risk.",
           "arTitle": "مخاطر صلاحيات الوصول المركبة",
           "enBody": "Individual actions may be safe, but their sequence creates a security breach.",
           "arBody": "قد تكون الإجراءات الفردية آمنة، لكن تسلسلها معاً يؤدي إلى خرق أمني.",
@@ -2929,6 +3027,7 @@
         },
         {
           "type": "row",
+          "hookKicker": "BLAST RADIUS & ISOLATION",
           "enTitle": "Why traditional controls fail.",
           "arTitle": "لماذا تفشل الضوابط الأمنية التقليدية؟",
           "enBody": "Traditional security focuses on single-action permissions, not agentic action chains.",
@@ -2945,6 +3044,7 @@
           "codeSnippet": "policy: \n  - tool: \"AI-Assistant\"\n    check: \"scope_creep\"\n    monitor: \"data_access_logs\"\n    alert: \"unauthorized_action_chain\"",
           "codeLanguage": "yaml",
           "codeFileName": "audit_ai_policy.yaml",
+          "hookKicker": "IMPLEMENTATION • YAML",
           "enTitle": "Monitoring agent behavior.",
           "arTitle": "مراقبة سلوك الوكلاء الأذكياء",
           "enBody": "Continuous monitoring of AI tool capabilities is required to prevent scope creep.",
@@ -2952,7 +3052,8 @@
         },
         {
           "type": "row",
-          "enTitle": "The catch Approval is not control.",
+          "hookKicker": "ARCHITECTURAL VERDICT",
+          "enTitle": "Catch Approval is not control.",
           "arTitle": "الحقيقة: الاعتماد لا يعني التحكم",
           "enBody": "Simply approving a tool is insufficient. Lifecycle reassessment is mandatory.",
           "arBody": "مجرد اعتماد الأداة لا يكفي. إعادة التقييم خلال دورة حياة الأداة أمر إلزامي.",
@@ -2960,6 +3061,7 @@
         },
         {
           "type": "cta",
+          "hookKicker": "ENGINEERING DEBATE",
           "enTitle": "How do you govern AI agents?",
           "arTitle": "كيف تدير صلاحيات الوكلاء الأذكياء؟",
           "enBody": "Join the discussion on AI security governance. Visit marrok.org for more.",
@@ -3032,7 +3134,7 @@
           "enTitle": "Is your approved AI a threat?",
           "arTitle": "هل أدواتك المعتمدة تشكل خطراً؟",
           "enBody": "Approved AI tools can evolve into Shady AI.",
-          "arBody": "الأدوات المعتمدة قد تتحول إلى Shady AI المعتمد.",
+          "arBody": "الأدوات المعتمدة قد تتحول إلى Shady AI‏.",
           "centerIcon": "shieldAlert"
         },
         {
@@ -3058,7 +3160,484 @@
         "terminalScanlines": true
       }
     },
-    "storageEngine": "neon-postgres"
+    "storageEngine": "neon-postgres",
+    "offlineDraft": false
+  },
+  {
+    "id": "post_26488150-bb6",
+    "title": "Why did Anthropic move beyond Git?",
+    "category": "AI + ENGINEERING",
+    "postStatus": "validated",
+    "createdAt": "2026-10-29T14:03:11.690Z",
+    "updatedAt": "2026-10-29T14:03:11.690Z",
+    "creatorHandle": "Based on Anthropic's engineering post. The numbers are Anthropic's own.",
+    "slideCount": 8,
+    "qaPassed": true,
+    "deck": {
+      "theme": "amber",
+      "category": "AI + ENGINEERING",
+      "caption": "Why did Anthropic move beyond Git? A deeper look at Scion 🚀\nلماذا ابتعدت Anthropic عن Git؟ نظرة عميقة على نظام Scion الداخلي\n\nWith AI agents making thousands of pull requests around the clock, traditional Git mirrors broke down under 100 GB repo histories and 25 million daily CI checkouts. Here is what Anthropic built instead:\n\nKey Takeaways / أبرز النقاط:\n• Commits and merges run server-side via API\n• Changesets track only modified files (proportional resource usage)\n• Test-after-merge workflow for high-throughput deployment\n• 200x smaller CPU/memory footprint & 25% of CI computing freed\n\nSource: Anthropic Engineering Blog (\"Scion: Git for AI Agents\")\nRead more at marrok.org\n\n#SoftwareEngineering #Git #Anthropic #AIAgents #DevOps #SystemDesign #SoftwareArchitecture #هندسة_البرمجيات #MARROK #TechInArabic",
+      "slides": [
+        {
+          "type": "hub",
+          "centerIcon": "gitMerge",
+          "hookKicker": "ENGINEERING BREAKDOWN",
+          "enTitle": "Why did Anthropic move beyond Git?",
+          "arTitle": "السبب وراء ابتعاد\nAnthropic عن Git",
+          "enBody": "A deeper look at Scion.",
+          "arBody": "نظرة أعمق على Scion‏.",
+          "satIcons": [
+            "server",
+            "database",
+            "gauge",
+            "cpu",
+            "box",
+            "activity"
+          ],
+          "satLabels": [
+            "Virtual FS",
+            "Server Merge",
+            "API VCS",
+            "Changesets",
+            "CI Runners",
+            "Telemetry"
+          ]
+        },
+        {
+          "type": "metric",
+          "metricValue": "100 GB",
+          "metricLabel": "MONOREPO SCALE",
+          "metricDiff": "▲ 25M CI checkouts every day",
+          "metricIcon": "database",
+          "hookKicker": "PRODUCTION METRIC • 25M",
+          "enTitle": "25M checkouts a day.",
+          "arTitle": "25 مليون سحب يومياً",
+          "enBody": "Git mirrors were collapsing under massive AI agent commits, stalling builds and blocking engineer deploys.",
+          "arBody": "كانت خوادم Git تنهار تحت سيل التعديلات المستمر من وكلاء الذكاء الاصطناعي، مما عطّل عمليات البناء."
+        },
+        {
+          "type": "code",
+          "codeSnippet": "$ scion checkout --lazy\n✔ Virtual filesystem mapped (0.4s)\n✔ Changeset: 3 files (0.01% of repo)\n$ scion commit -m \"agent: optimize index\"\n✔ Server-side merge verified (1.2s)",
+          "codeLanguage": "bash",
+          "codeFileName": "scion-cli.sh",
+          "hookKicker": "IMPLEMENTATION • BASH",
+          "enTitle": "Virtual tree checkout.",
+          "arTitle": "سحب شجرة افتراضية",
+          "enBody": "Instead of cloning the entire 100 GB repo history, Scion streams only the exact files the agent touches.",
+          "arBody": "بدلاً من استنساخ كامل المستودع البالغ 100 جيجابايت، يرسل Scion فقط الملفات التي يلمسها الوكيل البرمجي."
+        },
+        {
+          "type": "compare",
+          "compareLeftTitle": "Traditional Git",
+          "compareLeftBody": "• Full 100 GB clone on every CI job\n• Local merge locks monorepo branch\n• 40% compute wasted on VCS mirrors",
+          "compareRightTitle": "Anthropic Scion",
+          "compareRightBody": "• Lazy virtual checkout in milliseconds\n• API server-side commits without locks\n• 25% of all CI computing reclaimed",
+          "hookKicker": "HEAD-TO-HEAD CONTRAST",
+          "enTitle": "Git vs Scion.",
+          "arTitle": "مقارنة Git مع Scion",
+          "enBody": "Moving from local monolithic checkouts to an API-driven virtual filesystem cut compute overhead by 200x.",
+          "arBody": "الانتقال من الاستنساخ الكامل المحلي إلى نظام ملفات افتراضي مدار بالواجهات البرمجية قلل الهدر بنسبة 200 ضعف."
+        },
+        {
+          "type": "row",
+          "diagramFooter": "VIRTUAL FS: STREAMED • REPO CLONE: ZERO FULL HISTORY",
+          "hookKicker": "EXECUTION STACK",
+          "enTitle": "Server-side engine pipeline.",
+          "arTitle": "محرك يدار خادمياً",
+          "enBody": "Everything is tracked in an object store; merges run server-side so CI runners never wait for branch rebase locks.",
+          "arBody": "كل شيء يدار في مستودع كائنات سحابي؛ وتتم عمليات الدمج خادمياً حتى لا تنتظر بيئات العمل فك أقفال الفروع.",
+          "diagramEdges": [
+            "Lazy Fetch",
+            "Async Land"
+          ],
+          "icons": [
+            {
+              "icon": "code",
+              "label": "API-driven VCS"
+            },
+            {
+              "icon": "server",
+              "label": "Virtual mount"
+            },
+            {
+              "icon": "lock",
+              "label": "Lockless merges"
+            }
+          ],
+          "diagramNodes": [
+            {
+              "label": "Virtual Filesystem",
+              "sublabel": "Lazy stream on access",
+              "status": "MOUNTED",
+              "icon": "server"
+            },
+            {
+              "label": "API Engine",
+              "sublabel": "Server-side commit logic",
+              "status": "ORCHESTRATED",
+              "icon": "cpu"
+            },
+            {
+              "label": "Cloud Object Store",
+              "sublabel": "Lockless snapshot storage",
+              "status": "PERSISTED",
+              "icon": "database"
+            }
+          ],
+          "diagramVariant": "stack"
+        },
+        {
+          "type": "row",
+          "diagramFooter": "STRATEGY: TEST-AFTER-MERGE • TEAM BLOCKING: 0 SECONDS",
+          "hookKicker": "SYSTEM ARCHITECTURE",
+          "enTitle": "Test after merge sequence.",
+          "arTitle": "الاختبار بعد الدمج",
+          "enBody": "Scion lands code immediately and tests post-merge, isolating broken commits without stalling the rest of the team.",
+          "arBody": "يدمج Scion الشيفرة فوراً ويختبرها بعد الدمج، مما يعزل التعديلات المعطوبة دون إيقاف باقي الفريق.",
+          "diagramEdges": [
+            "Direct Land",
+            "Post-Merge Test"
+          ],
+          "icons": [
+            {
+              "icon": "terminal",
+              "label": "Agent Commit"
+            },
+            {
+              "icon": "gitMerge",
+              "label": "Speculative Merge"
+            },
+            {
+              "icon": "activity",
+              "label": "Test Runner"
+            }
+          ],
+          "diagramNodes": [
+            {
+              "label": "Agent Commit",
+              "sublabel": "API payload dispatched",
+              "status": "LANDED",
+              "icon": "terminal"
+            },
+            {
+              "label": "Speculative Merge",
+              "sublabel": "Applied directly to main",
+              "status": "COMMITTED",
+              "icon": "gitMerge"
+            },
+            {
+              "label": "Async Test CI",
+              "sublabel": "Broken builds isolated",
+              "status": "AUDITED",
+              "icon": "activity"
+            }
+          ],
+          "diagramVariant": "topology"
+        },
+        {
+          "type": "row",
+          "diagramFooter": "STATUS: PROPRIETARY ANTHROPIC TOOL • GENERAL REPOS STAY ON GIT",
+          "hookKicker": "ARCHITECTURAL VERDICT",
+          "enTitle": "Not a Git killer.",
+          "arTitle": "ليس قاتلاً لنظام Git",
+          "enBody": "Anthropic says Git still suits most repos. Scion needs custom review, search and CI tools, and has no public release.",
+          "arBody": "تقول Anthropic إن Git ما زال مناسباً لمعظم المستودعات؛ يحتاج Scion أدوات مراجعة وبحث مخصصة، ولا إصدار عام له.",
+          "diagramEdges": [
+            "Human Workflow",
+            "Agent Scale"
+          ],
+          "icons": [
+            {
+              "icon": "gitMerge",
+              "label": "General Repos"
+            },
+            {
+              "icon": "robot",
+              "label": "Agent Workloads"
+            },
+            {
+              "icon": "shieldAlert",
+              "label": "Internal Tool"
+            }
+          ],
+          "diagramNodes": [
+            {
+              "label": "Git for General Teams",
+              "sublabel": "Human workflow & tooling",
+              "status": "STANDARD",
+              "icon": "gitMerge"
+            },
+            {
+              "label": "Scion for AI Agents",
+              "sublabel": "25M checkouts · custom infra",
+              "status": "INTERNAL",
+              "icon": "robot"
+            },
+            {
+              "label": "No Public Release",
+              "sublabel": "Proprietary internal system",
+              "status": "CAVEAT",
+              "icon": "shieldAlert"
+            }
+          ],
+          "diagramVariant": "takeaway"
+        },
+        {
+          "type": "cta",
+          "hookKicker": "ENGINEERING DEBATE",
+          "enTitle": "Building with AI agents at scale?",
+          "arTitle": "تبني بوكلاء الذكاء\nالاصطناعي على نطاق\nواسع؟",
+          "ctaText": "DM us  •  رسالة خاصة",
+          "url": "marrok.org",
+          "enCredit": "Based on Anthropic's engineering post. The numbers are Anthropic's own.",
+          "arCredit": "مبني على مقال Anthropic الهندسي، والأرقام من Anthropic نفسها."
+        }
+      ],
+      "id": "post_26488150-bb6",
+      "brand": "MARROK",
+      "brandUrl": "marrok.org",
+      "sourceMeta": {
+        "userReviewed": true
+      },
+      "captionVariants": [
+        {
+          "style": "Executive Bulletins & Hard Metrics",
+          "caption": "Why did Anthropic move beyond Git? A deeper look at Scion 🚀\nلماذا ابتعدت Anthropic عن Git؟ نظرة عميقة على نظام Scion الداخلي\n\nWith AI agents making thousands of pull requests around the clock, traditional Git mirrors broke down under 100 GB repo histories and 25 million daily CI checkouts. Here is what Anthropic built instead:\n\nKey Takeaways / أبرز النقاط:\n• Commits and merges run server-side via API\n• Changesets track only modified files (proportional resource usage)\n• Test-after-merge workflow for high-throughput deployment\n• 200x smaller CPU/memory footprint & 25% of CI computing freed\n\nSource: Anthropic Engineering Blog (\"Scion: Git for AI Agents\")\nRead more at marrok.org\n\n#SoftwareEngineering #Git #Anthropic #AIAgents #DevOps #SystemDesign #SoftwareArchitecture #هندسة_البرمجيات #MARROK #TechInArabic"
+        },
+        {
+          "style": "Narrative Breakdown & Story",
+          "caption": "What happens when AI agents write more code than humans? Git starts melting. 🤖💥\n\nAnthropic hit a wall with traditional Git: 100GB mono-repo history and 25,000,000 CI checkouts every single day. Instead of band-aiding Git, they designed Scion: a server-authoritative VCS built from the ground up for always-online software agents.\n\nThe core lesson? Don't optimize for how humans worked 15 years ago. Design for the agents building right now.\n\nFull breakdown in the slides above.\nSource: Anthropic's Engineering post. Numbers are Anthropic's own.\nLearn more: marrok.org\n\n#AIEngineering #DeveloperTools #GitAlternatives #Anthropic #VCS #CloudArchitecture #SoftwareDesign #MARROK"
+        }
+      ],
+      "hookVariants": [
+        {
+          "tag": "Curiosity & Why",
+          "enTitle": "Why did Anthropic\nmove beyond Git?",
+          "arTitle": "السبب وراء ابتعاد\nAnthropic عن Git",
+          "enBody": "A deeper look at Scion.",
+          "arBody": "نظرة أعمق على Scion‏.",
+          "centerIcon": "gitMerge"
+        },
+        {
+          "tag": "Hard Metrics",
+          "enTitle": "100 GB repos &\n25M CI checkouts.",
+          "arTitle": "100 جيجابايت مستودع\nو25 مليون سحب يومياً",
+          "enBody": "When AI agents pushed Git to the breaking point.",
+          "arBody": "حين دفع وكلاء الذكاء الاصطناعي نظام Git إلى حافة الانهيار.",
+          "centerIcon": "database"
+        },
+        {
+          "tag": "The Paradigm Shift",
+          "enTitle": "Git was built for humans.\nScion was built for agents.",
+          "arTitle": "صُمم Git للبشر،\nوصُمم Scion للوكلاء",
+          "enBody": "How always-online AI changes every tooling assumption.",
+          "arBody": "كيف يغير وكلاء الذكاء الاصطناعي كل افتراضات أدوات التطوير.",
+          "centerIcon": "robot"
+        }
+      ]
+    }
+  },
+  {
+    "id": "post_72a7e461-187",
+    "title": "The Evolution of AI Inference Engines.",
+    "category": "AI INFRASTRUCTURE & INFERENCE",
+    "postStatus": "posted",
+    "createdAt": "2026-10-29T11:07:10.564Z",
+    "updatedAt": "2026-10-29T11:07:10.564Z",
+    "postedAt": "2026-10-29T11:07:10.564Z",
+    "creatorHandle": "AI Engineering Research",
+    "slideCount": 8,
+    "qaPassed": false,
+    "deck": {
+      "theme": "node",
+      "category": "AI INFRASTRUCTURE & INFERENCE",
+      "caption": "⚡ كيف تطورت محركات الاستنتاج (Inference Engines)؟\n\nمن Llama.cpp إلى vLLM، شهدت محركات الاستنتاج تحولاً جذرياً منذ 2023 للتعامل مع نماذج LLMs الضخمة.\n\nإليك كيف تعمل هذه المحركات تقنياً:\n🔹 Llama.cpp: استخدام الذاكرة الافتراضية (mmap) لتقليل استهلاك RAM.\n🔹 vLLM: تقنية Paged Attention لمنع هدر الذاكرة في KV Cache.\n🔹 SG Lang: استخدام Radix Attention لمشاركة البادئات المتكررة في الطلبات.\n🔹 Nvidia TensorRT-LLM: التكامل الرأسي بين العتاد والبرمجيات.\n\nما هو المحرك الذي تعتمد عليه في مشاريعك؟ شاركنا تجربتك في التعليقات 👇\n\n🎥 المصدر: The Rise of Modern Inference Engines\n\n#AI #LLM #Inference #MachineLearning #TechEngineering #vLLM #LlamaCpp #Nvidia",
+      "slides": [
+        {
+          "type": "hub",
+          "centerIcon": "robot",
+          "stepNumber": "01",
+          "hookKicker": "ENGINEERING BREAKDOWN",
+          "enTitle": "The Evolution of AI Inference Engines.",
+          "arTitle": "تطور محركات استنتاج الذكاء الاصطناعي",
+          "enBody": "How modern engines bridge the gap between LLM complexity and hardware constraints.",
+          "arBody": "كيف تسد المحركات الحديثة الفجوة بين تعقيد نماذج LLM ومحدودية العتاد.",
+          "satLabels": [
+            "KV Cache",
+            "Paged Attention",
+            "Quantization",
+            "Memory Mapping",
+            "Radix Attention",
+            "Continuous Batching"
+          ]
+        },
+        {
+          "type": "row",
+          "stepNumber": "02",
+          "hookKicker": "EXECUTION STACK",
+          "enTitle": "Why LLMs Broke Traditional Inference.",
+          "arTitle": "لماذا فشلت المحركات التقليدية مع LLMs؟",
+          "enBody": "Traditional frameworks like PyTorch focus on training. LLMs require specialized handling of attention and KV cache memory.",
+          "arBody": "تركز أطر العمل التقليدية مثل PyTorch على التدريب. تتطلب نماذج LLM معالجة خاصة لآليات الانتباه وذاكرة KV Cache‏.",
+          "diagramVariant": "stack"
+        },
+        {
+          "type": "row",
+          "stepNumber": "03",
+          "hookKicker": "SYSTEM ARCHITECTURE",
+          "enTitle": "Llamacpp Memory Mapping Efficiency.",
+          "arTitle": "كفاءة الذاكرة عبر mmap",
+          "enBody": "Uses OS memory mapping to stream model weights from SSD to RAM/GPU on-demand, avoiding full eager loading.",
+          "arBody": "يستخدم نظام الذاكرة الافتراضية لبث أوزان النموذج من SSD إلى RAM/GPU عند الطلب، بدلاً من التحميل الكامل.",
+          "diagramVariant": "split"
+        },
+        {
+          "type": "row",
+          "stepNumber": "04",
+          "hookKicker": "SCALE TOPOLOGY",
+          "enTitle": "vLLM Solving KV Cache Fragmentation.",
+          "arTitle": "حل مشكلة تجزئة ذاكرة KV",
+          "enBody": "Paged Attention splits KV cache into fixed-size blocks, similar to OS virtual memory, reducing waste by 60-80%.",
+          "arBody": "تقسم Paged Attention ذاكرة KV إلى كتل ثابتة الحجم، مما يقلل الهدر بنسبة 60-80%.",
+          "diagramVariant": "clusters"
+        },
+        {
+          "type": "row",
+          "stepNumber": "05",
+          "hookKicker": "SCALE TOPOLOGY",
+          "enTitle": "SG Lang Radix Attention Trees.",
+          "arTitle": "أشجار Radix Attention",
+          "enBody": "Caches common prompt prefixes in a tree structure to avoid recomputing KV cache for shared context.",
+          "arBody": "يخزن بادئات الطلبات المشتركة في هيكل شجري لتجنب إعادة حساب ذاكرة KV للسياق المتكرر.",
+          "diagramVariant": "graph"
+        },
+        {
+          "type": "row",
+          "stepNumber": "06",
+          "hookKicker": "SYSTEM ARCHITECTURE",
+          "enTitle": "Nvidia Hardware-Software Synergy.",
+          "arTitle": "تكامل العتاد والبرمجيات",
+          "enBody": "TensorRT-LLM optimizes kernels specifically for Nvidia silicon, maximizing throughput and reducing TCO.",
+          "arBody": "يعمل TensorRT-LLM على تحسين النواة خصيصاً لمعالجات Nvidia، مما يرفع الإنتاجية ويقلل التكلفة.",
+          "diagramVariant": "topology"
+        },
+        {
+          "type": "row",
+          "stepNumber": "07",
+          "hookKicker": "ARCHITECTURAL VERDICT",
+          "enTitle": "No one-size-fits-all.",
+          "arTitle": "المقايضات والقيود التقنية",
+          "enBody": "No one-size-fits-all. Lightweight engines lack advanced scheduling; heavy engines require specific hardware.",
+          "arBody": "لا يوجد حل واحد يناسب الجميع. المحركات الخفيفة تفتقر لجدولة متقدمة، والثقيلة تتطلب عتاداً خاصاً.",
+          "diagramVariant": "takeaway"
+        },
+        {
+          "type": "cta",
+          "hookKicker": "ENGINEERING DEBATE",
+          "enTitle": "Which engine fits your stack?",
+          "arTitle": "أي محرك يناسب بيئة عملك؟",
+          "enBody": "Choose based on hardware, latency requirements, and batching needs. Join the discussion below.",
+          "arBody": "اختر بناءً على العتاد، متطلبات التأخير، واحتياجات التجميع. شاركنا نقاشك في الأسفل.",
+          "ctaText": "Join discussion • شارك برأيك",
+          "url": "marrok.org"
+        }
+      ],
+      "postFormat": "carousel",
+      "id": "post_72a7e461-187",
+      "brand": "MARROK",
+      "brandUrl": "marrok.org",
+      "firstComment": "Which inference engine are you currently using for your LLM deployments? Let's discuss the trade-offs between vLLM, Llama.cpp, and TensorRT-LLM. https://marrok.org",
+      "shortCaption": "كيف تطورت محركات الاستنتاج (Inference Engines)؟ ⚡\nتحليل تقني لـ Llama.cpp وvLLM وNvidia.",
+      "screenHook": "Why LLMs broke traditional inference engines",
+      "scheduleSlot": "18:00 DZ",
+      "sourceMeta": {
+        "title": "The Rise of Modern Inference Engines",
+        "creator": "AI Engineering Research",
+        "url": "https://youtube.com",
+        "published": "2024",
+        "groundingQueries": [
+          "vLLM Paged Attention memory waste reduction",
+          "SG Lang Radix Attention throughput improvement",
+          "Llama.cpp memory mapping mechanism"
+        ],
+        "groundingSources": [
+          {
+            "title": "vLLM: Easy, Fast, and Cheap LLM Serving",
+            "url": "https://vllm.ai/"
+          },
+          {
+            "title": "SG Lang GitHub",
+            "url": "https://github.com/sgl-project/sglang"
+          }
+        ],
+        "isSearchGrounded": false,
+        "isFallback": false,
+        "engine": "ungrounded",
+        "model": "gemini-3.1-flash-lite",
+        "status": "unverified_draft",
+        "userReviewed": true
+      },
+      "facts": [
+        {
+          "text": "vLLM's Paged Attention reduces memory waste by 60-80%.",
+          "type": "claim",
+          "verified": "unconfirmed",
+          "evidence": "vLLM research paper and documentation"
+        },
+        {
+          "text": "SG Lang's Radix Attention can improve inference throughput up to 6.4x.",
+          "type": "claim",
+          "verified": "unconfirmed",
+          "evidence": "SG Lang project benchmarks"
+        }
+      ],
+      "notesForHuman": [
+        "The 6.4x throughput claim for SG Lang is cited from the project's own benchmarks.",
+        "The 60-80% memory waste reduction for vLLM is a standard claim in their research documentation.",
+        "Ensure the distinction between training frameworks (PyTorch) and inference engines is clear."
+      ],
+      "captionVariants": [
+        {
+          "style": "Bulletins",
+          "caption": "⚡ كيف تطورت محركات الاستنتاج (Inference Engines)؟\n\nمن Llama.cpp إلى vLLM، شهدت محركات الاستنتاج تحولاً جذرياً منذ 2023 للتعامل مع نماذج LLMs الضخمة.\n\nإليك كيف تعمل هذه المحركات تقنياً:\n🔹 Llama.cpp: استخدام الذاكرة الافتراضية (mmap) لتقليل استهلاك RAM.\n🔹 vLLM: تقنية Paged Attention لمنع هدر الذاكرة في KV Cache.\n🔹 SG Lang: استخدام Radix Attention لمشاركة البادئات المتكررة في الطلبات.\n🔹 Nvidia TensorRT-LLM: التكامل الرأسي بين العتاد والبرمجيات.\n\nما هو المحرك الذي تعتمد عليه في مشاريعك؟ شاركنا تجربتك في التعليقات 👇\n\n🎥 المصدر: The Rise of Modern Inference Engines\n\n#AI #LLM #Inference #MachineLearning #TechEngineering #vLLM #LlamaCpp #Nvidia"
+        },
+        {
+          "style": "Narrative",
+          "caption": "تطور الذكاء الاصطناعي يتطلب محركات استنتاج ذكية. 🧠\n\nلم تعد الأطر التقليدية كافية للتعامل مع نماذج LLM. المحركات الحديثة مثل vLLM وLlama.cpp أعادت تعريف كيفية إدارة الذاكرة والإنتاجية.\n\nهل تختار السرعة أم الكفاءة في استهلاك الموارد؟ شاركنا رأيك التقني 👇\n\n#AI #InferenceEngine #LLM #Tech #Engineering"
+        }
+      ],
+      "hookVariants": [
+        {
+          "tag": "Technical",
+          "enTitle": "Why LLMs Broke Traditional Inference.",
+          "arTitle": "لماذا فشلت محركات الاستنتاج التقليدية؟",
+          "enBody": "The shift from 2D convolutions to auto-regressive LLMs.",
+          "arBody": "التحول من الالتفافات ثنائية الأبعاد إلى نماذج LLM‏.",
+          "centerIcon": "alertTriangle"
+        },
+        {
+          "tag": "Performance",
+          "enTitle": "6.4x Throughput with Radix Attention.",
+          "arTitle": "زيادة الإنتاجية 6.4 ضعف مع Radix Attention",
+          "enBody": "How modern inference engines optimize shared context.",
+          "arBody": "كيف تحسن محركات الاستنتاج الحديثة السياق المشترك.",
+          "centerIcon": "zap"
+        },
+        {
+          "tag": "Architectural",
+          "enTitle": "The Evolution of Inference Engines.",
+          "arTitle": "تطور محركات استنتاج الذكاء الاصطناعي",
+          "enBody": "From Llama.cpp to Nvidia TensorRT-LLM.",
+          "arBody": "من Llama.cpp إلى Nvidia TensorRT-LLM‏.",
+          "centerIcon": "cpu"
+        }
+      ],
+      "visualOptions": {
+        "showCadReticles": true,
+        "showSparklines": true,
+        "terminalScanlines": true
+      }
+    }
   },
   {
     "id": "post_8acb9671-b15",
@@ -3086,6 +3665,7 @@
           "type": "hub",
           "centerIcon": "shieldAlert",
           "diagramFooter": "CADSYSREF // PRODUCTION VERIFIED ARCHITECTURE",
+          "hookKicker": "SECURITY POSTMORTEM",
           "enTitle": "Node2Shell RCE in Nodejs via Brotli.",
           "arTitle": "ثغرة Node2Shell تنفيذ كود عبر Brotli",
           "enBody": "A critical vulnerability in the bundled Brotli decoder allows remote code execution on standard Node.js builds.",
@@ -3115,7 +3695,8 @@
         {
           "type": "number",
           "stepNumber": "01",
-          "enTitle": "The Vulnerability Trigger.",
+          "hookKicker": "STAGE 01 • MECHANISM",
+          "enTitle": "Vulnerability Trigger.",
           "arTitle": "كيف تبدأ الثغرة؟",
           "enBody": "The flaw occurs when the Brotli decoder encounters malformed stream structures, leading to out-of-bounds memory writes.",
           "arBody": "تحدث الثغرة عندما يواجه مفكك ضغط Brotli هياكل بيانات غير صالحة، مما يؤدي إلى عمليات كتابة خارج حدود الذاكرة المخصصة."
@@ -3123,6 +3704,7 @@
         {
           "type": "row",
           "stepLabel": "STEP 02",
+          "hookKicker": "SYSTEM ARCHITECTURE",
           "enTitle": "Attack Surface Analysis.",
           "arTitle": "مساحة الهجوم المتاحة",
           "enBody": "Applications processing untrusted compressed data via fetch() or body-parsing middleware are at highest risk.",
@@ -3148,6 +3730,7 @@
           "codeSnippet": "const express = require('express');\nconst app = express();\n\n// Vulnerable if Brotli is enabled\napp.use(express.json()); \napp.use(express.text());\n\napp.post('/upload', (req, res) => {\n  // Processing compressed body\n});",
           "codeLanguage": "javascript",
           "codeFileName": "app.js",
+          "hookKicker": "IMPLEMENTATION • JAVASCRIPT",
           "enTitle": "Vulnerable Middleware Path.",
           "arTitle": "مسار الوسيط البرمجي المعرض للخطر",
           "enBody": "Express middleware configured for Brotli decompression can inadvertently pass malicious payloads to the vulnerable decoder.",
@@ -3158,6 +3741,7 @@
           "stepLabel": "STEP 03",
           "compareLeftTitle": "Universal Exploit",
           "compareRightTitle": "Build-Specific Exploit",
+          "hookKicker": "HEAD-TO-HEAD CONTRAST",
           "enTitle": "Exploitation Requirements.",
           "arTitle": "متطلبات الاستغلال",
           "enBody": "Exploitation is not universal; it requires precise build-specific memory offsets and configuration matching.",
@@ -3167,6 +3751,7 @@
         {
           "type": "row",
           "stepLabel": "STEP 04",
+          "hookKicker": "ARCHITECTURAL VERDICT",
           "enTitle": "Remediation Strategy.",
           "arTitle": "استراتيجية المعالجة",
           "enBody": "Patching the Node.js runtime is the only definitive fix. Temporary WAF rules are insufficient.",
@@ -3176,7 +3761,8 @@
         {
           "type": "row",
           "stepLabel": "STEP 05",
-          "enTitle": "The Catch Build Sensitivity.",
+          "hookKicker": "ARCHITECTURAL VERDICT",
+          "enTitle": "Catch Build Sensitivity.",
           "arTitle": "تنبيه: حساسية إصدارات البناء",
           "enBody": "Exploits targeting Node.js 24.22.0 failed against 22.x and 26.x builds, proving that runtime diversity hinders universal attacks.",
           "arBody": "محاولات استغلال Node.js 24.22.0 فشلت ضد إصدارات 22.x و 26.x، مما يثبت أن تنوع بيئات التشغيل يعيق الهجمات الشاملة.",
@@ -3184,6 +3770,7 @@
         },
         {
           "type": "cta",
+          "hookKicker": "ENGINEERING DEBATE",
           "enTitle": "Patch your runtimes now.",
           "arTitle": "حدث بيئات التشغيل الآن",
           "enBody": "Node2Shell highlights the danger of low-level component vulnerabilities. Check your Node.js versions today.",
@@ -3261,7 +3848,7 @@
           "enTitle": "Node2Shell: RCE in Node.js.",
           "arTitle": "ثغرة Node2Shell تنفيذ كود عن بُعد",
           "enBody": "Critical Brotli decoder flaw discovered.",
-          "arBody": "اكتشاف ثغرة حرجة في مفكك ضغط Brotli المعتمد.",
+          "arBody": "اكتشاف ثغرة حرجة في مفكك ضغط Brotli‏.",
           "centerIcon": "alertTriangle"
         },
         {
@@ -3277,11 +3864,12 @@
           "enTitle": "Patch Node.js Immediately.",
           "arTitle": "حدث Node.js فوراً",
           "enBody": "CVE-2026-111497 affects 22.x-26.x.",
-          "arBody": "الثغرة CVE-2026-111497 تؤثر على إصدارات 22.x-26.x المعتمد.",
+          "arBody": "الثغرة CVE-2026-111497 تؤثر على إصدارات 22.x-26.x‏.",
           "centerIcon": "shieldCheck"
         }
       ]
     },
-    "storageEngine": "neon-postgres"
+    "storageEngine": "neon-postgres",
+    "offlineDraft": false
   }
 ]
