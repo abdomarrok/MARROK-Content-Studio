@@ -21,6 +21,7 @@ import {
   drawImageSlide,
   drawCtaSlide,
   drawPosterSlide,
+  drawSubjectPairSlide,
   drawTakeawaysBlock,
 } from './archetypes/index.ts';
 
@@ -165,6 +166,8 @@ export async function renderSlideToCanvas(
       rawGraphicEnd = await drawImageSlide(ctx, slide, theme, options, carousel.brand || 'MARROK', videoElement, spec);
     } else if (slide.type === 'poster') {
       rawGraphicEnd = await drawPosterSlide(ctx, slide, theme, options, carousel.brand || 'MARROK', videoElement, spec);
+    } else if (slide.type === 'subjectPair') {
+      rawGraphicEnd = await drawSubjectPairSlide(ctx, slide, theme, options, spec);
     }
     yGraphicEnd = Math.round(rawGraphicEnd * graphicTransform.scale + graphicTransform.translateY);
     ctx.restore();

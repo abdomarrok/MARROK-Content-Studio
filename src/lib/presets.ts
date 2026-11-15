@@ -69,7 +69,7 @@ Learn more: marrok.org
     {
       tag: 'Hard Metrics',
       enTitle: '100 GB repos &\n25M CI checkouts.',
-      arTitle: '100 جيجابايت مستودع\nو25 مليون سحب يومياً.',
+      arTitle: 'مستودع 100 GB\nو25 مليون سحب يومياً',
       enBody: 'When AI agents pushed Git to the breaking point.',
       arBody: 'حين دفع وكلاء الذكاء الاصطناعي نظام Git إلى حافة الانهيار.',
       centerIcon: 'database',
@@ -117,7 +117,7 @@ $ scion commit -m "agent: optimize index"
       enTitle: 'Virtual tree checkout.',
       arTitle: 'سحب شجرة افتراضية.',
       enBody: 'Instead of cloning the entire 100 GB repo history, Scion streams only the exact files the agent touches.',
-      arBody: 'بدلاً من استنساخ كامل المستودع البالغ 100 جيجابايت، يرسل Scion فقط الملفات التي يلمسها الوكيل البرمجي.',
+      arBody: 'بدلاً من استنساخ كامل المستودع البالغ 100 GB، يرسل Scion فقط الملفات التي يلمسها الوكيل البرمجي.',
     },
     {
       type: 'compare',
@@ -128,7 +128,7 @@ $ scion commit -m "agent: optimize index"
       enTitle: 'Git vs. Scion.',
       arTitle: 'مقارنة Git مع Scion.',
       enBody: 'Moving from local monolithic checkouts to an API-driven virtual filesystem cut compute overhead by 200x.',
-      arBody: 'الانتقال من الاستنساخ الكامل المحلي إلى نظام ملفات افتراضي مدار بالواجهات البرمجية قلل الهدر بنسبة 200 ضعف.',
+      arBody: 'الانتقال من الاستنساخ الكامل المحلي إلى نظام ملفات افتراضي مدار عبر API قلل الهدر بمقدار 200x تقريباً.',
     },
     {
       type: 'row',

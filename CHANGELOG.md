@@ -1,5 +1,21 @@
 # Changelog — MARROK Content Studio
 
+## [1.7.0] — Flattened Inbox → Draft → Schedule Workflow, 4-Factor Scoring, Lazy Storyboards, Review Safety Gate & Netlify DB/Cloudinary Detection
+
+### 1. Flattened `Inbox → Draft → Schedule` Publishing Hub (`PublishingHubWorkspace.tsx`, `PostManagerPanel.tsx`, `WeeklyProgramReviewPanel.tsx`)
+- **3-Stage Pipeline Tabs (`Inbox` → `Draft` → `Schedule`):** Flattened nested program review/calendar tabs into plain-language pipeline stages with collapsible active-deck publishing (`Publish Active Post`).
+- **4-Factor Scoring & Freshness Badges:** Replaced opaque single scores with an inspectable 4-factor breakdown tooltip (`Freshness`, `Engagement`, `Client Relevance` for startups/SMEs, `Platform Risk`), `sourceDomain` + `publishedDateLabel` metadata, `Fresh`/`Evergreen` tags, and time-decay down-ranking for stale items.
+- **Originality, Quality Gate & Vault Deduplication (`evaluateGathererCandidateQuality`):** Requires a pre-filled editable **Marrok angle** ("what this means for your product", $\ge 15$ chars), emits summary-only draft warnings (`detectSummaryOnlyDraft`), blocks EN/AR title mismatches, generic Arabic filler, template clichés, Slide 1 `hub` layouts, and 3-in-a-row identical layouts, and surfaces matching Vault posts with an **`Already Covered`** badge.
+- **Lazy Inbox Generation & Storyboard Rationales:** Generates only Slide 1 Hook previews in `Inbox` (`isDeckSynthesized: false`) and lazily synthesizes full 8-slide storyboards (`hydrateCandidateDeckOnDemand`) on Inspect/Open/Move-to-Draft with non-`hub` Slide 1 hooks, anti-streak layout diversity, and per-slide `layoutRationale`.
+- **Mandatory 2-Flag Review Safety Gate & `Publish Now`:** Enforces both **Human Reviewed** (`userReviewed`) and **Claims & Numbers Verified** (`verifiedNumbers`) before individual/bulk scheduling or **`Publish Now`** dispatch; bulk accept queues only unscheduled Drafts. Default safe cadence is 1–2 posts/day with explicit `>2/day` overload warnings.
+
+### 2. Typography Floor (`24px`/`22px`), Arabic Tech-Term Policy & Node Test Reliability
+- **Typography Minimums:** Enforced $\ge 24\text{px}$ title & body copy and $\ge 22\text{px}$ footer copy across `9:16`, `3:4`, `4:5`, and `1:1` presets in `constants.ts` and `qaChecks.ts`.
+- **Arabic English-Term BiDi Policy:** Removed silent Arabic technical-term translation dictionaries, kept technical nouns in English Latin script with BiDi isolation inside natural Arabic sentences, and added non-blocking `qaChecks` warnings when translated technical terms appear.
+- **Node/Test & Netlify Env Hardening:** Added Node-safe URL resolution (`resolvePipelineApiUrl` / `directGenerate`), `HTMLCanvasElement.prototype.getContext` test mocking, `NETLIFY_DATABASE_URL` / `NETLIFY_DATABASE_URL_UNPOOLED` + `CLOUDINARY_URL` parsing in `api/config.ts` and `api/db/postgres.ts`, and loading-safe `Checking DB...` / `Checking Media...` indicators in the status strip.
+
+---
+
 ## [1.6.0] — Dedicated 4th Meme Post Format, Smart Aspect-Ratio Meme Space Maximization, Separated Graphic Photo Upload & Zero-Click Auto-Sync
 
 ### 1. Dedicated 4th `Meme` Post Format & Separated Graphic Photo Workflow (`src/types.ts`, `src/lib/canvas/videoFrameExtractor.ts`, `src/components/studio/panels/StudioCommandBar.tsx`, `src/components/studio/InlineSlideEditor.tsx`)

@@ -5,6 +5,7 @@ import type {
   PublishScheduleMode,
   PublishTargetPlatform,
   SavedPostRecord,
+  SavedPostStorageEngine,
   ThemePalette,
 } from '../../types.ts';
 import { renderSlideToCanvas } from '../canvas/renderSlide.ts';
@@ -22,6 +23,8 @@ export interface PublishStatusResponse {
   bufferApiConfigured: boolean;
   zernioApiConfigured?: boolean;
   zernioMcpUrl?: string;
+  storageEngine?: SavedPostStorageEngine;
+  databaseConfigured?: boolean;
   autoCleanedPostIds: string[];
   currentMonthKey: string;
   metricoolUsedThisMonth: number;
@@ -553,6 +556,15 @@ export async function fetchTikTokCommercialMusic(): Promise<TikTokMusicCatalogRe
 export async function dispatchPostPublish(
   payload: DispatchPublishPayload
 ): Promise<DispatchPublishResponse> {
+  if (
+    payload.deck?.sourceMeta?.userReviewed === false ||
+    payload.deck?.sourceMeta?.humanApproved === false ||
+    payload.deck?.sourceMeta?.verifiedNumbers === false
+  ) {
+    throw new Error(
+      'Review Safety Gate: Mark "Human Reviewed" and verify all claims & numbers before publishing or scheduling.'
+    );
+  }
   const res = await fetch('/api/publish/dispatch', {
     method: 'POST',
     credentials: 'include',
@@ -582,6 +594,8 @@ export interface ManagePublishedPostPayload {
   scheduledFor?: string;
   publishTargets?: PublishTargetPlatform[];
   requeueBuffer?: boolean;
+  approveReviewed?: boolean;
+  verifyNumbers?: boolean;
 }
 
 export interface ManagePublishedPostResponse {
@@ -974,7 +988,7 @@ export const PEAK_SLOT_META: Record<
 export function computePeakProgramScheduleSlots(
   count: number,
   startDateStr: string,
-  density: PeakProgramDensity = '3x-daily',
+  density: PeakProgramDensity = '2x-daily',
   occupiedSlotKeys: Set<string> = new Set(),
   now: Date = new Date()
 ): ScheduledSlotAssignment[] {
@@ -1050,6 +1064,38 @@ export function computePeakProgramScheduleSlots(
   }
 
   return slots;
+}
+
+export interface CadenceOverloadDay {
+  datePart: string;
+  count: number;
+  titles: string[];
+}
+
+/**
+ * Checks scheduled & posted items by calendar day and flags any day exceeding `maxPerDay` (default 2).
+ */
+export function detectCadenceOverloadByDay(
+  posts: SavedPostRecord[],
+  maxPerDay = 2
+): CadenceOverloadDay[] {
+  const byDay = new Map<string, string[]>();
+  for (const post of posts) {
+    const refIso = post.scheduledFor || (post.postStatus === 'posted' ? post.postedAt : undefined);
+    if (!refIso) continue;
+    const { datePart } = formatLocalDateTimeParts(refIso);
+    if (!datePart) continue;
+    const arr = byDay.get(datePart) || [];
+    arr.push(post.title || post.id);
+    byDay.set(datePart, arr);
+  }
+  const overloaded: CadenceOverloadDay[] = [];
+  for (const [datePart, titles] of Array.from(byDay.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
+    if (titles.length > maxPerDay) {
+      overloaded.push({ datePart, count: titles.length, titles });
+    }
+  }
+  return overloaded;
 }
 
 function escapeCsvCell(val: string): string {

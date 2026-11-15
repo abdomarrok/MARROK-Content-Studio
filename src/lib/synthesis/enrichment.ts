@@ -1,5 +1,8 @@
 import type { DiagramNode, DiagramVariant, SlideData } from '../../types.ts';
-import { extractSourceQuotedHubNodes } from './smartVisualDefaults.ts';
+import {
+  extractSourceQuotedHubNodes,
+  inferDynamicCoverArchetype,
+} from './smartVisualDefaults.ts';
 
 /**
  * Dynamic diagram and satellite enrichment:
@@ -15,8 +18,13 @@ export function enrichCarouselDiagrams(
   const combinedSource = `${topicOrText || ''} ${slides[0]?.enTitle || ''} ${slides[0]?.enBody || ''}`.trim();
 
   return slides.map((slide, idx) => {
-    // 1. Hub Slide (Slide 1)
-    if (idx === 0 || slide.type === 'hub') {
+    // 1. Hook Slide (Slide 1): NEVER force 'hub' — keep Hook layout (metric / compare / row / code / image / poster)
+    if (idx === 0) {
+      const hookType =
+        slide.type && slide.type !== 'hub' && slide.type !== 'cta'
+          ? slide.type
+          : inferDynamicCoverArchetype(slide);
+
       const existingValid =
         slide.satLabels &&
         slide.satLabels.length >= 4 &&
@@ -25,7 +33,8 @@ export function enrichCarouselDiagrams(
       if (existingValid && slide.hubNodeReasons && slide.hubNodeReasons.length >= 1) {
         return {
           ...slide,
-          type: 'hub',
+          type: hookType,
+          storyRole: 'hook',
         };
       }
 
@@ -43,9 +52,18 @@ export function enrichCarouselDiagrams(
 
       return {
         ...slide,
-        type: 'hub',
+        type: hookType,
+        storyRole: 'hook',
         satLabels,
         hubNodeReasons: slide.hubNodeReasons?.length ? slide.hubNodeReasons : quoted.hubNodeReasons,
+      };
+    }
+
+    if (slide.type === 'hub') {
+      return {
+        ...slide,
+        type: 'row',
+        diagramVariant: slide.diagramVariant || 'topology',
       };
     }
 
@@ -58,8 +76,16 @@ export function enrichCarouselDiagrams(
     }
 
     // 3. Technical Mechanism / Mid-Deck Slides
-    // If slide is a number, metric, code, or compare, keep its type unchanged
-    if (slide.type === 'code' || slide.type === 'compare' || slide.type === 'metric' || slide.type === 'number') {
+    // If slide is a specialized archetype, keep its type unchanged
+    if (
+      slide.type === 'code' ||
+      slide.type === 'compare' ||
+      slide.type === 'metric' ||
+      slide.type === 'number' ||
+      slide.type === 'subjectPair' ||
+      slide.type === 'image' ||
+      slide.type === 'poster'
+    ) {
       return slide;
     }
 

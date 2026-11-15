@@ -146,7 +146,9 @@ export default function App() {
 
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
   const [activePhase, setActivePhase] = useState<'studio' | 'publish'>('studio');
-  const [publishHubTab, setPublishHubTab] = useState<'single' | 'program' | 'posts' | 'bulk' | 'storage'>('single');
+  const [publishHubTab, setPublishHubTab] = useState<
+    'inbox' | 'draft' | 'schedule' | 'single' | 'program' | 'posts' | 'bulk' | 'storage'
+  >('draft');
   const [editingPostFromManagerId, setEditingPostFromManagerId] = useState<string | null>(null);
   const [isThemeCustomizerOpen, setIsThemeCustomizerOpen] = useState(false);
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
@@ -509,22 +511,22 @@ export default function App() {
                     onClick={async () => {
                       const existing = savedPosts.find((p) => p.id === carousel.id);
                       await handleSaveValidPost(existing?.postStatus || 'validated', true);
-                      setPublishHubTab('posts');
+                      setPublishHubTab('draft');
                       setActivePhase('publish');
                     }}
                     className="px-3 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold cursor-pointer transition-colors"
                   >
-                    {isSavingPost ? 'Saving...' : 'Save & Return to Posts Manager'}
+                    {isSavingPost ? 'Saving...' : 'Save & Return to Draft Queue'}
                   </button>
                   <button
                     type="button"
                     onClick={() => {
-                      setPublishHubTab('posts');
+                      setPublishHubTab('draft');
                       setActivePhase('publish');
                     }}
                     className="px-2.5 py-1 rounded-lg border border-white/15 bg-white/[0.05] hover:bg-white/[0.1] text-slate-200 font-semibold cursor-pointer transition-colors"
                   >
-                    Back to Posts
+                    Back to Drafts
                   </button>
                 </div>
               </div>
@@ -540,7 +542,7 @@ export default function App() {
               onOpenContactSheet={() => setIsContactSheetOpen(true)}
               onOpenSavedPostsDrawer={() => {
                 refreshVaultPosts(false);
-                setPublishHubTab('posts');
+                setPublishHubTab('draft');
                 setActivePhase('publish');
               }}
               onSaveValidPost={handleSaveValidPost}

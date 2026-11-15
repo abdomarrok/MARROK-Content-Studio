@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { CarouselData, SlideData } from '../types.ts';
 import { condenseCarouselToSingleSlide, seedSingleSlideTakeaways } from '../lib/synthesis/singleSlideCondenser.ts';
 import { runQAChecks, CHAR_LIMITS, SINGLE_SLIDE_CHAR_LIMITS } from '../lib/qaChecks.ts';
@@ -314,24 +314,29 @@ describe('Single-Slide Post & Infographic Poster System', () => {
       brandWatermark: 'bottom-right',
     };
 
-    const generated = await analyzeVideoForSlideAndCaption({
-      videoSource: currentVideoSlide.videoUrl!,
-      videoFileName: currentVideoSlide.videoFileName,
-      prompt: 'Zero-trust Kubernetes service mesh with mTLS sidecars',
-      currentSlide: currentVideoSlide,
-      theme: DEFAULT_PALETTES.teal,
-      postFormat: 'single',
-    });
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline unit test')));
+    try {
+      const generated = await analyzeVideoForSlideAndCaption({
+        videoSource: currentVideoSlide.videoUrl!,
+        videoFileName: currentVideoSlide.videoFileName,
+        prompt: 'Zero-trust Kubernetes service mesh with mTLS sidecars',
+        currentSlide: currentVideoSlide,
+        theme: DEFAULT_PALETTES.teal,
+        postFormat: 'single',
+      });
 
-    expect(generated.slideUpdates.enTitle).toBeTruthy();
-    expect(generated.slideUpdates.arTitle).toBeTruthy();
-    expect(generated.slideUpdates.enBody).toBeTruthy();
-    expect(generated.slideUpdates.arBody).toBeTruthy();
-    expect(generated.caption).toBeTruthy();
-    // Preserves video and sets imageFrameMode to 'hero' so slide text renders on canvas
-    expect(generated.slideUpdates.mediaType).toBe('video');
-    expect(generated.slideUpdates.videoUrl).toBe('blob:http://localhost:3000/kubernetes-mesh-demo.mp4');
-    expect(generated.slideUpdates.imageFrameMode).toBe('hero');
+      expect(generated.slideUpdates.enTitle).toBeTruthy();
+      expect(generated.slideUpdates.arTitle).toBeTruthy();
+      expect(generated.slideUpdates.enBody).toBeTruthy();
+      expect(generated.slideUpdates.arBody).toBeTruthy();
+      expect(generated.caption).toBeTruthy();
+      // Preserves video and sets imageFrameMode to 'hero' so slide text renders on canvas
+      expect(generated.slideUpdates.mediaType).toBe('video');
+      expect(generated.slideUpdates.videoUrl).toBe('blob:http://localhost:3000/kubernetes-mesh-demo.mp4');
+      expect(generated.slideUpdates.imageFrameMode).toBe('hero');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

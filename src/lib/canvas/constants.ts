@@ -34,6 +34,10 @@ export const FONT_BODY_EN = '"Plus Jakarta Sans", sans-serif';
 export const FONT_BODY_AR = '"Cairo", sans-serif';
 export const FONT_MONO = '"JetBrains Mono", monospace';
 
+export const MIN_TITLE_FONT_SIZE = 24;
+export const MIN_BODY_FONT_SIZE = 24;
+export const MIN_FOOTER_FONT_SIZE = 22;
+
 export interface CanvasDimensionSpec {
   id: CanvasDimensionPreset;
   label: string;
@@ -56,6 +60,7 @@ export interface CanvasDimensionSpec {
   headerMarginRight?: number;
   footerFontSize: number;
   footerBadgeSize: number;
+  minTitleFontSize: number;
   minBodyFontSize: number;
   graphicScale: number;
   graphicOffsetX: number;
@@ -98,6 +103,7 @@ export const CANVAS_DIMENSION_PRESETS: Record<CanvasDimensionPreset, CanvasDimen
     headerMarginRight: 920,
     footerFontSize: 24,
     footerBadgeSize: 24,
+    minTitleFontSize: 24,
     minBodyFontSize: 24,
     graphicScale: 1,
     graphicOffsetX: 0,
@@ -124,9 +130,10 @@ export const CANVAS_DIMENSION_PRESETS: Record<CanvasDimensionPreset, CanvasDimen
     headerHeight: 58,
     headerBadgeSize: 28,
     headerFontSize: 32,
-    footerFontSize: 20,
-    footerBadgeSize: 20,
-    minBodyFontSize: 20,
+    footerFontSize: 22,
+    footerBadgeSize: 22,
+    minTitleFontSize: 24,
+    minBodyFontSize: 24,
     graphicScale: 0.72,
     graphicOffsetX: 151,
     graphicOffsetY: 16,
@@ -152,9 +159,10 @@ export const CANVAS_DIMENSION_PRESETS: Record<CanvasDimensionPreset, CanvasDimen
     headerHeight: 62,
     headerBadgeSize: 29,
     headerFontSize: 34,
-    footerFontSize: 21,
-    footerBadgeSize: 21,
-    minBodyFontSize: 20,
+    footerFontSize: 22,
+    footerBadgeSize: 22,
+    minTitleFontSize: 24,
+    minBodyFontSize: 24,
     graphicScale: 0.76,
     graphicOffsetX: 130,
     graphicOffsetY: 18,
@@ -180,9 +188,10 @@ export const CANVAS_DIMENSION_PRESETS: Record<CanvasDimensionPreset, CanvasDimen
     headerHeight: 50,
     headerBadgeSize: 24,
     headerFontSize: 28,
-    footerFontSize: 18,
-    footerBadgeSize: 18,
-    minBodyFontSize: 18,
+    footerFontSize: 22,
+    footerBadgeSize: 22,
+    minTitleFontSize: 24,
+    minBodyFontSize: 24,
     graphicScale: 0.54,
     graphicOffsetX: 248,
     graphicOffsetY: 22,
@@ -210,6 +219,7 @@ export const CANVAS_DIMENSION_PRESETS: Record<CanvasDimensionPreset, CanvasDimen
     headerFontSize: 38,
     footerFontSize: 24,
     footerBadgeSize: 24,
+    minTitleFontSize: 24,
     minBodyFontSize: 24,
     graphicScale: 1,
     graphicOffsetX: 15,
@@ -530,6 +540,10 @@ export function getArchetypeGraphicTransform(
   } else if (slideType === 'poster') {
     baseCardY = 200;
     baseCardH = 430;
+    nativeCenterX = SAFE_CONTENT_CENTER_X;
+  } else if (slideType === 'subjectPair') {
+    baseCardY = 240;
+    baseCardH = 490;
     nativeCenterX = SAFE_CONTENT_CENTER_X;
   } else if (slideType === 'number') {
     baseCardY = 240;

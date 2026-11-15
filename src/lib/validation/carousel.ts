@@ -18,6 +18,7 @@ import type {
   SlideData,
   SlideTakeawayItem,
   SlideType,
+  SubjectPairConfig,
   TextAlignment,
   VisualSystemOptions,
 } from '../../types.ts';
@@ -42,6 +43,7 @@ const SLIDE_TYPES: SlideType[] = [
   'image',
   'cta',
   'poster',
+  'subjectPair',
 ];
 
 const DIAGRAM_VARIANTS: DiagramVariant[] = [
@@ -234,6 +236,57 @@ function parseMotionReelConfig(value: unknown): MotionReelData | undefined {
   return value as unknown as MotionReelData;
 }
 
+function parseSubjectPair(value: unknown): SubjectPairConfig | undefined {
+  if (!isRecord(value)) return undefined;
+  const beforeSystem = readString(value, 'beforeSystem', 80) || '';
+  const afterSystem = readString(value, 'afterSystem', 80) || '';
+  if (!beforeSystem && !afterSystem) return undefined;
+
+  const cfg: SubjectPairConfig = {
+    beforeSystem,
+    afterSystem,
+  };
+
+  const beforeLogoKey = readString(value, 'beforeLogoKey', 80);
+  const afterLogoKey = readString(value, 'afterLogoKey', 80);
+  const beforeLabel = readString(value, 'beforeLabel', 40);
+  const afterLabel = readString(value, 'afterLabel', 40);
+  const storyOwner = readString(value, 'storyOwner', 80);
+  const flowLabel = readString(value, 'flowLabel', 120);
+  const colorMode = readEnum(value.colorMode, ['official', 'mono'] as const);
+  const creativeMotif = readEnum(value.creativeMotif, ['chat-to-db', 'stream-flow'] as const);
+  const logoWidthPct = readNumber(value, 'logoWidthPct', 1, 100);
+  const beforeAsText = readBoolean(value, 'beforeAsText');
+  const afterAsText = readBoolean(value, 'afterAsText');
+  const isEdited = readBoolean(value, 'isEdited');
+  const isOverlapping = readBoolean(value, 'isOverlapping');
+  const isMerged = readBoolean(value, 'isMerged');
+  const isNonLibrarySource = readBoolean(value, 'isNonLibrarySource');
+  const usesMascot = readBoolean(value, 'usesMascot');
+
+  if (beforeLogoKey) cfg.beforeLogoKey = beforeLogoKey;
+  if (afterLogoKey) cfg.afterLogoKey = afterLogoKey;
+  if (beforeLabel) cfg.beforeLabel = beforeLabel;
+  if (afterLabel) cfg.afterLabel = afterLabel;
+  if (storyOwner) {
+    cfg.storyOwner = storyOwner;
+    cfg.storyOwnerMode = 'text';
+  }
+  if (flowLabel) cfg.flowLabel = flowLabel;
+  if (colorMode) cfg.colorMode = colorMode;
+  if (creativeMotif) cfg.creativeMotif = creativeMotif;
+  if (logoWidthPct !== undefined) cfg.logoWidthPct = logoWidthPct;
+  if (beforeAsText !== undefined) cfg.beforeAsText = beforeAsText;
+  if (afterAsText !== undefined) cfg.afterAsText = afterAsText;
+  if (isEdited !== undefined) cfg.isEdited = isEdited;
+  if (isOverlapping !== undefined) cfg.isOverlapping = isOverlapping;
+  if (isMerged !== undefined) cfg.isMerged = isMerged;
+  if (isNonLibrarySource !== undefined) cfg.isNonLibrarySource = isNonLibrarySource;
+  if (usesMascot !== undefined) cfg.usesMascot = usesMascot;
+
+  return cfg;
+}
+
 function parseSlide(
   value: unknown,
   index: number,
@@ -316,6 +369,7 @@ function parseSlide(
   const imagePanY = readNumber(value, 'imagePanY', -100, 100);
   const takeaways = parseTakeaways(value.takeaways);
   const layoutOverrides = parseLayoutOverrides(value.layoutOverrides);
+  const subjectPair = parseSubjectPair(value.subjectPair);
 
   if (satIcons) slide.satIcons = satIcons;
   if (satLabels) slide.satLabels = satLabels;
@@ -340,6 +394,7 @@ function parseSlide(
   if (imagePanY !== undefined) slide.imagePanY = imagePanY;
   if (takeaways) slide.takeaways = takeaways;
   if (layoutOverrides) slide.layoutOverrides = layoutOverrides;
+  if (subjectPair) slide.subjectPair = subjectPair;
 
   if (requireContent) {
     const hasText = [
@@ -360,7 +415,8 @@ function parseSlide(
       (slide.diagramNodes?.length ?? 0) > 0 ||
       (slide.icons?.length ?? 0) > 0 ||
       (slide.takeaways?.length ?? 0) > 0;
-    if (!hasText && !hasNodes) return null;
+    const hasSubjectPair = Boolean(slide.type === 'subjectPair' && slide.subjectPair);
+    if (!hasText && !hasNodes && !hasSubjectPair) return null;
   }
 
   return slide;

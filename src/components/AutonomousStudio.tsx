@@ -1877,12 +1877,27 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         ...prev,
         officialBrandIcons: {},
         slides: prev.slides.map((slide, idx) => {
+          const nextSubjectPair = slide.subjectPair
+            ? {
+                ...slide.subjectPair,
+                beforeAsText: true,
+                afterAsText: true,
+                beforeLogoKey: undefined,
+                afterLogoKey: undefined,
+                logoWidthPct: Math.min(slide.subjectPair.logoWidthPct ?? 11, 14),
+                isEdited: false,
+                isMerged: false,
+                isOverlapping: false,
+                usesMascot: false,
+              }
+            : undefined;
           const synced = autoSyncSlideGraphicsFromCopy(
             {
               ...slide,
               centerIcon: undefined,
               satIcons: undefined,
               brandLogoConfig: undefined,
+              subjectPair: nextSubjectPair,
             },
             idx
           );
@@ -2018,7 +2033,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
             if (!ov) continue;
             nextOverrides[k as GraphicalElementId] = {
               ...ov,
-              scale: Math.max(0.85, ov.scale ?? 1),
+              scale: Math.max(1, ov.scale ?? 1),
             };
           }
           return {

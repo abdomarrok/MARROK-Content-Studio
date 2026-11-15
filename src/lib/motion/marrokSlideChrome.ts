@@ -5,6 +5,7 @@ import {
 } from '../../types.ts';
 import { MARROK_LOGO_PATHS, drawMarrokVectorBadge } from '../icons.ts';
 import { DEFAULT_BRAND, MOTION_W, MOTION_H, clamp, spring } from './base.ts';
+import { isolateEmbeddedLatinInArabic } from '../text/arabicBiDi.ts';
 
 export const SAFE_LEFT = 82;
 export const SAFE_RIGHT = 945;
@@ -545,7 +546,7 @@ export function drawAnimatedBilingualSlideCopy(
       ctx.globalAlpha = arEase;
       ctx.translate(SAFE_RIGHT, cursorY + (1 - arEase) * 14);
       ctx.fillStyle = accent;
-      ctx.fillText(line, 0, 0, SAFE_WIDTH);
+      ctx.fillText(isolateEmbeddedLatinInArabic(line), 0, 0, SAFE_WIDTH);
       ctx.restore();
       cursorY += 66;
     });
@@ -613,7 +614,7 @@ export function drawAnimatedBilingualSlideCopy(
     ctx.fillStyle = '#FFFFFF';
     arBodyLines.forEach((line, idx) => {
       ctx.fillText(
-        line,
+        isolateEmbeddedLatinInArabic(line),
         SAFE_RIGHT - 26,
         cursorY + idx * lineH + (1 - bodyEase) * 12,
         SAFE_WIDTH - 32

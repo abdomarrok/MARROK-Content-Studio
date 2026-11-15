@@ -14,6 +14,13 @@ import {
 import { runPlatformRiskChecks } from '../lib/riskChecks.ts';
 import { getPublishBlockers } from '../components/studio/PublishChecklist.tsx';
 import { computeSlideLayoutAwareness } from '../lib/canvas/layoutAwareness.ts';
+import { getCanvasDimensionSpec, MIN_BODY_FONT_SIZE, MIN_FOOTER_FONT_SIZE, MIN_TITLE_FONT_SIZE } from '../lib/canvas/constants.ts';
+import {
+  isolateEmbeddedLatinInArabic,
+  sanitizeArabicSlideText,
+  sanitizeMetricForArabic,
+  splitArabicForBidiRender,
+} from '../lib/text/arabicBiDi.ts';
 import { DEFAULT_PALETTES } from '../types.ts';
 import type { CarouselData } from '../types.ts';
 
@@ -152,11 +159,19 @@ describe('Content Quality Engine, Footer Safe Ceiling & 3-Source Verification', 
         'نقل المهام الخلفية الثقيلة إلى صف مستقل يمنع تباطؤ طلبات الدفع الأساسية، ويحافظ على استقرار الأداء واستجابة الخوادم حتى أثناء ذروة الضغط وإعادة بناء الذاكرة المؤقتة.',
     };
 
-    for (const [preset, expectedMaxY, minBody] of [
-      ['tiktok-9:16', 1428, 24],
-      ['ig-4:5', 1125, 20],
-      ['ig-1:1', 895, 18],
+    for (const [preset, expectedMaxY] of [
+      ['tiktok-9:16', 1428],
+      ['ig-9:16', 1428],
+      ['ig-3:4', 1190],
+      ['ig-4:5', 1125],
+      ['ig-1:1', 895],
     ] as const) {
+      const spec = getCanvasDimensionSpec(preset);
+      expect(spec.minTitleFontSize, `${preset} minTitleFontSize`).toBeGreaterThanOrEqual(MIN_TITLE_FONT_SIZE);
+      expect(spec.minBodyFontSize, `${preset} minBodyFontSize`).toBeGreaterThanOrEqual(MIN_BODY_FONT_SIZE);
+      expect(spec.footerFontSize, `${preset} footerFontSize`).toBeGreaterThanOrEqual(MIN_FOOTER_FONT_SIZE);
+      expect(spec.footerBadgeSize, `${preset} footerBadgeSize`).toBeGreaterThanOrEqual(MIN_FOOTER_FONT_SIZE);
+
       const awareness = computeSlideLayoutAwareness(slide, {
         theme: 'teal',
         category: 'SYSTEMS',
@@ -166,8 +181,10 @@ describe('Content Quality Engine, Footer Safe Ceiling & 3-Source Verification', 
       });
       expect(awareness.arabicBodyBlock!.bottom, `${preset} footer ceiling`).toBeLessThanOrEqual(expectedMaxY);
       expect(awareness.arabicBodyBlock!.top, `${preset} body-ar gap`).toBeGreaterThan(awareness.bodyBlock!.bottom);
-      expect(awareness.arabicBodyBlock!.fontSize, `${preset} ar min font`).toBeGreaterThanOrEqual(minBody);
-      expect(awareness.bodyBlock!.fontSize, `${preset} en min font`).toBeGreaterThanOrEqual(minBody);
+      expect(awareness.titleBlock!.fontSize, `${preset} en title min font`).toBeGreaterThanOrEqual(24);
+      expect(awareness.arabicTitleBlock!.fontSize, `${preset} ar title min font`).toBeGreaterThanOrEqual(24);
+      expect(awareness.bodyBlock!.fontSize, `${preset} en body min font`).toBeGreaterThanOrEqual(24);
+      expect(awareness.arabicBodyBlock!.fontSize, `${preset} ar body min font`).toBeGreaterThanOrEqual(24);
     }
   });
 
@@ -239,5 +256,36 @@ describe('Content Quality Engine, Footer Safe Ceiling & 3-Source Verification', 
     expect(humorDeck.slides[0].hookClaimCard).toBeDefined();
 
     console.info('=== 3-SOURCE SLIDE 1 PREVIEWS ===\n' + JSON.stringify(previews, null, 2));
+  });
+
+  it('keeps English technical terms & number+unit pairs unrewritten and BiDi-isolated in Arabic copy', () => {
+    expect(sanitizeArabicSlideText('يعمل محلياً بدلاً من المقابس التقليدية.')).toBe(
+      'يعمل محلياً بدلاً من المقابس التقليدية.'
+    );
+    expect(sanitizeArabicSlideText('يعمل محلياً عبر Sockets مع Latency أقل من 15ms وذاكرة 510 GB.')).toBe(
+      'يعمل محلياً عبر Sockets مع Latency أقل من 15ms وذاكرة 510 GB\u200F.'
+    );
+    expect(sanitizeMetricForArabic('510 GB.')).toBe('510 GB');
+    expect(sanitizeMetricForArabic('15ms')).toBe('15ms');
+
+    const isolated = isolateEmbeddedLatinInArabic(
+      'يعتمد Raft على Postgres و Kafka لخفض p99 حتى 15ms في كل Cluster.'
+    );
+    expect(isolated).toContain('\u2066Raft\u2069');
+    expect(isolated).toContain('\u2066Postgres\u2069');
+    expect(isolated).toContain('\u2066Kafka\u2069');
+    expect(isolated).toContain('\u2066p99\u2069');
+    expect(isolated).toContain('\u206615ms\u2069');
+    expect(isolated).toContain('\u2066Cluster\u2069');
+    expect(isolated.endsWith('\u2069.') || isolated.includes('\u2069\u200F.')).toBe(true);
+
+    const segs = splitArabicForBidiRender('متوسط Latency هو 510 GB.');
+    expect(segs).toEqual([
+      { text: 'متوسط ', isLtr: false },
+      { text: 'Latency', isLtr: true },
+      { text: ' هو ', isLtr: false },
+      { text: '510 GB', isLtr: true },
+      { text: '.', isLtr: false },
+    ]);
   });
 });

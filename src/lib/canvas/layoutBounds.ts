@@ -80,6 +80,8 @@ export function computeSlideElementBounds(
         ? 'Code Window Terminal'
         : slide.type === 'compare'
         ? 'Comparison Columns'
+        : slide.type === 'subjectPair'
+        ? 'Subject Pair Migration Visual'
         : slide.type === 'metric'
         ? 'Metrics Grid Card'
         : slide.type === 'image'

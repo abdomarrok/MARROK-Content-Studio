@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Send,
   Calendar,
@@ -14,10 +14,11 @@ import {
   Shuffle,
   Database,
   Radar,
+  FileEdit,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   CarouselData,
-  DEFAULT_PALETTES,
   PublishScheduleMode,
   PublishTargetPlatform,
   SavedPostRecord,
@@ -33,9 +34,11 @@ import {
   deriveMetricoolDocumentTitle,
   deriveMetricoolFirstComment,
   deriveMetricoolTikTokTitle,
+  derivePostLifecycleStage,
   dispatchPostPublish,
   fetchPublishStatus,
   fetchTikTokCommercialMusic,
+  formatLocalDateTimeParts,
   getDefaultUpcomingTimeStr,
   getLocalTodayDateStr,
   MetricoolTemplateOptions,
@@ -44,11 +47,21 @@ import {
   TikTokCommercialTrack,
   uploadDeckSlidesForPublishing,
 } from '../../lib/publish/publishClient.ts';
+import { saveValidPost } from '../../lib/storage/postsVaultClient.ts';
 import { PostManagerPanel } from './PostManagerPanel.tsx';
 import { WeeklyProgramReviewPanel } from './WeeklyProgramReviewPanel.tsx';
 
+export type PublishHubMode = 'inbox' | 'draft' | 'schedule';
+export type LegacyCompatibleHubTab =
+  | PublishHubMode
+  | 'single'
+  | 'program'
+  | 'posts'
+  | 'bulk'
+  | 'storage';
+
 interface PublishingHubWorkspaceProps {
-  initialTab?: 'single' | 'program' | 'posts' | 'bulk' | 'storage';
+  initialTab?: LegacyCompatibleHubTab;
   carousel: CarouselData;
   theme: ThemePalette;
   savedPosts: SavedPostRecord[];
@@ -91,8 +104,14 @@ const PLATFORM_META: Record<
   },
 };
 
+function normalizeHubMode(tab?: LegacyCompatibleHubTab): PublishHubMode {
+  if (tab === 'inbox' || tab === 'program') return 'inbox';
+  if (tab === 'schedule' || tab === 'posts' || tab === 'bulk') return 'schedule';
+  return 'draft';
+}
+
 export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
-  initialTab = 'single',
+  initialTab = 'draft',
   carousel,
   theme,
   savedPosts,
@@ -104,16 +123,12 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
   onExportVaultJson,
   onImportVaultJson,
 }) => {
-  const normalizedInitial: 'single' | 'program' | 'posts' =
-    initialTab === 'program'
-      ? 'program'
-      : initialTab === 'bulk' || initialTab === 'posts'
-      ? 'posts'
-      : 'single';
-  const [hubMode, setHubMode] = useState<'single' | 'program' | 'posts'>(normalizedInitial);
+  const [hubMode, setHubMode] = useState<PublishHubMode>(() => normalizeHubMode(initialTab));
+  const [showActiveComposer, setShowActiveComposer] = useState<boolean>(
+    () => initialTab === 'single'
+  );
   const [status, setStatus] = useState<PublishStatusResponse | null>(null);
 
-  // Channel Selection
   const [selectedTargets, setSelectedTargets] = useState<PublishTargetPlatform[]>([
     'instagram',
     'facebook',
@@ -121,8 +136,7 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
     'tiktok',
   ]);
 
-  // Schedule Mode (Defaults to today in local timezone, never tomorrow)
-  const [scheduleMode, setScheduleMode] = useState<PublishScheduleMode>('customScheduled');
+  const [scheduleMode, setScheduleMode] = useState<PublishScheduleMode>('shareNow');
   const [scheduledDate, setScheduledDate] = useState<string>(getLocalTodayDateStr);
   const [scheduledTime, setScheduledTime] = useState<string>(getDefaultUpcomingTimeStr);
   const [autoCleanupImmediate] = useState<boolean>(true);
@@ -133,18 +147,23 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
     scheduledFor?: string | null;
   } | null>(null);
 
-  // Platform Options
+  // Active Deck mandatory safety gate states
+  const [activeHumanReviewed, setActiveHumanReviewed] = useState<boolean>(() =>
+    Boolean(carousel.sourceMeta?.userReviewed === true || carousel.sourceMeta?.humanApproved === true)
+  );
+  const [activeNumbersVerified, setActiveNumbersVerified] = useState<boolean>(() =>
+    Boolean(carousel.sourceMeta?.verifiedNumbers === true)
+  );
+
   const [templateOpts, setTemplateOpts] = useState<MetricoolTemplateOptions>(
     DEFAULT_METRICOOL_TEMPLATE_OPTIONS
   );
 
-  // TikTok Commercial Music Library State (Auto-Pick Trending Default + Preview)
   const [tiktokTracks, setTiktokTracks] = useState<TikTokCommercialTrack[]>([]);
   const [selectedMusicSoundId, setSelectedMusicSoundId] = useState<string>('auto');
   const [playingTrackId, setPlayingTrackId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Editable per-post metadata fields for the active deck
   const [customCaption, setCustomCaption] = useState<string>(() => carousel.caption || '');
   const [tiktokTitle, setTiktokTitle] = useState<string>(() =>
     deriveMetricoolTikTokTitle(carousel)
@@ -160,12 +179,11 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
   );
   const [showAltTextEditor, setShowAltTextEditor] = useState<boolean>(false);
 
-  // Staged Cloudinary URLs for active deck
   const [stagedUrlsByPostId, setStagedUrlsByPostId] = useState<Record<string, string[]>>({});
   const [stagedPublicIdsByPostId, setStagedPublicIdsByPostId] = useState<Record<string, string[]>>({});
 
-  // Progress & Busy State
   const [isBusy, setIsBusy] = useState(false);
+  const [publishingPostId, setPublishingPostId] = useState<string | null>(null);
   const [progressLabel, setProgressLabel] = useState<string | null>(null);
 
   const activePostKey = carousel.id || 'active_studio_deck';
@@ -175,7 +193,6 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
       const data = await fetchPublishStatus();
       setStatus(data);
       if (data.autoCleanedPostIds && data.autoCleanedPostIds.length > 0) {
-        // Silently refresh vault in background without showing a popup toast
         onRefreshVault();
       }
     } catch (err) {
@@ -209,16 +226,12 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
   }, []);
 
   useEffect(() => {
-    setHubMode(
-      initialTab === 'program'
-        ? 'program'
-        : initialTab === 'bulk' || initialTab === 'posts'
-        ? 'posts'
-        : 'single'
-    );
+    setHubMode(normalizeHubMode(initialTab));
+    if (initialTab === 'single') {
+      setShowActiveComposer(true);
+    }
   }, [initialTab]);
 
-  // Sync active deck fields when carousel changes
   useEffect(() => {
     setCustomCaption(
       carousel.caption ||
@@ -230,7 +243,34 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
     setFirstComment(deriveMetricoolFirstComment(carousel));
     setDocumentTitle(deriveMetricoolDocumentTitle(carousel));
     setAltTexts(deriveMetricoolAltTexts(carousel));
+    setActiveHumanReviewed(
+      Boolean(
+        carousel.sourceMeta?.userReviewed === true ||
+          carousel.sourceMeta?.humanApproved === true
+      )
+    );
+    setActiveNumbersVerified(Boolean(carousel.sourceMeta?.verifiedNumbers === true));
   }, [carousel]);
+
+  const effectiveStorageEngine: SavedPostStorageEngine =
+    status?.storageEngine || storageEngine || 'local-disk';
+
+  const { draftCount, scheduledCount, targetDatePostCount } = useMemo(() => {
+    const now = Date.now();
+    let draft = 0;
+    let scheduled = 0;
+    let onDate = 0;
+    for (const post of savedPosts) {
+      const stage = derivePostLifecycleStage(post, now);
+      if (stage === 'draft' || stage === 'attention') draft += 1;
+      if (stage === 'scheduled') scheduled += 1;
+      const refIso = post.scheduledFor || (post.postStatus === 'posted' ? post.postedAt : undefined);
+      if (refIso && formatLocalDateTimeParts(refIso).datePart === scheduledDate) {
+        onDate += 1;
+      }
+    }
+    return { draftCount: draft, scheduledCount: scheduled, targetDatePostCount: onDate };
+  }, [savedPosts, scheduledDate]);
 
   const togglePlatform = (platform: PublishTargetPlatform) => {
     setSelectedTargets((prev) =>
@@ -246,7 +286,6 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
     onShowToast('Auto-filled TikTok Title, First Comment, Document Title & Slide Alt Texts');
   };
 
-  // Resolve the currently active TikTok track object for preview/display
   const activeTikTokTrack: TikTokCommercialTrack | undefined =
     selectedMusicSoundId === 'none'
       ? undefined
@@ -288,8 +327,7 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
     const pool = tiktokTracks.slice(0, Math.min(12, tiktokTracks.length));
     const currentId = activeTikTokTrack?.musicSoundId;
     const candidates = pool.filter((t) => t.musicSoundId !== currentId);
-    const picked =
-      candidates[Math.floor(Math.random() * candidates.length)] || pool[0];
+    const picked = candidates[Math.floor(Math.random() * candidates.length)] || pool[0];
     if (picked) {
       setSelectedMusicSoundId(picked.musicSoundId);
       if (playingTrackId && audioRef.current) {
@@ -300,7 +338,6 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
     }
   };
 
-  // Stage slides to Cloudinary without dispatching yet
   const handleStageSlidesToCloudinary = async () => {
     setIsBusy(true);
     try {
@@ -334,12 +371,116 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
     }
   };
 
-  // Dispatch to Buffer GraphQL + Zernio REST API v1 + Save Schedule to Vault
+  // Direct Publish Now action for any Draft or Scheduled post card
+  const handlePublishPostNow = async (
+    post: SavedPostRecord,
+    targetsOverride?: PublishTargetPlatform[]
+  ) => {
+    const humanOk = Boolean(
+      post.humanApproved === true || post.deck?.sourceMeta?.userReviewed === true
+    );
+    const numbersOk = Boolean(
+      post.verifiedNumbers === true || post.deck?.sourceMeta?.verifiedNumbers === true
+    );
+    if (!humanOk || !numbersOk) {
+      onShowToast(
+        '⚠️ Review Safety Gate: Confirm "Human Reviewed" and "Claims & Numbers Verified" before publishing.'
+      );
+      return;
+    }
+
+    const activeTargets: PublishTargetPlatform[] =
+      targetsOverride && targetsOverride.length > 0
+        ? targetsOverride
+        : post.publishTargets && post.publishTargets.length > 0
+        ? post.publishTargets
+        : ['instagram', 'facebook', 'linkedin', 'tiktok'];
+
+    setPublishingPostId(post.id);
+    setProgressLabel(`Publishing "${post.title.slice(0, 32)}" immediately...`);
+    try {
+      const hasTikTok = activeTargets.includes('tiktok');
+      const hasOther = activeTargets.some((t) => t !== 'tiktok');
+      const primaryPreset = hasTikTok && !hasOther ? 'tiktok-9:16' : 'ig-4:5';
+
+      const uploaded = await uploadDeckSlidesForPublishing(
+        post.deck,
+        primaryPreset,
+        theme,
+        (stage) => setProgressLabel(`Staging media: ${stage}`)
+      );
+
+      let pubIds = [...uploaded.publicIds];
+      let tiktokUrls: string[] | undefined = undefined;
+      if (hasTikTok && hasOther && status?.zernioApiConfigured) {
+        const uploadedTikTok = await uploadDeckSlidesForPublishing(
+          post.deck,
+          'tiktok-9:16',
+          theme,
+          (stage) => setProgressLabel(`TikTok 9:16: ${stage}`)
+        );
+        tiktokUrls = uploadedTikTok.urls;
+        pubIds = Array.from(new Set([...pubIds, ...uploadedTikTok.publicIds]));
+      }
+
+      const dispatchRes = await dispatchPostPublish({
+        postId: post.id,
+        deck: {
+          ...post.deck,
+          sourceMeta: {
+            ...post.deck.sourceMeta,
+            userReviewed: true,
+            humanApproved: true,
+            verifiedNumbers: true,
+          },
+        },
+        title: post.title,
+        caption: post.deck?.caption || post.title,
+        mode: 'shareNow',
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Africa/Algiers',
+        targets: activeTargets,
+        imageUrls: uploaded.urls,
+        tiktokImageUrls: tiktokUrls,
+        cloudinaryPublicIds: pubIds,
+        autoCleanupImmediate: autoCleanupImmediate,
+        tiktokSettings: {
+          privacyLevel: templateOpts.tiktokPostPrivacy,
+          photoCoverIndex: templateOpts.tiktokPhotoCoverIndex,
+          autoAddMusic: selectedMusicSoundId !== 'none' && templateOpts.tiktokAutoAddMusic,
+          allowComment: !templateOpts.tiktokDisableComments,
+          title: deriveMetricoolTikTokTitle(post.deck),
+          musicSoundId: activeTikTokTrack?.musicSoundId || 'auto',
+        },
+      });
+
+      onRefreshVault();
+      await loadStatus();
+
+      if ((dispatchRes.bufferFailedCount ?? 0) > 0) {
+        onShowToast(`⚠️ ${dispatchRes.warnings?.[0] || 'One or more channels failed'}`);
+      } else {
+        onShowToast(`✓ Published "${post.title.slice(0, 32)}" immediately!`);
+      }
+    } catch (err) {
+      onShowToast(`⚠️ ${err instanceof Error ? err.message : 'Publish Now failed'}`);
+    } finally {
+      setPublishingPostId(null);
+      setProgressLabel(null);
+    }
+  };
+
   const handleDispatchPublishAndSchedule = async (options?: {
     targetSubset?: PublishTargetPlatform[];
     mergeRemoteIds?: boolean;
     cancelExistingBeforeDispatch?: boolean;
   }) => {
+    if (!activeHumanReviewed || !activeNumbersVerified) {
+      onShowToast(
+        '⚠️ Review Safety Gate: Check "Human Reviewed" and "Claims & Numbers Verified" before scheduling or publishing.'
+      );
+      return;
+    }
+
     const activeTargets =
       options?.targetSubset && options.targetSubset.length > 0
         ? options.targetSubset
@@ -364,11 +505,25 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
       const userTimezone =
         Intl.DateTimeFormat().resolvedOptions().timeZone || 'Africa/Algiers';
 
-      if (!status?.cloudinaryConfigured) {
-        onShowToast(
-          '⚠️ Notice: Cloudinary keys are missing on Vercel. Add CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in Vercel settings for direct public hosting.'
-        );
-      }
+      const verifiedDeck: CarouselData = {
+        ...carousel,
+        caption: customCaption,
+        sourceMeta: {
+          ...carousel.sourceMeta,
+          userReviewed: true,
+          humanApproved: true,
+          verifiedNumbers: true,
+        },
+      };
+
+      await saveValidPost({
+        deck: verifiedDeck,
+        postStatus: 'validated',
+        title: carousel.slides[0]?.enTitle || 'Untitled Post',
+        allowOverride: true,
+        userReviewed: true,
+        verifiedNumbers: true,
+      });
 
       let urls = stagedUrlsByPostId[activePostKey];
       let pubIds = stagedPublicIdsByPostId[activePostKey] || [];
@@ -376,7 +531,7 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
 
       if (!urls || urls.length === 0) {
         const uploaded = await uploadDeckSlidesForPublishing(
-          carousel,
+          verifiedDeck,
           renderPreset,
           theme,
           (stage) => setProgressLabel(stage)
@@ -387,11 +542,9 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
         setStagedPublicIdsByPostId((prev) => ({ ...prev, [activePostKey]: pubIds }));
       }
 
-      // If publishing to BOTH Instagram/Facebook/LinkedIn (4:5) AND TikTok via Zernio API,
-      // stage native 9:16 vertical slides specifically for TikTok so neither platform crops or rejects!
       if (hasTikTokTarget && hasMetaOrLinkedInTarget && status?.zernioApiConfigured) {
         const uploadedTikTok = await uploadDeckSlidesForPublishing(
-          carousel,
+          verifiedDeck,
           'tiktok-9:16',
           theme,
           (stage) => setProgressLabel(`TikTok 9:16: ${stage}`)
@@ -423,7 +576,7 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
       );
       const dispatchRes = await dispatchPostPublish({
         postId: carousel.id,
-        deck: { ...carousel, caption: customCaption },
+        deck: verifiedDeck,
         title: carousel.slides[0]?.enTitle || 'Untitled Post',
         caption: customCaption,
         mode: scheduleMode,
@@ -518,121 +671,165 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 gap-3 text-slate-200">
-      {/* Streamlined 3-Tab Navigation Bar */}
-      <div className="rounded-2xl border border-white/[0.08] bg-[#0b1218]/95 px-3 sm:px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 shadow-lg">
-        {/* Primary 3-Tab Segmented Switcher */}
-        <div className="flex flex-wrap items-center gap-1.5 bg-black/40 p-1 rounded-xl border border-white/10">
+    <div
+      className="flex-1 flex flex-col min-h-0 gap-3 text-slate-200"
+      data-testid="publishing-hub-workspace"
+    >
+      {/* Flattened Top 3-Step Pipeline Navigation: Inbox -> Draft -> Schedule */}
+      <div className="rounded-xl border border-white/[0.08] bg-[#0b1218]/95 px-3 sm:px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 shadow-lg">
+        <div
+          role="tablist"
+          aria-label="Workflow Pipeline"
+          className="flex flex-wrap items-center gap-1.5 bg-black/40 p-1 rounded-lg border border-white/10"
+        >
           <button
             type="button"
-            onClick={() => setHubMode('single')}
-            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-              hubMode === 'single'
-                ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/40 shadow-xs'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Send className="w-3.5 h-3.5" />
-            <span>Publish Active Post</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setHubMode('program')}
-            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-              hubMode === 'program'
-                ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-400/40 shadow-xs'
+            role="tab"
+            aria-selected={hubMode === 'inbox'}
+            data-testid="hub-tab-inbox"
+            onClick={() => setHubMode('inbox')}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
+              hubMode === 'inbox'
+                ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-400/40'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
             <Radar className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Gather & Peak (10 · 12 · 18)</span>
-            <span className="text-[11px] font-mono text-cyan-300 tabular-nums">
-              ·{' '}
-              {
-                savedPosts.filter(
-                  (p) => p.postStatus !== 'posted' && p.deck?.sourceMeta?.userReviewed === false
-                ).length
-              }{' '}
-              review
-            </span>
+            <span>Inbox</span>
           </button>
+
           <button
             type="button"
-            onClick={() => setHubMode('posts')}
-            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-              hubMode === 'posts'
-                ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/40 shadow-xs'
+            role="tab"
+            aria-selected={hubMode === 'draft'}
+            data-testid="hub-tab-draft"
+            onClick={() => setHubMode('draft')}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
+              hubMode === 'draft'
+                ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/40'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <FileEdit className="w-3.5 h-3.5" />
+            <span>Draft</span>
+            <span className="text-[11px] font-mono text-slate-300 tabular-nums">
+              · {draftCount}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={hubMode === 'schedule'}
+            data-testid="hub-tab-schedule"
+            onClick={() => setHubMode('schedule')}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
+              hubMode === 'schedule'
+                ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/40'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
             <Calendar className="w-3.5 h-3.5" />
-            <span>Posts & Calendar</span>
+            <span>Schedule</span>
             <span className="text-[11px] font-mono text-slate-300 tabular-nums">
-              · {savedPosts.length}
+              · {scheduledCount}
             </span>
           </button>
         </div>
 
-        {/* Right: Quiet Editorial Connection Status (Database · Buffer · Zernio · Cloudinary) */}
-        <div className="hidden md:flex items-center gap-2 text-[11px] font-mono text-slate-400 tabular-nums">
-          <span
-            className={`inline-flex items-center gap-1.5 ${
-              storageEngine === 'neon-postgres' || storageEngine === 'cloud-kv'
-                ? 'text-emerald-300'
-                : storageEngine === 'local-disk'
-                ? 'text-cyan-300'
-                : 'text-amber-300'
+        {/* Right: Quick Active Deck Publisher Trigger + Live Connection Status (Neon · Buffer · Zernio · Cloudinary) */}
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            data-testid="toggle-active-composer-btn"
+            onClick={() => {
+              setHubMode('draft');
+              setShowActiveComposer((prev) => !prev);
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-bold cursor-pointer whitespace-nowrap transition-colors ${
+              showActiveComposer && hubMode === 'draft'
+                ? 'border-emerald-400/50 bg-emerald-500/20 text-emerald-200'
+                : 'border-white/15 bg-white/[0.04] hover:bg-white/[0.09] text-slate-200'
             }`}
-            title={
-              storageEngine === 'neon-postgres'
-                ? 'Durable Neon PostgreSQL cloud pooler connected across all devices'
-                : storageEngine === 'browser-vault' || storageEngine === 'vercel-tmp'
-                ? 'Offline Local Draft mode — browser storage active while backend database is offline'
-                : 'Local disk storage'
-            }
           >
-            <Database className="w-3 h-3 shrink-0" />
+            <Send className="w-3.5 h-3.5 text-emerald-400" />
             <span>
-              {storageEngine === 'neon-postgres'
-                ? 'Neon Postgres'
-                : storageEngine === 'cloud-kv'
-                ? 'Cloud KV'
-                : storageEngine === 'local-disk'
-                ? 'Local Disk'
-                : 'Offline Local Draft'}
+              {showActiveComposer && hubMode === 'draft'
+                ? 'Hide Active Deck Composer'
+                : 'Publish Active Post'}
             </span>
-          </span>
-          <span aria-hidden="true" className="text-slate-600">·</span>
-          <span className={status?.bufferApiConfigured ? 'text-emerald-300' : 'text-slate-500'}>
-            {status?.bufferApiConfigured ? 'Buffer Ready' : 'Buffer Off'}
-          </span>
-          <span aria-hidden="true" className="text-slate-600">·</span>
-          <span className={status?.zernioApiConfigured ? 'text-cyan-300' : 'text-slate-500'}>
-            {status?.zernioApiConfigured ? 'Zernio Ready' : 'Zernio Off'}
-          </span>
-          <span aria-hidden="true" className="text-slate-600">·</span>
-          <span
-            className={`inline-flex items-center gap-1 ${
-              status?.cloudinaryConfigured ? 'text-slate-300' : 'text-amber-300'
-            }`}
-            title={
-              status?.cloudinaryConfigured
-                ? `Cloudinary connected (${status.cloudinaryCloudName})`
-                : 'Cloudinary environment variables missing in Netlify Functions'
-            }
+          </button>
+
+          <div
+            data-testid="connection-status-strip"
+            className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-slate-400 tabular-nums"
           >
-            <Cloud className="w-3 h-3 shrink-0" />
-            <span>
-              {status?.cloudinaryConfigured
-                ? status.cloudinaryCloudName || 'Cloudinary'
-                : 'Staging Ephemeral'}
+            <span
+              data-testid="status-db-engine"
+              className={`inline-flex items-center gap-1.5 ${
+                effectiveStorageEngine === 'neon-postgres' ||
+                effectiveStorageEngine === 'cloud-kv'
+                  ? 'text-emerald-300'
+                  : !status
+                  ? 'text-slate-400'
+                  : effectiveStorageEngine === 'local-disk'
+                  ? 'text-cyan-300'
+                  : 'text-amber-300'
+              }`}
+            >
+              <Database className="w-3 h-3 shrink-0" />
+              <span>
+                {effectiveStorageEngine === 'neon-postgres'
+                  ? 'Neon Postgres'
+                  : effectiveStorageEngine === 'cloud-kv'
+                  ? 'Cloud KV'
+                  : !status
+                  ? 'Checking DB...'
+                  : effectiveStorageEngine === 'local-disk'
+                  ? 'Local Disk'
+                  : 'Offline Local Draft'}
+              </span>
             </span>
-          </span>
+            <span aria-hidden="true" className="text-slate-600">
+              ·
+            </span>
+            <span className={status?.bufferApiConfigured ? 'text-emerald-300' : 'text-slate-500'}>
+              {status ? (status.bufferApiConfigured ? 'Buffer Ready' : 'Buffer Off') : 'Buffer ...'}
+            </span>
+            <span aria-hidden="true" className="text-slate-600">
+              ·
+            </span>
+            <span className={status?.zernioApiConfigured ? 'text-cyan-300' : 'text-slate-500'}>
+              {status ? (status.zernioApiConfigured ? 'Zernio Ready' : 'Zernio Off') : 'Zernio ...'}
+            </span>
+            <span aria-hidden="true" className="text-slate-600">
+              ·
+            </span>
+            <span
+              data-testid="status-cloudinary"
+              className={`inline-flex items-center gap-1 ${
+                status?.cloudinaryConfigured
+                  ? 'text-emerald-300'
+                  : !status
+                  ? 'text-slate-400'
+                  : 'text-amber-300'
+              }`}
+            >
+              <Cloud className="w-3 h-3 shrink-0" />
+              <span>
+                {!status
+                  ? 'Checking Media...'
+                  : status.cloudinaryConfigured
+                  ? status.cloudinaryCloudName || 'Cloudinary'
+                  : 'Staging Ephemeral'}
+              </span>
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* TAB 2: GATHER, REVIEW QUEUE & PEAK (10 · 12 · 18) WEEKLY PROGRAM */}
-      {hubMode === 'program' ? (
+      {/* TAB 1: INBOX (Trend Radar, 4-Factor Scoring, Lazy Hook Previews, Move to Draft) */}
+      {hubMode === 'inbox' && (
         <div className="flex-1 min-h-0 overflow-y-auto">
           <WeeklyProgramReviewPanel
             savedPosts={savedPosts}
@@ -645,14 +842,497 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
                 onBackToStudio();
               }
             }}
+            onMovedToDraft={(count) => {
+              if (count > 0) {
+                onRefreshVault();
+              }
+            }}
             onRefreshVault={onRefreshVault}
             onRefreshStatus={() => void loadStatus()}
             onShowToast={onShowToast}
           />
         </div>
-      ) : hubMode === 'posts' ? (
-        /* TAB 3: UNIFIED POSTS & CALENDAR MANAGER */
+      )}
+
+      {/* TAB 2: DRAFT (Draft Review Safety Gate + Optional Active Studio Deck Composer) */}
+      {hubMode === 'draft' && (
+        <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-y-auto">
+          {showActiveComposer && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 shrink-0">
+              {/* LEFT COLUMN: Active Deck, Channels, Review Checkboxes, Schedule / Publish Now */}
+              <div className="lg:col-span-5 rounded-xl border border-emerald-400/30 bg-[#0b1218]/95 p-4 flex flex-col justify-between gap-4">
+                <div className="space-y-4">
+                  <div className="p-3 rounded-lg border border-white/10 bg-white/[0.03] flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-[11px] font-mono text-emerald-300">
+                        <span className="uppercase font-bold">
+                          {carousel.postFormat || 'carousel'}
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span className="tabular-nums">{carousel.slides.length} Slides</span>
+                      </div>
+                      <div className="text-sm font-bold text-white truncate mt-0.5">
+                        {carousel.slides[0]?.enTitle || 'Untitled Active Post'}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={onBackToStudio}
+                      className="px-3 py-1.5 rounded-md border border-white/15 bg-white/[0.05] hover:bg-white/[0.1] text-xs font-bold text-slate-200 cursor-pointer shrink-0 whitespace-nowrap"
+                    >
+                      Edit Slides
+                    </button>
+                  </div>
+
+                  {/* Channels */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                        1. Select Channels
+                      </span>
+                      <span className="text-[11px] font-mono text-emerald-400 tabular-nums">
+                        {selectedTargets.length} selected
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(Object.keys(PLATFORM_META) as PublishTargetPlatform[]).map((platform) => {
+                        const meta = PLATFORM_META[platform];
+                        const active = selectedTargets.includes(platform);
+                        const liveChannel = status?.channels?.find((c) => c.service === platform);
+                        const providerLabel =
+                          liveChannel?.provider === 'zernio' ||
+                          (platform === 'tiktok' && status?.zernioApiConfigured)
+                            ? 'Zernio API'
+                            : liveChannel?.provider === 'buffer' && status?.bufferApiConfigured
+                            ? 'Buffer API'
+                            : meta.providerLabel;
+                        return (
+                          <button
+                            key={platform}
+                            type="button"
+                            onClick={() => togglePlatform(platform)}
+                            className={`flex items-center gap-2.5 p-2 rounded-lg border text-left transition-colors cursor-pointer ${
+                              active
+                                ? 'border-emerald-400/40 bg-emerald-500/10 text-white'
+                                : 'border-white/10 bg-black/20 text-slate-400 opacity-60 hover:opacity-90'
+                            }`}
+                          >
+                            <span
+                              className="w-2.5 h-2.5 rounded-full shrink-0"
+                              style={{ backgroundColor: meta.badgeColor }}
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-bold truncate">{meta.label}</div>
+                              <div className="text-[10px] text-slate-400 truncate">
+                                {liveChannel?.handle || meta.handle} · {providerLabel}
+                              </div>
+                            </div>
+                            {active && <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* TikTok Music Picker */}
+                  {selectedTargets.includes('tiktok') && (
+                    <div className="p-3 rounded-lg border border-cyan-500/25 bg-cyan-500/[0.04] space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-cyan-200">
+                          <Music className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>TikTok Background Sound</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {activeTikTokTrack?.previewUrl && (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleAudioPreview(activeTikTokTrack)}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold border border-cyan-400/40 bg-cyan-500/15 text-cyan-200 cursor-pointer"
+                            >
+                              {playingTrackId === activeTikTokTrack.musicSoundId ? (
+                                <>
+                                  <Square className="w-2.5 h-2.5 fill-current" />
+                                  <span>Stop</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Play className="w-2.5 h-2.5 fill-current" />
+                                  <span>Preview</span>
+                                </>
+                              )}
+                            </button>
+                          )}
+                          {tiktokTracks.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={handleShuffleTrendingTrack}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono border border-white/15 bg-white/[0.05] text-slate-200 cursor-pointer"
+                            >
+                              <Shuffle className="w-2.5 h-2.5" />
+                              <span>Shuffle</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <select
+                        aria-label="Select TikTok background sound"
+                        value={selectedMusicSoundId}
+                        onChange={(e) => setSelectedMusicSoundId(e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-md bg-black/60 border border-white/15 text-xs text-white focus:outline-none focus:border-cyan-400"
+                      >
+                        <option value="auto">
+                          {tiktokTracks[0]
+                            ? `Auto-Pick #1 Trending: ${tiktokTracks[0].name}`
+                            : 'Auto-Pick Top Trending Sound'}
+                        </option>
+                        {tiktokTracks.map((t) => (
+                          <option key={t.musicSoundId} value={t.musicSoundId}>
+                            #{t.rank} {t.name} — {t.artist} ({t.durationSec}s)
+                          </option>
+                        ))}
+                        <option value="none">No Background Music</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Dispatch Timing */}
+                  <div className="space-y-2">
+                    <span className="block text-xs font-bold uppercase tracking-wider text-slate-300">
+                      2. Publish Now or Schedule
+                    </span>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setScheduleMode('shareNow')}
+                        className={`p-2 rounded-lg border text-left transition-colors cursor-pointer ${
+                          scheduleMode === 'shareNow'
+                            ? 'border-emerald-400 bg-emerald-500/15 text-white'
+                            : 'border-white/10 bg-black/20 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <div className="text-xs font-bold">Publish Now</div>
+                        <div className="text-[10px] opacity-75">Immediate</div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setScheduleMode('customScheduled')}
+                        className={`p-2 rounded-lg border text-left transition-colors cursor-pointer ${
+                          scheduleMode === 'customScheduled'
+                            ? 'border-emerald-400 bg-emerald-500/15 text-white'
+                            : 'border-white/10 bg-black/20 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <div className="text-xs font-bold">Schedule</div>
+                        <div className="text-[10px] opacity-75">Pick Date &amp; Time</div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setScheduleMode('addToQueue')}
+                        className={`p-2 rounded-lg border text-left transition-colors cursor-pointer ${
+                          scheduleMode === 'addToQueue'
+                            ? 'border-emerald-400 bg-emerald-500/15 text-white'
+                            : 'border-white/10 bg-black/20 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <div className="text-xs font-bold">Add to Queue</div>
+                        <div className="text-[10px] opacity-75">Next Open Slot</div>
+                      </button>
+                    </div>
+
+                    {scheduleMode === 'customScheduled' && (
+                      <div className="space-y-2 pt-1">
+                        {targetDatePostCount + 1 > 2 && (
+                          <div className="px-2.5 py-1.5 rounded-md border border-amber-400/40 bg-amber-500/10 text-[11px] text-amber-200 flex items-center gap-1.5">
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                            <span>
+                              {scheduledDate} would exceed recommended 1–2 posts/day cadence.
+                            </span>
+                          </div>
+                        )}
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <input
+                            type="date"
+                            min={getLocalTodayDateStr()}
+                            value={scheduledDate}
+                            onChange={(e) => setScheduledDate(e.target.value)}
+                            className="w-full px-2.5 py-1.5 rounded-md bg-black/50 border border-white/15 text-xs text-white font-mono"
+                          />
+                          <input
+                            type="time"
+                            value={scheduledTime}
+                            onChange={(e) => {
+                              const nextSlot = resolveNextFutureSlotForTime(
+                                scheduledDate,
+                                e.target.value
+                              );
+                              setScheduledDate(nextSlot.datePart);
+                              setScheduledTime(nextSlot.timeShort);
+                            }}
+                            className="w-full px-2.5 py-1.5 rounded-md bg-black/50 border border-white/15 text-xs text-white font-mono"
+                          />
+                        </div>
+                        <div className="flex items-center justify-between gap-2 text-[10px] font-mono text-slate-400">
+                          <span>Peak Times:</span>
+                          <div className="flex items-center gap-1">
+                            {(['10:00', '12:00', '18:00'] as const).map((peakTime) => (
+                              <button
+                                key={peakTime}
+                                type="button"
+                                onClick={() => {
+                                  const nextSlot = resolveNextFutureSlotForTime(
+                                    scheduledDate,
+                                    peakTime
+                                  );
+                                  setScheduledDate(nextSlot.datePart);
+                                  setScheduledTime(nextSlot.timeShort);
+                                }}
+                                className={`px-2 py-0.5 rounded font-bold tabular-nums cursor-pointer ${
+                                  scheduledTime === peakTime
+                                    ? 'bg-emerald-400 text-slate-950'
+                                    : 'bg-white/10 text-slate-300'
+                                }`}
+                              >
+                                {peakTime}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Mandatory Review Safety Checkboxes for Active Deck */}
+                  <div className="p-2.5 rounded-lg border border-white/10 bg-black/40 space-y-2 text-xs">
+                    <div className="text-[10px] font-mono uppercase text-slate-400 font-bold">
+                      3. Mandatory Review Gate
+                    </div>
+                    <div className="flex flex-wrap items-center gap-4">
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer text-slate-200 font-semibold">
+                        <input
+                          type="checkbox"
+                          data-testid="active-check-human-reviewed"
+                          checked={activeHumanReviewed}
+                          onChange={(e) => setActiveHumanReviewed(e.target.checked)}
+                          className="rounded border-white/25 text-emerald-500"
+                        />
+                        <span>Human Reviewed</span>
+                      </label>
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer text-slate-200 font-semibold">
+                        <input
+                          type="checkbox"
+                          data-testid="active-check-numbers-verified"
+                          checked={activeNumbersVerified}
+                          onChange={(e) => setActiveNumbersVerified(e.target.checked)}
+                          className="rounded border-white/25 text-emerald-500"
+                        />
+                        <span>Claims &amp; Numbers Verified</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Primary CTA + Last Dispatch Feedback */}
+                <div className="space-y-2 pt-2 border-t border-white/10">
+                  {lastDispatchSummary &&
+                    (lastDispatchSummary.warnings.length > 0 ||
+                      lastDispatchSummary.channelResults.length > 0) && (
+                      <div className="p-2.5 rounded-lg border border-white/10 bg-black/50 space-y-1.5 text-[11px]">
+                        <div className="flex flex-wrap gap-1.5">
+                          {lastDispatchSummary.channelResults.map((ch) => (
+                            <span
+                              key={ch.service}
+                              className={`px-2 py-0.5 rounded text-[10px] font-mono ${
+                                ch.ok
+                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                  : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                              }`}
+                            >
+                              {ch.service}: {ch.ok ? `${ch.provider} ✓` : 'Failed'}
+                            </span>
+                          ))}
+                        </div>
+                        {lastDispatchSummary.mode && lastDispatchSummary.mode !== 'shareNow' && (
+                          <button
+                            type="button"
+                            onClick={() => setHubMode('schedule')}
+                            className="text-[10px] font-mono text-cyan-300 underline cursor-pointer"
+                          >
+                            View Scheduled Item in Schedule →
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                  {progressLabel && (
+                    <div className="p-2 rounded-md border border-cyan-500/30 bg-cyan-500/10 flex items-center gap-2 text-xs font-mono text-cyan-200">
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
+                      <span className="truncate">{progressLabel}</span>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    data-testid="active-dispatch-btn"
+                    disabled={
+                      isBusy ||
+                      selectedTargets.length === 0 ||
+                      !activeHumanReviewed ||
+                      !activeNumbersVerified
+                    }
+                    onClick={() => void handleDispatchPublishAndSchedule()}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg font-extrabold text-xs text-slate-950 transition-opacity cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
+                    style={{ backgroundColor: theme.accent }}
+                  >
+                    <Send className="w-4 h-4" />
+                    <span>
+                      {scheduleMode === 'shareNow'
+                        ? 'Publish Now'
+                        : scheduleMode === 'addToQueue'
+                        ? 'Add to Channel Queue'
+                        : `Schedule for ${scheduledDate} at ${scheduledTime}`}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {/* RIGHT COLUMN: Bilingual Caption + Advanced Options */}
+              <div className="lg:col-span-7 rounded-xl border border-white/10 bg-[#0b1218]/95 p-4 flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                    Active Post Caption (Bilingual EN / AR)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleAutoFillActiveFields}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-[11px] font-semibold text-slate-300 cursor-pointer"
+                  >
+                    <Wand2 className="w-3 h-3 text-emerald-400" />
+                    <span>Auto-Fill Metadata</span>
+                  </button>
+                </div>
+                <textarea
+                  rows={6}
+                  value={customCaption}
+                  onChange={(e) => setCustomCaption(e.target.value)}
+                  className="w-full p-3 rounded-lg bg-black/40 border border-white/15 text-xs text-slate-100 leading-relaxed resize-y focus:outline-none focus:border-emerald-400"
+                />
+
+                <details className="group rounded-lg border border-white/10 bg-black/30 overflow-hidden">
+                  <summary className="px-3 py-2 flex items-center justify-between cursor-pointer select-none text-xs font-bold text-slate-300 hover:text-white">
+                    <span className="flex items-center gap-2">
+                      <Sliders className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Advanced Platform &amp; Cloudinary Staging Options</span>
+                    </span>
+                  </summary>
+                  <div className="p-3 pt-2 border-t border-white/10 space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <input
+                        type="text"
+                        maxLength={90}
+                        value={tiktokTitle}
+                        onChange={(e) => setTiktokTitle(e.target.value)}
+                        placeholder="TikTok Photo Title"
+                        className="w-full px-2.5 py-1.5 rounded-md bg-slate-950 border border-white/15 text-xs text-white"
+                      />
+                      <input
+                        type="text"
+                        maxLength={58}
+                        value={documentTitle}
+                        onChange={(e) => setDocumentTitle(e.target.value)}
+                        placeholder="LinkedIn PDF Document Title"
+                        className="w-full px-2.5 py-1.5 rounded-md bg-slate-950 border border-white/15 text-xs text-white"
+                      />
+                    </div>
+                    <textarea
+                      rows={2}
+                      value={firstComment}
+                      onChange={(e) => setFirstComment(e.target.value)}
+                      placeholder="First Comment (Citations & Links)"
+                      className="w-full px-2.5 py-1.5 rounded-md bg-slate-950 border border-white/15 text-xs text-slate-200 resize-y"
+                    />
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowAltTextEditor(!showAltTextEditor)}
+                        className="text-[11px] font-mono text-cyan-400 hover:underline cursor-pointer"
+                      >
+                        {showAltTextEditor
+                          ? 'Hide Alt Texts'
+                          : `Edit Alt Texts (${altTexts.length})`}
+                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={handleStageSlidesToCloudinary}
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-cyan-500/30 bg-cyan-500/10 text-[11px] font-bold text-cyan-200 cursor-pointer"
+                        >
+                          <Cloud className="w-3.5 h-3.5" />
+                          <span>Pre-Stage Media</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => handleManualCloudinaryCleanup(false)}
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-white/10 bg-white/[0.04] text-[11px] font-semibold text-slate-300 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-slate-400" />
+                          <span>Clean Expired Media</span>
+                        </button>
+                      </div>
+                    </div>
+                    {showAltTextEditor && (
+                      <div className="space-y-1 max-h-32 overflow-y-auto">
+                        {altTexts.map((alt, idx) => (
+                          <input
+                            key={idx}
+                            type="text"
+                            value={alt}
+                            onChange={(e) => {
+                              const next = [...altTexts];
+                              next[idx] = e.target.value;
+                              setAltTexts(next);
+                            }}
+                            className="w-full px-2 py-1 rounded bg-slate-950 border border-white/10 text-[11px] text-slate-200"
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </details>
+              </div>
+            </div>
+          )}
+
+          {/* Unscheduled Draft Review Queue */}
+          <PostManagerPanel
+            mode="draft"
+            savedPosts={savedPosts}
+            activeCarouselId={carousel.id}
+            theme={theme}
+            onEditInStudio={(post) => {
+              if (onSelectPostIntoStudio) {
+                onSelectPostIntoStudio(post);
+              } else {
+                onBackToStudio();
+              }
+            }}
+            onPublishPostNow={handlePublishPostNow}
+            publishingPostId={publishingPostId}
+            onRefreshVault={onRefreshVault}
+            onRefreshStatus={() => void loadStatus()}
+            onShowToast={onShowToast}
+            onExportVaultJson={onExportVaultJson}
+            onImportVaultJson={onImportVaultJson}
+          />
+        </div>
+      )}
+
+      {/* TAB 3: SCHEDULE (Peak Schedule, 7/14d Calendar, Queue + >2/day Cadence Overload Warning + Publish Now) */}
+      {hubMode === 'schedule' && (
         <PostManagerPanel
+          mode="schedule"
           savedPosts={savedPosts}
           activeCarouselId={carousel.id}
           theme={theme}
@@ -663,614 +1343,14 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
               onBackToStudio();
             }
           }}
+          onPublishPostNow={handlePublishPostNow}
+          publishingPostId={publishingPostId}
           onRefreshVault={onRefreshVault}
           onRefreshStatus={() => void loadStatus()}
           onShowToast={onShowToast}
           onExportVaultJson={onExportVaultJson}
           onImportVaultJson={onImportVaultJson}
         />
-      ) : (
-        /* TAB 1: CLEAN PUBLISH ACTIVE POST COMPOSER */
-        <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-3 overflow-y-auto">
-          {/* LEFT COLUMN (5 cols): Active Deck, Channels, TikTok Sound, Schedule & Primary Publish CTA */}
-          <div className="lg:col-span-5 rounded-2xl border border-white/10 bg-[#0b1218]/90 p-4 flex flex-col justify-between gap-4">
-            <div className="space-y-4">
-              {/* Active Deck Summary Card */}
-              <div className="p-3.5 rounded-xl border border-white/10 bg-white/[0.03] flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 text-[11px] font-mono text-emerald-300">
-                    <span className="uppercase font-bold">
-                      {carousel.postFormat || 'carousel'}
-                    </span>
-                    <span aria-hidden="true">·</span>
-                    <span className="tabular-nums">{carousel.slides.length} Slides</span>
-                  </div>
-                  <div className="text-sm font-bold text-white truncate mt-1">
-                    {carousel.slides[0]?.enTitle || 'Untitled Post'}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={onBackToStudio}
-                  className="px-3 py-1.5 rounded-lg border border-white/15 bg-white/[0.05] hover:bg-white/[0.1] text-xs font-bold text-slate-200 cursor-pointer shrink-0 whitespace-nowrap"
-                >
-                  Edit Slides
-                </button>
-              </div>
-
-              {/* 1. Target Channels */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                    1. Select Channels
-                  </span>
-                  <span className="text-[11px] font-mono text-emerald-400 tabular-nums">
-                    {selectedTargets.length} selected
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {(Object.keys(PLATFORM_META) as PublishTargetPlatform[]).map((platform) => {
-                    const meta = PLATFORM_META[platform];
-                    const active = selectedTargets.includes(platform);
-                    const liveChannel = status?.channels?.find((c) => c.service === platform);
-                    const providerLabel =
-                      liveChannel?.provider === 'zernio' ||
-                      (platform === 'tiktok' && status?.zernioApiConfigured)
-                        ? 'Zernio API'
-                        : liveChannel?.provider === 'buffer' && status?.bufferApiConfigured
-                        ? 'Buffer API'
-                        : meta.providerLabel;
-                    return (
-                      <button
-                        key={platform}
-                        type="button"
-                        onClick={() => togglePlatform(platform)}
-                        className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                          active
-                            ? 'border-emerald-400/40 bg-emerald-500/10 text-white'
-                            : 'border-white/10 bg-black/20 text-slate-400 opacity-60 hover:opacity-90'
-                        }`}
-                      >
-                        <span
-                          className="w-2.5 h-2.5 rounded-full shrink-0"
-                          style={{ backgroundColor: meta.badgeColor }}
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div className="text-xs font-bold truncate">{meta.label}</div>
-                          <div className="text-[10px] text-slate-400 truncate">
-                            {liveChannel?.handle || meta.handle} · {providerLabel}
-                          </div>
-                        </div>
-                        {active && <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* TikTok Trending Commercial Music Selector (Shown when TikTok is selected) */}
-              {selectedTargets.includes('tiktok') && (
-                <div className="p-3 rounded-xl border border-cyan-500/25 bg-cyan-500/[0.04] space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5 text-xs font-bold text-cyan-200">
-                      <Music className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>TikTok Background Sound</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      {activeTikTokTrack?.previewUrl && (
-                        <button
-                          type="button"
-                          onClick={() => handleToggleAudioPreview(activeTikTokTrack)}
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold border transition-colors cursor-pointer ${
-                            playingTrackId === activeTikTokTrack.musicSoundId
-                              ? 'border-amber-400/50 bg-amber-500/20 text-amber-200'
-                              : 'border-cyan-400/40 bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-200'
-                          }`}
-                          title="Preview selected TikTok track"
-                        >
-                          {playingTrackId === activeTikTokTrack.musicSoundId ? (
-                            <>
-                              <Square className="w-2.5 h-2.5 fill-current" />
-                              <span>Stop</span>
-                            </>
-                          ) : (
-                            <>
-                              <Play className="w-2.5 h-2.5 fill-current" />
-                              <span>Preview</span>
-                            </>
-                          )}
-                        </button>
-                      )}
-                      {tiktokTracks.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={handleShuffleTrendingTrack}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono border border-white/15 bg-white/[0.05] hover:bg-white/[0.1] text-slate-200 cursor-pointer"
-                          title="Pick another trending TikTok track"
-                        >
-                          <Shuffle className="w-2.5 h-2.5" />
-                          <span>Shuffle</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  <select
-                    aria-label="Select TikTok background sound"
-                    value={selectedMusicSoundId}
-                    onChange={(e) => {
-                      if (playingTrackId && audioRef.current) {
-                        audioRef.current.pause();
-                        setPlayingTrackId(null);
-                      }
-                      setSelectedMusicSoundId(e.target.value);
-                    }}
-                    className="w-full px-2.5 py-1.5 rounded-lg bg-black/60 border border-white/15 text-xs text-white focus:outline-none focus:border-cyan-400"
-                  >
-                    <option value="auto">
-                      {tiktokTracks[0]
-                        ? `Auto-Pick #1 Trending: ${tiktokTracks[0].name} — ${tiktokTracks[0].artist} (${tiktokTracks[0].durationSec}s)`
-                        : 'Auto-Pick Top Trending Sound'}
-                    </option>
-                    {tiktokTracks.map((t) => (
-                      <option key={t.musicSoundId} value={t.musicSoundId}>
-                        #{t.rank} {t.name} — {t.artist} ({t.durationSec}s
-                        {t.genres.length > 0 ? ` · ${t.genres.slice(0, 2).join('/')}` : ''})
-                      </option>
-                    ))}
-                    <option value="none">No Background Music</option>
-                  </select>
-                </div>
-              )}
-
-              {/* 2. When to Publish */}
-              <div className="space-y-2.5">
-                <span className="block text-xs font-bold uppercase tracking-wider text-slate-300">
-                  2. When to Publish
-                </span>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setScheduleMode('customScheduled')}
-                    className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                      scheduleMode === 'customScheduled'
-                        ? 'border-emerald-400 bg-emerald-500/15 text-white'
-                        : 'border-white/10 bg-black/20 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <div className="text-xs font-bold">Schedule</div>
-                    <div className="text-[10px] opacity-75">Pick Date & Time</div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setScheduleMode('addToQueue')}
-                    className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                      scheduleMode === 'addToQueue'
-                        ? 'border-emerald-400 bg-emerald-500/15 text-white'
-                        : 'border-white/10 bg-black/20 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <div className="text-xs font-bold">Add to Queue</div>
-                    <div className="text-[10px] opacity-75">Next Open Slot</div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setScheduleMode('shareNow')}
-                    className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                      scheduleMode === 'shareNow'
-                        ? 'border-emerald-400 bg-emerald-500/15 text-white'
-                        : 'border-white/10 bg-black/20 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <div className="text-xs font-bold">Publish Now</div>
-                    <div className="text-[10px] opacity-75">Immediate</div>
-                  </button>
-                </div>
-
-                {scheduleMode === 'customScheduled' && (
-                  <div className="space-y-2 pt-1">
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <div>
-                        <label className="block text-[10px] font-mono uppercase text-slate-400 mb-1">
-                          Date (Local)
-                        </label>
-                        <input
-                          type="date"
-                          min={getLocalTodayDateStr()}
-                          value={scheduledDate}
-                          onChange={(e) => setScheduledDate(e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/15 text-xs text-white font-mono focus:outline-none focus:border-emerald-400"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-mono uppercase text-slate-400 mb-1">
-                          Time (24h)
-                        </label>
-                        <input
-                          type="time"
-                          value={scheduledTime}
-                          onChange={(e) => {
-                            const nextSlot = resolveNextFutureSlotForTime(
-                              scheduledDate,
-                              e.target.value
-                            );
-                            setScheduledDate(nextSlot.datePart);
-                            setScheduledTime(nextSlot.timeShort);
-                          }}
-                          className="w-full px-3 py-2 rounded-xl bg-black/50 border border-white/15 text-xs text-white font-mono focus:outline-none focus:border-emerald-400"
-                        />
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 px-1">
-                      <span className="text-[10px] font-mono text-slate-400">
-                        TikTok & IG Best Times (Future Only):
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        {(['10:00', '12:00', '18:00'] as const).map((peakTime) => (
-                          <button
-                            key={peakTime}
-                            type="button"
-                            onClick={() => {
-                              const nextSlot = resolveNextFutureSlotForTime(
-                                scheduledDate,
-                                peakTime
-                              );
-                              setScheduledDate(nextSlot.datePart);
-                              setScheduledTime(nextSlot.timeShort);
-                              if (nextSlot.rolledToTomorrow) {
-                                onShowToast(
-                                  `${peakTime} has passed today — set to Tomorrow (${nextSlot.datePart}) at ${peakTime}`
-                                );
-                              }
-                            }}
-                            className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold tabular-nums cursor-pointer transition-colors ${
-                              scheduledTime === peakTime
-                                ? 'bg-emerald-400 text-slate-950'
-                                : 'bg-white/10 text-slate-300 hover:text-white'
-                            }`}
-                          >
-                            {peakTime}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Primary Action Footer */}
-            <div className="space-y-2.5 pt-3 border-t border-white/10">
-              {lastDispatchSummary &&
-                (lastDispatchSummary.warnings.length > 0 ||
-                  lastDispatchSummary.channelResults.length > 0) && (
-                  <div className="p-3 rounded-xl border border-white/10 bg-black/50 space-y-2 text-[11px]">
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono uppercase tracking-wider text-slate-300 font-bold text-[10px]">
-                        Last Dispatch Status
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setLastDispatchSummary(null)}
-                        className="text-[10px] text-slate-400 hover:text-white cursor-pointer"
-                      >
-                        Dismiss
-                      </button>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {lastDispatchSummary.channelResults.map((ch) => (
-                        <span
-                          key={ch.service}
-                          className={`px-2 py-0.5 rounded text-[10px] font-mono ${
-                            ch.ok && (ch.provider === 'buffer' || ch.provider === 'zernio')
-                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                              : ch.ok
-                              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
-                              : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                          }`}
-                          title={ch.message}
-                        >
-                          {ch.service}:{' '}
-                          {ch.provider === 'zernio'
-                            ? ch.ok
-                              ? 'Zernio ✓'
-                              : 'Zernio Failed'
-                            : ch.provider === 'buffer'
-                            ? ch.ok
-                              ? 'Buffer ✓'
-                              : 'Buffer Failed'
-                            : 'Saved ✓'}
-                        </span>
-                      ))}
-                    </div>
-                    {lastDispatchSummary.warnings.map((w, i) => (
-                      <div key={i} className="text-[10px] text-amber-300 leading-snug">
-                        • {w}
-                      </div>
-                    ))}
-                    {(() => {
-                      const failedChannels = lastDispatchSummary.channelResults.filter(
-                        (ch) => !ch.ok && (ch.provider === 'buffer' || ch.provider === 'zernio')
-                      );
-                      if (failedChannels.length === 0) return null;
-                      const failedTargets = failedChannels.map((ch) => ch.service);
-                      return (
-                        <div className="pt-1.5 border-t border-amber-500/25 space-y-1.5">
-                          <div className="text-[10px] font-mono text-amber-200">
-                            Partial dispatch detected ({failedTargets.join(', ')} failed). Choose how to recover:
-                          </div>
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <button
-                              type="button"
-                              disabled={isBusy}
-                              onClick={() =>
-                                void handleDispatchPublishAndSchedule({
-                                  targetSubset: failedTargets,
-                                  mergeRemoteIds: true,
-                                })
-                              }
-                              className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-emerald-200 text-[10px] font-bold cursor-pointer disabled:opacity-50"
-                            >
-                              Retry Failed Channels Only ({failedTargets.join(', ')})
-                            </button>
-                            <button
-                              type="button"
-                              disabled={isBusy}
-                              onClick={() =>
-                                void handleDispatchPublishAndSchedule({
-                                  cancelExistingBeforeDispatch: true,
-                                })
-                              }
-                              className="px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/35 text-amber-200 text-[10px] font-bold cursor-pointer disabled:opacity-50"
-                            >
-                              Cancel & Re-Dispatch All
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                    {lastDispatchSummary.mode && lastDispatchSummary.mode !== 'shareNow' && (
-                      <div className="pt-1 flex items-center justify-between gap-2 border-t border-white/10">
-                        <span className="text-[10px] font-mono text-cyan-200">
-                          Scheduled (not posted yet)
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setHubMode('posts')}
-                          className="px-2.5 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-200 text-[10px] font-bold cursor-pointer"
-                        >
-                          View / Cancel Schedule in Posts & Calendar →
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-              {progressLabel && (
-                <div className="p-2.5 rounded-xl border border-cyan-500/30 bg-cyan-500/10 flex items-center gap-2 text-xs font-mono text-cyan-200">
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
-                  <span className="truncate">{progressLabel}</span>
-                </div>
-              )}
-
-              <button
-                type="button"
-                disabled={isBusy || selectedTargets.length === 0}
-                onClick={() => void handleDispatchPublishAndSchedule()}
-                className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl font-extrabold text-xs text-slate-950 shadow-lg transition-all cursor-pointer disabled:opacity-50"
-                style={{ backgroundColor: theme.accent }}
-              >
-                <Send className="w-4 h-4" />
-                <span>
-                  {scheduleMode === 'shareNow'
-                    ? 'Publish Now'
-                    : scheduleMode === 'addToQueue'
-                    ? 'Add to Channel Queue'
-                    : `Schedule for ${scheduledDate} at ${scheduledTime}`}
-                </span>
-              </button>
-            </div>
-          </div>
-
-          {/* RIGHT COLUMN (7 cols): Caption Editor + Collapsible Advanced Platform & Zernio MCP Options */}
-          <div className="lg:col-span-7 rounded-2xl border border-white/10 bg-[#0b1218]/90 p-4 flex flex-col gap-4 overflow-y-auto">
-            {/* Clean Bilingual Caption Editor */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                  3. Post Caption (Bilingual EN / AR)
-                </label>
-                <button
-                  type="button"
-                  onClick={handleAutoFillActiveFields}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-[11px] font-semibold text-slate-300 cursor-pointer"
-                >
-                  <Wand2 className="w-3 h-3 text-emerald-400" />
-                  <span>Auto-Fill Metadata</span>
-                </button>
-              </div>
-              <textarea
-                rows={7}
-                value={customCaption}
-                onChange={(e) => setCustomCaption(e.target.value)}
-                placeholder="Write or edit your post caption..."
-                className="w-full p-3 rounded-xl bg-black/40 border border-white/15 text-xs text-slate-100 leading-relaxed resize-y focus:outline-none focus:border-emerald-400"
-              />
-              <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 tabular-nums">
-                <span>{customCaption.length} characters</span>
-                <span>4:5 IG/FB/LI + 9:16 TikTok Auto-Staged</span>
-              </div>
-            </div>
-
-            {/* Collapsible Advanced Platform & Zernio MCP Options Disclosure */}
-            <details className="group rounded-xl border border-white/10 bg-black/30 overflow-hidden">
-              <summary className="px-3.5 py-2.5 flex items-center justify-between cursor-pointer select-none text-xs font-bold text-slate-300 hover:text-white">
-                <span className="flex items-center gap-2">
-                  <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>Advanced Platform & Zernio MCP Options (TikTok Title, LinkedIn PDF, Alt Texts)</span>
-                </span>
-                <span className="text-[10px] font-mono text-slate-400 group-open:rotate-180 transition-transform">
-                  ▼
-                </span>
-              </summary>
-
-              <div className="p-3.5 pt-2 border-t border-white/10 space-y-4">
-                {/* Zernio Free API & Hosted MCP Server Info Banner */}
-                <div className="p-3 rounded-xl border border-cyan-500/25 bg-cyan-500/5 space-y-1.5 text-[11px]">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-bold text-cyan-200">
-                      Zernio Free API + Hosted MCP Server (TikTok & Instagram)
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard?.writeText('https://mcp.zernio.com/mcp');
-                        onShowToast('✓ Copied Zernio MCP Server URL: https://mcp.zernio.com/mcp');
-                      }}
-                      className="px-2 py-0.5 rounded bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 font-mono text-[10px] cursor-pointer shrink-0"
-                    >
-                      Copy MCP URL
-                    </button>
-                  </div>
-                  <p className="text-slate-400 leading-relaxed">
-                    Direct API publishing via <code className="text-emerald-300 font-mono">Buffer</code> (Facebook, LinkedIn, Instagram) + <code className="text-cyan-300 font-mono">Zernio</code> (TikTok Photo Carousel with Commercial Music & Instagram failover). Hosted MCP endpoint:{' '}
-                    <code className="text-slate-200 font-mono">https://mcp.zernio.com/mcp</code>
-                  </p>
-                </div>
-
-                {/* Platform-Specific Titles & First Comment */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mb-1">
-                      <span>TikTok Photo Title</span>
-                      <span>{tiktokTitle.length}/90</span>
-                    </div>
-                    <input
-                      type="text"
-                      maxLength={90}
-                      value={tiktokTitle}
-                      onChange={(e) => setTiktokTitle(e.target.value)}
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-white/15 text-xs text-white"
-                    />
-                  </div>
-                  <div>
-                    <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mb-1">
-                      <span>LinkedIn PDF Document Title</span>
-                      <span>{documentTitle.length}/58</span>
-                    </div>
-                    <input
-                      type="text"
-                      maxLength={58}
-                      value={documentTitle}
-                      onChange={(e) => setDocumentTitle(e.target.value)}
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-white/15 text-xs text-white"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-mono text-slate-400 mb-1">
-                    First Comment (Citations & Links)
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={firstComment}
-                    onChange={(e) => setFirstComment(e.target.value)}
-                    className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-white/15 text-xs text-slate-200 resize-y"
-                  />
-                </div>
-
-                {/* Platform Switches */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                  <label className="flex items-center gap-2 p-2 rounded-lg border border-white/10 bg-white/[0.02] text-xs text-slate-200 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={templateOpts.linkedInImagesAsCarousel}
-                      onChange={(e) =>
-                        setTemplateOpts((p) => ({
-                          ...p,
-                          linkedInImagesAsCarousel: e.target.checked,
-                        }))
-                      }
-                      className="rounded border-white/20 text-emerald-500"
-                    />
-                    <span>LinkedIn PDF Carousel</span>
-                  </label>
-                  <label className="flex items-center gap-2 p-2 rounded-lg border border-white/10 bg-white/[0.02] text-xs text-slate-200 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={templateOpts.tiktokAutoAddMusic}
-                      onChange={(e) =>
-                        setTemplateOpts((p) => ({
-                          ...p,
-                          tiktokAutoAddMusic: e.target.checked,
-                        }))
-                      }
-                      className="rounded border-white/20 text-emerald-500"
-                    />
-                    <span>TikTok Auto Add Music</span>
-                  </label>
-                </div>
-
-                {/* Slide Alt Texts Toggle */}
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => setShowAltTextEditor(!showAltTextEditor)}
-                    className="text-[11px] font-mono text-cyan-400 hover:underline cursor-pointer"
-                  >
-                    {showAltTextEditor
-                      ? 'Hide Slide Alt Texts'
-                      : `Edit Slide Alt Texts (${altTexts.length})`}
-                  </button>
-                  {showAltTextEditor && (
-                    <div className="mt-2 space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                      {altTexts.map((alt, idx) => (
-                        <div key={idx} className="flex items-center gap-2">
-                          <span className="text-[10px] font-mono text-slate-500 w-12 shrink-0">
-                            Slide {idx + 1}
-                          </span>
-                          <input
-                            type="text"
-                            value={alt}
-                            onChange={(e) => {
-                              const next = [...altTexts];
-                              next[idx] = e.target.value;
-                              setAltTexts(next);
-                            }}
-                            className="flex-1 px-2 py-1 rounded bg-slate-950 border border-white/10 text-[11px] text-slate-200"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Manual Staging & Cleanup Utility Bar */}
-                <div className="pt-2 border-t border-white/10 flex flex-wrap items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    disabled={isBusy}
-                    onClick={handleStageSlidesToCloudinary}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 text-[11px] font-bold text-cyan-200 cursor-pointer"
-                  >
-                    <Cloud className="w-3.5 h-3.5" />
-                    <span>Pre-Stage Slide Images</span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={isBusy}
-                    onClick={() => handleManualCloudinaryCleanup(false)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] text-[11px] font-semibold text-slate-300 cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5 text-slate-400" />
-                    <span>Clean Expired Staged Media</span>
-                  </button>
-                </div>
-              </div>
-            </details>
-          </div>
-        </div>
       )}
     </div>
   );

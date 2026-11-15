@@ -57,7 +57,7 @@ describe('IconThumbnail and getIconDisplayName', () => {
       const img = screen.getByRole('img');
       expect(img).toBeInTheDocument();
       expect(img).toHaveAttribute('alt', 'PostgreSQL');
-      expect(img.getAttribute('src')).toContain('/api/proxy-image?url=');
+      expect(img.getAttribute('src')).toMatch(/data:image\/svg\+xml|\/api\/proxy-image\?url=/);
     });
 
     it('renders an img element for web URLs', () => {

@@ -202,6 +202,38 @@ function checkCopyright(carousel: CarouselData, rawInput: string = ''): RiskChec
         };
       }
     }
+    const pair = carousel.slides[i].subjectPair;
+    if (carousel.slides[i].type === 'subjectPair' || pair) {
+      if (pair) {
+        if ((pair.logoWidthPct ?? 11) > 14) {
+          return {
+            id: 'copyright',
+            label: 'Brand IP & Logo Safety',
+            status: 'BLOCK',
+            message: `Slide ${i + 1} Subject Pair logo exceeds 14% max slide width (${pair.logoWidthPct}% > 14%).`,
+          };
+        }
+        let logoCount = 0;
+        if (!pair.beforeAsText && pair.beforeLogoKey) logoCount++;
+        if (!pair.afterAsText && pair.afterLogoKey) logoCount++;
+        if (logoCount > 2) {
+          return {
+            id: 'copyright',
+            label: 'Brand IP & Logo Safety',
+            status: 'BLOCK',
+            message: `Slide ${i + 1} Subject Pair exceeds 2-logo limit (${logoCount} > 2).`,
+          };
+        }
+        if (pair.isEdited || pair.isNonLibrarySource || pair.isMerged || pair.isOverlapping || pair.usesMascot) {
+          return {
+            id: 'copyright',
+            label: 'Brand IP & Logo Safety',
+            status: 'BLOCK',
+            message: `Slide ${i + 1} Subject Pair violates logo integrity rules (must use unedited bundled SVGs or styled text, no mascots/merging/overlapping).`,
+          };
+        }
+      }
+    }
   }
 
   return {

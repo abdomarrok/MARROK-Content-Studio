@@ -7,6 +7,7 @@ import {
   Gauge,
   Columns,
   ArrowRight,
+  ArrowLeftRight,
   LayoutTemplate,
   Hash,
   Wand2,
@@ -36,6 +37,7 @@ import {
   CompareArchetypeEditor,
   ImageArchetypeEditor,
   CtaArchetypeEditor,
+  SubjectPairArchetypeEditor,
   EXPECTATIONS_VS_REALITY_MEME_URL,
 } from './archetypes/index.ts';
 
@@ -98,6 +100,7 @@ const ARCHETYPES: {
   { id: 'code', label: 'Code Diff', icon: Code },
   { id: 'metric', label: 'Metric', icon: Gauge },
   { id: 'compare', label: 'Compare', icon: Columns },
+  { id: 'subjectPair', label: 'Subject Pair', icon: ArrowLeftRight },
   { id: 'cta', label: 'CTA', icon: ArrowRight },
 ];
 
@@ -548,6 +551,15 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
       {/* ARCHETYPE: COMPARE */}
       {currentSlide.type === 'compare' && (
         <CompareArchetypeEditor
+          currentSlide={currentSlide}
+          smart={smart}
+          onUpdateField={onUpdateField}
+        />
+      )}
+
+      {/* ARCHETYPE: SUBJECT PAIR */}
+      {currentSlide.type === 'subjectPair' && (
+        <SubjectPairArchetypeEditor
           currentSlide={currentSlide}
           smart={smart}
           onUpdateField={onUpdateField}

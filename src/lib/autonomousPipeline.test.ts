@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { runAutonomousPipeline } from './autonomousPipeline';
+import { resolvePipelineApiUrl, runAutonomousPipeline } from './autonomousPipeline';
 import type { CarouselData } from '../types';
 
 const apiDeck: CarouselData = {
@@ -80,5 +80,51 @@ describe('runAutonomousPipeline', () => {
       runAutonomousPipeline('aborted input', { signal: controller.signal })
     ).rejects.toMatchObject({ name: 'AbortError' });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('qualifies relative /api paths in Node (without window) and supports apiBaseUrl & directGenerate', async () => {
+    vi.stubGlobal('window', undefined);
+    process.env.MARROK_API_BASE_URL = 'https://staging.marrok.org/';
+    try {
+      expect(resolvePipelineApiUrl('/api/generate')).toBe(
+        'https://staging.marrok.org/api/generate'
+      );
+      delete process.env.MARROK_API_BASE_URL;
+      expect(resolvePipelineApiUrl('/api/generate')).toBe(
+        'http://127.0.0.1:3000/api/generate'
+      );
+    } finally {
+      delete process.env.MARROK_API_BASE_URL;
+      vi.unstubAllGlobals();
+    }
+
+    const customFetch = vi.fn().mockResolvedValue(jsonResponse(apiDeck));
+    const viaBaseUrl = await runAutonomousPipeline(
+      'How Cloudflare reduced edge worker cold starts by 4x using V8 snapshots',
+      {
+        generateDiagram: false,
+        apiBaseUrl: 'https://studio.marrok.org/',
+        fetchFn: customFetch as unknown as typeof fetch,
+      }
+    );
+    expect(viaBaseUrl.slides[0].enTitle).toContain('Authentic hook');
+    expect(customFetch).toHaveBeenCalledWith(
+      'https://studio.marrok.org/api/generate',
+      expect.any(Object)
+    );
+
+    const noHttpFetch = vi.fn();
+    const directSpy = vi.fn().mockResolvedValue(apiDeck);
+    const viaDirect = await runAutonomousPipeline(
+      'How Cloudflare reduced edge worker cold starts by 4x using V8 snapshots',
+      {
+        generateDiagram: false,
+        fetchFn: noHttpFetch as unknown as typeof fetch,
+        directGenerate: directSpy,
+      }
+    );
+    expect(viaDirect.slides[0].enTitle).toContain('Authentic hook');
+    expect(directSpy).toHaveBeenCalledTimes(1);
+    expect(noHttpFetch).not.toHaveBeenCalled();
   });
 });

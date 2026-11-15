@@ -31,8 +31,15 @@ import {
   resolveSmartSlideVisuals,
   seedSlideArchetypeData,
 } from '../../../lib/synthesizer.ts';
-import { GatheredCandidatePost } from '../../../lib/gather/gatherClient.ts';
+import {
+  explainArchetypeChoice,
+} from '../../../lib/synthesis/smartVisualDefaults.ts';
+import {
+  GatheredCandidatePost,
+  reEvaluateCandidateQuality,
+} from '../../../lib/gather/gatherClient.ts';
 import { splitArabicForBidiRender } from '../../../lib/text/arabicBiDi.ts';
+import { SubjectPairArchetypeEditor } from '../archetypes/SubjectPairArchetypeEditor.tsx';
 
 const ARCHETYPE_OPTIONS: Array<{
   id: SlideType;
@@ -41,6 +48,7 @@ const ARCHETYPE_OPTIONS: Array<{
 }> = [
   { id: 'hub', label: 'Hub Network', shortLabel: 'Hub' },
   { id: 'row', label: 'Schematic', shortLabel: 'Diagram' },
+  { id: 'subjectPair', label: 'Subject Pair', shortLabel: 'Pair' },
   { id: 'compare', label: 'Compare A/B', shortLabel: 'Compare' },
   { id: 'code', label: 'Code Diff', shortLabel: 'Code' },
   { id: 'metric', label: 'Hard Metric', shortLabel: 'Metric' },
@@ -77,6 +85,8 @@ const ASPECT_RATIO_OPTIONS: Array<{
 function getArchetypeBadgeStyle(type: SlideType): string {
   switch (type) {
     case 'hub':
+      return 'text-cyan-300 bg-cyan-500/15 border-cyan-400/30';
+    case 'subjectPair':
       return 'text-cyan-300 bg-cyan-500/15 border-cyan-400/30';
     case 'compare':
       return 'text-amber-300 bg-amber-500/15 border-amber-400/30';
@@ -224,6 +234,14 @@ export const CandidateSlideStoryboardStrip: React.FC<
             <div className="text-[11px] font-semibold text-slate-200 truncate w-full">
               {slide.enTitle || `Slide ${sIdx + 1}`}
             </div>
+            {slide.layoutRationale && (
+              <div
+                className="text-[10px] text-slate-400 truncate w-full"
+                title={slide.layoutRationale}
+              >
+                {slide.layoutRationale}
+              </div>
+            )}
           </button>
         );
       })}
@@ -277,7 +295,7 @@ export const CandidateSlidePreviewInspector: React.FC<
     slides.length === 1 ||
     activeSlide?.type === 'poster';
   const limits = isSingle ? SINGLE_SLIDE_CHAR_LIMITS : CHAR_LIMITS;
-  const isHook = safeIdx === 0 && activeSlide?.type === 'hub';
+  const isHook = safeIdx === 0 && activeSlide?.type !== 'cta';
   const enTitleLimit = isHook ? limits.hookTitle : limits.enTitle;
 
   // Keyboard Left / Right arrow navigation when inspector is open
@@ -349,23 +367,32 @@ export const CandidateSlidePreviewInspector: React.FC<
         ...nextSlides[safeIdx],
         ...patch,
       };
-      nextSlides[safeIdx] = options?.autoSyncGraphics
+      const synced = options?.autoSyncGraphics
         ? autoSyncSlideGraphicsFromCopy(merged, safeIdx)
         : merged;
+      nextSlides[safeIdx] = {
+        ...synced,
+        layoutRationale:
+          patch.layoutRationale ||
+          explainArchetypeChoice(synced, safeIdx, nextSlides.length),
+      };
 
       const nextDraftTitle =
         safeIdx === 0 && patch.enTitle !== undefined
           ? patch.enTitle
           : prev.draftTitle;
-      return {
+      return reEvaluateCandidateQuality({
         ...prev,
         draftTitle: nextDraftTitle,
         deck: {
           ...prev.deck,
-          title: nextDraftTitle,
           slides: nextSlides,
+          sourceMeta:
+            safeIdx === 0 && patch.enTitle !== undefined
+              ? { ...prev.deck.sourceMeta, title: nextDraftTitle }
+              : prev.deck.sourceMeta,
         },
-      };
+      });
     });
   };
 
@@ -390,20 +417,28 @@ export const CandidateSlidePreviewInspector: React.FC<
   };
 
   const handleSwitchArchetype = (newType: SlideType) => {
+    if (safeIdx === 0 && newType === 'hub' && slides.length > 1) {
+      onShowToast('Slide 1 must stay a Hook layout (Compare, Metric, or Schematic) — Hub covers are blocked.');
+      return;
+    }
     onUpdateCandidateDeck(candidate.id, (prev) => {
       const nextSlides = [...(prev.deck.slides || [])];
       if (nextSlides[safeIdx]) {
-        nextSlides[safeIdx] = seedSlideArchetypeData(
+        const seeded = seedSlideArchetypeData(
           nextSlides[safeIdx],
           newType,
           safeIdx,
           true
         );
+        nextSlides[safeIdx] = {
+          ...seeded,
+          layoutRationale: explainArchetypeChoice(seeded, safeIdx, nextSlides.length),
+        };
       }
-      return {
+      return reEvaluateCandidateQuality({
         ...prev,
         deck: { ...prev.deck, slides: nextSlides },
-      };
+      });
     });
     onShowToast(`Switched Slide ${safeIdx + 1} to ${newType.toUpperCase()}`);
   };
@@ -419,6 +454,11 @@ export const CandidateSlidePreviewInspector: React.FC<
       diagramNodes: smart.diagramNodes,
       diagramEdges: smart.diagramEdges,
       diagramFooter: smart.diagramFooter,
+      layoutRationale: explainArchetypeChoice(
+        { ...activeSlide, diagramVariant: newVariant },
+        safeIdx,
+        slides.length
+      ),
     });
     onShowToast(`Switched schematic layout to ${newVariant.toUpperCase()}`);
   };
@@ -656,17 +696,38 @@ export const CandidateSlidePreviewInspector: React.FC<
               </span>
             </div>
 
+            {/* 1-Line Storyboard Rationale */}
+            <div
+              data-testid="active-slide-layout-rationale"
+              className="px-2.5 py-1.5 rounded-lg bg-cyan-500/[0.06] border border-cyan-500/20 text-[11px] text-cyan-100 flex items-center justify-between gap-2"
+            >
+              <span>
+                <strong className="font-mono uppercase text-[10px] text-cyan-300 mr-1.5">
+                  Layout Rationale:
+                </strong>
+                {activeSlide.layoutRationale ||
+                  explainArchetypeChoice(activeSlide, safeIdx, slides.length)}
+              </span>
+            </div>
+
             {/* Archetype Selector Pills */}
             <div className="flex flex-wrap items-center gap-1.5">
               {ARCHETYPE_OPTIONS.map((arch) => {
                 const active = activeSlide.type === arch.id;
+                const blockedS1Hub = safeIdx === 0 && arch.id === 'hub' && slides.length > 1;
                 return (
                   <button
                     key={arch.id}
                     type="button"
+                    disabled={blockedS1Hub}
                     data-testid={`candidate-arch-pill-${arch.id}`}
                     onClick={() => handleSwitchArchetype(arch.id)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    title={
+                      blockedS1Hub
+                        ? 'Slide 1 must be a Hook archetype (Compare, Metric, or Schematic)'
+                        : undefined
+                    }
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap disabled:opacity-35 disabled:cursor-not-allowed ${
                       active
                         ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/50 shadow-xs'
                         : 'bg-white/[0.03] text-slate-400 hover:text-white border border-white/10'
@@ -771,23 +832,6 @@ export const CandidateSlidePreviewInspector: React.FC<
                   onBlur={handleAutoFitActiveSlideOnBlur}
                   className="w-full px-2.5 py-1.5 rounded-lg bg-black/80 border border-white/15 text-xs text-white font-arabic focus:outline-none focus:border-cyan-400"
                 />
-                {/[A-Za-z]/.test(activeSlide.arTitle || '') && (
-                  <div
-                    dir="rtl"
-                    lang="ar"
-                    className="mt-1 px-2 py-0.5 rounded bg-white/[0.03] border border-white/10 text-[11px] text-slate-300 font-arabic text-right"
-                  >
-                    {splitArabicForBidiRender(activeSlide.arTitle || '').map((seg, i) =>
-                      seg.isLtr ? (
-                        <bdi key={i} dir="ltr" className="font-mono text-cyan-300 px-0.5">
-                          {seg.text}
-                        </bdi>
-                      ) : (
-                        <span key={i}>{seg.text}</span>
-                      )
-                    )}
-                  </div>
-                )}
               </div>
 
               <div>
@@ -986,6 +1030,15 @@ export const CandidateSlidePreviewInspector: React.FC<
                     </div>
                   </div>
                 </div>
+              )}
+
+              {/* SUBJECT PAIR */}
+              {activeSlide.type === 'subjectPair' && (
+                <SubjectPairArchetypeEditor
+                  currentSlide={activeSlide}
+                  smart={smartDefaults}
+                  onUpdateField={(field, val) => updateActiveSlide({ [field]: val })}
+                />
               )}
 
               {/* COMPARE: Left vs Right Cards */}

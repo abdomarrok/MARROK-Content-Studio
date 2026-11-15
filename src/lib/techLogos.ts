@@ -16,6 +16,7 @@ export interface TechIconItem {
 export const TECH_ICONS_LIST: TechIconItem[] = [
   { name: 'discord', title: 'Discord', url: 'https://cdn.jsdelivr.net/npm/simple-icons@v14/icons/discord.svg', category: 'Distributed Systems & Chat', officialColor: '#5865F2', guidelinesUrl: 'https://discord.com/branding' },
   { name: 'scylladb', title: 'ScyllaDB', url: 'https://cdn.jsdelivr.net/npm/simple-icons@v14/icons/scylladb.svg', category: 'Databases & Caching', aliases: ['scylla'], officialColor: '#44C8F5', guidelinesUrl: 'https://www.scylladb.com/' },
+  { name: 'apachecassandra', title: 'Apache Cassandra', url: 'https://cdn.jsdelivr.net/npm/simple-icons@v14/icons/apachecassandra.svg', category: 'Databases & Storage', aliases: ['cassandra'], officialColor: '#1287B1', guidelinesUrl: 'https://cassandra.apache.org/' },
   { name: 'docker', title: 'Docker', url: 'https://cdn.jsdelivr.net/npm/simple-icons@v14/icons/docker.svg', category: 'DevOps & Containers', officialColor: '#2496ED', guidelinesUrl: 'https://www.docker.com/company/newsroom/media-resources/' },
   { name: 'kubernetes', title: 'Kubernetes', url: 'https://cdn.jsdelivr.net/npm/simple-icons@v14/icons/kubernetes.svg', category: 'DevOps & Containers', aliases: ['k8s'], officialColor: '#326CE5', guidelinesUrl: 'https://kubernetes.io/community/branding/' },
   { name: 'redis', title: 'Redis', url: 'https://cdn.jsdelivr.net/npm/simple-icons@v14/icons/redis.svg', category: 'Databases & Caching', officialColor: '#FF4438', guidelinesUrl: 'https://redis.io/legal/trademark-policy/' },
@@ -115,6 +116,8 @@ export const THIRD_PARTY_COMPANY_NAMES = new Set([
   'grafana',
   'supabase',
   'scylladb',
+  'apachecassandra',
+  'cassandra',
 ]);
 
 export function detectMentionedThirdPartyBrands(rawText: string): TechIconItem[] {

@@ -47,9 +47,9 @@ export function wrapTextLines(
     return [...cached];
   }
 
-  // Protect units and metrics from being split across lines (e.g. "510 GB", "125 ms", "15 مللي ثانية", "105 عقدة")
+  // Protect units and metrics from being split across lines (e.g. "510 GB", "125 ms", "99.9%", "10x")
   let textWithNbsp = rawText
-    .replace(/\b(\d+(?:\.\d+)?)\s+(GB|TB|MB|KB|ms|s|μs|ns|req|rps|qps|x|X|%|nodes|checkouts|servers|clusters|shards|cores)\b/gi, '$1\u00A0$2')
+    .replace(/\b(\d+(?:\.\d+)?)\s+(GB\/s|MB\/s|Gbps|Mbps|GB|TB|MB|KB|ms|s|μs|ns|req|rps|qps|x|X|%|nodes|checkouts|servers|clusters|shards|cores)\b/gi, '$1\u00A0$2')
     .replace(/\b(\d+(?:\.\d+)?)\s+(مللي\s+ثانية|جيجابايت|تيرابايت|ميجابايت|مللي|ثانية|ثواني|ضعفاً|ضعف|مليون|مليار|عقدة|خادم)\b/g, (_, num, unit) => `${num}\u00A0${unit.replace(/\s+/g, '\u00A0')}`);
 
   // Prevent isolated Latin technical terms and 2-word English phrases (e.g. "Durable Objects") from splitting across lines in Arabic text
@@ -225,9 +225,11 @@ export function fitTextInBox(
       currentSize -= 0.5;
     }
 
-    // Never silently clip: scale down slightly further if needed before falling back to ellipsis
+    // Never silently clip: scale down slightly further if needed before falling back to ellipsis,
+    // while strictly honoring any >= 24px readability floor.
     let emergencySize = minFontSize;
-    while (emergencySize > 11 && ctx.measureText(cleanText).width > effectiveMaxWidth) {
+    const emergencyFloor = minFontSize >= 24 ? minFontSize : 11;
+    while (emergencySize > emergencyFloor && ctx.measureText(cleanText).width > effectiveMaxWidth) {
       emergencySize -= 0.5;
       ctx.font = `${fontWeight} ${emergencySize}px ${fontFamily}`;
     }
@@ -253,9 +255,10 @@ export function fitTextInBox(
     currentSize -= 1;
   }
 
-  // If still more than maxLines at minFontSize, step down slightly further so text shrinks to fit instead of clipping
+  // If still more than maxLines at minFontSize, step down only for sub-24px micro labels
   let fallbackSize = minFontSize;
-  while (fallbackSize > 18) {
+  const fallbackFloor = minFontSize >= 24 ? minFontSize : 18;
+  while (fallbackSize > fallbackFloor) {
     ctx.font = `${fontWeight} ${fallbackSize}px ${fontFamily}`;
     const candidateLines = wrapTextLines(ctx, cleanText, effectiveMaxWidth);
     if (

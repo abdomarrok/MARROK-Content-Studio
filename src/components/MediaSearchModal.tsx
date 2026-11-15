@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Search, Globe, Image as ImageIcon, Upload, Link, X, Check, Loader2, Sparkles } from 'lucide-react';
 import { ThemePalette } from '../types';
 import { withClientAuthHeaders } from '../lib/security/clientSessionToken';
+import { getBundledOfficialLogoDataUrl, listBundledTechIcons } from '../lib/bundledTechSvgs';
 
 interface MediaItem {
   name?: string;
@@ -225,39 +226,65 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({
           )}
 
           {/* TAB 1: Tech Brand Logos */}
-          {activeTab === 'techLogos' && !isLoading && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {icons.map((item, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => {
-                    onSelectUrl(item.url, item.title);
-                    onClose();
-                  }}
-                  className="group flex flex-col items-center justify-center p-3 rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.07] hover:border-white/30 transition-all text-center cursor-pointer relative"
-                >
-                  <div className="w-12 h-12 rounded-lg bg-black/50 border border-white/10 flex items-center justify-center p-2.5 mb-2 group-hover:scale-110 transition-transform">
-                    <img
-                      src={`/api/proxy-image?url=${encodeURIComponent(item.url)}&color=${encodeURIComponent(theme.accent)}`}
-                      alt={item.title}
-                      className="w-full h-full object-contain opacity-90 group-hover:opacity-100"
-                    />
+          {activeTab === 'techLogos' && !isLoading && (() => {
+            const bundledList = listBundledTechIcons();
+            const filteredBundled = searchQuery.trim()
+              ? bundledList.filter((b) =>
+                  b.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                  b.slug.toLowerCase().includes(searchQuery.toLowerCase())
+                )
+              : bundledList;
+
+            const mergedIcons = icons.length > 0 ? icons : filteredBundled.map((b) => ({
+              title: b.title,
+              category: 'Bundled SVG',
+              url: getBundledOfficialLogoDataUrl(b.slug) || '',
+            }));
+
+            const resolveIconSrc = (item: { url: string; title: string }) => {
+              const bundledData = getBundledOfficialLogoDataUrl(item.title) || getBundledOfficialLogoDataUrl(item.url);
+              if (bundledData) return bundledData;
+              if (item.url.startsWith('data:')) return item.url;
+              return `/api/proxy-image?url=${encodeURIComponent(item.url)}&color=${encodeURIComponent(theme.accent)}`;
+            };
+
+            return (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {mergedIcons.map((item, idx) => {
+                  const iconSrc = resolveIconSrc(item);
+                  return (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        onSelectUrl(iconSrc, item.title);
+                        onClose();
+                      }}
+                      className="group flex flex-col items-center justify-center p-3 rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.07] hover:border-white/30 transition-all text-center cursor-pointer relative"
+                    >
+                      <div className="w-12 h-12 rounded-lg bg-black/50 border border-white/10 flex items-center justify-center p-2.5 mb-2 group-hover:scale-110 transition-transform">
+                        <img
+                          src={iconSrc}
+                          alt={item.title}
+                          className="w-full h-full object-contain opacity-90 group-hover:opacity-100"
+                        />
+                      </div>
+                      <span className="text-xs font-bold text-white font-jakarta truncate max-w-full">
+                        {item.title}
+                      </span>
+                      <span className="text-[10px] text-slate-400 truncate max-w-full">
+                        {item.category || 'Tech Logo'}
+                      </span>
+                    </button>
+                  );
+                })}
+                {mergedIcons.length === 0 && (
+                  <div className="col-span-full py-12 text-center text-slate-500 text-xs">
+                    No tech brand logos matched "{searchQuery}". Try "cassandra", "scylladb", "discord", "postgres", or "docker".
                   </div>
-                  <span className="text-xs font-bold text-white font-jakarta truncate max-w-full">
-                    {item.title}
-                  </span>
-                  <span className="text-[10px] text-slate-400 truncate max-w-full">
-                    {item.category}
-                  </span>
-                </button>
-              ))}
-              {icons.length === 0 && (
-                <div className="col-span-full py-12 text-center text-slate-500 text-xs">
-                  No tech brand logos matched "{searchQuery}". Try "docker", "k8s", "redis", or "python".
-                </div>
-              )}
-            </div>
-          )}
+                )}
+              </div>
+            );
+          })()}
 
           {/* TAB 2: Web Diagrams & Visuals */}
           {activeTab === 'diagrams' && !isLoading && (

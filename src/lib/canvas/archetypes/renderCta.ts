@@ -5,6 +5,7 @@ import { drawRoundRect } from '../background.ts';
 import { drawMarrokVectorBadge } from '../../icons.ts';
 import { getCanvasDimensionSpec, getArchetypeGraphicTransform } from '../constants.ts';
 import { computeSlideLayoutAwareness } from '../layoutAwareness.ts';
+import { isolateEmbeddedLatinInArabic } from '../../text/arabicBiDi.ts';
 
 /**
  * Archetype 8: Standardized Marrok Closer (CTA Slide)
@@ -259,7 +260,7 @@ export async function drawCtaSlide(
     ctx.textBaseline = 'alphabetic';
     let lineY = atb.firstBaselineY;
     for (const line of atb.lines) {
-      ctx.fillText(line, x, lineY);
+      ctx.fillText(isolateEmbeddedLatinInArabic(line), x, lineY);
       lineY += atb.lineHeight;
     }
     ctx.restore();
@@ -431,7 +432,11 @@ export async function drawCtaSlide(
     ctx.direction = isRtlCredit ? 'rtl' : 'ltr';
     ctx.textBaseline = 'alphabetic';
     const arCreditX = isRtlCredit ? cardX + cardW - 24 : textStartX;
-    ctx.fillText(fitArCredit.text, arCreditX, cardY + Math.round(cardH * 0.8));
+    ctx.fillText(
+      isRtlCredit ? isolateEmbeddedLatinInArabic(fitArCredit.text) : fitArCredit.text,
+      arCreditX,
+      cardY + Math.round(cardH * 0.8)
+    );
     ctx.restore();
 
     ctx.restore();

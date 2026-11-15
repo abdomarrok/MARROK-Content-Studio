@@ -154,4 +154,57 @@ describe('QA Gate & Platform Risk Checks (Phase 4 & 5)', () => {
     expect(musicRisk.items.find((i) => i.id === 'copyright')?.status).toBe('BLOCK');
     expect(musicRisk.items.find((i) => i.id === 'copyright')?.message).toContain('Drake');
   });
+
+  it('flags sub-24px text overrides in Checks across every aspect ratio (9:16, 3:4, 4:5, 1:1)', () => {
+    for (const preset of ['tiktok-9:16', 'ig-3:4', 'ig-4:5', 'ig-1:1'] as const) {
+      const deck = cloneStarterDeck();
+      deck.dimensionPreset = preset;
+      deck.slides[1].layoutOverrides = {
+        bodyBlock: { scale: preset === 'tiktok-9:16' ? 0.5 : 0.65 },
+      };
+
+      const report = runQAChecks(deck);
+      expect(report.canExport, `${preset} sub-24px should fail Checks`).toBe(false);
+      expect(
+        report.results.some((r) => r.severity === 'fail' && r.id.startsWith('min-font-size-1-')),
+        `${preset} min-font-size failure present`
+      ).toBe(true);
+    }
+  });
+
+  it('emits non-blocking Checks warning only when Arabic copy translates a technical term instead of keeping English', () => {
+    const cleanDeck = cloneStarterDeck();
+    cleanDeck.sourceMeta = {
+      ...cleanDeck.sourceMeta,
+      status: 'verified_live',
+      userReviewed: true,
+    };
+    cleanDeck.slides[1].arTitle = 'يقلل Cache زمن p99 حتى 15ms';
+    cleanDeck.slides[1].arBody =
+      'تتواصل Sockets مع Postgres و Kafka و Raft داخل نفس Cluster عبر API سريع.';
+
+    const cleanReport = runQAChecks(cleanDeck);
+    expect(
+      cleanReport.results.filter((r) => r.id.startsWith('translated-tech-term-'))
+    ).toEqual([]);
+
+    const translatedDeck = cloneStarterDeck();
+    translatedDeck.sourceMeta = {
+      ...translatedDeck.sourceMeta,
+      status: 'verified_live',
+      userReviewed: true,
+    };
+    translatedDeck.slides[1].arTitle = 'تحسين زمن الاستجابة والمقابس';
+    translatedDeck.slides[1].arBody =
+      'استخدام الذاكرة المؤقتة بحجم 10 جيجابايت قلل الكمون حتى 15 مللي ثانية داخل العنقود.';
+
+    const warnReport = runQAChecks(translatedDeck);
+    const termWarnings = warnReport.results.filter((r) =>
+      r.id.startsWith('translated-tech-term-')
+    );
+    expect(termWarnings.length).toBeGreaterThanOrEqual(2);
+    expect(termWarnings.every((w) => w.severity === 'warn')).toBe(true);
+    // Non-blocking warning must not set canExport false by itself
+    expect(warnReport.canExport).toBe(true);
+  });
 });

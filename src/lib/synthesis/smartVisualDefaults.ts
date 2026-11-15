@@ -1,5 +1,6 @@
-import type { CarouselData, DiagramNode, DiagramVariant, HookClaimCard, HubNodeReason, SlideData, SlideType } from '../../types.ts';
+import type { CarouselData, DiagramNode, DiagramVariant, HookClaimCard, HubNodeReason, SlideData, SlideType, SubjectPairConfig } from '../../types.ts';
 import { TECH_ICONS_LIST } from '../techLogos.ts';
+import { getBundledIconMeta } from '../bundledTechSvgs.ts';
 import { CHAR_LIMITS, SINGLE_SLIDE_CHAR_LIMITS } from '../qaChecks.ts';
 import { autoFitTextToLimits, autoPolishHeadline } from '../text/headlines.ts';
 import { fixArabicPunctuation } from '../text/arabicBiDi.ts';
@@ -335,8 +336,17 @@ export function extractSourceQuotedHubNodes(
 
     // Never echo category tags (e.g. TECH / TECH HUMOR)
     if (roots.every((r) => forbiddenEchoRoots.has(r) || HUB_FILLER_TOKENS.has(r))) return;
-    // Avoid picking single-word labels that simply repeat the headline word-for-word
-    if (roots.length === 1 && titleOnlyRoots.has(roots[0])) return;
+    // Avoid picking labels that simply repeat headline words (including cross-script or single-word echoes)
+    const latinRoots = labelWords
+      .filter((w) => /[A-Za-z]/.test(w))
+      .map(normalizeRoot)
+      .filter((r) => r.length >= 3);
+    if (
+      (roots.length === 1 && titleOnlyRoots.has(roots[0])) ||
+      (latinRoots.length === 1 && titleOnlyRoots.has(latinRoots[0]))
+    ) {
+      return;
+    }
 
     const alreadyUsed = roots.some((r) => {
       if (usedRoots.has(r)) return true;
@@ -398,7 +408,7 @@ export function extractSourceQuotedHubNodes(
     tryRegister(raw, 'proper-noun');
   }
 
-  // D. Meaningful adjacent noun-like pairs or standalone nouns in source order
+  // D. Meaningful adjacent noun-like pairs or standalone nouns in source order (same script only)
   const rawTokens = cleanSource
     .replace(/[.?!,:;]/g, ' ')
     .split(/\s+/)
@@ -413,10 +423,10 @@ export function extractSourceQuotedHubNodes(
   for (let i = 0; i < rawTokens.length - 1; i++) {
     const a = rawTokens[i];
     const b = rawTokens[i + 1];
-    if (/^[A-Za-z\u0600-\u06FF-]+$/.test(a) && /^[A-Za-z\u0600-\u06FF-]+$/.test(b)) {
-      if (a.length + b.length + 1 <= 18) {
-        tryRegister(`${a} ${b}`, 'source-term');
-      }
+    const bothLatin = /^[A-Za-z0-9-]+$/.test(a) && /^[A-Za-z0-9-]+$/.test(b);
+    const bothArabic = /^[\u0600-\u06FF-]+$/.test(a) && /^[\u0600-\u06FF-]+$/.test(b);
+    if ((bothLatin || bothArabic) && a.length + b.length + 1 <= 18) {
+      tryRegister(`${a} ${b}`, 'source-term');
     }
     if (candidates.length >= targetCount) break;
   }
@@ -507,17 +517,44 @@ export function buildNonNumericHookClaimCard(
     }
   }
 
-  // 2. Quote / Contrarian Claim / Question from source sentences
-  const sentences = (sourceText || slide?.enBody || slide?.enTitle || '')
+  // 2. Quote / Contrarian Claim / Question from source sentences (strictly deduped against slide.enTitle)
+  const normalizedTitle = (slide?.enTitle || '').trim().toLowerCase();
+  const titleTokens = new Set(normalizedTitle.split(/\s+/).filter((w) => w.length > 2));
+
+  const isDuplicateOfTitle = (candidate: string) => {
+    const cleanCand = candidate.trim().toLowerCase();
+    if (!cleanCand || !normalizedTitle) return false;
+    if (cleanCand === normalizedTitle) return true;
+    if (cleanCand.includes(normalizedTitle) || normalizedTitle.includes(cleanCand)) return true;
+    const candTokens = cleanCand.split(/\s+/).filter((w) => w.length > 2);
+    if (candTokens.length === 0 || titleTokens.size === 0) return false;
+    const overlap = candTokens.filter((t) => titleTokens.has(t)).length;
+    const overlapRatio = overlap / Math.max(candTokens.length, titleTokens.size);
+    return overlapRatio >= 0.65;
+  };
+
+  const sentences = (sourceText || slide?.enBody || '')
     .split(/(?<=[.?!؟\n])\s+/)
     .map((s) => s.replace(/^[•*-]\s*/, '').replace(/^["'«»]|["'«»]$/g, '').trim())
-    .filter((s) => s.length >= 14);
+    .filter((s) => s.length >= 14 && !isDuplicateOfTitle(s));
 
   const surprising =
     sentences.find((s) => /[?!؟]/.test(s)) ||
     sentences.find((s) => /\b(never|always|nobody|everyone|worst|best|actually|real|secret|truth|stop|mistake|breaks?|friday|coffee|senior|junior)\b/i.test(s)) ||
-    sentences[0] ||
-    (slide?.enTitle || '').trim();
+    sentences[0];
+
+  if (!surprising) {
+    // If no distinct sentence found, do not echo enTitle! Fall back to a distinct contrast statement or observation
+    const fallbackObservation = slide?.enBody && !isDuplicateOfTitle(slide.enBody)
+      ? slide.enBody.slice(0, 90)
+      : 'Measured architectural shift in production workloads.';
+    return {
+      mode: 'quote',
+      badge: 'KEY OBSERVATION',
+      statement: fallbackObservation,
+      attribution: slide?.enCredit ? slide.enCredit.replace(/^Source:\s*/i, '') : undefined,
+    };
+  }
 
   const words = surprising.split(/\s+/).filter(Boolean);
   const compactQuote = (words.length > 14 ? words.slice(0, 14).join(' ') : surprising)
@@ -535,13 +572,156 @@ export function buildNonNumericHookClaimCard(
 }
 
 /**
+ * Detects migration, replacement, A vs B, or before -> after technical stories.
+ * Allocates 3-brand stories according to the approved rule:
+ * - The story owner (e.g. Discord, Uber, Netflix) is allocated to storyOwner (styled text wordmark).
+ * - The two systems (e.g. Cassandra -> ScyllaDB) occupy the two logo slots (BEFORE & AFTER).
+ */
+export function detectSubjectPairFromText(
+  fullText: string,
+  slide?: SlideData
+): SubjectPairConfig | undefined {
+  if (slide?.subjectPair?.beforeSystem && slide?.subjectPair?.afterSystem) {
+    return slide.subjectPair;
+  }
+  if (!fullText) return undefined;
+
+  const clean = fullText.replace(/\n+/g, ' ');
+
+  // 1. Check for 3-brand pattern: "<Company> migrated from <SysA> to <SysB>"
+  // e.g. "Discord migrated from Cassandra to ScyllaDB"
+  const threeBrandMatch = clean.match(
+    /\b([A-Za-z0-9_-]+)\s+(?:migrated|migrating|switched|switching|moving|moved|replaced)\s+(?:from\s+)?([A-Za-z0-9_-]+)\s+(?:to|with|for)\s+([A-Za-z0-9_-]+)/i
+  );
+  if (threeBrandMatch) {
+    const rawOwner = threeBrandMatch[1];
+    const rawA = threeBrandMatch[2];
+    const rawB = threeBrandMatch[3];
+
+    const metaA = getBundledIconMeta(rawA);
+    const metaB = getBundledIconMeta(rawB);
+
+    const isCreativeChat = /discord|chat|message|messaging|channel|bot/i.test(`${rawOwner} ${clean}`);
+
+    return {
+      beforeSystem: metaA ? metaA.title : rawA.charAt(0).toUpperCase() + rawA.slice(1),
+      afterSystem: metaB ? metaB.title : rawB.charAt(0).toUpperCase() + rawB.slice(1),
+      beforeLogoKey: metaA ? metaA.slug : undefined,
+      afterLogoKey: metaB ? metaB.slug : undefined,
+      beforeAsText: !metaA,
+      afterAsText: !metaB,
+      storyOwner: rawOwner.charAt(0).toUpperCase() + rawOwner.slice(1),
+      storyOwnerMode: 'text',
+      beforeLabel: 'BEFORE',
+      afterLabel: 'AFTER',
+      colorMode: 'official',
+      logoWidthPct: 11,
+      creativeMotif: isCreativeChat ? 'chat-to-db' : 'stream-flow',
+      flowLabel: isCreativeChat ? 'CHAT WORKLOAD → COMPACTED SHARDS' : 'DATASTREAM MIGRATION',
+    };
+  }
+
+  // 2. Pattern: "migrated/migrating/switched from <SysA> to <SysB>"
+  const migrationMatch = clean.match(
+    /\b(?:migrated|migrating|migration|switched|switching|moved|moving)\s+from\s+([A-Za-z0-9_-]+)\s+to\s+([A-Za-z0-9_-]+)/i
+  );
+  if (migrationMatch) {
+    const rawA = migrationMatch[1];
+    const rawB = migrationMatch[2];
+    const metaA = getBundledIconMeta(rawA);
+    const metaB = getBundledIconMeta(rawB);
+
+    // Look for company story owner elsewhere in text (e.g. Discord, Uber, Netflix, Stripe, Meta)
+    const companyMatch = clean.match(/\b(discord|uber|netflix|stripe|shopify|airbnb|github|slack|meta|google|amazon|apple|microsoft|cloudflare)\b/i);
+    const ownerName = companyMatch ? companyMatch[1].charAt(0).toUpperCase() + companyMatch[1].slice(1) : undefined;
+    const isCreativeChat = /discord|chat|message|messaging|channel|bot/i.test(clean);
+
+    return {
+      beforeSystem: metaA ? metaA.title : rawA.charAt(0).toUpperCase() + rawA.slice(1),
+      afterSystem: metaB ? metaB.title : rawB.charAt(0).toUpperCase() + rawB.slice(1),
+      beforeLogoKey: metaA ? metaA.slug : undefined,
+      afterLogoKey: metaB ? metaB.slug : undefined,
+      beforeAsText: !metaA,
+      afterAsText: !metaB,
+      storyOwner: ownerName,
+      storyOwnerMode: ownerName ? 'text' : undefined,
+      beforeLabel: 'BEFORE',
+      afterLabel: 'AFTER',
+      colorMode: 'official',
+      logoWidthPct: 11,
+      creativeMotif: isCreativeChat ? 'chat-to-db' : 'stream-flow',
+      flowLabel: isCreativeChat ? 'CHAT WORKLOAD → COMPACTED SHARDS' : 'DATASTREAM MIGRATION',
+    };
+  }
+
+  // 3. Pattern: "<SysA> -> <SysB>" or "<SysA> → <SysB>"
+  const arrowMatch = clean.match(/\b([A-Za-z0-9_-]+)\s*(?:->|→)\s*([A-Za-z0-9_-]+)/i);
+  if (arrowMatch) {
+    const rawA = arrowMatch[1];
+    const rawB = arrowMatch[2];
+    const metaA = getBundledIconMeta(rawA);
+    const metaB = getBundledIconMeta(rawB);
+    if (metaA || metaB) {
+      const companyMatch = clean.match(/\b(discord|uber|netflix|stripe|shopify|airbnb|github|slack|meta|google|amazon|apple|microsoft|cloudflare)\b/i);
+      const ownerName = companyMatch ? companyMatch[1].charAt(0).toUpperCase() + companyMatch[1].slice(1) : undefined;
+      const isCreativeChat = /discord|chat|message|messaging|channel|bot/i.test(clean);
+
+      return {
+        beforeSystem: metaA ? metaA.title : rawA.charAt(0).toUpperCase() + rawA.slice(1),
+        afterSystem: metaB ? metaB.title : rawB.charAt(0).toUpperCase() + rawB.slice(1),
+        beforeLogoKey: metaA ? metaA.slug : undefined,
+        afterLogoKey: metaB ? metaB.slug : undefined,
+        beforeAsText: !metaA,
+        afterAsText: !metaB,
+        storyOwner: ownerName,
+        storyOwnerMode: ownerName ? 'text' : undefined,
+        beforeLabel: 'BEFORE',
+        afterLabel: 'AFTER',
+        colorMode: 'official',
+        logoWidthPct: 11,
+        creativeMotif: isCreativeChat ? 'chat-to-db' : 'stream-flow',
+        flowLabel: isCreativeChat ? 'CHAT WORKLOAD → COMPACTED SHARDS' : 'DATASTREAM MIGRATION',
+      };
+    }
+  }
+
+  // 4. Check if text mentions Cassandra + ScyllaDB specifically or 2 known database/infra systems
+  if (/\b(?:cassandra|apachecassandra)\b/i.test(clean) && /\b(?:scylla|scylladb)\b/i.test(clean)) {
+    const metaA = getBundledIconMeta('apachecassandra');
+    const metaB = getBundledIconMeta('scylladb');
+    const companyMatch = clean.match(/\b(discord|uber|netflix|stripe|shopify|airbnb|github|slack|meta|google|amazon|apple|microsoft|cloudflare)\b/i);
+    const ownerName = companyMatch ? companyMatch[1].charAt(0).toUpperCase() + companyMatch[1].slice(1) : undefined;
+    const isCreativeChat = /discord|chat|message|messaging|channel|bot/i.test(clean);
+
+    return {
+      beforeSystem: metaA ? metaA.title : 'Apache Cassandra',
+      afterSystem: metaB ? metaB.title : 'ScyllaDB',
+      beforeLogoKey: metaA ? metaA.slug : 'apachecassandra',
+      afterLogoKey: metaB ? metaB.slug : 'scylladb',
+      beforeAsText: false,
+      afterAsText: false,
+      storyOwner: ownerName || (isCreativeChat ? 'Discord' : undefined),
+      storyOwnerMode: 'text',
+      beforeLabel: 'BEFORE',
+      afterLabel: 'AFTER',
+      colorMode: 'official',
+      logoWidthPct: 11,
+      creativeMotif: isCreativeChat ? 'chat-to-db' : 'stream-flow',
+      flowLabel: isCreativeChat ? 'CHAT WORKLOAD → COMPACTED SHARDS' : 'DATASTREAM MIGRATION',
+    };
+  }
+
+  return undefined;
+}
+
+/**
  * Heuristic analysis of a slide's headline and body copy to assign the most appropriate
- * content archetype among Metric, Compare, Code, Row, or Number.
+ * content archetype among Metric, Compare, Code, Row, Number, or Subject Pair.
  */
 export function analyzeSlideTextForArchetype(
   slide: SlideData,
   slideIndex: number = 0
-): 'metric' | 'compare' | 'code' | 'row' | 'number' {
+): 'metric' | 'compare' | 'code' | 'row' | 'number' | 'subjectPair' {
   const title = (slide.enTitle || '').trim();
   const body = (slide.enBody || '').trim();
   const arTitle = (slide.arTitle || '').trim();
@@ -549,13 +729,23 @@ export function analyzeSlideTextForArchetype(
   const arText = `${arTitle} ${arBody}`;
   const fullText = `${title} ${body} ${arText}`;
 
-  let scores: Record<'metric' | 'compare' | 'code' | 'row' | 'number', number> = {
+  const pair = detectSubjectPairFromText(fullText, slide);
+  if (pair && slideIndex === 0) {
+    return 'subjectPair';
+  }
+
+  let scores: Record<'metric' | 'compare' | 'code' | 'row' | 'number' | 'subjectPair', number> = {
     code: 0,
     compare: 0,
     metric: 0,
     number: 0,
     row: 1, // baseline fallback
+    subjectPair: pair ? 8 : 0,
   };
+
+  if (pair && /\b(?:migrat(?:ed|ing|ion)|switched|switching|moving|replaced|transition|vs\.?)\b/i.test(fullText)) {
+    scores.subjectPair += 6;
+  }
 
   // 1. Code Diff / Query / CLI / Config detection
   if (
@@ -628,15 +818,16 @@ export function analyzeSlideTextForArchetype(
     scores.row += 2;
   }
 
-  // Pick the highest-scoring archetype (tie-breaking order: code > compare > metric > number > row)
-  const candidates: Array<'code' | 'compare' | 'metric' | 'number' | 'row'> = [
+  // Pick the highest-scoring archetype (tie-breaking order: subjectPair > code > compare > metric > number > row)
+  const candidates: Array<'subjectPair' | 'code' | 'compare' | 'metric' | 'number' | 'row'> = [
+    'subjectPair',
     'code',
     'compare',
     'metric',
     'number',
     'row',
   ];
-  let best: 'code' | 'compare' | 'metric' | 'number' | 'row' = 'row';
+  let best: 'subjectPair' | 'code' | 'compare' | 'metric' | 'number' | 'row' = 'row';
   let bestScore = scores.row;
 
   for (const candidate of candidates) {
@@ -735,6 +926,8 @@ export interface SmartSlideVisualDefaults {
   compareLeftBody: string;
   compareRightTitle: string;
   compareRightBody: string;
+  // Subject Pair
+  subjectPair?: SubjectPairConfig;
 }
 
 /**
@@ -1405,6 +1598,11 @@ export function resolveSmartSlideVisuals(
       ? slide.compareRightBody
       : derivedCompare.rightBody;
 
+  const derivedSubjectPair =
+    !forceRefresh && slide.subjectPair
+      ? slide.subjectPair
+      : detectSubjectPairFromText(fullText, slide);
+
   return {
     recommendedArchetype,
     recommendedVariant,
@@ -1434,6 +1632,7 @@ export function resolveSmartSlideVisuals(
     compareLeftBody,
     compareRightTitle,
     compareRightBody,
+    subjectPair: derivedSubjectPair,
   };
 }
 
@@ -1496,27 +1695,36 @@ export function applyHookEngineToSlide1(
   );
   const plainArTitle = capHeadlineToTwelveWords(slide.arTitle || '', true);
 
-  // Pick Slide 1 cover layout:
-  // - Numeric source -> keep 'metric' or 'compare' or existing hub
-  // - Non-numeric contrast/opinion/claim -> 'metric' (renders Quote/Contrast Claim Card) or preserve 'hub' when it already holds distinct source concepts
+  const detectedPair = slide.subjectPair || detectSubjectPairFromText(combinedContextForExtraction, slide);
+  const isSubjectPairStory = Boolean(detectedPair);
+
+  // Pick Slide 1 Hook cover layout (NEVER 'hub' per storyboard policy, NEVER empty metric without numbers or claim card):
+  // - Custom media/poster -> keep 'image' / 'poster'
+  // - Subject Pair story (migration / replacement) -> 'subjectPair'
+  // - Hard numeric win -> 'metric'
+  // - Non-numeric with claim card -> 'metric' (rendered as hookClaimCard, never empty hard metric)
+  // - Comparative / contrasting narrative -> 'compare'
+  // - Mechanism / schematic narrative -> 'row'
   const resolvedType: SlideType = (() => {
     if (slide.type === 'image' && (slide.imageUrl || slide.videoUrl)) return 'image';
+    if (slide.type === 'subjectPair' || isSubjectPairStory) return 'subjectPair';
     if (hasNumericWin) {
       return slide.type === 'compare' || slide.type === 'code' || slide.type === 'row' ? slide.type : 'metric';
     }
-    if (nonNumericCard?.mode === 'contrast' && quotedHub.hubNodeReasons.length < 4) {
+    if (nonNumericCard?.mode === 'contrast') {
+      return slide.type === 'compare' ? 'compare' : 'metric';
+    }
+    if (slide.type === 'compare' || slide.type === 'code' || slide.type === 'row') {
+      return slide.type;
+    }
+    if (slide.type === 'metric' && nonNumericCard) {
       return 'metric';
     }
-    if (
-      (quotedHub.hubNodeReasons.length >= 4 && (!nonNumericCard || slide.type === 'hub')) ||
-      (slide.type === 'hub' && nonNumericCard?.mode !== 'contrast' && (quotedHub.satLabels.length >= 2 || smart.satLabels.length >= 2))
-    ) {
-      return 'hub';
+    const dynamicCover = inferDynamicCoverArchetype(slide);
+    if (dynamicCover === 'metric' && !hasNumericWin && !nonNumericCard) {
+      return 'row';
     }
-    if (nonNumericCard) {
-      return 'metric';
-    }
-    return slide.type || 'hub';
+    return dynamicCover;
   })();
 
   const finalSatLabels =
@@ -1543,6 +1751,7 @@ export function applyHookEngineToSlide1(
     arBody: '',
     enTitle: plainEnTitle || slide.enTitle,
     arTitle: plainArTitle || slide.arTitle,
+    subjectPair: resolvedType === 'subjectPair' ? (detectedPair || smart.subjectPair) : slide.subjectPair,
     satLabels: finalSatLabels,
     hubNodeReasons: finalReasons,
     satIcons: smart.satIcons,
@@ -1553,7 +1762,7 @@ export function applyHookEngineToSlide1(
     metricLabel: hasNumericWin ? smart.metricLabel : '',
     metricDiff: hasNumericWin ? smart.metricDiff : '',
     metricIcon: smart.metricIcon,
-    hookClaimCard: nonNumericCard,
+    hookClaimCard: resolvedType === 'metric' ? nonNumericCard : undefined,
     chartDirection: hasNumericWin ? smart.chartDirection : 'none',
   };
 
@@ -1563,23 +1772,38 @@ export function applyHookEngineToSlide1(
 
 /**
  * Determines the most scroll-stopping Slide 1 cover archetype based on the story angle:
+ * - 'subjectPair' for system migrations, replacements, or before -> after shifts
  * - 'compare' for head-to-head showdowns, replacements, or paradigm shifts
  * - 'metric' for shocking benchmarks, dollar figures, latency drops, or scale numbers
  * - 'row' (isolation/topology schematic) for security vulnerabilities, zero-days, or protocol mechanics
- * - 'hub' for broad ecosystem, architecture, or multi-pillar overviews
+ * - 'row' as the safe structural fallback (NEVER empty 'metric' or 'hub')
  */
 export function inferDynamicCoverArchetype(slide: SlideData): SlideType {
   if (slide.type === 'image' && (slide.imageUrl || slide.videoUrl)) return 'image';
   if (slide.type === 'poster') return 'poster';
+  if (slide.type === 'subjectPair') return 'subjectPair';
 
   const title = (slide.enTitle || '').trim();
   const body = (slide.enBody || '').trim();
   const arTitle = (slide.arTitle || '').trim();
   const combined = `${title} ${body} ${arTitle}`;
 
-  // 1. Head-to-head comparison / migration / replacement angle -> Compare cover
+  // 0. Migration / before-after / subject pair story
+  if (slide.subjectPair || detectSubjectPairFromText(combined, slide)) {
+    return 'subjectPair';
+  }
+
+  // 1. Hard benchmark / financial shock / latency / scale number in the hook -> Metric cover
+  const hasNumbers = /(?:\$\d[\d,.]*\s*[KMBTkmbt]?|\b\d+(?:\.\d+)?\s*(?:%|x|X|ms|µs|ns|s|GB\/s|MB\/s|KB|MB|GB|TB|PB|req\/s|RPS|ops\/s|QPS|tokens\/s|GW|MW|billion|trillion|million)\b)/i.test(
+    `${title} ${body}`
+  );
+  if (hasNumbers) {
+    return 'metric';
+  }
+
+  // 2. Head-to-head comparison / migration / replacement angle -> Compare cover
   if (
-    /\b(?:vs\.?|versus|compared\s+to|instead\s+of|replaces|replacing|migrating\s+from|ditched|ditching|outperforms|beats)\b/i.test(
+    /\b(?:vs\.?|versus|compared\s+to|instead\s+of|replaces|replacing|migrating\s+from|move\s+beyond|beyond|ditched|ditching|outperforms|beats|tradeoff|trade-?off)\b/i.test(
       combined
     ) ||
     /مقابل|بدلاً\s+من|مقارنة/.test(arTitle)
@@ -1587,25 +1811,17 @@ export function inferDynamicCoverArchetype(slide: SlideData): SlideType {
     return 'compare';
   }
 
-  // 2. Hard benchmark / financial shock / latency / scale number in the hook -> Metric cover
+  // 3. Zero-day / CVE / protocol / kernel / isolation / architecture mechanism -> Row schematic cover
   if (
-    /(?:\$\d[\d,.]*\s*[KMBTkmbt]?|\b\d+(?:\.\d+)?\s*(?:%|x|X|ms|µs|ns|s|GB\/s|MB\/s|KB|MB|GB|TB|PB|req\/s|RPS|ops\/s|QPS|tokens\/s|GW|MW|billion|trillion|million)\b)/i.test(
-      `${title} ${body}`
-    )
-  ) {
-    return 'metric';
-  }
-
-  // 3. Zero-day / CVE / protocol / kernel / isolation mechanism -> Row schematic cover
-  if (
-    /\b(?:cve-\d{4}|zero[- ]?day|exploit|vulnerability|sandbox|ebpf|kernel|handshake|protocol|wireguard|mtls|post[- ]?quantum|signature\s+size)\b/i.test(
+    /\b(?:cve-\d{4}|zero[- ]?day|exploit|vulnerability|sandbox|isolation|ebpf|kernel|handshake|protocol|wireguard|mtls|post[- ]?quantum|signature\s+size|container|architecture|quorum|consensus)\b/i.test(
       combined
     )
   ) {
     return 'row';
   }
 
-  return 'hub';
+  // Never fall back to 'hub' on Slide 1 Hook — use high-impact Focused Hook Claim card (rendered under 'metric' with hookClaimCard)
+  return 'metric';
 }
 
 /**
@@ -1620,6 +1836,13 @@ export function explainArchetypeChoice(
   const fullText = `${slide.enTitle || ''} ${slide.enBody || ''}`;
   const type = slide.type;
 
+  if (type === 'subjectPair') {
+    const pair = slide.subjectPair;
+    const before = pair?.beforeSystem || 'Before';
+    const after = pair?.afterSystem || 'After';
+    const owner = pair?.storyOwner ? `for ${pair.storyOwner}` : '';
+    return `Picked Subject Pair visual (${before} → ${after} ${owner}) to map system migration and architectural shift.`.replace(/\s+/g, ' ').trim();
+  }
   if (type === 'cta' || (totalSlides > 1 && slideIndex === totalSlides - 1)) {
     return 'Picked CTA closer for the final slide to drive comments and attribution.';
   }
@@ -1703,7 +1926,9 @@ export function diversifyDeckArchetypesAndVisuals(
   let usedCompare = false;
   let usedCode = false;
   let usedMetric = false;
-  let slide1CoverType: SlideType = 'hub';
+  let slide1CoverType: SlideType = 'metric';
+  const assignedTypes: SlideType[] = [];
+  const assignedSignatures: string[] = [];
 
   return slides.map((slide, idx) => {
     const storyRole: SlideData['storyRole'] =
@@ -1725,6 +1950,8 @@ export function diversifyDeckArchetypesAndVisuals(
       if (slide.type === 'compare') usedCompare = true;
       if (slide.type === 'code') usedCode = true;
       if (slide.type === 'metric') usedMetric = true;
+      assignedTypes.push(slide.type);
+      assignedSignatures.push(slide.type === 'row' ? `row:${slide.diagramVariant || 'topology'}` : slide.type);
       return {
         ...slide,
         storyRole: slide.storyRole || storyRole,
@@ -1733,9 +1960,9 @@ export function diversifyDeckArchetypesAndVisuals(
       };
     }
 
-    // Slide 1 Cover: preserve explicit cover archetype (from AI or HookVariant) or infer dynamic cover when requested
+    // Slide 1 Cover: Always a Hook layout (metric / compare / row / code) — NEVER 'hub'
     if (idx === 0) {
-      const explicitNonHubCover =
+      const explicitHookCover =
         slide.type === 'metric' ||
         slide.type === 'compare' ||
         slide.type === 'code' ||
@@ -1743,11 +1970,11 @@ export function diversifyDeckArchetypesAndVisuals(
         slide.type === 'poster' ||
         slide.type === 'image';
 
-      const coverType: SlideType = explicitNonHubCover
+      const coverType: SlideType = explicitHookCover
         ? slide.type
-        : options?.dynamicCover
+        : options?.dynamicCover !== false
         ? inferDynamicCoverArchetype(slide)
-        : 'hub';
+        : 'metric';
 
       slide1CoverType = coverType;
       if (coverType === 'compare') usedCompare = true;
@@ -1802,11 +2029,22 @@ export function diversifyDeckArchetypesAndVisuals(
         false
       );
       nextCover.cornerTag = deriveSlideCornerTag(nextCover, 0, slides.length);
-      nextCover.layoutRationale = explainArchetypeChoice(nextCover, 0, slides.length);
+      nextCover.layoutRationale =
+        coverType === 'compare'
+          ? 'Picked Compare Hook cover to contrast options right on Slide 1.'
+          : coverType === 'row'
+          ? 'Picked Schematic Hook cover to frame the core mechanism on Slide 1.'
+          : explainArchetypeChoice(nextCover, 0, slides.length);
+      assignedTypes.push(nextCover.type);
+      assignedSignatures.push(
+        nextCover.type === 'row' ? `row:${nextCover.diagramVariant || 'isolation'}` : nextCover.type
+      );
       return nextCover;
     }
 
     if (idx === slides.length - 1 && slide.type === 'cta') {
+      assignedTypes.push('cta');
+      assignedSignatures.push('cta');
       return {
         ...slide,
         storyRole: 'cta',
@@ -1817,6 +2055,8 @@ export function diversifyDeckArchetypesAndVisuals(
 
     // Preserve explicit custom images/videos
     if (slide.type === 'image' && (slide.imageUrl || slide.videoUrl)) {
+      assignedTypes.push('image');
+      assignedSignatures.push('image');
       return {
         ...slide,
         storyRole,
@@ -1825,8 +2065,14 @@ export function diversifyDeckArchetypesAndVisuals(
       };
     }
 
-    // Penultimate slide: Takeaway / Trade-off schematic
-    if (idx === slides.length - 2 && slides.length >= 5) {
+    // Penultimate slide: Takeaway / Trade-off schematic (unless previous 2 slides were already 'row', to avoid a 3-in-a-row streak)
+    const prevType1Pre = assignedTypes[assignedTypes.length - 1];
+    const prevType2Pre = assignedTypes[assignedTypes.length - 2];
+    if (
+      idx === slides.length - 2 &&
+      slides.length >= 5 &&
+      !(prevType1Pre === 'row' && prevType2Pre === 'row')
+    ) {
       const smartTakeaway = resolveSmartSlideVisuals(
         { ...slide, type: 'row', diagramVariant: 'takeaway' },
         idx,
@@ -1843,6 +2089,8 @@ export function diversifyDeckArchetypesAndVisuals(
         diagramFooter: smartTakeaway.diagramFooter,
       };
       nextTakeaway.layoutRationale = explainArchetypeChoice(nextTakeaway, idx, slides.length);
+      assignedTypes.push('row');
+      assignedSignatures.push('row:takeaway');
       return nextTakeaway;
     }
 
@@ -1864,16 +2112,46 @@ export function diversifyDeckArchetypesAndVisuals(
       }
     }
 
+    // Also reserve slide N-3 away from 'row' when slide N-4 was 'row' so slide N-2 can cleanly use 'row:takeaway'
+    if (
+      slides.length >= 5 &&
+      idx === slides.length - 3 &&
+      targetType === 'row' &&
+      prevType1Pre === 'row'
+    ) {
+      targetType = !usedCompare ? 'compare' : !usedCode ? 'code' : 'number';
+    }
+
+    // Strict Anti-Streak Guard: NEVER allow 3 identical archetypes in a row
+    const prevType1 = assignedTypes[assignedTypes.length - 1];
+    const prevType2 = assignedTypes[assignedTypes.length - 2];
+    if (prevType1 && prevType2 && prevType1 === targetType && prevType2 === targetType) {
+      const streakBreakers: SlideType[] = ['compare', 'metric', 'number', 'code', 'row'];
+      const candidate =
+        streakBreakers.find((t) => t !== targetType && t !== prevType1) ||
+        (targetType === 'row' ? 'number' : 'row');
+      targetType = candidate;
+    }
+
     if (targetType === 'compare') usedCompare = true;
     if (targetType === 'code') usedCode = true;
     if (targetType === 'metric') usedMetric = true;
 
-    const chosenVariant =
+    let chosenVariant: DiagramVariant | undefined =
       targetType === 'row'
         ? inferBestDiagramVariant(slide) !== 'topology'
           ? inferBestDiagramVariant(slide)
           : variantRotation[variantCursor++ % variantRotation.length]
         : undefined;
+
+    if (targetType === 'row' && chosenVariant) {
+      const prevSig1 = assignedSignatures[assignedSignatures.length - 1];
+      if (prevSig1 === `row:${chosenVariant}`) {
+        chosenVariant =
+          variantRotation.find((v) => `row:${v}` !== prevSig1) ||
+          variantRotation[variantCursor++ % variantRotation.length];
+      }
+    }
 
     const smart = resolveSmartSlideVisuals(
       {
@@ -1897,6 +2175,8 @@ export function diversifyDeckArchetypesAndVisuals(
       };
       nextCompare.cornerTag = deriveSlideCornerTag(nextCompare, idx, slides.length);
       nextCompare.layoutRationale = explainArchetypeChoice(nextCompare, idx, slides.length);
+      assignedTypes.push('compare');
+      assignedSignatures.push('compare');
       return nextCompare;
     }
 
@@ -1911,6 +2191,8 @@ export function diversifyDeckArchetypesAndVisuals(
       };
       nextCode.cornerTag = deriveSlideCornerTag(nextCode, idx, slides.length);
       nextCode.layoutRationale = explainArchetypeChoice(nextCode, idx, slides.length);
+      assignedTypes.push('code');
+      assignedSignatures.push('code');
       return nextCode;
     }
 
@@ -1928,6 +2210,8 @@ export function diversifyDeckArchetypesAndVisuals(
       };
       nextMetric.cornerTag = deriveSlideCornerTag(nextMetric, idx, slides.length);
       nextMetric.layoutRationale = explainArchetypeChoice(nextMetric, idx, slides.length);
+      assignedTypes.push('metric');
+      assignedSignatures.push('metric');
       return nextMetric;
     }
 
@@ -1942,20 +2226,25 @@ export function diversifyDeckArchetypesAndVisuals(
       };
       nextNum.cornerTag = deriveSlideCornerTag(nextNum, idx, slides.length);
       nextNum.layoutRationale = explainArchetypeChoice(nextNum, idx, slides.length);
+      assignedTypes.push('number');
+      assignedSignatures.push('number');
       return nextNum;
     }
 
+    const finalVariant = chosenVariant || smart.diagramVariant;
     const nextRow: SlideData = {
       ...slide,
       type: 'row',
       storyRole,
-      diagramVariant: chosenVariant || smart.diagramVariant,
+      diagramVariant: finalVariant,
       diagramNodes: smart.diagramNodes,
       diagramEdges: smart.diagramEdges,
       diagramFooter: smart.diagramFooter,
     };
     nextRow.cornerTag = deriveSlideCornerTag(nextRow, idx, slides.length);
     nextRow.layoutRationale = explainArchetypeChoice(nextRow, idx, slides.length);
+    assignedTypes.push('row');
+    assignedSignatures.push(`row:${finalVariant || 'topology'}`);
     return nextRow;
   });
 }

@@ -1,5 +1,9 @@
 import type { DiagramNode, DiagramVariant, SlideData } from '../../types.ts';
-import { resolveSmartSlideVisuals } from './smartVisualDefaults.ts';
+import {
+  explainArchetypeChoice,
+  inferDynamicCoverArchetype,
+  resolveSmartSlideVisuals,
+} from './smartVisualDefaults.ts';
 
 /**
  * Visual Pacing & Anti-Repetition Balancer
@@ -35,70 +39,124 @@ export function balanceCarouselVisualPacing(slides: SlideData[]): SlideData[] {
   return slides.map((slide, idx) => {
     const smart = resolveSmartSlideVisuals(slide, idx, false);
 
-    // Hub Slide (Slide 1)
-    if (idx === 0 || slide.type === 'hub') {
-      return {
+    // Hook Slide (Slide 1): MUST be a non-HUB Hook layout (metric / compare / row / code / poster / image)
+    if (idx === 0) {
+      const resolvedHookType =
+        slide.type && slide.type !== 'hub' && slide.type !== 'cta'
+          ? slide.type
+          : inferDynamicCoverArchetype(slide);
+      const hookSmart = resolveSmartSlideVisuals(
+        { ...slide, type: resolvedHookType },
+        0,
+        true
+      );
+      const nextHook: SlideData = {
         ...slide,
-        type: 'hub',
-        centerIcon: slide.centerIcon || smart.centerIcon,
-        centerTag: slide.centerTag || smart.centerTag,
-        satLabels: smart.satLabels,
-        satIcons: slide.satIcons && slide.satIcons.length > 0 ? slide.satIcons : smart.satIcons,
+        type: resolvedHookType,
+        storyRole: 'hook',
+        centerIcon: slide.centerIcon || hookSmart.centerIcon,
+        centerTag: slide.centerTag || hookSmart.centerTag,
+        satLabels: slide.satLabels && slide.satLabels.length > 0 ? slide.satLabels : hookSmart.satLabels,
+        satIcons: slide.satIcons && slide.satIcons.length > 0 ? slide.satIcons : hookSmart.satIcons,
+        metricBeforeValue: slide.metricBeforeValue || hookSmart.metricBeforeValue,
+        metricValue: slide.metricValue || hookSmart.metricValue,
+        metricLabel: slide.metricLabel || hookSmart.metricLabel,
+        metricDiff: slide.metricDiff || hookSmart.metricDiff,
+        metricIcon: slide.metricIcon || hookSmart.metricIcon,
+        subjectPair: resolvedHookType === 'subjectPair' ? (slide.subjectPair || hookSmart.subjectPair) : slide.subjectPair,
+        compareLeftTitle: slide.compareLeftTitle || hookSmart.compareLeftTitle,
+        compareLeftBody: slide.compareLeftBody || hookSmart.compareLeftBody,
+        compareRightTitle: slide.compareRightTitle || hookSmart.compareRightTitle,
+        compareRightBody: slide.compareRightBody || hookSmart.compareRightBody,
+        diagramVariant: resolvedHookType === 'row' ? (slide.diagramVariant || hookSmart.diagramVariant) : slide.diagramVariant,
+        diagramNodes: resolvedHookType === 'row' && (!slide.diagramNodes || slide.diagramNodes.length < 3) ? hookSmart.diagramNodes : slide.diagramNodes,
+        diagramEdges: resolvedHookType === 'row' && (!slide.diagramEdges || slide.diagramEdges.length < 2) ? hookSmart.diagramEdges : slide.diagramEdges,
+        diagramFooter: resolvedHookType === 'row' ? (slide.diagramFooter || hookSmart.diagramFooter) : slide.diagramFooter,
       };
+      nextHook.layoutRationale =
+        slide.layoutRationale || explainArchetypeChoice(nextHook, 0, slides.length);
+      return nextHook;
     }
 
     // CTA Slide (Final Slide)
     if (idx === slides.length - 1 || slide.type === 'cta') {
-      return {
+      const nextCta: SlideData = {
         ...slide,
         type: 'cta',
         ctaText: slide.ctaText && !slide.ctaText.toLowerCase().includes('dm for')
           ? slide.ctaText
           : 'Join Discussion  •  شارك برأيك',
       };
+      nextCta.layoutRationale =
+        slide.layoutRationale || explainArchetypeChoice(nextCta, idx, slides.length);
+      return nextCta;
     }
 
     // Specialized Archetypes: Validate & Repair Missing Data
+    if (slide.type === 'subjectPair') {
+      const nextSubjectPair: SlideData = {
+        ...slide,
+        subjectPair: slide.subjectPair || smart.subjectPair,
+      };
+      nextSubjectPair.layoutRationale =
+        slide.layoutRationale || explainArchetypeChoice(nextSubjectPair, idx, slides.length);
+      return nextSubjectPair;
+    }
     if (slide.type === 'code') {
-      return {
+      const nextCode: SlideData = {
         ...slide,
         codeFileName: smart.codeFileName,
         codeLanguage: smart.codeLanguage,
         codeSnippet: smart.codeSnippet,
       };
+      nextCode.layoutRationale =
+        slide.layoutRationale || explainArchetypeChoice(nextCode, idx, slides.length);
+      return nextCode;
     }
 
     if (slide.type === 'metric') {
-      return {
+      const nextMetric: SlideData = {
         ...slide,
         metricValue: smart.metricValue,
         metricLabel: smart.metricLabel,
         metricDiff: smart.metricDiff,
         metricIcon: smart.metricIcon,
       };
+      nextMetric.layoutRationale =
+        slide.layoutRationale || explainArchetypeChoice(nextMetric, idx, slides.length);
+      return nextMetric;
     }
 
     if (slide.type === 'compare') {
-      return {
+      const nextCompare: SlideData = {
         ...slide,
         compareLeftTitle: smart.compareLeftTitle,
         compareLeftBody: smart.compareLeftBody,
         compareRightTitle: smart.compareRightTitle,
         compareRightBody: smart.compareRightBody,
       };
+      nextCompare.layoutRationale =
+        slide.layoutRationale || explainArchetypeChoice(nextCompare, idx, slides.length);
+      return nextCompare;
     }
 
     if (slide.type === 'number') {
-      return {
+      const nextNum: SlideData = {
         ...slide,
         stepNumber: smart.stepNumber,
         stepLabel: smart.stepLabel,
         centerIcon: slide.centerIcon || smart.numberIcon,
       };
+      nextNum.layoutRationale =
+        slide.layoutRationale || explainArchetypeChoice(nextNum, idx, slides.length);
+      return nextNum;
     }
 
     if (slide.type === 'image') {
-      return slide;
+      return {
+        ...slide,
+        layoutRationale: slide.layoutRationale || explainArchetypeChoice(slide, idx, slides.length),
+      };
     }
 
     // Mechanism (Row) Slides: Enforce Anti-Repetition & Variety
@@ -310,7 +368,7 @@ export function balanceCarouselVisualPacing(slides: SlideData[]): SlideData[] {
     ];
     const diagramFooter = slide.diagramFooter || fallbackFooter;
 
-    return {
+    const nextRow: SlideData = {
       ...slide,
       type: 'row',
       diagramVariant: chosenVariant,
@@ -318,5 +376,8 @@ export function balanceCarouselVisualPacing(slides: SlideData[]): SlideData[] {
       diagramEdges,
       diagramFooter,
     };
+    nextRow.layoutRationale =
+      slide.layoutRationale || explainArchetypeChoice(nextRow, idx, slides.length);
+    return nextRow;
   });
 }

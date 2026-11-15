@@ -720,17 +720,25 @@ export function validateAndBuildPostRecord(
       details: blobSlides.map((b) => `Slide ${b.idx + 1}: ephemeral ${b.url.slice(0, 28)}...`),
     };
   }
+  const explicitMetaApproved =
+    sanitizedDeck.sourceMeta?.humanApproved ?? sanitizedDeck.sourceMeta?.userReviewed;
   const humanApproved =
     input.humanApproved !== undefined
-      ? input.humanApproved
+      ? Boolean(input.humanApproved)
       : input.isAutomatedRun
       ? false
+      : explicitMetaApproved !== undefined
+      ? Boolean(explicitMetaApproved)
       : true;
+  const verifiedNumbers = Boolean(
+    sanitizedDeck.sourceMeta?.verifiedNumbers ?? input.existingRecord?.verifiedNumbers ?? false
+  );
 
   sanitizedDeck.sourceMeta = {
     ...sanitizedDeck.sourceMeta,
     userReviewed: humanApproved,
     humanApproved,
+    verifiedNumbers,
   };
 
   const qaReport = runQAChecks(sanitizedDeck);
@@ -747,6 +755,7 @@ export function validateAndBuildPostRecord(
     qualityPassed,
     groundingVerified,
     humanApproved,
+    verifiedNumbers,
   };
 
   if (!qualityPassed && !input.allowOverride) {
@@ -808,6 +817,7 @@ export function validateAndBuildPostRecord(
     qualityPassed,
     groundingVerified,
     humanApproved,
+    verifiedNumbers,
     deck: sanitizedDeck,
     scheduledFor: input.existingRecord?.scheduledFor,
     publishTargets: input.existingRecord?.publishTargets,

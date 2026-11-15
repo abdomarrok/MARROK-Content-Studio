@@ -16,6 +16,15 @@ function cleanHeadline(str?: string, fallback = ''): string {
 
 function extractSlideNodes(slide?: SlideData): string[] {
   if (!slide) return ['KERNEL', 'ZERO-TRUST', 'SANDBOX', 'TELEMETRY'];
+  if (slide.subjectPair) {
+    const p = slide.subjectPair;
+    return [
+      p.storyOwner ? p.storyOwner.toUpperCase() : 'MIGRATION',
+      (p.beforeSystem || 'BEFORE').toUpperCase(),
+      '→',
+      (p.afterSystem || 'AFTER').toUpperCase(),
+    ];
+  }
   if (slide.satLabels && slide.satLabels.length >= 2) {
     return slide.satLabels.filter(Boolean).slice(0, 4);
   }

@@ -8,3 +8,4 @@ export * from './renderCompare.ts';
 export * from './renderImage.ts';
 export * from './renderCta.ts';
 export * from './renderPoster.ts';
+export * from './renderSubjectPair.ts';

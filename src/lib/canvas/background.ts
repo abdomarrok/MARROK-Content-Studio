@@ -5,6 +5,7 @@ import {
   CANVAS_HEIGHT,
   GRID_SPACING,
   GRID_LINE_WIDTH,
+  MIN_FOOTER_FONT_SIZE,
   CanvasDimensionSpec,
   getCanvasDimensionSpec,
 } from './constants.ts';
@@ -268,8 +269,14 @@ export function drawPaginationFooter(
     (slide?.imageFrameMode === 'full' || Boolean(slide?.standaloneMeme)) &&
     Boolean(slide?.imageUrl || slide?.videoUrl);
 
-  const fontSize = resolved.footerFontSize || (resolved.height >= 1920 ? 24 : 20);
-  const badgeSize = resolved.footerBadgeSize || (resolved.height >= 1920 ? 24 : 20);
+  const fontSize = Math.max(
+    MIN_FOOTER_FONT_SIZE,
+    resolved.footerFontSize || (resolved.height >= 1920 ? 24 : MIN_FOOTER_FONT_SIZE)
+  );
+  const badgeSize = Math.max(
+    MIN_FOOTER_FONT_SIZE,
+    resolved.footerBadgeSize || (resolved.height >= 1920 ? 24 : MIN_FOOTER_FONT_SIZE)
+  );
 
   // Reserve a fixed footer row strictly below safeFooterCeilingY (min 24px clearance above badge top)
   const rawFooterY =

@@ -282,13 +282,13 @@ describe('Dynamic Slide 1 Cover Archetypes & Topic Virality Scoring', () => {
       })
     ).toBe('row');
 
-    expect(
-      inferDynamicCoverArchetype({
-        type: 'hub',
-        enTitle: 'Unlocking Gödel’s lost theorems.',
-        arTitle: 'فك شفرة نظريات غودل المفقودة',
-      })
-    ).toBe('hub');
+    const generalCover = inferDynamicCoverArchetype({
+      type: 'hub',
+      enTitle: 'Unlocking Gödel’s lost theorems.',
+      arTitle: 'فك شفرة نظريات غودل المفقودة',
+    });
+    expect(generalCover).toBe('metric');
+    expect(generalCover).not.toBe('hub');
   });
 
   it('computes a 58..99 virality score and viral angle badge for Topic Radar stories', () => {

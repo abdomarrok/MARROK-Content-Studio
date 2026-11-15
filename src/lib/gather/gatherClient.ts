@@ -3,6 +3,9 @@ import type {
   PostFormat,
   PublishTargetPlatform,
   SavedPostRecord,
+  SavedPostStatus,
+  SlideData,
+  TopicScoreBreakdown,
 } from '../../types.ts';
 import { analyzePostHistoryCadence } from '../theme/cadenceEngine.ts';
 import { runAutonomousPipeline } from '../autonomousPipeline.ts';
@@ -14,11 +17,17 @@ import {
   diversifyDeckArchetypesAndVisuals,
   synthesizeCarousel,
 } from '../synthesizer.ts';
-import { saveValidPost, syncLocalVaultAfterManage } from '../storage/postsVaultClient.ts';
 import {
-  managePublishedPost,
-  resolveNextFutureSlotForTime,
-} from '../publish/publishClient.ts';
+  explainArchetypeChoice,
+  inferDynamicCoverArchetype,
+  resolveSmartSlideVisuals,
+} from '../synthesis/smartVisualDefaults.ts';
+import {
+  evaluateGathererCandidateQuality,
+  type GathererQualityGateResult,
+} from '../qaChecks.ts';
+import { extractCleanSubject } from '../text/headlines.ts';
+import { saveValidPost, syncLocalVaultAfterManage } from '../storage/postsVaultClient.ts';
 import { withClientAuthHeaders } from '../security/clientSessionToken.ts';
 
 export type GatherSourceType =
@@ -35,6 +44,7 @@ export interface GatheredTopicItem {
   title: string;
   url: string;
   sourceName: string;
+  sourceDomain?: string;
   sourceType: GatherSourceType;
   author?: string;
   brand: string;
@@ -46,9 +56,14 @@ export interface GatheredTopicItem {
     | 'KUBERNETES & CLOUD'
     | 'DISTRIBUTED SYSTEMS';
   publishedAt: string;
+  publishedDateLabel?: string;
+  freshnessTag?: 'fresh' | 'evergreen' | 'Fresh' | 'Evergreen';
   score: number;
   viralityScore?: number;
+  scoreBreakdown?: TopicScoreBreakdown;
   viralAngle?: string;
+  clientRelevanceReason?: string;
+  marrokAngle?: string;
   summary: string;
   extractedMetrics: string[];
   recommendedFormat: 'carousel' | 'single' | 'reel';
@@ -63,6 +78,19 @@ export interface GatheredCandidatePost {
   themeId: string;
   postFormat: PostFormat;
   generatedAt: string;
+  sourceDomain: string;
+  publishedDateLabel: string;
+  freshnessTag: 'Fresh' | 'Evergreen';
+  scoreBreakdown: TopicScoreBreakdown;
+  compositeScore: number;
+  marrokAngle: string;
+  alreadyCovered?: boolean;
+  coveredPostId?: string;
+  coveredPostTitle?: string;
+  coveredPostStatus?: SavedPostStatus;
+  isDeckSynthesized: boolean;
+  qualityGate: GathererQualityGateResult;
+  summaryOnlyWarning?: string;
 }
 
 export interface TopicRadarResponse {
@@ -236,29 +264,272 @@ export function isTopicAlreadyInVault(
   return null;
 }
 
+export function deriveSourceDomain(url: string, fallbackSource?: string): string {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname.replace(/^www\./i, '');
+  } catch {
+    return (fallbackSource || 'source').toLowerCase().replace(/[^a-z0-9.-]+/g, '-');
+  }
+}
+
+export function deriveTopicScoringMetadata(topic: GatheredTopicItem): {
+  sourceDomain: string;
+  publishedDateLabel: string;
+  freshnessTag: 'Fresh' | 'Evergreen';
+  scoreBreakdown: TopicScoreBreakdown;
+  compositeScore: number;
+  marrokAngle: string;
+} {
+  const sourceDomain = topic.sourceDomain || deriveSourceDomain(topic.url, topic.sourceName);
+  const parsedMs = Date.parse(topic.publishedAt || '');
+  const ageDays = Number.isFinite(parsedMs)
+    ? Math.max(0, (Date.now() - parsedMs) / (1000 * 60 * 60 * 24))
+    : 7;
+  const publishedDateLabel = Number.isFinite(parsedMs)
+    ? new Date(parsedMs).toISOString().slice(0, 10)
+    : new Date().toISOString().slice(0, 10);
+  const rawFreshTag: 'fresh' | 'evergreen' =
+    topic.freshnessTag?.toLowerCase() === 'evergreen'
+      ? 'evergreen'
+      : topic.freshnessTag?.toLowerCase() === 'fresh'
+      ? 'fresh'
+      : ageDays <= 45
+      ? 'fresh'
+      : 'evergreen';
+  const freshnessTag: 'Fresh' | 'Evergreen' = rawFreshTag === 'fresh' ? 'Fresh' : 'Evergreen';
+
+  let breakdown: TopicScoreBreakdown;
+  if (topic.scoreBreakdown) {
+    breakdown = topic.scoreBreakdown;
+  } else {
+    const freshness = Math.max(
+      18,
+      Math.min(98, Math.round(ageDays <= 3 ? 96 : ageDays <= 14 ? 85 : ageDays <= 45 ? 70 : Math.max(22, 62 - (ageDays - 45) * 0.25)))
+    );
+    const engagement = Math.max(30, Math.min(98, Math.round(topic.viralityScore || topic.score || 68)));
+    const relevanceSignal =
+      /\b(cost|cloud|postgres|redis|api|cache|latency|startup|sme|scale|migrat|security|deploy|container|docker|queue|worker|rate\s*limit)\b/i.test(
+        `${topic.title} ${topic.summary}`
+      )
+        ? 86
+        : 72;
+    const riskPenalty = /\b(0day|zero-day|exploit|hack|bypass|malware|cve-)\b/i.test(
+      `${topic.title} ${topic.summary}`
+    )
+      ? 34
+      : 10;
+    const composite = Math.max(
+      20,
+      Math.min(
+        99,
+        Math.round(
+          freshness * 0.25 +
+            engagement * 0.3 +
+            relevanceSignal * 0.35 +
+            (100 - riskPenalty) * 0.1
+        )
+      )
+    );
+    breakdown = {
+      freshness,
+      engagement,
+      clientRelevance: relevanceSignal,
+      platformRisk: riskPenalty,
+      riskScore: riskPenalty,
+      freshnessTag: rawFreshTag,
+      ageHours: Math.round(ageDays * 24),
+      composite,
+    };
+  }
+
+  const defaultAngle =
+    (topic.marrokAngle || '').trim() ||
+    (topic.clientRelevanceReason || '').trim() ||
+    (topic.extractedMetrics && topic.extractedMetrics.length > 0
+      ? `What this means for startups & SMEs: cutting production cost and tail latency using ${topic.extractedMetrics[0]} benchmark patterns without over-engineering.`
+      : `What this means for your product: practical architecture trade-offs startups and SMEs can adopt immediately from ${sourceDomain}.`);
+
+  return {
+    sourceDomain,
+    publishedDateLabel,
+    freshnessTag,
+    scoreBreakdown: breakdown,
+    compositeScore: breakdown.composite,
+    marrokAngle: defaultAngle,
+  };
+}
+
 /**
- * Builds a single GatheredCandidatePost (with auto-generated Draft Carousel Title and bilingual Slide Outlines)
- * from a GatheredTopicItem without polluting the user's saved Vault posts.
+ * Re-runs the Inbox Quality Gate & Summary-Only originality audit whenever the user edits
+ * a candidate's Marrok angle or slide copy inside Inbox.
  */
-export function buildCandidateFromTopicSync(
+export function reEvaluateCandidateQuality(
+  candidate: GatheredCandidatePost
+): GatheredCandidatePost {
+  const cleanAngle = (candidate.marrokAngle || '').trim();
+  const nextDeck: CarouselData = {
+    ...candidate.deck,
+    sourceMeta: {
+      ...candidate.deck.sourceMeta,
+      marrokAngle: cleanAngle,
+    },
+  };
+  const qualityGate = evaluateGathererCandidateQuality({
+    title: candidate.topic.title,
+    draftTitle: candidate.draftTitle,
+    summary: candidate.topic.summary,
+    marrokAngle: cleanAngle,
+    deck: nextDeck,
+  });
+
+  return {
+    ...candidate,
+    marrokAngle: cleanAngle,
+    deck: nextDeck,
+    qualityGate,
+    summaryOnlyWarning: qualityGate.summaryOnlyReason,
+  };
+}
+
+/**
+ * Builds a fast, zero-lag lightweight Inbox preview card with ONLY Slide 1 Hook synthesized
+ * synchronously (`isDeckSynthesized: false`). Full 8-slide deck generation runs lazily on open or draft queue.
+ */
+export function buildLightweightLazyCandidate(
   topic: GatheredTopicItem,
   assignedThemeId: string,
-  formatOverride: 'auto' | PostFormat = 'auto'
+  formatOverride: 'auto' | PostFormat = 'auto',
+  vaultMatch: SavedPostRecord | null = null
 ): GatheredCandidatePost {
   const targetFormat: PostFormat =
     formatOverride !== 'auto' ? formatOverride : topic.recommendedFormat || 'carousel';
 
+  const meta = deriveTopicScoringMetadata(topic);
+  const { cleanSubject, arSubject } = extractCleanSubject(topic.title);
+  const hookHeadline = cleanSubject.split(/\s+/).length > 10
+    ? cleanSubject.split(/\s+/).slice(0, 10).join(' ')
+    : cleanSubject;
+  const arHeadline = `ماذا يعني ${arSubject} لمنتجك الهندسي؟`;
+
+  const draftSeedSlide: SlideData = {
+    type: 'metric',
+    storyRole: 'hook',
+    enTitle: hookHeadline || topic.title.slice(0, 48),
+    arTitle: arHeadline,
+    enBody: targetFormat === 'single' ? meta.marrokAngle.slice(0, 130) : '',
+    arBody: targetFormat === 'single' ? `أثر عملي على أداء وتكلفة أنظمة الشركات الناشئة.` : '',
+    metricValue: topic.extractedMetrics?.[0] || '',
+    metricLabel: topic.domainCategory.split(' ')[0] || 'SYSTEMS',
+    cornerTag: 'HOOK',
+  };
+
+  const chosenHookType = targetFormat === 'single' ? 'poster' : inferDynamicCoverArchetype(draftSeedSlide);
+  const smart = resolveSmartSlideVisuals({ ...draftSeedSlide, type: chosenHookType }, 0, true);
+  const slide1: SlideData = {
+    ...draftSeedSlide,
+    type: chosenHookType,
+    centerIcon: smart.centerIcon,
+    centerTag: smart.centerTag,
+    satLabels: smart.satLabels,
+    hubNodeReasons: smart.hubNodeReasons,
+    metricBeforeValue: smart.metricBeforeValue,
+    metricValue: smart.metricValue || draftSeedSlide.metricValue,
+    metricLabel: smart.metricLabel || draftSeedSlide.metricLabel,
+    metricDiff: smart.metricDiff,
+    chartDirection: smart.chartDirection,
+    compareLeftTitle: smart.compareLeftTitle,
+    compareLeftBody: smart.compareLeftBody,
+    compareRightTitle: smart.compareRightTitle,
+    compareRightBody: smart.compareRightBody,
+    diagramVariant: smart.diagramVariant,
+    diagramNodes: smart.diagramNodes,
+    diagramEdges: smart.diagramEdges,
+    diagramFooter: smart.diagramFooter,
+    hookClaimCard: smart.hookClaimCard,
+    layoutRationale: explainArchetypeChoice({ ...draftSeedSlide, type: chosenHookType }, 0, targetFormat === 'single' ? 1 : 8),
+  };
+
+  const lightweightDeck: CarouselData = {
+    id: `candidate_${topic.id}`,
+    theme: assignedThemeId,
+    category: topic.domainCategory || 'SYSTEMS ARCHITECTURE',
+    brand: 'MARROK',
+    brandUrl: 'marrok.org',
+    channel: topic.brand || topic.sourceName,
+    postFormat: targetFormat,
+    caption: `${topic.title}\n\n${meta.marrokAngle}`,
+    slides: [slide1],
+    sourceMeta: {
+      title: topic.title,
+      creator: topic.author || topic.sourceName,
+      channel: topic.sourceName,
+      published: topic.publishedAt,
+      url: topic.url,
+      viralityScore: meta.compositeScore,
+      viralAngle: topic.viralAngle,
+      marrokAngle: meta.marrokAngle,
+      extractedSourceMetrics: topic.extractedMetrics || [],
+      userReviewed: false,
+      verifiedNumbers: false,
+      groundingSources: [{ title: topic.title, url: topic.url }],
+    },
+  };
+
+  const baseCandidate: GatheredCandidatePost = {
+    id: topic.id,
+    topic,
+    deck: lightweightDeck,
+    draftTitle: slide1.enTitle || topic.title,
+    themeId: assignedThemeId,
+    postFormat: targetFormat,
+    generatedAt: new Date().toISOString(),
+    sourceDomain: meta.sourceDomain,
+    publishedDateLabel: meta.publishedDateLabel,
+    freshnessTag: meta.freshnessTag,
+    scoreBreakdown: meta.scoreBreakdown,
+    compositeScore: meta.compositeScore,
+    marrokAngle: meta.marrokAngle,
+    alreadyCovered: Boolean(vaultMatch),
+    coveredPostId: vaultMatch?.id,
+    coveredPostTitle: vaultMatch?.title,
+    coveredPostStatus: vaultMatch?.postStatus,
+    isDeckSynthesized: false,
+    qualityGate: { passed: true, blockingReasons: [], warnings: [], isSummaryOnly: false },
+  };
+
+  return reEvaluateCandidateQuality(baseCandidate);
+}
+
+/**
+ * Synchronously synthesizes a full GatheredCandidatePost (8-slide carousel or 1-slide poster)
+ * with non-Hub Slide 1 Hook, layout diversity, per-slide `layoutRationale`, and quality gate evaluation.
+ */
+export function buildCandidateFromTopicSync(
+  topic: GatheredTopicItem,
+  assignedThemeId: string,
+  formatOverride: 'auto' | PostFormat = 'auto',
+  vaultMatch: SavedPostRecord | null = null
+): GatheredCandidatePost {
+  const targetFormat: PostFormat =
+    formatOverride !== 'auto' ? formatOverride : topic.recommendedFormat || 'carousel';
+
+  const meta = deriveTopicScoringMetadata(topic);
   const cacheKey = `${topic.id}|${targetFormat}`;
   const existing = candidateDeckCache.get(cacheKey);
-  if (existing) {
-    return {
+  if (existing && existing.isDeckSynthesized) {
+    return reEvaluateCandidateQuality({
       ...existing,
       themeId: assignedThemeId,
+      alreadyCovered: Boolean(vaultMatch),
+      coveredPostId: vaultMatch?.id,
+      coveredPostTitle: vaultMatch?.title,
+      coveredPostStatus: vaultMatch?.postStatus,
       deck: {
         ...existing.deck,
         theme: assignedThemeId,
       },
-    };
+    });
   }
 
   let deck = synthesizeCarousel({
@@ -277,6 +548,13 @@ export function buildCandidateFromTopicSync(
   }
   deck = autoFinalizeCarouselDeck(deck);
 
+  // Guarantee per-slide layoutRationale on every finalized slide
+  const finalSlides = deck.slides.map((s, idx) => ({
+    ...s,
+    layoutRationale: s.layoutRationale || explainArchetypeChoice(s, idx, deck.slides.length),
+  }));
+  deck = { ...deck, slides: finalSlides };
+
   const draftTitle = deck.slides[0]?.enTitle || topic.title;
   const enrichedDeck: CarouselData = {
     ...deck,
@@ -294,9 +572,11 @@ export function buildCandidateFromTopicSync(
       channel: topic.sourceName,
       published: topic.publishedAt,
       url: topic.url,
-      viralityScore: topic.viralityScore,
+      viralityScore: meta.compositeScore,
       viralAngle: topic.viralAngle,
+      marrokAngle: meta.marrokAngle,
       userReviewed: false,
+      verifiedNumbers: false,
       groundingSources: [
         { title: topic.title, url: topic.url },
         ...(deck.sourceMeta?.groundingSources || []),
@@ -304,7 +584,7 @@ export function buildCandidateFromTopicSync(
     },
   };
 
-  const candidate: GatheredCandidatePost = {
+  const candidate = reEvaluateCandidateQuality({
     id: topic.id,
     topic,
     deck: enrichedDeck,
@@ -312,40 +592,65 @@ export function buildCandidateFromTopicSync(
     themeId: assignedThemeId,
     postFormat: targetFormat,
     generatedAt: new Date().toISOString(),
-  };
+    sourceDomain: meta.sourceDomain,
+    publishedDateLabel: meta.publishedDateLabel,
+    freshnessTag: meta.freshnessTag,
+    scoreBreakdown: meta.scoreBreakdown,
+    compositeScore: meta.compositeScore,
+    marrokAngle: meta.marrokAngle,
+    alreadyCovered: Boolean(vaultMatch),
+    coveredPostId: vaultMatch?.id,
+    coveredPostTitle: vaultMatch?.title,
+    coveredPostStatus: vaultMatch?.postStatus,
+    isDeckSynthesized: true,
+    qualityGate: { passed: true, blockingReasons: [], warnings: [], isSummaryOnly: false },
+  });
 
   candidateDeckCache.set(cacheKey, candidate);
   return candidate;
 }
 
 /**
- * Background Content Gatherer:
- * Takes discovered social/RSS trend topics, excludes any topics already in the user's Vault or dismissed,
- * and automatically generates draft carousel titles and slide outlines in the background with non-repeating
- * theme colors. Never includes the user's own existing saved posts.
+ * Lazy Background Content Gatherer:
+ * Discovers trend topics, excludes ONLY dismissed IDs, flags topics matching existing Vault posts
+ * with `alreadyCovered: true` (never hiding them silently), ranks fresh high-composite topics first,
+ * and creates fast lazy Slide 1 Hook Inbox previews without triggering eager full-deck synthesis for all 21 items.
  */
 export async function generateGatheredCandidatesInBackground(
   topics: GatheredTopicItem[],
   savedPosts: SavedPostRecord[],
   options?: {
     formatOverride?: 'auto' | PostFormat;
+    lazy?: boolean;
     onProgress?: (current: number, total: number, currentTitle: string) => void;
   }
 ): Promise<GatheredCandidatePost[]> {
   const dismissedIds = getDismissedGatherTopicIds();
-  const freshTopics = topics.filter(
-    (t) => !dismissedIds.has(t.id) && !isTopicAlreadyInVault(t, savedPosts)
-  );
+  const useLazy = options?.lazy !== false;
+
+  const visibleTopics = topics
+    .filter((t) => !dismissedIds.has(t.id))
+    .map((t) => ({
+      topic: t,
+      vaultMatch: isTopicAlreadyInVault(t, savedPosts),
+      meta: deriveTopicScoringMetadata(t),
+    }))
+    .sort((a, b) => {
+      // Push already-covered items below uncovered ones, then sort by composite score
+      if (Boolean(a.vaultMatch) !== Boolean(b.vaultMatch)) {
+        return a.vaultMatch ? 1 : -1;
+      }
+      return b.meta.compositeScore - a.meta.compositeScore;
+    });
 
   const candidates: GatheredCandidatePost[] = [];
   const rollingHistory: SavedPostRecord[] = [...savedPosts];
 
-  for (let i = 0; i < freshTopics.length; i++) {
-    const topic = freshTopics[i];
-    options?.onProgress?.(i + 1, freshTopics.length, topic.title);
+  for (let i = 0; i < visibleTopics.length; i++) {
+    const { topic, vaultMatch } = visibleTopics[i];
+    options?.onProgress?.(i + 1, visibleTopics.length, topic.title);
 
-    // Yield to browser event loop every 2 items so UI remains 60fps smooth while background generating outlines
-    if (i > 0 && i % 2 === 0) {
+    if (i > 0 && i % 4 === 0) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
@@ -355,14 +660,21 @@ export async function generateGatheredCandidatesInBackground(
     });
     const assignedThemeId = cadence.recommendedThemeId || 'teal';
 
-    const candidate = buildCandidateFromTopicSync(
-      topic,
-      assignedThemeId,
-      options?.formatOverride || 'auto'
-    );
+    const candidate = useLazy
+      ? buildLightweightLazyCandidate(
+          topic,
+          assignedThemeId,
+          options?.formatOverride || 'auto',
+          vaultMatch
+        )
+      : buildCandidateFromTopicSync(
+          topic,
+          assignedThemeId,
+          options?.formatOverride || 'auto',
+          vaultMatch
+        );
     candidates.push(candidate);
 
-    // Advance virtual history so every candidate in the gathered list gets a distinct, harmonious theme color
     rollingHistory.unshift({
       id: candidate.id,
       title: candidate.draftTitle,
@@ -381,17 +693,59 @@ export async function generateGatheredCandidatesInBackground(
   return candidates;
 }
 
+/**
+ * Lazy On-Demand Deck Hydration:
+ * Generates the full 8-slide storyboard ONLY when a user opens/inspects a candidate
+ * or clicks Move to Draft. Preserves edits to `marrokAngle` and enforces Slide 1 Hook + layout diversity.
+ */
+export async function hydrateCandidateDeckOnDemand(
+  candidate: GatheredCandidatePost,
+  options?: {
+    useAi?: boolean;
+    onStatus?: (msg: string) => void;
+  }
+): Promise<GatheredCandidatePost> {
+  if (candidate.isDeckSynthesized && !options?.useAi) {
+    return reEvaluateCandidateQuality(candidate);
+  }
+
+  if (options?.useAi) {
+    return synthesizeCandidateWithFullAi(candidate, { onStatus: options.onStatus });
+  }
+
+  options?.onStatus?.(`Building full ${candidate.postFormat === 'single' ? '1-slide' : '8-slide'} storyboard...`);
+  const hydrated = buildCandidateFromTopicSync(
+    {
+      ...candidate.topic,
+      marrokAngle: candidate.marrokAngle,
+    },
+    candidate.themeId,
+    candidate.postFormat,
+    candidate.alreadyCovered && candidate.coveredPostId
+      ? ({
+          id: candidate.coveredPostId,
+          title: candidate.coveredPostTitle || candidate.topic.title,
+          postStatus: candidate.coveredPostStatus || 'validated',
+        } as SavedPostRecord)
+      : null
+  );
+
+  return reEvaluateCandidateQuality({
+    ...hydrated,
+    marrokAngle: candidate.marrokAngle || hydrated.marrokAngle,
+  });
+}
+
 export interface AcceptCandidatesResult {
   scheduledPosts: SavedPostRecord[];
+  draftPosts: SavedPostRecord[];
   failedCandidates: Array<{ title: string; error: string }>;
 }
 
 /**
  * Full AI Synthesis with Deep Article Scraping:
- * Upgrades a gathered candidate post by scraping the full article text from its source URL
- * (when only a short RSS/social snippet is present) and running the full AI synthesis pipeline
- * (`runAutonomousPipeline`) so Slides 2-7 contain deep, article-grounded engineering mechanisms
- * and diverse visual archetypes rather than static offline templates.
+ * Upgrades a gathered candidate post on demand by scraping full article text from its source URL
+ * and running `runAutonomousPipeline`, while keeping `userReviewed: false` & `verifiedNumbers: false`.
  */
 export async function synthesizeCandidateWithFullAi(
   candidate: GatheredCandidatePost,
@@ -402,7 +756,6 @@ export async function synthesizeCandidateWithFullAi(
   let enrichedTopic: GatheredTopicItem = candidate.topic;
   const targetFormat: PostFormat = candidate.postFormat || 'carousel';
 
-  // 1. Scrape full article text if URL is public HTTP(S) and current summary is short
   if (
     enrichedTopic.url &&
     /^https?:\/\//i.test(enrichedTopic.url) &&
@@ -412,7 +765,11 @@ export async function synthesizeCandidateWithFullAi(
     try {
       options?.onStatus?.(`Scraping full article from ${enrichedTopic.brand || enrichedTopic.sourceName}...`);
       const extracted = await extractArticleFromUrl(enrichedTopic.url);
-      if (extracted?.ok && extracted.topic?.summary && extracted.topic.summary.length > (enrichedTopic.summary || '').length) {
+      if (
+        extracted?.ok &&
+        extracted.topic?.summary &&
+        extracted.topic.summary.length > (enrichedTopic.summary || '').length
+      ) {
         enrichedTopic = {
           ...enrichedTopic,
           summary: extracted.topic.summary,
@@ -428,20 +785,23 @@ export async function synthesizeCandidateWithFullAi(
     }
   }
 
-  // 2. Run full AI synthesis pipeline on the scraped article prompt
   let aiDeck: CarouselData = candidate.deck;
   try {
-    options?.onStatus?.(`Synthesizing ${targetFormat === 'single' ? '1-slide infographic' : '8-slide deck'} with AI...`);
-    aiDeck = await runAutonomousPipeline(enrichedTopic.synthesisPrompt, {
-      categoryHint: enrichedTopic.domainCategory,
-      postFormat: targetFormat === 'single' ? 'single' : 'carousel',
-      onProgress: options?.onStatus,
-    });
+    options?.onStatus?.(
+      `Synthesizing ${targetFormat === 'single' ? '1-slide infographic' : '8-slide deck'} with AI...`
+    );
+    aiDeck = await runAutonomousPipeline(
+      `${enrichedTopic.synthesisPrompt}\n\nRequired Marrok Angle (what this means for startups/product): ${candidate.marrokAngle}`,
+      {
+        categoryHint: enrichedTopic.domainCategory,
+        postFormat: targetFormat === 'single' ? 'single' : 'carousel',
+        onProgress: options?.onStatus,
+      }
+    );
     if (targetFormat === 'single' && aiDeck.slides.length > 1) {
       aiDeck = condenseCarouselToSingleSlide(aiDeck);
     }
   } catch {
-    // Fallback to upgraded local synthesis with the newly scraped article summary
     aiDeck = synthesizeCarousel({
       prompt: enrichedTopic.synthesisPrompt,
       categoryHint: enrichedTopic.domainCategory,
@@ -451,7 +811,21 @@ export async function synthesizeCandidateWithFullAi(
       aiDeck = condenseCarouselToSingleSlide(aiDeck);
     }
   }
+
+  if (aiDeck.slides.length > 2) {
+    aiDeck = {
+      ...aiDeck,
+      slides: diversifyDeckArchetypesAndVisuals(aiDeck.slides, { dynamicCover: true }),
+    };
+  }
   aiDeck = autoFinalizeCarouselDeck(aiDeck);
+  aiDeck = {
+    ...aiDeck,
+    slides: aiDeck.slides.map((s, idx) => ({
+      ...s,
+      layoutRationale: s.layoutRationale || explainArchetypeChoice(s, idx, aiDeck.slides.length),
+    })),
+  };
 
   const draftTitle = aiDeck.slides[0]?.enTitle || candidate.draftTitle || enrichedTopic.title;
   const upgradedDeck: CarouselData = {
@@ -470,7 +844,11 @@ export async function synthesizeCandidateWithFullAi(
       channel: enrichedTopic.sourceName,
       published: enrichedTopic.publishedAt,
       url: enrichedTopic.url,
+      viralityScore: candidate.compositeScore,
+      viralAngle: enrichedTopic.viralAngle,
+      marrokAngle: candidate.marrokAngle,
       userReviewed: false,
+      verifiedNumbers: false,
       groundingSources: [
         { title: enrichedTopic.title, url: enrichedTopic.url },
         ...(aiDeck.sourceMeta?.groundingSources || []),
@@ -478,13 +856,14 @@ export async function synthesizeCandidateWithFullAi(
     },
   };
 
-  const upgradedCandidate: GatheredCandidatePost = {
+  const upgradedCandidate = reEvaluateCandidateQuality({
     ...candidate,
     topic: enrichedTopic,
     deck: upgradedDeck,
     draftTitle,
+    isDeckSynthesized: true,
     generatedAt: new Date().toISOString(),
-  };
+  });
 
   const cacheKey = `${enrichedTopic.id}|${targetFormat}`;
   candidateDeckCache.set(cacheKey, upgradedCandidate);
@@ -492,43 +871,51 @@ export async function synthesizeCandidateWithFullAi(
 }
 
 /**
- * Accepts one or more GatheredCandidatePosts, automatically upgrades any offline outline
- * via full article scraping + AI synthesis, saves them to the Vault as reviewed (`userReviewed: true`),
- * and schedules them into their strictly validated future schedule slots (`10:00` · `12:00` · `18:00`).
+ * Moves validated Inbox candidates into the Draft queue (`postStatus: 'validated'`, unscheduled).
+ * NEVER bypasses human review (`userReviewed: false`, `verifiedNumbers: false`)
+ * and NEVER auto-schedules posts in bulk or individually before human inspection.
  */
-export async function acceptGatheredCandidatesIntoSchedule(
-  items: Array<{
-    candidate: GatheredCandidatePost;
-    datePart: string;
-    timeShort: string;
-    targets: PublishTargetPlatform[];
-  }>,
+export async function acceptGatheredCandidatesToDrafts(
+  candidatesList: GatheredCandidatePost[],
   options?: {
-    requeueBuffer?: boolean;
-    scheduleImmediately?: boolean;
-    skipAiUpgrade?: boolean;
+    useAiUpgrade?: boolean;
     onProgress?: (current: number, total: number, title: string) => void;
   }
 ): Promise<AcceptCandidatesResult> {
-  const scheduledPosts: SavedPostRecord[] = [];
+  const draftPosts: SavedPostRecord[] = [];
   const failedCandidates: Array<{ title: string; error: string }> = [];
-  const shouldSchedule = options?.scheduleImmediately !== false;
 
-  for (let i = 0; i < items.length; i++) {
-    const { candidate: rawCandidate, datePart, timeShort, targets } = items[i];
-    options?.onProgress?.(i + 1, items.length, rawCandidate.draftTitle);
+  for (let i = 0; i < candidatesList.length; i++) {
+    const rawCandidate = candidatesList[i];
+    options?.onProgress?.(i + 1, candidatesList.length, rawCandidate.draftTitle);
 
     try {
-      // Automatically upgrade candidate with full article scraping & AI synthesis if still an offline outline
-      const needsAiUpgrade =
-        !options?.skipAiUpgrade &&
-        (rawCandidate.deck.sourceMeta?.isFallback !== false ||
-          rawCandidate.deck.sourceMeta?.engine === 'offline-synthesizer' ||
-          !rawCandidate.deck.sourceMeta?.engine);
+      if (rawCandidate.alreadyCovered) {
+        throw new Error(
+          `Already covered in Vault ("${rawCandidate.coveredPostTitle || rawCandidate.topic.title}")`
+        );
+      }
 
-      const candidate = needsAiUpgrade
-        ? await synthesizeCandidateWithFullAi(rawCandidate)
-        : rawCandidate;
+      if (!rawCandidate.marrokAngle || rawCandidate.marrokAngle.trim().length < 15) {
+        throw new Error('Add a Marrok angle (what this means for your product) before moving to Draft.');
+      }
+
+      // Lazy full-deck generation only at inspection / acceptance time
+      const candidate = await hydrateCandidateDeckOnDemand(rawCandidate, {
+        useAi: options?.useAiUpgrade,
+      });
+
+      const gate = evaluateGathererCandidateQuality({
+        title: candidate.topic.title,
+        draftTitle: candidate.draftTitle,
+        summary: candidate.topic.summary,
+        marrokAngle: candidate.marrokAngle,
+        deck: candidate.deck,
+      });
+
+      if (!gate.passed) {
+        throw new Error(`Quality Gate blocked: ${gate.blockingReasons[0]}`);
+      }
 
       const cleanDeck: CarouselData = {
         ...candidate.deck,
@@ -537,7 +924,10 @@ export async function acceptGatheredCandidatesIntoSchedule(
         postFormat: candidate.postFormat,
         sourceMeta: {
           ...candidate.deck.sourceMeta,
-          userReviewed: true,
+          marrokAngle: candidate.marrokAngle.trim(),
+          userReviewed: false,
+          humanApproved: false,
+          verifiedNumbers: false,
         },
       };
 
@@ -546,35 +936,57 @@ export async function acceptGatheredCandidatesIntoSchedule(
         postStatus: 'validated',
         title: candidate.draftTitle || cleanDeck.slides[0]?.enTitle || candidate.topic.title,
         allowOverride: true,
-        userReviewed: true,
+        userReviewed: false,
+        verifiedNumbers: false,
       });
 
-      if (shouldSchedule) {
-        // Strict Future-Only Guard: guarantee the slot is in the future even if time passed while reviewing
-        const safeSlot = resolveNextFutureSlotForTime(datePart, timeShort);
-        const managed = await managePublishedPost({
-          postId: saved.id,
-          action: 'reschedule',
-          scheduledFor: safeSlot.isoDate,
-          publishTargets: targets.length > 0 ? targets : ['instagram', 'facebook', 'linkedin', 'tiktok'],
-          requeueBuffer: options?.requeueBuffer ?? true,
-        });
-        scheduledPosts.push(managed.post || saved);
-      } else {
-        scheduledPosts.push(saved);
-      }
+      draftPosts.push({
+        ...saved,
+        humanApproved: false,
+        verifiedNumbers: false,
+        scheduledFor: undefined,
+      });
 
-      // Mark topic as processed so it no longer appears in the unaccepted Content Gatherer inbox
       dismissGatherTopicId(candidate.topic.id);
     } catch (err) {
       failedCandidates.push({
         title: rawCandidate.draftTitle,
-        error: err instanceof Error ? err.message : 'Failed to accept and schedule post',
+        error: err instanceof Error ? err.message : 'Failed to move candidate to Draft',
       });
     }
   }
 
-  return { scheduledPosts, failedCandidates };
+  return {
+    scheduledPosts: draftPosts,
+    draftPosts,
+    failedCandidates,
+  };
+}
+
+/**
+ * Legacy wrapper updated for Review Safety:
+ * Queues accepted items strictly as unreviewed Drafts (`userReviewed: false`, `verifiedNumbers: false`)
+ * without auto-scheduling.
+ */
+export async function acceptGatheredCandidatesIntoSchedule(
+  items: Array<{
+    candidate: GatheredCandidatePost;
+    datePart?: string;
+    timeShort?: string;
+    targets?: PublishTargetPlatform[];
+  }>,
+  options?: {
+    skipAiUpgrade?: boolean;
+    onProgress?: (current: number, total: number, title: string) => void;
+  }
+): Promise<AcceptCandidatesResult> {
+  return acceptGatheredCandidatesToDrafts(
+    items.map((item) => item.candidate),
+    {
+      useAiUpgrade: options?.skipAiUpgrade === false,
+      onProgress: options?.onProgress,
+    }
+  );
 }
 
 export interface BatchGatherResult {
@@ -583,9 +995,8 @@ export interface BatchGatherResult {
 }
 
 /**
- * Legacy helper preserved for backward compatibility & tests:
- * Batch-synthesizes selected gathered topics into the Vault as Pending Human Review drafts (`userReviewed: false`),
- * rotating non-repeating theme palettes via the Feed Color Cadence Engine.
+ * Batch-synthesizes selected gathered topics into the Vault as Pending Human Review drafts
+ * (`userReviewed: false`, `verifiedNumbers: false`, unscheduled) with rotating theme colors.
  */
 export async function synthesizeGatheredTopicsForReview(
   topics: GatheredTopicItem[],
@@ -605,6 +1016,7 @@ export async function synthesizeGatheredTopicsForReview(
     options?.onProgress?.(i + 1, topics.length, topic.title);
 
     try {
+      const meta = deriveTopicScoringMetadata(topic);
       const cadence = analyzePostHistoryCadence(workingHistory, undefined, {
         prompt: topic.synthesisPrompt,
         category: topic.domainCategory,
@@ -657,7 +1069,9 @@ export async function synthesizeGatheredTopicsForReview(
           channel: topic.sourceName,
           published: topic.publishedAt,
           url: topic.url,
+          marrokAngle: meta.marrokAngle,
           userReviewed: false,
+          verifiedNumbers: false,
           groundingSources: [
             { title: topic.title, url: topic.url },
             ...(deck.sourceMeta?.groundingSources || []),
@@ -671,6 +1085,7 @@ export async function synthesizeGatheredTopicsForReview(
         title: topic.title,
         allowOverride: true,
         userReviewed: false,
+        verifiedNumbers: false,
       });
 
       createdPosts.push(saved);
@@ -749,7 +1164,9 @@ export async function diversifySavedPostVisuals(
     return post;
   }
 
-  const diversifiedSlides = diversifyDeckArchetypesAndVisuals(post.deck.slides);
+  const diversifiedSlides = diversifyDeckArchetypesAndVisuals(post.deck.slides, {
+    dynamicCover: true,
+  });
   const updatedDeck: CarouselData = {
     ...post.deck,
     slides: diversifiedSlides,
@@ -768,7 +1185,8 @@ export async function diversifySavedPostVisuals(
       postStatus: post.postStatus,
       title: post.title,
       allowOverride: true,
-      userReviewed: true,
+      userReviewed: post.deck?.sourceMeta?.userReviewed,
+      verifiedNumbers: post.verifiedNumbers ?? post.deck?.sourceMeta?.verifiedNumbers,
     });
   } catch {
     return updatedRecord;
@@ -795,7 +1213,8 @@ export async function resynthesizeSavedPostWithDeepAi(
 
   let synthesisPrompt = '';
   let scrapedTitle = post.title.replace(/\s*\(Cloudflare\.?$/i, '').trim();
-  let scrapedAuthor = post.creatorHandle || post.deck?.sourceMeta?.creator || post.deck?.brand || 'MARROK';
+  let scrapedAuthor =
+    post.creatorHandle || post.deck?.sourceMeta?.creator || post.deck?.brand || 'MARROK';
   let scrapedBrand = post.deck?.brand || 'MARROK';
   let scrapedBrandUrl = post.deck?.brandUrl || 'marrok.org';
 
@@ -825,9 +1244,7 @@ export async function resynthesizeSavedPostWithDeepAi(
       .map((f) => f.text)
       .filter((t) => t && !t.startsWith('Primary architectural domain:') && !t.startsWith('Brand attribution:'))
       .join('\n• ');
-    const captionContext = (post.deck?.caption || '')
-      .replace(/⚡[^\n]*\n?/g, '')
-      .slice(0, 2400);
+    const captionContext = (post.deck?.caption || '').replace(/⚡[^\n]*\n?/g, '').slice(0, 2400);
 
     synthesisPrompt = [
       `Technical Topic: ${scrapedTitle}`,
@@ -865,7 +1282,7 @@ export async function resynthesizeSavedPostWithDeepAi(
   if (upgradedDeck.slides.length > 2) {
     upgradedDeck = {
       ...upgradedDeck,
-      slides: diversifyDeckArchetypesAndVisuals(upgradedDeck.slides),
+      slides: diversifyDeckArchetypesAndVisuals(upgradedDeck.slides, { dynamicCover: true }),
     };
   }
 
@@ -885,7 +1302,9 @@ export async function resynthesizeSavedPostWithDeepAi(
       channel: post.deck?.sourceMeta?.channel || scrapedAuthor,
       url: rawSourceUrl || upgradedDeck.sourceMeta?.url,
       published: post.deck?.sourceMeta?.published || new Date().toISOString(),
-      userReviewed: true,
+      marrokAngle: post.deck?.sourceMeta?.marrokAngle,
+      userReviewed: false,
+      verifiedNumbers: false,
     },
   };
 
@@ -895,6 +1314,8 @@ export async function resynthesizeSavedPostWithDeepAi(
     title: finalTitle,
     slideCount: finalDeck.slides.length,
     qaPassed: true,
+    humanApproved: false,
+    verifiedNumbers: false,
     updatedAt: new Date().toISOString(),
     deck: finalDeck,
   };
@@ -906,7 +1327,8 @@ export async function resynthesizeSavedPostWithDeepAi(
       postStatus: post.postStatus,
       title: finalTitle,
       allowOverride: true,
-      userReviewed: true,
+      userReviewed: false,
+      verifiedNumbers: false,
     });
     return {
       ...saved,
@@ -921,9 +1343,7 @@ export async function resynthesizeSavedPostWithDeepAi(
 
 /**
  * 1-Click Single-Slide AI Regeneration:
- * Scrapes the candidate's full article if needed, synthesizes fresh bilingual copy and
- * content-specific graphic elements for the target slide (`slideIndex`), and returns
- * the updated candidate while preserving all other slides and user edits in the deck.
+ * Never forces Slide 1 to 'hub'; respects Hook archetypes + layout diversity + layoutRationale.
  */
 export async function regenerateSingleCandidateSlideWithAi(
   candidate: GatheredCandidatePost,
@@ -994,7 +1414,9 @@ export async function regenerateSingleCandidateSlideWithAi(
     });
   }
 
-  const diversifiedFreshSlides = diversifyDeckArchetypesAndVisuals(freshDeck.slides || []);
+  const diversifiedFreshSlides = diversifyDeckArchetypesAndVisuals(freshDeck.slides || [], {
+    dynamicCover: true,
+  });
   const candidatePool = diversifiedFreshSlides.filter(
     (s, idx) =>
       idx === slideIndex ||
@@ -1008,7 +1430,7 @@ export async function regenerateSingleCandidateSlideWithAi(
   const targetType =
     options?.preferredType ||
     (slideIndex === 0
-      ? 'hub'
+      ? inferDynamicCoverArchetype(pickedFresh)
       : slideIndex === slides.length - 1 && currentSlide.type === 'cta'
       ? 'cta'
       : pickedFresh.type || currentSlide.type);
@@ -1019,10 +1441,10 @@ export async function regenerateSingleCandidateSlideWithAi(
   };
 
   const reDiversified = diversifyDeckArchetypesAndVisuals(
-    slides.map((s, idx) => (idx === slideIndex ? mergedSlide : s))
+    slides.map((s, idx) => (idx === slideIndex ? mergedSlide : s)),
+    { dynamicCover: true }
   );
 
-  // Preserve exact user-selected archetype on the regenerated slide while keeping fresh smart visuals & auto-fitted copy
   const mergedRegenerated: CarouselData['slides'][number] = {
     ...reDiversified[slideIndex],
     type: targetType,
@@ -1030,7 +1452,13 @@ export async function regenerateSingleCandidateSlideWithAi(
     arTitle: pickedFresh.arTitle || reDiversified[slideIndex]?.arTitle || currentSlide.arTitle,
     enBody: pickedFresh.enBody || reDiversified[slideIndex]?.enBody || currentSlide.enBody,
     arBody: pickedFresh.arBody || reDiversified[slideIndex]?.arBody || currentSlide.arBody,
+    layoutRationale: explainArchetypeChoice(
+      { ...reDiversified[slideIndex], type: targetType },
+      slideIndex,
+      slides.length
+    ),
   };
+
   slides[slideIndex] = autoSyncSlideGraphicsFromCopy(
     autoFitSlideCopyToLimits(
       mergedRegenerated,
@@ -1043,10 +1471,11 @@ export async function regenerateSingleCandidateSlideWithAi(
   const nextDraftTitle =
     slideIndex === 0 && slides[0]?.enTitle ? slides[0].enTitle : candidate.draftTitle;
 
-  const updatedCandidate: GatheredCandidatePost = {
+  const updatedCandidate = reEvaluateCandidateQuality({
     ...candidate,
     topic: enrichedTopic,
     draftTitle: nextDraftTitle,
+    isDeckSynthesized: true,
     deck: {
       ...candidate.deck,
       slides,
@@ -1056,7 +1485,7 @@ export async function regenerateSingleCandidateSlideWithAi(
       },
     },
     generatedAt: new Date().toISOString(),
-  };
+  });
 
   const cacheKey = `${enrichedTopic.id}|${candidate.postFormat}`;
   candidateDeckCache.set(cacheKey, updatedCandidate);

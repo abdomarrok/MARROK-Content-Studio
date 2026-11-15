@@ -510,6 +510,8 @@ export function getIconSvg(iconName: string, strokeColor = '#13131E', strokeWidt
   `.trim();
 }
 
+import { getBundledOfficialLogoDataUrl } from './bundledTechSvgs.ts';
+
 export function getIconDataUrl(iconName: string, strokeColor = '#13131E', strokeWidth = 4.2): string {
   const lower = iconName.toLowerCase().trim();
   if (lower === 'marrok' || lower === 'marroklogo') {
@@ -519,6 +521,11 @@ export function getIconDataUrl(iconName: string, strokeColor = '#13131E', stroke
   // Check if iconName is already a data URL or blob URL
   if (iconName.startsWith('data:') || iconName.startsWith('blob:')) {
     return iconName;
+  }
+  // Check bundled offline official tech icons first (zero network/proxy latency)
+  const bundledDataUrl = getBundledOfficialLogoDataUrl(lower);
+  if (bundledDataUrl) {
+    return bundledDataUrl;
   }
   // Check if iconName is a direct web URL
   if (iconName.startsWith('http://') || iconName.startsWith('https://')) {

@@ -3,7 +3,29 @@ export type ThemeMode = 'security' | 'engineering' | 'cyber' | 'violet' | 'bluep
 // Dynamic category type accepting any detected or custom domain
 export type CategoryType = string;
 
-export type SlideType = 'hub' | 'row' | 'number' | 'metric' | 'code' | 'compare' | 'image' | 'cta' | 'poster';
+export type SlideType = 'hub' | 'row' | 'number' | 'metric' | 'code' | 'compare' | 'image' | 'cta' | 'poster' | 'subjectPair';
+
+export interface SubjectPairConfig {
+  beforeSystem: string;
+  afterSystem: string;
+  beforeLogoKey?: string;
+  afterLogoKey?: string;
+  beforeLabel?: string;      // Defaults to 'BEFORE'
+  afterLabel?: string;       // Defaults to 'AFTER'
+  beforeAsText?: boolean;
+  afterAsText?: boolean;
+  storyOwner?: string;       // e.g. 'Discord'
+  storyOwnerMode?: 'text';   // strictly text wordmark
+  colorMode?: 'official' | 'mono';
+  logoWidthPct?: number;     // Clamped strictly <= 14% of slide width (e.g. 11 or 12)
+  creativeMotif?: 'chat-to-db' | 'stream-flow';
+  flowLabel?: string;        // e.g. 'CHAT WORKLOAD → COMPACTED SHARDS'
+  isEdited?: boolean;
+  isOverlapping?: boolean;
+  isMerged?: boolean;
+  isNonLibrarySource?: boolean;
+  usesMascot?: boolean;
+}
 
 export interface SlideTakeawayItem {
   en: string;
@@ -129,6 +151,7 @@ export interface SlideData {
     isEdited?: boolean;
     isNonLibrarySource?: boolean;
   };
+  subjectPair?: SubjectPairConfig;
 }
 
 export interface HubNodeReason {
@@ -217,6 +240,17 @@ export interface NumericEvidenceDiscrepancy {
   message: string;
 }
 
+export interface TopicScoreBreakdown {
+  composite: number;
+  freshness: number;
+  engagement: number;
+  clientRelevance: number;
+  platformRisk: number;
+  riskScore: number;
+  ageHours?: number;
+  freshnessTag: 'fresh' | 'evergreen';
+}
+
 export interface PostSourceMeta {
   type?: 'article' | 'screenshot' | 'youtube' | 'notes';
   inputMode?: string;
@@ -234,6 +268,7 @@ export interface PostSourceMeta {
   status?: 'verified_live' | 'unverified_draft';
   userReviewed?: boolean;
   verifiedNumbers?: boolean;
+  marrokAngle?: string;
   extractedSourceMetrics?: string[];
   numericDiscrepancies?: NumericEvidenceDiscrepancy[];
   qualityPassed?: boolean;
@@ -440,6 +475,7 @@ export interface SavedPostRecord {
   qualityPassed?: boolean;
   groundingVerified?: boolean;
   humanApproved?: boolean;
+  verifiedNumbers?: boolean;
   publishFailed?: boolean;
   offlineDraft?: boolean;
   storageEngine?: SavedPostStorageEngine;

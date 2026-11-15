@@ -476,7 +476,7 @@ export async function handleGetPublishStatus(_req: Request, res: Response) {
     const config = getServerConfig();
     // READ-PURE: never mutate Postgres rows or Cloudinary assets inside GET handlers.
     // Overdue promotion & media cleanup run on the Netlify Scheduled Function / POST cleanup-media.
-    const { posts } = await loadStoredPosts();
+    const { posts, storageEngine } = await loadStoredPosts();
     const quotaStats = computeFreePlanQuotaStats(posts);
 
     let liveChannels = quotaStats.channels;
@@ -520,6 +520,8 @@ export async function handleGetPublishStatus(_req: Request, res: Response) {
     });
 
     return res.json({
+      storageEngine,
+      databaseConfigured: Boolean(config.databaseUrl),
       cloudinaryConfigured: isCloudinaryConfigured(config),
       cloudinaryCloudName: config.cloudinaryCloudName || null,
       bufferApiConfigured: Boolean(config.bufferApiKey),
@@ -1353,6 +1355,26 @@ export async function handleDispatchPublish(req: Request, res: Response) {
     const { posts: existingPosts } = await loadStoredPosts();
     const existingRecord = postId ? existingPosts.find((p) => p.id === postId) : undefined;
 
+    // Review Safety Gate: never publish or schedule unreviewed / unverified drafts
+    const isUnreviewed =
+      existingRecord?.humanApproved === false ||
+      existingRecord?.deck?.sourceMeta?.userReviewed === false ||
+      deck?.sourceMeta?.userReviewed === false ||
+      deck?.sourceMeta?.humanApproved === false;
+    const isNumbersUnverified =
+      existingRecord?.verifiedNumbers === false ||
+      existingRecord?.deck?.sourceMeta?.verifiedNumbers === false ||
+      deck?.sourceMeta?.verifiedNumbers === false;
+
+    if (isUnreviewed || isNumbersUnverified) {
+      return res.status(400).json({
+        error: isUnreviewed
+          ? 'Review Safety Gate: Mark "Human Reviewed" before publishing or scheduling this post.'
+          : 'Review Safety Gate: Verify all claims & numbers before publishing or scheduling this post.',
+        code: 'REVIEW_SAFETY_GATE',
+      });
+    }
+
     const isImmediate = mode === 'shareNow';
     const warnings: string[] = [];
 
@@ -1935,6 +1957,25 @@ export async function handleManagePublishedPost(req: Request, res: Response) {
         return res.status(400).json({ error: 'Valid scheduledFor ISO timestamp is required' });
       }
 
+      const approveReviewedOverride = req.body?.approveReviewed === true;
+      const verifyNumbersOverride = req.body?.verifyNumbers === true;
+
+      const effectiveReviewed =
+        approveReviewedOverride ||
+        (existing.humanApproved !== false && existing.deck?.sourceMeta?.userReviewed !== false);
+      const effectiveVerified =
+        verifyNumbersOverride ||
+        (existing.verifiedNumbers !== false && existing.deck?.sourceMeta?.verifiedNumbers !== false);
+
+      if (!effectiveReviewed || !effectiveVerified) {
+        return res.status(400).json({
+          error: !effectiveReviewed
+            ? 'Review Safety Gate: Human review (userReviewed = true) is required before scheduling.'
+            : 'Review Safety Gate: Claims & numbers must be verified before scheduling.',
+          code: 'REVIEW_SAFETY_GATE',
+        });
+      }
+
       const nextTargets: PublishTargetPlatform[] = Array.isArray(publishTargets) && publishTargets.length > 0
         ? publishTargets.filter((t): t is PublishTargetPlatform =>
             ['instagram', 'facebook', 'linkedin', 'tiktok'].includes(String(t))
@@ -2006,6 +2047,19 @@ export async function handleManagePublishedPost(req: Request, res: Response) {
       const updatedRecord: SavedPostRecord = {
         ...existing,
         postStatus: 'validated',
+        humanApproved: effectiveReviewed ? true : existing.humanApproved,
+        verifiedNumbers: effectiveVerified ? true : existing.verifiedNumbers,
+        deck: existing.deck
+          ? {
+              ...existing.deck,
+              sourceMeta: {
+                ...existing.deck.sourceMeta,
+                userReviewed: effectiveReviewed ? true : existing.deck.sourceMeta?.userReviewed,
+                humanApproved: effectiveReviewed ? true : existing.deck.sourceMeta?.humanApproved,
+                verifiedNumbers: effectiveVerified ? true : existing.deck.sourceMeta?.verifiedNumbers,
+              },
+            }
+          : existing.deck,
         postedAt: undefined,
         scheduledFor,
         publishTargets: nextTargets,

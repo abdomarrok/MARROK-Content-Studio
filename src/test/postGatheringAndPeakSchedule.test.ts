@@ -162,13 +162,16 @@ describe('Automated Post Gathering, Review Queue & Peak-Hour (10 · 12 · 18) Pr
     expect(isTopicAlreadyInVault(sampleTopic, [vaultPost])?.id).toBe('existing_1');
     expect(isTopicAlreadyInVault(CURATED_ENGINEERING_TOPICS[1], [vaultPost])).toBeNull();
 
-    // Background gatherer must exclude `sampleTopic` (already in Vault) and generate slide outlines only for new topics
+    // Background gatherer marks matching Vault topics with alreadyCovered: true and sorts uncovered topics first
     const candidates = await generateGatheredCandidatesInBackground(
       CURATED_ENGINEERING_TOPICS.slice(0, 3),
       [vaultPost]
     );
-    expect(candidates).toHaveLength(2);
-    expect(candidates.some((c) => c.id === sampleTopic.id)).toBe(false);
+    expect(candidates).toHaveLength(3);
+    const coveredCandidate = candidates.find((c) => c.id === sampleTopic.id);
+    expect(coveredCandidate?.alreadyCovered).toBe(true);
+    expect(coveredCandidate?.coveredPostId).toBe('existing_1');
+    expect(candidates[0].alreadyCovered).toBe(false);
     expect(candidates[0].draftTitle.length).toBeGreaterThan(5);
     expect(candidates[0].deck.slides.length).toBeGreaterThanOrEqual(1);
     expect(candidates[0].themeId).not.toBe(candidates[1].themeId);

@@ -86,13 +86,14 @@ STAGE 5: VIRAL HOOK PSYCHOLOGY, CURIOSITY GAPS & RTL LINT (Spec §8)
 - HOOK KICKERS (hookKicker):
   * Populate 'hookKicker' on every slide with a crisp 2-to-4 word uppercase editorial badge (max 32 chars) that frames the slide's tension (e.g. "BENCHMARK SHOCK", "THE BOTTLENECK", "PROTOCOL INTERNALS", "BEFORE VS AFTER", "PRODUCTION IMPACT", "THE HIDDEN CATCH").
 - ARABIC HEADLINES & BODY:
-  * Natural, authentic, idiomatic Modern Standard Arabic (فصحى معاصرة طبيعية غير مترجمة حرفياً).
-  * NEVER write literal template echoes of English boilerplate ("تحليل تقني لـ", "تحليل معماري لمنظومة", "تحليل هندسي معمق", "الآليات الأساسية", "الحدود التشغيلية", "المقايضة الجوهرية", "شارك في النقاش", "كيف تعمل منظومة ... تحت الضغط", أو كلمة "المعتمد").
-  * State the concrete Arabic claim, contrast, punchline, or mechanism naturally on every slide.
-  * Proper nouns remain in Latin characters (e.g. OpenAI, Nvidia, S&P 500, Git, Anthropic, PostgreSQL).
+  * Write natural, authentic, idiomatic Modern Standard Arabic sentences (فصحى معاصرة طبيعية غير مترجمة حرفياً).
+  * NEVER translate technical terms, system nouns, protocols, or units into Arabic (do NOT write "المقابس", "مقابس الشبكة", "زمن الاستجابة", "ذاكرة التخزين المؤقت", "العنقود", "جيجابايت", "مللي ثانية", "كافكا", or "رافت").
+  * Always keep ALL technical terms and proper nouns in English (Latin script) inside the Arabic sentence — e.g. Sockets, Latency, Cache, Cluster, Raft, Postgres, Kafka, API, p99, Docker, Kubernetes, OpenAI, Nvidia, S&P 500, Git.
+  * Always keep numbers together with their English units inside Arabic text — e.g. 15ms, 510 GB, 100 GB, 10x, 99.9%.
   * NEVER reverse subject and object (e.g. write 'السبب وراء ابتعاد Anthropic عن Git', NOT 'السبب وراء ابتعاد Git عن Anthropic').
-  * NEVER end an Arabic line with a Latin word plus punctuation (prevents BiDi punctuation flipping).
-  * NO generic filler sentences. Explain the actual mechanism or economic impact clearly.
+  * NEVER end an Arabic line with a Latin word plus punctuation (end the sentence with an Arabic word before the period to prevent BiDi punctuation flipping).
+  * NEVER write literal template echoes of English boilerplate ("تحليل تقني لـ", "تحليل معماري لمنظومة", "تحليل هندسي معمق", "الآليات الأساسية", "الحدود التشغيلية", "المقايضة الجوهرية", "شارك في النقاش", "كيف تعمل منظومة ... تحت الضغط", أو كلمة "المعتمد").
+  * NO generic filler sentences. State the concrete Arabic claim, contrast, or mechanism clearly.
 - CHARACTER LIMITS:
   * English title: max 45 chars (max 50 on Slide 1 hook)
   * Arabic title: max 40 chars
@@ -354,7 +355,7 @@ export const CAROUSEL_RESPONSE_SCHEMA = {
         properties: {
           type: {
             type: Type.STRING,
-            description: 'hub, row, number, metric, code, compare, image, cta, or poster',
+            description: 'hub, row, number, metric, code, compare, image, cta, poster, or subjectPair',
           },
           hookKicker: {
             type: Type.STRING,
@@ -512,13 +513,25 @@ export const CAROUSEL_RESPONSE_SCHEMA = {
             type: Type.STRING,
             description: 'Right card bullet points for compare slide',
           },
+          subjectPair: {
+            type: Type.OBJECT,
+            properties: {
+              beforeSystem: { type: Type.STRING, description: 'Baseline system name (e.g. Cassandra)' },
+              afterSystem: { type: Type.STRING, description: 'Target system name (e.g. ScyllaDB)' },
+              storyOwner: { type: Type.STRING, description: 'Company owning the migration story as styled text (e.g. Discord)' },
+              beforeLabel: { type: Type.STRING, description: 'BEFORE' },
+              afterLabel: { type: Type.STRING, description: 'AFTER' },
+              flowLabel: { type: Type.STRING, description: 'e.g. CHAT WORKLOAD → COMPACTED SHARDS' },
+            },
+            description: 'For migration, A vs B, or before->after stories: 2 systems and story owner wordmark',
+          },
           enTitle: {
             type: Type.STRING,
             description: 'English headline: 2 to 8 words (max 45 chars) ending in . or ?. Punchy, informative, and grammatically complete.',
           },
           arTitle: {
             type: Type.STRING,
-            description: 'Concise, contextual Arabic headline. Keep brand/tool names in Latin. Correct grammar and natural flow.',
+            description: 'Concise natural Arabic headline. Keep ALL technical nouns and units in English (Sockets, Latency, Cache, Cluster, Raft, Postgres, Kafka, API, p99, 15ms, 510 GB).',
           },
           enBody: {
             type: Type.STRING,
@@ -526,7 +539,7 @@ export const CAROUSEL_RESPONSE_SCHEMA = {
           },
           arBody: {
             type: Type.STRING,
-            description: 'Arabic body copy or hook subtitle',
+            description: 'Natural Arabic body copy. Keep technical nouns & number+unit pairs in English inside the Arabic sentence; end with an Arabic word before punctuation.',
           },
           ctaText: {
             type: Type.STRING,

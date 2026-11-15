@@ -12,6 +12,8 @@ import {
   FONT_TITLE_AR,
   FONT_BODY_EN,
   FONT_BODY_AR,
+  MIN_TITLE_FONT_SIZE,
+  MIN_BODY_FONT_SIZE,
   CanvasDimensionSpec,
   getCanvasDimensionSpec,
   getArchetypeGraphicTransform,
@@ -470,7 +472,8 @@ export function computeSlideLayoutAwareness(
     spec.safeFooterCeilingY - baseTextCeilingY - gapGraphicToTitle - takeawayClearance
   );
 
-  const bodyMinFloor = spec.minBodyFontSize ?? (isCompactAspect ? 20 : 24);
+  const titleMinFloor = Math.max(MIN_TITLE_FONT_SIZE, spec.minTitleFontSize ?? MIN_TITLE_FONT_SIZE);
+  const bodyMinFloor = Math.max(MIN_BODY_FONT_SIZE, spec.minBodyFontSize ?? MIN_BODY_FONT_SIZE);
   const initialScaleBase = isCompactAspect ? Math.max(0.7, spec.graphicScale + 0.08) : 1.04;
   let textScale = hasTakeaways
     ? Math.min(0.9, initialScaleBase * 0.9)
@@ -521,14 +524,14 @@ export function computeSlideLayoutAwareness(
   const measureTextPass = (scale: number, cap: number) => {
     const baseBodyTarget = isCompactAspect ? (spec.height <= 1080 ? 34 : 38) : 44;
     const baseBodyMin = bodyMinFloor;
-    // Equal size, weight, and spacing for English & Arabic
-    const enTitleTarget = Math.max(26, (isCompactAspect ? 62 : 72) * scale * titleScale);
-    const arTitleTarget = Math.max(26, (isCompactAspect ? 62 : 72) * scale * arTitleScale);
+    // Equal size, weight, and spacing for English & Arabic, strictly >= 24px across every ratio
+    const enTitleTarget = Math.max(titleMinFloor, (isCompactAspect ? 62 : 72) * scale * titleScale);
+    const arTitleTarget = Math.max(titleMinFloor, (isCompactAspect ? 62 : 72) * scale * arTitleScale);
     const enBodyTarget = Math.max(bodyMinFloor, baseBodyTarget * scale * bodyScale);
     const arBodyTarget = Math.max(bodyMinFloor, baseBodyTarget * scale * arBodyScale);
 
-    const enTitleMin = Math.max(22, Math.round((isCompactAspect ? (spec.height <= 1080 ? 28 : 32) : 38) * Math.min(1, titleScale)));
-    const arTitleMin = Math.max(22, Math.round((isCompactAspect ? (spec.height <= 1080 ? 28 : 32) : 38) * Math.min(1, arTitleScale)));
+    const enTitleMin = Math.max(titleMinFloor, Math.round((isCompactAspect ? (spec.height <= 1080 ? 28 : 32) : 38) * Math.min(1, titleScale)));
+    const arTitleMin = Math.max(titleMinFloor, Math.round((isCompactAspect ? (spec.height <= 1080 ? 28 : 32) : 38) * Math.min(1, arTitleScale)));
     const enBodyMin = Math.max(bodyMinFloor, Math.round(baseBodyMin * Math.min(1, bodyScale)));
     const arBodyMin = Math.max(bodyMinFloor, Math.round(baseBodyMin * Math.min(1, arBodyScale)));
 
@@ -1487,22 +1490,23 @@ function computeCtaSlideLayout(
   const tScale = titleOverride?.scale ?? 1;
   const arTScale = arTitleOverride?.scale ?? 1;
 
+  const ctaTitleMinFloor = Math.max(MIN_TITLE_FONT_SIZE, spec.minTitleFontSize ?? MIN_TITLE_FONT_SIZE);
   const ctaFontScale = spec.height < 1920 ? Math.max(0.76, spec.graphicScale + 0.08) : 1;
-  let enFontSize = Math.round(56 * ctaFontScale * tScale);
+  let enFontSize = Math.max(ctaTitleMinFloor, Math.round(56 * ctaFontScale * tScale));
   let enLineHeight = enFontSize * 1.2;
-  let enTitleH = Math.round(68 * ctaFontScale * tScale);
+  let enTitleH = Math.round(enFontSize * 1.22);
   let enTitleLines = rawEnTitle ? [rawEnTitle] : [];
 
-  let arFontSize = Math.round(50 * ctaFontScale * arTScale);
+  let arFontSize = Math.max(ctaTitleMinFloor, Math.round(50 * ctaFontScale * arTScale));
   let arLineHeight = arFontSize * 1.35;
-  let arTitleH = Math.round(74 * ctaFontScale * arTScale);
+  let arTitleH = Math.round(arFontSize * 1.48);
   let arTitleLines = rawArTitle ? [rawArTitle] : [];
 
   if (ctx) {
     if (rawEnTitle) {
       const enFit = fitTextInBox(ctx, rawEnTitle, spec.safeTextWidthTitle, enFontSize, FONT_TITLE_EN, '800', {
         maxLines: tScale > 1.15 ? 3 : 2,
-        minFontSize: Math.round(28 * Math.min(1, tScale)),
+        minFontSize: Math.max(ctaTitleMinFloor, Math.round(28 * Math.min(1, tScale))),
         lineHeightFactor: 1.2,
       });
       enTitleLines = enFit.lines;
@@ -1513,7 +1517,7 @@ function computeCtaSlideLayout(
     if (rawArTitle) {
       const arFit = fitTextInBox(ctx, rawArTitle, spec.safeTextWidthTitle, arFontSize, FONT_TITLE_AR, '800', {
         maxLines: arTScale > 1.15 ? 3 : 2,
-        minFontSize: Math.round(26 * Math.min(1, arTScale)),
+        minFontSize: Math.max(ctaTitleMinFloor, Math.round(26 * Math.min(1, arTScale))),
         lineHeightFactor: 1.35,
       });
       arTitleLines = arFit.lines;

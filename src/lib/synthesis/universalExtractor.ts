@@ -3,7 +3,13 @@ import { autoFitTextToLimits, enforceHeadlineSpecRule, extractCleanSubject, isNo
 import { normalizePunctuation, stripMarkdown } from '../text/markdown.ts';
 import { sanitizeArabicSlideText } from '../text/arabicBiDi.ts';
 import { KNOWN_TECH_LOGOS } from '../techLogos.ts';
-import { buildNonNumericHookClaimCard, extractSourceQuotedHubNodes } from './smartVisualDefaults.ts';
+import {
+  buildNonNumericHookClaimCard,
+  explainArchetypeChoice,
+  extractSourceQuotedHubNodes,
+  inferDynamicCoverArchetype,
+  resolveSmartSlideVisuals,
+} from './smartVisualDefaults.ts';
 
 export interface UniversalSynthesisOptions {
   brand?: string;
@@ -691,72 +697,210 @@ export function synthesizeUniversalCarousel(rawInput: string, options: Universal
 
   // 5. Humor / Opinion / Non-numeric hot takes get a dedicated authentic narrative instead of systems boilerplate
   if (isHumorOrOpinion) {
-    return buildHumorOrOpinionStory(cleaned, coreSubject, userSubstantivePoints, {
-      brand,
-      brandUrl,
-      domainCategory,
-      targetCount,
-      metrics,
-    });
+    return finalizeSynthesizedDeckSlides(
+      buildHumorOrOpinionStory(cleaned, coreSubject, userSubstantivePoints, {
+        brand,
+        brandUrl,
+        domainCategory,
+        targetCount,
+        metrics,
+      })
+    );
   }
 
   // 6. If user provided multiple substantive bullet points or sentences (>= 2 points):
   // Directly synthesize slides from the user's actual points!
   if (userSubstantivePoints.length >= 2 && !isExplicitHeadlineComparison) {
-    return buildDeckFromUserPoints(coreSubject, userSubstantivePoints, {
-      brand,
-      brandUrl,
-      domainCategory,
-      targetCount,
-      metrics,
-      centerIcon: options.centerIcon,
-      rawSourceText: cleaned,
-    });
+    return finalizeSynthesizedDeckSlides(
+      buildDeckFromUserPoints(coreSubject, userSubstantivePoints, {
+        brand,
+        brandUrl,
+        domainCategory,
+        targetCount,
+        metrics,
+        centerIcon: options.centerIcon,
+        rawSourceText: cleaned,
+      })
+    );
   }
 
   if (lines.length === 1 && firstLineSentences.length >= 2 && rawFirstLine.length > 110 && !isAgentOrDelegation) {
-    return buildGeneralSystemsStory(cleaned, { brand, brandUrl, targetCount, domainCategory, metrics });
+    return finalizeSynthesizedDeckSlides(
+      buildGeneralSystemsStory(cleaned, { brand, brandUrl, targetCount, domainCategory, metrics })
+    );
   }
 
   // 7. Domain-Specific Narrative Generation for Short Prompts / Topic Inputs
   if (isAgentOrDelegation) {
-    return buildAgentDelegationStory(coreSubject, { brand, brandUrl, targetCount, metrics });
+    return finalizeSynthesizedDeckSlides(
+      buildAgentDelegationStory(coreSubject, { brand, brandUrl, targetCount, metrics })
+    );
   }
 
   if (isScionOrVcs) {
-    return buildVcsStory(coreSubject, { brand, brandUrl, targetCount, metrics });
+    return finalizeSynthesizedDeckSlides(
+      buildVcsStory(coreSubject, { brand, brandUrl, targetCount, metrics })
+    );
   }
 
   if (isContainerOrCloud) {
-    return buildContainerStory(coreSubject, { brand, brandUrl, targetCount, metrics });
+    return finalizeSynthesizedDeckSlides(
+      buildContainerStory(coreSubject, { brand, brandUrl, targetCount, metrics })
+    );
   }
 
   if (isRedisOrCache) {
-    return buildCacheStory(coreSubject, { brand, brandUrl, targetCount, metrics });
+    return finalizeSynthesizedDeckSlides(
+      buildCacheStory(coreSubject, { brand, brandUrl, targetCount, metrics })
+    );
   }
 
   if (isSecurity) {
-    return buildSecurityStory(coreSubject, { brand, brandUrl, targetCount, metrics });
+    return finalizeSynthesizedDeckSlides(
+      buildSecurityStory(coreSubject, { brand, brandUrl, targetCount, metrics })
+    );
   }
 
   if (isKernelOrEbpf) {
-    return buildKernelStory(coreSubject, { brand, brandUrl, targetCount, metrics });
+    return finalizeSynthesizedDeckSlides(
+      buildKernelStory(coreSubject, { brand, brandUrl, targetCount, metrics })
+    );
   }
 
   if (isAiOrLlm) {
-    return buildAiStory(coreSubject, { brand, brandUrl, targetCount, metrics });
+    return finalizeSynthesizedDeckSlides(
+      buildAiStory(coreSubject, { brand, brandUrl, targetCount, metrics })
+    );
   }
 
   if (isDatabase) {
-    return buildDatabaseStory(coreSubject, { brand, brandUrl, targetCount, metrics });
+    return finalizeSynthesizedDeckSlides(
+      buildDatabaseStory(coreSubject, { brand, brandUrl, targetCount, metrics })
+    );
   }
 
   if (entities.isComparative) {
-    return buildComparativeStory(coreSubject, entities, metrics, { brand, brandUrl, targetCount, domainCategory });
+    return finalizeSynthesizedDeckSlides(
+      buildComparativeStory(coreSubject, entities, metrics, { brand, brandUrl, targetCount, domainCategory })
+    );
   }
 
   // Fallback: Source-grounded prose & systems story (no canned boilerplate)
-  return buildGeneralSystemsStory(cleaned, { brand, brandUrl, targetCount, domainCategory, metrics });
+  return finalizeSynthesizedDeckSlides(
+    buildGeneralSystemsStory(cleaned, { brand, brandUrl, targetCount, domainCategory, metrics })
+  );
+}
+
+/**
+ * Post-processes synthesized story decks so:
+ * 1) Slide 1 uses a focused Hook archetype (`compare`, `metric`, or `row` — NEVER `hub`).
+ * 2) No 3 consecutive slides share the same layout type.
+ * 3) Every slide carries a human-readable 1-line `layoutRationale` explaining why its layout fits.
+ */
+function finalizeSynthesizedDeckSlides(rawSlides: SlideData[]): SlideData[] {
+  if (!Array.isArray(rawSlides) || rawSlides.length === 0) return rawSlides;
+  const total = rawSlides.length;
+  const result: SlideData[] = [];
+
+  for (let idx = 0; idx < total; idx++) {
+    let slide: SlideData = { ...rawSlides[idx] };
+
+    // 1. Ensure Slide 1 on multi-slide decks is NEVER a Hub web diagram
+    if (idx === 0 && total > 1 && slide.type === 'hub') {
+      const hookType = inferDynamicCoverArchetype(slide);
+      const smart = resolveSmartSlideVisuals(
+        {
+          ...slide,
+          type: hookType,
+        },
+        0,
+        true
+      );
+      slide = {
+        ...slide,
+        type: hookType,
+        storyRole: 'hook',
+        cornerTag: 'HOOK',
+        centerIcon: smart.centerIcon || slide.centerIcon,
+        centerTag: smart.centerTag || slide.centerTag,
+        satLabels: slide.satLabels && slide.satLabels.length > 0 ? slide.satLabels : smart.satLabels,
+        hubNodeReasons:
+          slide.hubNodeReasons && slide.hubNodeReasons.length > 0
+            ? slide.hubNodeReasons
+            : smart.hubNodeReasons,
+        metricBeforeValue: slide.metricBeforeValue || smart.metricBeforeValue,
+        metricValue: slide.metricValue || smart.metricValue,
+        metricLabel: slide.metricLabel || smart.metricLabel,
+        metricDiff: slide.metricDiff || smart.metricDiff,
+        metricIcon: slide.metricIcon || smart.metricIcon,
+        chartDirection: slide.chartDirection || smart.chartDirection,
+        compareLeftTitle: slide.compareLeftTitle || smart.compareLeftTitle,
+        compareLeftBody: slide.compareLeftBody || smart.compareLeftBody,
+        compareRightTitle: slide.compareRightTitle || smart.compareRightTitle,
+        compareRightBody: slide.compareRightBody || smart.compareRightBody,
+        diagramVariant: hookType === 'row' ? slide.diagramVariant || smart.diagramVariant || 'isolation' : slide.diagramVariant,
+        diagramNodes: slide.diagramNodes && slide.diagramNodes.length > 0 ? slide.diagramNodes : smart.diagramNodes,
+        diagramEdges: slide.diagramEdges && slide.diagramEdges.length > 0 ? slide.diagramEdges : smart.diagramEdges,
+        diagramFooter: slide.diagramFooter || smart.diagramFooter,
+        hookClaimCard: slide.hookClaimCard || smart.hookClaimCard,
+        enBody: '',
+        arBody: '',
+      };
+    }
+
+    // 2. Enforce strict non-3-in-a-row layout streak across content slides
+    if (idx >= 2 && idx < total - 1 && slide.type !== 'cta' && slide.type !== 'image') {
+      const prev1 = result[idx - 1]?.type;
+      const prev2 = result[idx - 2]?.type;
+      if (prev1 && prev2 && prev1 === slide.type && prev2 === slide.type) {
+        if (idx === total - 2 && slide.type === 'row' && slide.diagramVariant === 'takeaway') {
+          const prevSlide = result[idx - 1];
+          const smartPrev = resolveSmartSlideVisuals({ ...prevSlide, type: 'number' }, idx - 1, true);
+          const updatedPrev: SlideData = {
+            ...prevSlide,
+            type: 'number',
+            stepNumber: smartPrev.stepNumber,
+            stepLabel: smartPrev.stepLabel,
+            centerIcon: prevSlide.centerIcon || smartPrev.numberIcon,
+          };
+          updatedPrev.layoutRationale = explainArchetypeChoice(updatedPrev, idx - 1, total);
+          result[idx - 1] = updatedPrev;
+        } else {
+          const alternatives: SlideData['type'][] = ['compare', 'metric', 'number', 'code', 'row'];
+          const replacement = alternatives.find((t) => t !== slide.type) || 'number';
+          const smartAlt = resolveSmartSlideVisuals({ ...slide, type: replacement }, idx, true);
+          slide = {
+            ...slide,
+            type: replacement,
+            compareLeftTitle: replacement === 'compare' ? smartAlt.compareLeftTitle : slide.compareLeftTitle,
+            compareLeftBody: replacement === 'compare' ? smartAlt.compareLeftBody : slide.compareLeftBody,
+            compareRightTitle: replacement === 'compare' ? smartAlt.compareRightTitle : slide.compareRightTitle,
+            compareRightBody: replacement === 'compare' ? smartAlt.compareRightBody : slide.compareRightBody,
+            metricValue: replacement === 'metric' ? smartAlt.metricValue : slide.metricValue,
+            metricLabel: replacement === 'metric' ? smartAlt.metricLabel : slide.metricLabel,
+            metricDiff: replacement === 'metric' ? smartAlt.metricDiff : slide.metricDiff,
+            stepNumber: replacement === 'number' ? smartAlt.stepNumber : slide.stepNumber,
+            stepLabel: replacement === 'number' ? smartAlt.stepLabel : slide.stepLabel,
+            codeFileName: replacement === 'code' ? smartAlt.codeFileName : slide.codeFileName,
+            codeLanguage: replacement === 'code' ? smartAlt.codeLanguage : slide.codeLanguage,
+            codeSnippet: replacement === 'code' ? smartAlt.codeSnippet : slide.codeSnippet,
+            diagramVariant: replacement === 'row' ? smartAlt.diagramVariant : slide.diagramVariant,
+            diagramNodes: replacement === 'row' ? smartAlt.diagramNodes : slide.diagramNodes,
+            diagramEdges: replacement === 'row' ? smartAlt.diagramEdges : slide.diagramEdges,
+          };
+        }
+      }
+    }
+
+    // 3. Always attach a concise 1-line layout rationale per slide
+    if (!slide.layoutRationale) {
+      slide.layoutRationale = explainArchetypeChoice(slide, idx, total);
+    }
+
+    result.push(slide);
+  }
+
+  return result;
 }
 
 interface StoryOptions {
@@ -830,30 +974,19 @@ function buildDeckFromUserPoints(
       })
     : undefined;
 
-  const useHubCover = !hasNumericHook && quotedHub.hubNodeReasons.length >= 4 && (!nonNumericClaim || nonNumericClaim.mode !== 'contrast');
-
-  const hookSlide: SlideData = useHubCover
-    ? {
-        type: 'hub',
-        storyRole: 'hook',
-        centerIcon: options.centerIcon || (isFinancialOrMacro ? 'dollarSign' : resolveTechLogo(subject) || 'cpu'),
-        satIcons: isFinancialOrMacro
-          ? ['dollarSign', 'trendingDown', 'lifecycle', 'factory', 'users']
-          : ['server', 'database', 'gauge', 'cpu', 'layers'],
-        satLabels: quotedHub.satLabels.slice(0, 5),
-        hubNodeReasons: quotedHub.hubNodeReasons,
-        hookClaimCard: nonNumericClaim,
-        enTitle: enHook,
-        arTitle: arHook,
-        enBody: '',
-        arBody: '',
-      }
-    : {
-        type: 'metric',
-        storyRole: 'hook',
-        centerIcon: options.centerIcon || (isFinancialOrMacro ? 'dollarSign' : resolveTechLogo(subject) || 'cpu'),
-        satLabels: quotedHub.satLabels.slice(0, 5),
-        hubNodeReasons: quotedHub.hubNodeReasons,
+  const hookSlide: SlideData = {
+    type: hasNumericHook
+      ? 'metric'
+      : inferDynamicCoverArchetype({
+          enTitle: enHook,
+          arTitle: arHook,
+          enBody: userPoints.slice(0, 2).join(' '),
+          hookClaimCard: nonNumericClaim,
+        } as SlideData),
+    storyRole: 'hook',
+    centerIcon: options.centerIcon || (isFinancialOrMacro ? 'dollarSign' : resolveTechLogo(subject) || 'cpu'),
+    satLabels: quotedHub.satLabels.slice(0, 5),
+    hubNodeReasons: quotedHub.hubNodeReasons,
         ...(hasNumericHook && pickedMetric
           ? {
               metricValue: formattedHookMetricValue,
@@ -1549,7 +1682,7 @@ function buildVcsStory(subject: string, opts: StoryOptions): SlideData[] {
       enTitle: 'Virtual tree checkout.',
       arTitle: 'سحب شجرة افتراضية.',
       enBody: 'Instead of cloning the entire 100 GB repo history, Scion streams only the exact files the agent touches.',
-      arBody: 'بدلاً من استنساخ كامل المستودع البالغ 100 جيجابايت، يرسل Scion فقط الملفات التي يلمسها الوكيل البرمجي.',
+      arBody: 'بدلاً من استنساخ كامل المستودع البالغ 100 GB، يرسل Scion فقط الملفات التي يلمسها الوكيل البرمجي.',
     },
     {
       type: 'compare',
@@ -1560,7 +1693,7 @@ function buildVcsStory(subject: string, opts: StoryOptions): SlideData[] {
       enTitle: 'Git vs. Scion.',
       arTitle: 'مقارنة Git مع Scion.',
       enBody: 'Moving from local monolithic checkouts to an API-driven virtual filesystem cut compute overhead by 200x.',
-      arBody: 'الانتقال من الاستنساخ الكامل المحلي إلى نظام ملفات افتراضي مدار بالواجهات البرمجية قلل الهدر بنسبة 200 ضعف.',
+      arBody: 'الانتقال من الاستنساخ الكامل المحلي إلى نظام ملفات افتراضي مدار عبر API قلل الهدر بمقدار 200x تقريباً.',
     },
     {
       type: 'row',
@@ -2517,7 +2650,7 @@ function buildHumorOrOpinionStory(
 
   const candidates: SlideData[] = [
     {
-      type: claimCard?.mode === 'contrast' || quoted.hubNodeReasons.length < 4 ? 'metric' : 'hub',
+      type: claimCard?.mode === 'contrast' ? 'compare' : 'metric',
       storyRole: 'hook',
       centerIcon: 'sparkles',
       satIcons: ['terminal', 'alertTriangle', 'gitBranch', 'clock', 'zap'],
@@ -2646,15 +2779,18 @@ function buildGeneralSystemsStory(rawSource: string, opts: StoryOptions): SlideD
   const term3 = (quoted.satLabels[2] || 'reliability').toLowerCase();
   const slug = cleanSubject.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 18) || 'workflow_spec';
 
-  const isShortConcept = rawSource.trim().split(/\s+/).length <= 8;
-  const useHubCover =
-    !hasNumeric &&
-    ((quoted.hubNodeReasons.length >= 4 && (!claimCard || claimCard.mode !== 'contrast')) ||
-      (isShortConcept && quoted.satLabels.length >= 2 && (!claimCard || claimCard.mode !== 'contrast')));
+  const coverHookType = hasNumeric
+    ? 'metric'
+    : inferDynamicCoverArchetype({
+        enTitle: enHook,
+        arTitle: `ما الذي يغيره ${arSubject} فعلياً؟`,
+        enBody: sentences.slice(1).join(' '),
+        hookClaimCard: claimCard,
+      } as SlideData);
 
   const candidates: SlideData[] = [
     {
-      type: useHubCover ? 'hub' : 'metric',
+      type: coverHookType,
       storyRole: 'hook',
       centerIcon: resolveTechLogo(rawSource) || 'cpu',
       satIcons: ['layers', 'lock', 'code', 'gauge', 'box'],

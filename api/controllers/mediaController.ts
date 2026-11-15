@@ -4,6 +4,7 @@ import type {
   CarouselData,
   NumericEvidenceDiscrepancy,
   SavedPostRecord,
+  TopicScoreBreakdown,
 } from '../../src/types.ts';
 import { TECH_ICONS_LIST } from '../constants.ts';
 import { getServerConfig } from '../config.ts';
@@ -103,9 +104,15 @@ export interface GatheredTopicItem {
     | 'KUBERNETES & CLOUD'
     | 'DISTRIBUTED SYSTEMS';
   publishedAt: string;
+  publishedDateLabel?: string;
+  sourceDomain?: string;
+  freshnessTag?: 'fresh' | 'evergreen';
   score: number;
   viralityScore?: number;
   viralAngle?: string;
+  scoreBreakdown?: TopicScoreBreakdown;
+  clientRelevanceReason?: string;
+  marrokAngle?: string;
   summary: string;
   extractedMetrics: string[];
   recommendedFormat: 'carousel' | 'single' | 'reel';
@@ -817,9 +824,101 @@ export async function fetchCustomRssFeed(rssUrl: string, limit = 5): Promise<Gat
   }
 }
 
+function extractSourceDomain(rawUrl?: string, fallback?: string): string {
+  if (rawUrl) {
+    try {
+      return new URL(rawUrl).hostname.replace(/^www\./i, '').toLowerCase();
+    } catch {
+      // fallback below
+    }
+  }
+  return (fallback || 'marrok.org').replace(/^www\./i, '').toLowerCase();
+}
+
+function formatPublishedDateLabel(publishedAt?: string): string {
+  if (!publishedAt) return 'Today';
+  const parsed = Date.parse(publishedAt);
+  if (!Number.isFinite(parsed)) return 'Recent';
+  const diffHours = Math.max(0, (Date.now() - parsed) / 3600_000);
+  if (diffHours < 24) {
+    return diffHours < 1 ? 'Just now' : `${Math.round(diffHours)}h ago`;
+  }
+  if (diffHours < 7 * 24) {
+    return `${Math.round(diffHours / 24)}d ago`;
+  }
+  return new Date(parsed).toISOString().slice(0, 10);
+}
+
 /**
- * Computes a 0-99 Virality Score and classifies the primary viral hook angle
- * based on hard metric density, community velocity, contrarian/showdown framing, and 2026 tech trends.
+ * Generates an editable pre-filled 1-line "Marrok angle" connecting a raw tech story
+ * to practical startup / SME product engineering decisions.
+ */
+export function buildDefaultMarrokAngle(item: {
+  title: string;
+  summary: string;
+  extractedMetrics?: string[];
+  domainCategory?: string;
+}): { clientRelevance: number; clientRelevanceReason: string; marrokAngle: string } {
+  const combined = `${item.title || ''} ${item.summary || ''}`.toLowerCase();
+  const leadMetric = item.extractedMetrics?.[0];
+  const metricSuffix = leadMetric ? ` (${leadMetric})` : '';
+
+  let relevance = 62;
+  if (
+    /\b(postgres|postgresql|redis|sqlite|mysql|database|latency|cache|cost|billing|cloud|aws|docker|kubernetes|auth|security|api|worker|queue|ci\/cd|deploy|migration|observability|p99|throughput)\b/.test(
+      combined
+    )
+  ) {
+    relevance += 24;
+  }
+  if (/\b(startup|sme|team|production|outage|incident|pricing|self-host|oss|open[- ]?source|typescript|rust|go|python)\b/.test(combined)) {
+    relevance += 10;
+  }
+  if (/\b(arxiv|theoretical|toy|benchmarking\s+only|preprint|theorem|abstract\s+algebra)\b/.test(combined)) {
+    relevance -= 14;
+  }
+
+  const clientRelevance = Math.max(35, Math.min(98, relevance));
+
+  if (/\b(postgres|redis|scylla|cassandra|sqlite|database|index|vector|kv[- ]?cache|storage)\b/.test(combined)) {
+    return {
+      clientRelevance,
+      clientRelevanceReason: 'Direct impact on product DB cost, query p99, and scaling runway for SME teams.',
+      marrokAngle: `What this means for your product: cut database latency & cloud overhead${metricSuffix} before buying bigger instances.`,
+    };
+  }
+  if (/\b(cve|security|sandbox|auth|oauth|delegation|zero[- ]?trust|mtls|breach|firewall|isolate)\b/.test(combined)) {
+    return {
+      clientRelevance,
+      clientRelevanceReason: 'Protects customer tenant isolation and prevents production breach blast radius.',
+      marrokAngle: `What this means for your product: isolate untrusted keys & workflows${metricSuffix} before an incident audits it for you.`,
+    };
+  }
+  if (/\b(llm|agent|ai|rag|inference|token|model|deepseek|vllm|context)\b/.test(combined)) {
+    return {
+      clientRelevance,
+      clientRelevanceReason: 'Shapes AI feature margin, inference speed, and reliability in production apps.',
+      marrokAngle: `What this means for your product: lower AI inference bill and wait times${metricSuffix} without sacrificing answer reliability.`,
+    };
+  }
+  if (/\b(rust|ebpf|linux|kernel|nginx|proxy|worker|queue|docker|kubernetes|cloudflare)\b/.test(combined)) {
+    return {
+      clientRelevance,
+      clientRelevanceReason: 'Practical infra playbook for lean teams serving high traffic on modest servers.',
+      marrokAngle: `What this means for your product: squeeze far more traffic from lean servers${metricSuffix} with lower operational tax.`,
+    };
+  }
+
+  return {
+    clientRelevance,
+    clientRelevanceReason: `Actionable ${String(item.domainCategory || 'engineering').toLowerCase()} insight for startup/SME builders.`,
+    marrokAngle: `What this means for your product: turn this architecture pattern${metricSuffix} into measurable release speed and stability.`,
+  };
+}
+
+/**
+ * Computes transparent 4-factor scoring (`freshness`, `engagement`, `clientRelevance`, `platformRisk`),
+ * down-ranks stale news, and classifies Fresh vs Evergreen tag + viral hook angle.
  */
 export function computeTopicViralityScore(item: {
   title: string;
@@ -827,19 +926,50 @@ export function computeTopicViralityScore(item: {
   score: number;
   extractedMetrics: string[];
   sourceType?: GatherSourceType;
-}): { viralityScore: number; viralAngle: string } {
+  publishedAt?: string;
+  domainCategory?: string;
+}): {
+  viralityScore: number;
+  viralAngle: string;
+  scoreBreakdown: TopicScoreBreakdown;
+  clientRelevanceReason: string;
+  marrokAngle: string;
+} {
   const combined = `${item.title || ''} ${item.summary || ''}`;
   const lower = combined.toLowerCase();
 
-  let pts = 46;
-  // 1. Quantitative metric density (up to +24)
-  pts += Math.min(24, (item.extractedMetrics?.length || 0) * 8);
+  // 1. Freshness & age decay
+  const parsedPub = item.publishedAt ? Date.parse(item.publishedAt) : NaN;
+  const ageHours = Number.isFinite(parsedPub)
+    ? Math.max(0, (Date.now() - parsedPub) / 3600_000)
+    : 24;
 
-  // 2. Social/community velocity (up to +16)
+  const isEvergreenSubject =
+    item.sourceType === 'curated' ||
+    /\b(how\s+we|architecture|internals|guide|postmortem|under\s+the\s+hood|migration|pattern|playbook)\b/i.test(
+      combined
+    );
+
+  let freshness = 88;
+  if (ageHours <= 12) freshness = 96;
+  else if (ageHours <= 48) freshness = 90;
+  else if (ageHours <= 72) freshness = 82;
+  else if (ageHours <= 7 * 24) freshness = 70;
+  else if (ageHours <= 30 * 24) freshness = isEvergreenSubject ? 58 : 42;
+  else freshness = isEvergreenSubject ? 48 : 24;
+
+  const freshnessTag: 'fresh' | 'evergreen' =
+    ageHours <= 7 * 24 && !isEvergreenSubject
+      ? 'fresh'
+      : ageHours <= 72
+      ? 'fresh'
+      : 'evergreen';
+
+  // 2. Engagement signal (community score + metric richness + story tension)
   const rawScore = Math.max(10, Number(item.score) || 50);
-  pts += Math.min(16, Math.round(Math.log10(rawScore) * 6));
-
-  // 3. Viral Story Angle classification & trigger bonus
+  const velocityPts = Math.min(35, Math.round(Math.log10(rawScore) * 12));
+  const metricPts = Math.min(28, (item.extractedMetrics?.length || 0) * 9);
+  let angleBonus = 6;
   let viralAngle = 'SYSTEMS DEEP DIVE';
 
   if (
@@ -847,45 +977,93 @@ export function computeTopicViralityScore(item: {
       combined
     )
   ) {
-    pts += 11;
+    angleBonus = 18;
     viralAngle = 'ARCHITECTURE SHOWDOWN';
   } else if (
     /\b(?:cve-\d+|zero[- ]?day|vulnerability|exploit|breach|post[- ]?quantum|crisis|gamble|outage|postmortem)\b/i.test(
       lower
     )
   ) {
-    pts += 10;
+    angleBonus = 16;
     viralAngle = 'HIGH-STAKES RISK';
   } else if (
     /(?:\$\d|\b\d+(?:\.\d+)?\s*(?:%|x|ms|gb\/s|tb|trillion|billion)\b)/i.test(item.title || '')
   ) {
-    pts += 10;
+    angleBonus = 15;
     viralAngle = 'BENCHMARK SHOCK';
   } else if (
     /\b(?:deepseek|llm|agent|agentic|kv[- ]?cache|inference|vllm|moe|mla|cuda|transformer|rag)\b/i.test(
       lower
     )
   ) {
-    pts += 9;
+    angleBonus = 14;
     viralAngle = 'AI BREAKTHROUGH';
   } else if (item.sourceType === 'github' || /\b(?:open[- ]?source|github|rust|ebpf|zig)\b/i.test(lower)) {
-    pts += 8;
+    angleBonus = 12;
     viralAngle = 'OPEN-SOURCE BREAKOUT';
   }
 
-  const viralityScore = Math.max(58, Math.min(99, pts));
-  return { viralityScore, viralAngle };
+  const engagement = Math.max(38, Math.min(99, 28 + velocityPts + metricPts + angleBonus));
+
+  // 3. Client relevance (startups & SME product teams)
+  const { clientRelevance, clientRelevanceReason, marrokAngle } = buildDefaultMarrokAngle(item);
+
+  // 4. Platform risk (moderation, ragebait, politics/drama penalty)
+  let riskScore = 8; // baseline low risk (8%)
+  if (/\b(hack|exploit|weapon|bypass|pirat|crack|leak)\b/i.test(lower)) riskScore += 18;
+  if (/\b(layoff|drama|scandal|lawsuit|fired|politic)\b/i.test(lower)) riskScore += 16;
+  if (!item.extractedMetrics || item.extractedMetrics.length === 0) riskScore += 6;
+  riskScore = Math.max(4, Math.min(75, riskScore));
+  const platformRisk = 100 - riskScore;
+
+  // Weighted composite + explicit age decay penalty so stale news sinks below fresh candidates
+  let compositeRaw =
+    freshness * 0.28 +
+    engagement * 0.27 +
+    clientRelevance * 0.30 +
+    platformRisk * 0.15;
+
+  if (ageHours > 14 * 24) {
+    compositeRaw -= isEvergreenSubject ? 8 : 20;
+  } else if (ageHours > 7 * 24) {
+    compositeRaw -= isEvergreenSubject ? 3 : 10;
+  }
+
+  const composite = Math.max(25, Math.min(99, Math.round(compositeRaw)));
+
+  return {
+    viralityScore: composite,
+    viralAngle,
+    scoreBreakdown: {
+      composite,
+      freshness: Math.round(freshness),
+      engagement: Math.round(engagement),
+      clientRelevance: Math.round(clientRelevance),
+      platformRisk: Math.round(platformRisk),
+      riskScore: Math.round(riskScore),
+      ageHours: Math.round(ageHours),
+      freshnessTag,
+    },
+    clientRelevanceReason,
+    marrokAngle,
+  };
 }
 
 function attachViralityMetadata(item: GatheredTopicItem): GatheredTopicItem {
-  if (typeof item.viralityScore === 'number' && item.viralAngle) {
-    return item;
-  }
-  const { viralityScore, viralAngle } = computeTopicViralityScore(item);
+  const sourceDomain = item.sourceDomain || extractSourceDomain(item.url, item.brandUrl);
+  const publishedDateLabel = item.publishedDateLabel || formatPublishedDateLabel(item.publishedAt);
+  const computed = computeTopicViralityScore(item);
+  const scoreBreakdown = item.scoreBreakdown || computed.scoreBreakdown;
   return {
     ...item,
-    viralityScore,
-    viralAngle,
+    sourceDomain,
+    publishedDateLabel,
+    freshnessTag: item.freshnessTag || scoreBreakdown.freshnessTag,
+    scoreBreakdown,
+    viralityScore: typeof item.viralityScore === 'number' && item.scoreBreakdown ? item.viralityScore : computed.viralityScore,
+    viralAngle: item.viralAngle || computed.viralAngle,
+    clientRelevanceReason: item.clientRelevanceReason || computed.clientRelevanceReason,
+    marrokAngle: item.marrokAngle || computed.marrokAngle,
   };
 }
 
@@ -1186,7 +1364,7 @@ export async function extractUrlTopicInternal(
     const domainCategory = classifyEngineeringDomain(`${title} ${combinedSummary}`);
     const recommendedFormat = recommendPostFormat(title, combinedSummary, metrics);
 
-    const topic: GatheredTopicItem = {
+    const topic: GatheredTopicItem = attachViralityMetadata({
       id: `url_${crypto.createHash('sha256').update(finalUrl).digest('hex').slice(0, 20)}`,
       title,
       url: finalUrl,
@@ -1207,7 +1385,7 @@ export async function extractUrlTopicInternal(
         summary: combinedSummary || title,
         extractedMetrics: metrics,
       }),
-    };
+    });
 
     return {
       ok: true,
@@ -2013,6 +2191,7 @@ export async function handleTelegramWebhook(req: Request, res: Response): Promis
     const targetPost: SavedPostRecord = {
       ...existingTarget,
       humanApproved: true,
+      verifiedNumbers: true,
       updatedAt: new Date().toISOString(),
       deck: {
         ...existingTarget.deck,
@@ -2020,6 +2199,7 @@ export async function handleTelegramWebhook(req: Request, res: Response): Promis
           ...existingTarget.deck.sourceMeta,
           userReviewed: true,
           humanApproved: true,
+          verifiedNumbers: true,
         },
       },
     };

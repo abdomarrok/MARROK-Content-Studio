@@ -14,11 +14,13 @@ import {
   Layers,
   Code,
   GitCompare,
+  ArrowLeftRight,
   Gauge,
   Hash,
   Smile,
   X,
 } from 'lucide-react';
+import { SubjectPairArchetypeEditor } from './archetypes/SubjectPairArchetypeEditor.tsx';
 import {
   CarouselData,
   SlideData,
@@ -797,24 +799,6 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
             placeholder="عنوان تقني دقيق ومختصر."
             className="w-full bg-black/60 border border-white/15 focus:border-white/40 rounded-xl px-3.5 py-2.5 text-sm text-white font-medium focus:outline-none font-cairo text-right transition-colors"
           />
-          {/[A-Za-z]/.test(currentSlide.arTitle || '') && (
-            <div
-              dir="rtl"
-              lang="ar"
-              data-testid="arabic-title-bidi-preview"
-              className="px-2.5 py-1 rounded-lg bg-white/[0.03] border border-white/10 text-xs text-slate-300 font-cairo text-right leading-relaxed"
-            >
-              {splitArabicForBidiRender(currentSlide.arTitle || '').map((seg, idx) =>
-                seg.isLtr ? (
-                  <bdi key={idx} dir="ltr" className="font-mono text-cyan-300 px-0.5">
-                    {seg.text}
-                  </bdi>
-                ) : (
-                  <span key={idx}>{seg.text}</span>
-                )
-              )}
-            </div>
-          )}
         </div>
       </div>
       )}
@@ -1025,6 +1009,7 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
                 [
                   { id: 'hub', label: 'Hub', icon: Layers },
                   { id: 'row', label: 'Schematic', icon: Layers },
+                  { id: 'subjectPair', label: 'Subject Pair', icon: ArrowLeftRight },
                   { id: 'compare', label: 'Compare A/B', icon: GitCompare },
                   { id: 'code', label: 'Code Block', icon: Code },
                   { id: 'metric', label: 'Hard Metric', icon: Gauge },
@@ -1057,6 +1042,14 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
               <span>Graphics sync live from copy</span>
             </span>
           </div>
+
+          {/* Inline Subject Pair Editor when slide is 'subjectPair' */}
+          {currentSlide.type === 'subjectPair' && (
+            <SubjectPairArchetypeEditor
+              currentSlide={currentSlide}
+              onUpdateField={onUpdateField}
+            />
+          )}
 
           {/* Schematic Variant Pills + Quick Node Label Editors when slide is 'row' */}
           {currentSlide.type === 'row' && (

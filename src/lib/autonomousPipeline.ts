@@ -31,6 +31,41 @@ export interface AutonomousPipelineOptions {
   categoryHint?: string;
   postFormat?: 'carousel' | 'single';
   signal?: AbortSignal;
+  /** Optional base URL used when running in Node (e.g. CLI/tests/cron) where relative /api/* paths fail URL parsing. */
+  apiBaseUrl?: string;
+  /** Optional custom fetch implementation (useful in Node or headless runners). */
+  fetchFn?: typeof fetch;
+  /** Optional server-side direct generator callback to bypass HTTP when running on the backend. */
+  directGenerate?: (payload: Record<string, unknown>) => Promise<CarouselData | null>;
+}
+
+/**
+ * Resolves a relative `/api/*` endpoint safely in both browser and Node runtimes.
+ * In Node (where `typeof window === 'undefined'`), `fetch('/api/generate')` throws
+ * `TypeError: Failed to parse URL from /api/generate`, so we qualify it with an absolute base URL.
+ */
+export function resolvePipelineApiUrl(endpointPath: string, apiBaseUrl?: string): string {
+  if (/^https?:\/\//i.test(endpointPath)) {
+    return endpointPath;
+  }
+  const normalizedPath = endpointPath.startsWith('/') ? endpointPath : `/${endpointPath}`;
+  if (apiBaseUrl && /^https?:\/\//i.test(apiBaseUrl.trim())) {
+    return `${apiBaseUrl.trim().replace(/\/+$/, '')}${normalizedPath}`;
+  }
+  if (typeof window !== 'undefined' && window.location?.origin && !/^null$/i.test(window.location.origin)) {
+    return normalizedPath;
+  }
+  const envObj =
+    typeof process !== 'undefined' && process.env
+      ? process.env
+      : undefined;
+  const envBase =
+    envObj?.MARROK_API_BASE_URL ||
+    envObj?.VITE_API_BASE_URL ||
+    envObj?.DEPLOY_PRIME_URL ||
+    envObj?.URL ||
+    'http://127.0.0.1:3000';
+  return `${envBase.replace(/\/+$/, '')}${normalizedPath}`;
 }
 
 function throwIfAborted(signal?: AbortSignal) {
@@ -136,8 +171,12 @@ export async function runAutonomousPipeline(
     categoryHint,
     postFormat = 'carousel',
     signal,
+    apiBaseUrl,
+    fetchFn,
+    directGenerate,
   } = options;
 
+  const activeFetch: typeof fetch = fetchFn || fetch;
   const isSinglePost = postFormat === 'single';
 
   // Step 1: Validate input sufficiency (reject empty / < 20 chars / < 4 meaningful words without media)
@@ -168,52 +207,68 @@ export async function runAutonomousPipeline(
     requestHeaders['x-gemini-backup-key'] = backupKey;
   }
 
+  const generationPayload: Record<string, unknown> = {
+    prompt: rawInput,
+    topic: rawInput,
+    notes: rawInput,
+    inputMode,
+    imageBase64,
+    imageMimeType,
+    imageName,
+    categoryHint,
+    postFormat,
+  };
+
   const generationDeadline = createRequestDeadline(signal, GENERATION_REQUEST_TIMEOUT_MS);
   try {
-    const res = await fetch('/api/generate', {
-      method: 'POST',
-      credentials: 'include',
-      headers: requestHeaders,
-      signal: generationDeadline.signal,
-      body: JSON.stringify({
-        prompt: rawInput,
-        topic: rawInput,
-        notes: rawInput,
-        inputMode,
-        imageBase64,
-        imageMimeType,
-        imageName,
-        categoryHint,
-        postFormat,
-      }),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      const parsed = parseCarouselData(data, {
-        minSlides: isSinglePost ? 1 : 3,
-        requireSlideContent: true,
-      });
+    if (directGenerate) {
+      const directResult = await directGenerate(generationPayload);
+      const parsed = directResult
+        ? parseCarouselData(directResult, {
+            minSlides: isSinglePost ? 1 : 3,
+            requireSlideContent: true,
+          })
+        : null;
       if (parsed) {
-        const headerEngine = res.headers.get('x-marrok-engine') as
-          | 'grounded'
-          | 'ungrounded'
-          | 'offline'
-          | 'gemini-ai'
-          | 'offline-synthesizer'
-          | null;
-        if (parsed.sourceMeta && headerEngine && !parsed.sourceMeta.engine) {
-          parsed.sourceMeta.engine = headerEngine;
-        }
         rawCarousel = parsed;
-        if (
-          parsed.sourceMeta?.isFallback ||
-          parsed.sourceMeta?.engine === 'offline' ||
-          parsed.sourceMeta?.engine === 'offline-synthesizer' ||
-          headerEngine === 'offline' ||
-          headerEngine === 'offline-synthesizer'
-        ) {
-          onProgress?.('Offline NLP Engine Activated: Synthesizing custom slides from your pasted notes.');
+      }
+    } else {
+      const generateUrl = resolvePipelineApiUrl('/api/generate', apiBaseUrl);
+      const res = await activeFetch(generateUrl, {
+        method: 'POST',
+        credentials: 'include',
+        headers: requestHeaders,
+        signal: generationDeadline.signal,
+        body: JSON.stringify(generationPayload),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const parsed = parseCarouselData(data, {
+          minSlides: isSinglePost ? 1 : 3,
+          requireSlideContent: true,
+        });
+        if (parsed) {
+          const headerEngine = res.headers.get('x-marrok-engine') as
+            | 'grounded'
+            | 'ungrounded'
+            | 'offline'
+            | 'gemini-ai'
+            | 'offline-synthesizer'
+            | null;
+          if (parsed.sourceMeta && headerEngine && !parsed.sourceMeta.engine) {
+            parsed.sourceMeta.engine = headerEngine;
+          }
+          rawCarousel = parsed;
+          if (
+            parsed.sourceMeta?.isFallback ||
+            parsed.sourceMeta?.engine === 'offline' ||
+            parsed.sourceMeta?.engine === 'offline-synthesizer' ||
+            headerEngine === 'offline' ||
+            headerEngine === 'offline-synthesizer'
+          ) {
+            onProgress?.('Offline NLP Engine Activated: Synthesizing custom slides from your pasted notes.');
+          }
         }
       }
     }
@@ -284,7 +339,8 @@ export async function runAutonomousPipeline(
       try {
         const diagramPrompt = `Architectural system diagram for ${targetSlide.enTitle || 'distributed systems'}: ${targetSlide.enBody?.slice(0, 120) || ''}. Isometric vector blueprint, high contrast, glowing neon accents, deep carbon background.`;
 
-        const imgRes = await fetch('/api/generate-image', {
+        const generateImageUrl = resolvePipelineApiUrl('/api/generate-image', apiBaseUrl);
+        const imgRes = await activeFetch(generateImageUrl, {
           method: 'POST',
           credentials: 'include',
           headers: requestHeaders,

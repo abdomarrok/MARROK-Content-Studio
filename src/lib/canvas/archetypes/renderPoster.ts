@@ -5,6 +5,7 @@ import { fitTextInBox } from '../textLayout.ts';
 import { loadIconImage, safeDrawImage } from '../imageLoader.ts';
 import { drawRowSlide } from './renderRow.ts';
 import { drawImageSlide } from './renderImage.ts';
+import { isolateEmbeddedLatinInArabic } from '../../text/arabicBiDi.ts';
 
 /**
  * Archetype 9: Infographic, Branded Meme & Video Poster (`poster`)
@@ -176,7 +177,11 @@ export async function drawTakeawaysBlock(
       ctx.textAlign = 'right';
       ctx.direction = 'rtl';
       ctx.textBaseline = 'bottom';
-      ctx.fillText(fitAr.lines[0] || item.ar, cardX + cardW - 16, rowY + rowH - (isCompactRow ? 6 : 10));
+      ctx.fillText(
+        isolateEmbeddedLatinInArabic(fitAr.lines[0] || item.ar),
+        cardX + cardW - 16,
+        rowY + rowH - (isCompactRow ? 6 : 10)
+      );
     }
   }
 

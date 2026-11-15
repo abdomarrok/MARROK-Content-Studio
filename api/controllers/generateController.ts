@@ -269,9 +269,9 @@ Return ONLY a valid raw JSON object (no markdown fences, no commentary) with thi
     {
       "type": "hub",
       "enTitle": "Headline under 45 chars.",
-      "arTitle": "عنوان تقني مختصر.",
+      "arTitle": "عنوان عربي طبيعي مع إبقاء Latency و API بالإنجليزية",
       "enBody": "Concise mechanism explanation under 140 chars.",
-      "arBody": "شرح تقني دقيق ومختصر باللغة العربية.",
+      "arBody": "شرح عربي طبيعي للآلية مع إبقاء Cache و 15ms بالإنجليزية دون ترجمة المصطلحات التقنية.",
       "icon": "cpu",
       "satellites": [
         { "label": "Node A", "arLabel": "عقدة أ", "sub": "Subtext", "icon": "server" },
@@ -921,7 +921,7 @@ export async function handleRefineSlide(req: Request, res: Response) {
     shorten:
       'Compress English and Arabic titles and body copy for instant mobile glanceability while preserving exact technical numbers and mechanisms.',
     arabic_sync:
-      'Keep the English headline and body accurate, and produce a natural, authoritative Modern Standard Arabic technical translation with proper BiDi terminology.',
+      'Keep the English headline and body accurate, and produce a natural Modern Standard Arabic sentence while keeping ALL technical terms (e.g. Sockets, Latency, Cache, Cluster, Raft, Postgres, Kafka, API, p99) and number+unit pairs (e.g. 15ms, 510 GB) in English Latin script.',
     analogy:
       'Reframe the body explanation using a concrete systems engineering mental model or architectural contrast while staying under 135 characters.',
   };
@@ -931,9 +931,9 @@ export async function handleRefineSlide(req: Request, res: Response) {
 Directive: ${directive}
 Rules:
 - enTitle: 2 to 6 words ending with a period (.) or question mark (?), max 45 characters.
-- arTitle: Natural Arabic technical headline ending with . or ؟, max 40 characters.
+- arTitle: Natural Arabic sentence keeping technical nouns & number+unit pairs in English (e.g. Sockets, Latency, Cache, API, 15ms), max 40 characters.
 - enBody: Direct technical explanation, max 140 characters.
-- arBody: Natural Arabic technical explanation ending with an Arabic word and period, max 150 characters.
+- arBody: Natural Arabic sentence keeping technical nouns & number+unit pairs in English without translating them, ending with an Arabic word and period, max 150 characters.
 - Return ONLY valid JSON with keys: enTitle, arTitle, enBody, arBody.
 
 Current Slide:

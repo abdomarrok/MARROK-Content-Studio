@@ -214,12 +214,27 @@ export function getServerConfig(envOverride?: NodeJS.ProcessEnv): ServerConfig {
   const isVercel = Boolean(readRuntimeEnv('VERCEL', envOverride) || readRuntimeEnv('VERCEL_ENV', envOverride));
   const kvRestUrl = readRuntimeEnv('KV_REST_API_URL', envOverride) || readRuntimeEnv('UPSTASH_REDIS_REST_URL', envOverride);
   const kvRestToken = readRuntimeEnv('KV_REST_API_TOKEN', envOverride) || readRuntimeEnv('UPSTASH_REDIS_REST_TOKEN', envOverride);
-  const cloudinaryCloudName = readRuntimeEnv('CLOUDINARY_CLOUD_NAME', envOverride);
-  const cloudinaryApiKey = readRuntimeEnv('CLOUDINARY_API_KEY', envOverride);
-  const cloudinaryApiSecret = readRuntimeEnv('CLOUDINARY_API_SECRET', envOverride);
+  let cloudinaryCloudName = readRuntimeEnv('CLOUDINARY_CLOUD_NAME', envOverride);
+  let cloudinaryApiKey = readRuntimeEnv('CLOUDINARY_API_KEY', envOverride);
+  let cloudinaryApiSecret = readRuntimeEnv('CLOUDINARY_API_SECRET', envOverride);
+  const rawCloudinaryUrl = readRuntimeEnv('CLOUDINARY_URL', envOverride);
+  if ((!cloudinaryCloudName || !cloudinaryApiKey || !cloudinaryApiSecret) && rawCloudinaryUrl) {
+    try {
+      const parsedCdn = new URL(rawCloudinaryUrl);
+      cloudinaryCloudName = cloudinaryCloudName || parsedCdn.hostname;
+      cloudinaryApiKey = cloudinaryApiKey || decodeURIComponent(parsedCdn.username);
+      cloudinaryApiSecret = cloudinaryApiSecret || decodeURIComponent(parsedCdn.password);
+    } catch {
+      // Ignore malformed CLOUDINARY_URL
+    }
+  }
   const bufferApiKey = readRuntimeEnv('BUFFER_API_KEY', envOverride);
   const zernioApiKey = readRuntimeEnv('ZERNIO_API_KEY', envOverride);
-  const databaseUrl = readRuntimeEnv('DATABASE_URL', envOverride) || readRuntimeEnv('POSTGRES_URL', envOverride);
+  const databaseUrl =
+    readRuntimeEnv('DATABASE_URL', envOverride) ||
+    readRuntimeEnv('POSTGRES_URL', envOverride) ||
+    readRuntimeEnv('NETLIFY_DATABASE_URL', envOverride) ||
+    readRuntimeEnv('NETLIFY_DATABASE_URL_UNPOOLED', envOverride);
   const telegramBotToken = readRuntimeEnv('TELEGRAM_BOT_TOKEN', envOverride);
   const telegramWebhookSecret = readRuntimeEnv('TELEGRAM_WEBHOOK_SECRET', envOverride);
   const telegramAllowedChatIds = readRuntimeEnv('TELEGRAM_ALLOWED_CHAT_IDS', envOverride)

@@ -429,6 +429,7 @@ export interface SaveValidPostParams {
   title?: string;
   allowOverride?: boolean;
   userReviewed?: boolean;
+  verifiedNumbers?: boolean;
 }
 
 /**
@@ -448,11 +449,25 @@ export async function saveValidPost(params: SaveValidPostParams): Promise<SavedP
   }
 
   const deletedIds = readDeletedIds();
+  const resolvedUserReviewed =
+    params.userReviewed !== undefined
+      ? params.userReviewed
+      : params.deck.sourceMeta?.userReviewed !== undefined
+      ? params.deck.sourceMeta.userReviewed
+      : true;
+  const resolvedVerifiedNumbers =
+    params.verifiedNumbers !== undefined
+      ? params.verifiedNumbers
+      : params.deck.sourceMeta?.verifiedNumbers;
+
   const reviewedDeck: CarouselData = {
     ...params.deck,
     sourceMeta: {
       ...params.deck.sourceMeta,
-      userReviewed: params.userReviewed ?? true,
+      userReviewed: resolvedUserReviewed,
+      ...(resolvedVerifiedNumbers !== undefined
+        ? { verifiedNumbers: resolvedVerifiedNumbers }
+        : {}),
     },
   };
 
@@ -467,6 +482,9 @@ export async function saveValidPost(params: SaveValidPostParams): Promise<SavedP
         postStatus: params.postStatus || 'validated',
         title: params.title,
         allowOverride: params.allowOverride ?? true,
+        ...(resolvedVerifiedNumbers !== undefined
+          ? { verifiedNumbers: resolvedVerifiedNumbers }
+          : {}),
       }),
     });
 
@@ -535,6 +553,10 @@ export async function saveValidPost(params: SaveValidPostParams): Promise<SavedP
       slideCount: sanitized.slides.length,
       qaPassed: honestQaPassed,
       qualityPassed: honestQaPassed,
+      humanApproved: resolvedUserReviewed,
+      ...(resolvedVerifiedNumbers !== undefined
+        ? { verifiedNumbers: resolvedVerifiedNumbers }
+        : {}),
       offlineDraft: true,
       storageEngine: 'browser-vault',
       deck: sanitized,

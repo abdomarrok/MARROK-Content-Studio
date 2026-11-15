@@ -13,11 +13,12 @@
 │  ┌────────────────────────────────────┐  ┌──────────────────────────────┐  │
 │  │ Phase 1: AutonomousStudio.tsx      │  │ Phase 2: Publish & Posts Hub │  │
 │  │  ├─ Carousel | 1-Slide | Meme|Reel │  │  (PublishingHubWorkspace.tsx)│  │
-│  │  ├─ Smart Meme & Graphic Workflows │  │  ├─ Tab 1: Publish Active    │  │
-│  │  ├─ Feed Color Cadence Auto-Rotate │  │  │   (Buffer + Zernio APIs + │  │
-│  │  └─ ViewportCanvas / ReelViewport  │  │  │    TikTok Trending Music) │  │
-│  └───────┬──────────────────┬─────────┘  │  └─ Tab 2: Posts & Calendar  │  │
-│          │                  │            │      (PostManagerPanel.tsx)  │  │
+│  │  ├─ Smart Meme & Graphic Workflows │  │  ├─ Inbox: Lazy Radar + 4-   │  │
+│  │  ├─ Feed Color Cadence Auto-Rotate │  │  │   Factor Score + Angle Gate│  │
+│  │  └─ ViewportCanvas / ReelViewport  │  │  ├─ Draft: 2-Flag Review +   │  │
+│  │                                    │  │  │   Publish Now / Composer   │  │
+│  └───────┬──────────────────┬─────────┘  │  └─ Schedule: 7/14d Calendar │  │
+│          │                  │            │      + >2/day Cadence Warn   │  │
 │          ▼                  ▼            └──────────────┬───────────────┘  │
 │  ┌────────────────┐ ┌────────────────┐                  │                  │
 │  │ Static & Video │ │ Motion Reel    │                  │                  │
@@ -69,10 +70,10 @@
 | `api/controllers/publishController.ts` | Signed SHA-1 Cloudinary upload (`uploadSlideToCloudinary`), automatic post-publish asset destruction (`destroyCloudinaryAsset`, `sweepExpiredCloudinaryAssets`), Buffer GraphQL API dispatch (`https://api.buffer.com`), Zernio REST API v1 dispatch (`https://zernio.com/api/v1/posts`), and TikTok Commercial Music catalog (`fetchZernioTikTokCommercialMusic`) |
 | `api/controllers/proxyController.ts` | SSRF-hardened HTTPS image proxy with DNS resolution check, 2 MB cap, and SVG sanitization |
 | `api/controllers/mediaController.ts` | Subject-based tech icon & Wikimedia search (`/api/search-media`), automated technical trend radar (`/api/gather/radar` across HN, Lobsters, Reddit, Cloudflare RSS, custom RSS, and curated stories), and SSRF-hardened web article reader extraction (`/api/gather/extract-url`) |
-| `src/components/studio/PublishingHubWorkspace.tsx` | Full-page Phase 2 Publish & Posts Hub with 2 tabs (`Publish Active Post` and `Posts & Calendar`), dual aspect-ratio staging (`4:5` + `9:16`), and TikTok Background Sound selector with audio preview |
-| `src/components/studio/PostManagerPanel.tsx` | Unified Post Lifecycle & Calendar Manager (`Posts List`, `7/14-Day Calendar`, `Bulk Schedule`, and `Weekly Program Review` modal trigger) supporting inline rescheduling, unscheduling, and remote queue cancellation across Buffer and Zernio |
-| `src/components/studio/WeeklyProgramReviewPanel.tsx` | Modal interface for scanning trend radar topics, background bilingual deck synthesis, human review/editing of slide outlines, and batch scheduling to TikTok/Instagram peak hours (10:00, 12:00, 18:00 DZ local time) |
-| `src/lib/gather/gatherClient.ts` | Client SDK for `/api/gather/*`, managing topic radar queries, background candidate generation with vault deduplication (`isTopicAlreadyInVault`), and topic-to-post conversions |
+| `src/components/studio/PublishingHubWorkspace.tsx` | Flattened Phase 2 Publish Hub (`Inbox · Draft · Schedule`), live Neon/Buffer/Zernio/Cloudinary status strip, dual aspect-ratio staging (`4:5` + `9:16`), mandatory 2-flag safety gate, immediate `Publish Now`, and TikTok Background Sound selector |
+| `src/components/studio/PostManagerPanel.tsx` | Draft Review Queue & Schedule/Calendar Manager (`Queue`, `7/14-Day Calendar`, `Bulk Schedule`) enforcing `Human Reviewed` + `Claims & Numbers Verified` gates, `>2 posts/day` cadence overload warnings, inline rescheduling, and `Publish Now` dispatch |
+| `src/components/studio/WeeklyProgramReviewPanel.tsx` | Inbox container managing lazy trend radar scanning, on-demand 8-slide storyboard hydration (`hydrateCandidateDeckOnDemand`), editable `Marrok angle` validation, and safe Draft-only queueing |
+| `src/lib/gather/gatherClient.ts` | Client SDK for `/api/gather/*`, managing lazy Slide 1 Hook previews, 4-factor composite scoring (`freshness`, `engagement`, `clientRelevance`, `platformRisk`), `Already Covered` vault deduplication, and quality-gated Draft queueing |
 | `src/lib/publish/tiktokTitle.ts` | Pure standalone string utility (`stripLeadingDuplicateTikTokTitle`) decoupled from browser DOM/Canvas and IndexedDB to guarantee clean Vercel Node.js Serverless function bundling |
 | `src/lib/publish/publishClient.ts` | Client SDK for `/api/publish/*` endpoints, dual aspect-ratio slide renderer (`uploadDeckSlidesForPublishing`), TikTok Commercial Music fetcher (`fetchTikTokCommercialMusic`), local-timezone schedule helpers, and metadata auto-derivation |
 | `src/lib/theme/cadenceEngine.ts` | Posted history color cadence analyzer (`analyzePostHistoryCadence`, `resolveHarmoniousPaletteWithoutRepetition`) preventing consecutive same-color posts |

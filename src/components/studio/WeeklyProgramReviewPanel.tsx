@@ -1,44 +1,25 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Radar, Clock } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   CarouselData,
   PostFormat,
-  PublishTargetPlatform,
   SavedPostRecord,
-  SlideData,
   ThemePalette,
 } from '../../types.ts';
 import {
-  computePeakProgramScheduleSlots,
-  derivePostLifecycleStage,
-  formatLocalDateTimeParts,
-  getLocalTodayDateStr,
-  getLocalTomorrowDateStr,
-  isLocalSlotInFuture,
-  managePublishedPost,
-  PeakProgramDensity,
-  PeakTimeSlot,
-  resolveNextFutureSlotForTime,
-} from '../../lib/publish/publishClient.ts';
-import {
-  acceptGatheredCandidatesIntoSchedule,
-  buildCandidateFromTopicSync,
+  acceptGatheredCandidatesToDrafts,
+  buildLightweightLazyCandidate,
   dismissGatherTopicId,
   extractArticleFromUrl,
   fetchTopicRadar,
   GatheredCandidatePost,
   generateGatheredCandidatesInBackground,
   getSavedCustomRssFeeds,
+  hydrateCandidateDeckOnDemand,
+  reEvaluateCandidateQuality,
   regenerateSingleCandidateSlideWithAi,
   saveCustomRssFeeds,
-  synthesizeCandidateWithFullAi,
 } from '../../lib/gather/gatherClient.ts';
-import { saveValidPost } from '../../lib/storage/postsVaultClient.ts';
-import {
-  TopicRadarGatherView,
-  PeakScheduleBoardView,
-  PeakBoardDaySlot,
-} from './review/index.ts';
+import { TopicRadarGatherView } from './review/TopicRadarGatherView.tsx';
 
 interface WeeklyProgramReviewPanelProps {
   savedPosts: SavedPostRecord[];
@@ -47,31 +28,22 @@ interface WeeklyProgramReviewPanelProps {
   initialSubView?: 'gather' | 'peak-board';
   onEditInStudio: (post: SavedPostRecord) => void;
   onLoadCandidateIntoStudio?: (deck: CarouselData, title: string) => void;
+  onMovedToDraft?: (count: number) => void;
   onRefreshVault: () => void;
   onRefreshStatus: () => void;
   onShowToast: (msg: string) => void;
 }
 
-const ALL_PLATFORMS: PublishTargetPlatform[] = [
-  'instagram',
-  'facebook',
-  'linkedin',
-  'tiktok',
-];
-
 export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> = ({
   savedPosts,
   theme,
-  initialSubView = 'gather',
-  onEditInStudio,
   onLoadCandidateIntoStudio,
+  onMovedToDraft,
   onRefreshVault,
   onRefreshStatus,
   onShowToast,
 }) => {
-  const [subView, setSubView] = useState<'gather' | 'peak-board'>(initialSubView);
   const isMountedRef = useRef<boolean>(true);
-  const autoUpgradedIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -80,17 +52,6 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
     };
   }, []);
 
-  // Live clock (ticks every 30s so future-only slot validation stays accurate)
-  const [nowDate, setNowDate] = useState<Date>(() => new Date());
-  useEffect(() => {
-    const timer = setInterval(() => setNowDate(new Date()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const todayStr = useMemo(() => getLocalTodayDateStr(nowDate), [nowDate]);
-  const tomorrowStr = useMemo(() => getLocalTomorrowDateStr(nowDate), [nowDate]);
-
-  // ── 1. Content Gatherer State ──
   const [candidates, setCandidates] = useState<GatheredCandidatePost[]>([]);
   const [isScanningTrends, setIsScanningTrends] = useState<boolean>(false);
   const [scanProgressLabel, setScanProgressLabel] = useState<string | null>(null);
@@ -98,73 +59,28 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
   const [domainFilter, setDomainFilter] = useState<string>('all');
   const [formatFilter, setFormatFilter] = useState<'auto' | PostFormat>('auto');
 
-  // Connected Custom RSS Feeds & Direct Article URL Extractor
-  const [customRssFeeds, setCustomRssFeeds] = useState<string[]>(() => getSavedCustomRssFeeds());
+  const [customRssFeeds, setCustomRssFeeds] = useState<string[]>(() =>
+    getSavedCustomRssFeeds()
+  );
   const [urlOrRssInput, setUrlOrRssInput] = useState<string>('');
   const [isExtractingInput, setIsExtractingInput] = useState<boolean>(false);
   const [showRssManager, setShowRssManager] = useState<boolean>(false);
 
-  // Selected candidate IDs for multi-post weekly schedule acceptance
   const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
-  const [programStartDate, setProgramStartDate] = useState<string>(() => getLocalTodayDateStr());
-  const [programDensity, setProgramDensity] = useState<PeakProgramDensity>('3x-daily');
-  const [requeueBufferOnApprove] = useState<boolean>(true);
   const [isAcceptingBatch, setIsAcceptingBatch] = useState<boolean>(false);
   const [acceptingSingleId, setAcceptingSingleId] = useState<string | null>(null);
-  const [synthesizingCandidateId, setSynthesizingCandidateId] = useState<string | null>(null);
+  const [hydratingCandidateId, setHydratingCandidateId] = useState<string | null>(null);
   const [regeneratingSlideKey, setRegeneratingSlideKey] = useState<string | null>(null);
 
-  // Per-candidate custom schedule overrides
-  const [candidateScheduleOverrides, setCandidateScheduleOverrides] = useState<
-    Record<string, { datePart: string; timeShort: string; targets: PublishTargetPlatform[] }>
-  >({});
-
-  // Expanded candidate ID for inline editing
   const [expandedCandidateId, setExpandedCandidateId] = useState<string | null>(null);
   const [activeOutlineSlideIdx, setActiveOutlineSlideIdx] = useState<number>(0);
 
-  // ── 2. Scheduled Peak-Hour (10 · 12 · 18) Review Board State ──
-  const [boardDaysCount, setBoardDaysCount] = useState<7 | 14>(7);
-  const [assigningSlotKey, setAssigningSlotKey] = useState<string | null>(null);
-  const [busyPostId, setBusyPostId] = useState<string | null>(null);
-
-  // Inline editor for already-scheduled posts
-  const [editingScheduledPostId, setEditingScheduledPostId] = useState<string | null>(null);
-  const [editScheduledTitle, setEditScheduledTitle] = useState<string>('');
-  const [editScheduledCaption, setEditScheduledCaption] = useState<string>('');
-  const [editScheduledSlides, setEditScheduledSlides] = useState<SlideData[]>([]);
-  const [editScheduledSlideIdx, setEditScheduledSlideIdx] = useState<number>(0);
-  const [isSavingScheduledEdit, setIsSavingScheduledEdit] = useState<boolean>(false);
-
-  const postsWithStage = useMemo(() => {
-    const nowMs = nowDate.getTime();
-    return savedPosts.map((post) => ({
-      post,
-      stage: derivePostLifecycleStage(post, nowMs),
-    }));
-  }, [savedPosts, nowDate]);
-
-  // Occupied future scheduled slot keys (`YYYY-MM-DD|HH:mm`)
-  const occupiedSlotKeys = useMemo(() => {
-    const set = new Set<string>();
-    for (const { post, stage } of postsWithStage) {
-      if (stage === 'scheduled' && post.scheduledFor) {
-        const parts = formatLocalDateTimeParts(post.scheduledFor);
-        set.add(`${parts.datePart}|${parts.timeShort}`);
-      }
-    }
-    return set;
-  }, [postsWithStage]);
-
-  // Run background Content Gatherer + automatic non-blocking Deep AI upgrade
+  // Lazy Inbox Gatherer: loads ranked trends & fast Slide 1 hooks ONLY (no eager 21x8 AI storm)
   const runBackgroundGatherer = useCallback(
     async (refresh = false) => {
       setIsScanningTrends(true);
-      setScanProgressLabel('Scanning social media & RSS trend feeds...');
+      setScanProgressLabel('Scanning Reddit, Hacker News, Lobsters, GitHub & RSS feeds...');
       try {
-        if (refresh) {
-          autoUpgradedIdsRef.current.clear();
-        }
         const res = await fetchTopicRadar({
           source: sourceFilter,
           category: domainFilter,
@@ -177,10 +93,11 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
           savedPosts,
           {
             formatOverride: formatFilter,
+            lazy: true,
             onProgress: (curr, total, title) => {
               if (!isMountedRef.current) return;
               setScanProgressLabel(
-                `Generating draft carousel & slide outlines (${curr}/${total}): ${title.slice(0, 42)}...`
+                `Preparing lazy Slide 1 Hook (${curr}/${total}): ${title.slice(0, 42)}...`
               );
             },
           }
@@ -189,35 +106,15 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
         if (!isMountedRef.current) return;
         setCandidates(generated);
         setSelectedCandidateIds((prev) => {
-          const validPrev = prev.filter((id) => generated.some((c) => c.id === id));
-          if (validPrev.length > 0) return validPrev;
-          return generated.slice(0, 6).map((c) => c.id);
+          const validIds = new Set(
+            generated
+              .filter((c) => !c.alreadyCovered && (c.qualityGate?.passed ?? true))
+              .map((c) => c.id)
+          );
+          const kept = prev.filter((id) => validIds.has(id));
+          if (kept.length > 0) return kept;
+          return Array.from(validIds).slice(0, 4);
         });
-
-        // Automatically run Deep AI Synthesis + Graphic Sync + Limit Fitting in background
-        void (async () => {
-          for (const cand of generated) {
-            if (!isMountedRef.current) break;
-            if (autoUpgradedIdsRef.current.has(cand.id)) continue;
-            autoUpgradedIdsRef.current.add(cand.id);
-            setSynthesizingCandidateId(cand.id);
-            try {
-              const upgraded = await synthesizeCandidateWithFullAi(cand);
-              if (!isMountedRef.current) break;
-              setCandidates((prev) =>
-                prev.map((c) => (c.id === cand.id ? upgraded : c))
-              );
-            } catch {
-              // Keep pre-finalized candidate if background AI upgrade fails
-            } finally {
-              if (isMountedRef.current) {
-                setSynthesizingCandidateId((curr) =>
-                  curr === cand.id ? null : curr
-                );
-              }
-            }
-          }
-        })();
       } catch (err) {
         if (isMountedRef.current) {
           onShowToast(
@@ -238,121 +135,68 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
     void runBackgroundGatherer(false);
   }, [runBackgroundGatherer]);
 
-  // Proposed future slots
-  const proposedFutureSlotsByCandidateId = useMemo(() => {
-    const orderedIds = [
-      ...selectedCandidateIds,
-      ...candidates.map((c) => c.id).filter((id) => !selectedCandidateIds.includes(id)),
-    ];
-    const safeStartDate = programStartDate < todayStr ? todayStr : programStartDate;
-    const slots = computePeakProgramScheduleSlots(
-      Math.max(1, orderedIds.length),
-      safeStartDate,
-      programDensity,
-      occupiedSlotKeys,
-      nowDate
-    );
-
-    const map: Record<
-      string,
-      { datePart: string; timeShort: string; readableLabel: string }
-    > = {};
-    orderedIds.forEach((id, idx) => {
-      const slot = slots[idx];
-      if (slot) {
-        map[id] = {
-          datePart: slot.datePart,
-          timeShort: slot.timePart.slice(0, 5),
-          readableLabel: slot.readableLabel,
-        };
-      }
-    });
-    return map;
-  }, [
-    selectedCandidateIds,
-    candidates,
-    programStartDate,
-    todayStr,
-    programDensity,
-    occupiedSlotKeys,
-    nowDate,
-  ]);
-
-  const getCandidateFutureSchedule = useCallback(
-    (candidateId: string): {
-      datePart: string;
-      timeShort: string;
-      targets: PublishTargetPlatform[];
-      rolledToTomorrow: boolean;
-    } => {
-      const override = candidateScheduleOverrides[candidateId];
-      if (override) {
-        const safe = resolveNextFutureSlotForTime(
-          override.datePart,
-          override.timeShort,
-          nowDate
-        );
-        return {
-          datePart: safe.datePart,
-          timeShort: safe.timeShort,
-          targets: override.targets,
-          rolledToTomorrow: safe.rolledToTomorrow,
-        };
-      }
-
-      const proposed = proposedFutureSlotsByCandidateId[candidateId];
-      const safe = resolveNextFutureSlotForTime(
-        proposed?.datePart || todayStr,
-        proposed?.timeShort || '18:00',
-        nowDate
-      );
-      return {
-        datePart: safe.datePart,
-        timeShort: safe.timeShort,
-        targets: ALL_PLATFORMS,
-        rolledToTomorrow: safe.rolledToTomorrow,
-      };
-    },
-    [candidateScheduleOverrides, proposedFutureSlotsByCandidateId, todayStr, nowDate]
-  );
-
-  const updateCandidateSchedule = (
-    candidateId: string,
-    patch: Partial<{ datePart: string; timeShort: string; targets: PublishTargetPlatform[] }>
-  ) => {
-    const current = getCandidateFutureSchedule(candidateId);
-    const nextDate = patch.datePart !== undefined ? patch.datePart : current.datePart;
-    const nextTime = patch.timeShort !== undefined ? patch.timeShort : current.timeShort;
-    const nextTargets = patch.targets !== undefined ? patch.targets : current.targets;
-
-    const validated = resolveNextFutureSlotForTime(nextDate, nextTime, nowDate);
-    if (validated.rolledToTomorrow && nextDate === todayStr) {
-      onShowToast(
-        `${nextTime} has already passed today — automatically set to Tomorrow (${validated.datePart}) at ${validated.timeShort}`
-      );
-    }
-
-    setCandidateScheduleOverrides((prev) => ({
-      ...prev,
-      [candidateId]: {
-        datePart: validated.datePart,
-        timeShort: validated.timeShort,
-        targets: nextTargets,
-      },
-    }));
-
-    if (!selectedCandidateIds.includes(candidateId)) {
-      setSelectedCandidateIds((prev) => [...prev, candidateId]);
-    }
-  };
-
   const updateCandidateDeck = (
     candidateId: string,
     updater: (prev: GatheredCandidatePost) => GatheredCandidatePost
   ) => {
     setCandidates((prev) =>
-      prev.map((c) => (c.id === candidateId ? updater(c) : c))
+      prev.map((c) => (c.id === candidateId ? reEvaluateCandidateQuality(updater(c)) : c))
     );
+  };
+
+  const handleUpdateCandidateAngle = (candidateId: string, angle: string) => {
+    setCandidates((prev) =>
+      prev.map((c) => {
+        if (c.id !== candidateId) return c;
+        return reEvaluateCandidateQuality({
+          ...c,
+          marrokAngle: angle,
+          deck: {
+            ...c.deck,
+            sourceMeta: {
+              ...c.deck.sourceMeta,
+              marrokAngle: angle,
+            },
+          },
+        });
+      })
+    );
+  };
+
+  // Lazy on-demand 8-slide generation ONLY when candidate is opened or clicked
+  const handleOpenAndHydrateCandidate = async (
+    candidate: GatheredCandidatePost,
+    slideIndex = 0
+  ): Promise<GatheredCandidatePost> => {
+    setExpandedCandidateId(candidate.id);
+    setActiveOutlineSlideIdx(slideIndex);
+
+    if (candidate.isDeckSynthesized) {
+      return candidate;
+    }
+
+    setHydratingCandidateId(candidate.id);
+    try {
+      const hydrated = await hydrateCandidateDeckOnDemand(candidate, {
+        useAi: false,
+      });
+      if (!isMountedRef.current) return hydrated;
+      setCandidates((prev) =>
+        prev.map((c) => (c.id === candidate.id ? hydrated : c))
+      );
+      return hydrated;
+    } catch (err) {
+      if (isMountedRef.current) {
+        onShowToast(
+          `⚠️ ${err instanceof Error ? err.message : 'Failed to generate slide outline'}`
+        );
+      }
+      return candidate;
+    } finally {
+      if (isMountedRef.current) {
+        setHydratingCandidateId((curr) => (curr === candidate.id ? null : curr));
+      }
+    }
   };
 
   const handleAddUrlOrRss = async () => {
@@ -372,52 +216,36 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
     setIsExtractingInput(true);
     try {
       const res = await extractArticleFromUrl(clean);
-      const initialCandidate = buildCandidateFromTopicSync(
+      const lazyCand = buildLightweightLazyCandidate(
         res.topic,
         theme.id || 'teal',
         formatFilter
       );
-      const newCandidate = await synthesizeCandidateWithFullAi(initialCandidate);
+      const hydratedCand = await hydrateCandidateDeckOnDemand(lazyCand, {
+        useAi: true,
+      });
+      if (!isMountedRef.current) return;
       setCandidates((prev) => [
-        newCandidate,
-        ...prev.filter((c) => c.id !== newCandidate.id),
+        hydratedCand,
+        ...prev.filter((c) => c.id !== hydratedCand.id),
       ]);
-      setSelectedCandidateIds((prev) =>
-        prev.includes(newCandidate.id) ? prev : [newCandidate.id, ...prev]
-      );
-      setExpandedCandidateId(newCandidate.id);
+      if (!hydratedCand.alreadyCovered && hydratedCand.qualityGate.passed) {
+        setSelectedCandidateIds((prev) =>
+          prev.includes(hydratedCand.id) ? prev : [hydratedCand.id, ...prev]
+        );
+      }
+      setExpandedCandidateId(hydratedCand.id);
       setActiveOutlineSlideIdx(0);
       setUrlOrRssInput('');
       onShowToast(
-        `✓ Deep-synthesized ${newCandidate.deck.slides.length}-slide deck from "${res.topic.title.slice(0, 38)}..."`
+        `✓ Extracted & drafted ${hydratedCand.deck.slides.length}-slide outline for "${res.topic.title.slice(0, 38)}"`
       );
     } catch (err) {
       onShowToast(
-        `⚠️ ${err instanceof Error ? err.message : 'Failed to extract URL'}`
+        `⚠️ ${err instanceof Error ? err.message : 'Failed to extract article URL'}`
       );
     } finally {
       setIsExtractingInput(false);
-    }
-  };
-
-  const handleSynthesizeCandidateWithAi = async (candidate: GatheredCandidatePost) => {
-    setSynthesizingCandidateId(candidate.id);
-    try {
-      const upgraded = await synthesizeCandidateWithFullAi(candidate);
-      setCandidates((prev) =>
-        prev.map((c) => (c.id === candidate.id ? upgraded : c))
-      );
-      setExpandedCandidateId(candidate.id);
-      setActiveOutlineSlideIdx(0);
-      onShowToast(
-        `✨ Deep AI Synthesis complete for "${upgraded.draftTitle.slice(0, 36)}" (${upgraded.deck.slides.length} slides)`
-      );
-    } catch (err) {
-      onShowToast(
-        `⚠️ ${err instanceof Error ? err.message : 'Deep AI synthesis failed'}`
-      );
-    } finally {
-      setSynthesizingCandidateId(null);
     }
   };
 
@@ -432,11 +260,12 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
         candidate,
         slideIndex
       );
+      if (!isMountedRef.current) return;
       setCandidates((prev) =>
         prev.map((c) => (c.id === candidate.id ? updated : c))
       );
       onShowToast(
-        `✨ Regenerated Slide ${slideIndex + 1} with AI for "${updated.draftTitle.slice(0, 32)}"`
+        `✨ Regenerated Slide ${slideIndex + 1} for "${updated.draftTitle.slice(0, 32)}"`
       );
     } catch (err) {
       onShowToast(
@@ -447,33 +276,22 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
     }
   };
 
-  const handleAcceptSingleCandidate = async (candidate: GatheredCandidatePost) => {
+  const handleMoveSingleToDraft = async (candidate: GatheredCandidatePost) => {
     setAcceptingSingleId(candidate.id);
     try {
-      const sched = getCandidateFutureSchedule(candidate.id);
-      const result = await acceptGatheredCandidatesIntoSchedule(
-        [
-          {
-            candidate,
-            datePart: sched.datePart,
-            timeShort: sched.timeShort,
-            targets: sched.targets,
-          },
-        ],
-        {
-          requeueBuffer: requeueBufferOnApprove,
-          scheduleImmediately: true,
-        }
-      );
+      const result = await acceptGatheredCandidatesToDrafts([candidate], {
+        useAiUpgrade: false,
+      });
 
-      if (result.scheduledPosts.length > 0) {
+      if (result.draftPosts.length > 0) {
         setCandidates((prev) => prev.filter((c) => c.id !== candidate.id));
         setSelectedCandidateIds((prev) => prev.filter((id) => id !== candidate.id));
         onRefreshVault();
         onRefreshStatus();
         onShowToast(
-          `✓ Accepted & scheduled "${candidate.draftTitle.slice(0, 34)}" for ${sched.datePart} at ${sched.timeShort}`
+          `✓ Moved "${candidate.draftTitle.slice(0, 34)}" to Draft for human & claims verification`
         );
+        onMovedToDraft?.(result.draftPosts.length);
       } else if (result.failedCandidates.length > 0) {
         onShowToast(`⚠️ ${result.failedCandidates[0].error}`);
       }
@@ -482,49 +300,44 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
     }
   };
 
-  const handleAcceptSelectedBatch = async () => {
+  const handleQueueSelectedToDrafts = async () => {
     const picked = candidates.filter((c) => selectedCandidateIds.includes(c.id));
     if (picked.length === 0) {
-      onShowToast('Select at least 1 possible post to accept into your schedule');
+      onShowToast('Select at least 1 valid Inbox card to move to Draft');
       return;
     }
 
     setIsAcceptingBatch(true);
     try {
-      const scheduleItems = picked.map((cand) => {
-        const sched = getCandidateFutureSchedule(cand.id);
-        return {
-          candidate: cand,
-          datePart: sched.datePart,
-          timeShort: sched.timeShort,
-          targets: sched.targets,
-        };
+      const result = await acceptGatheredCandidatesToDrafts(picked, {
+        useAiUpgrade: false,
       });
 
-      const result = await acceptGatheredCandidatesIntoSchedule(scheduleItems, {
-        requeueBuffer: requeueBufferOnApprove,
-        scheduleImmediately: true,
-      });
-
-      if (result.scheduledPosts.length > 0) {
-        const acceptedIds = new Set(result.scheduledPosts.map((p) => p.id));
-        setCandidates((prev) => prev.filter((c) => !acceptedIds.has(c.id)));
-        setSelectedCandidateIds((prev) => prev.filter((id) => !acceptedIds.has(id)));
+      if (result.draftPosts.length > 0) {
+        const acceptedIds = new Set(picked.map((p) => p.id));
+        const failedTitles = new Set(result.failedCandidates.map((f) => f.title));
+        const succeeded = picked.filter(
+          (c) => acceptedIds.has(c.id) && !failedTitles.has(c.draftTitle)
+        );
+        const succeededIds = new Set(succeeded.map((c) => c.id));
+        setCandidates((prev) => prev.filter((c) => !succeededIds.has(c.id)));
+        setSelectedCandidateIds((prev) => prev.filter((id) => !succeededIds.has(id)));
         onRefreshVault();
         onRefreshStatus();
         onShowToast(
-          `✓ Successfully accepted & scheduled ${result.scheduledPosts.length} posts into future peak slots!`
+          `✓ Queued ${result.draftPosts.length} unscheduled Draft(s) for review (human & numeric verification required before scheduling)`
         );
+        onMovedToDraft?.(result.draftPosts.length);
       }
 
       if (result.failedCandidates.length > 0) {
         onShowToast(
-          `⚠️ ${result.failedCandidates.length} candidate(s) could not be scheduled: ${result.failedCandidates[0].error}`
+          `⚠️ ${result.failedCandidates.length} candidate(s) blocked: ${result.failedCandidates[0].error}`
         );
       }
     } catch (err) {
       onShowToast(
-        `⚠️ ${err instanceof Error ? err.message : 'Batch scheduling failed'}`
+        `⚠️ ${err instanceof Error ? err.message : 'Failed to queue drafts'}`
       );
     } finally {
       setIsAcceptingBatch(false);
@@ -535,277 +348,48 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
     dismissGatherTopicId(candidateId);
     setCandidates((prev) => prev.filter((c) => c.id !== candidateId));
     setSelectedCandidateIds((prev) => prev.filter((id) => id !== candidateId));
-    onShowToast('Candidate dismissed from review inbox');
+    onShowToast('Dismissed candidate from Inbox');
   };
-
-  const handleUnschedulePost = async (post: SavedPostRecord) => {
-    setBusyPostId(post.id);
-    try {
-      await managePublishedPost({ postId: post.id, action: 'unschedule' });
-      onRefreshVault();
-      onRefreshStatus();
-      onShowToast(`Unscheduled "${post.title.slice(0, 32)}"`);
-    } catch (err) {
-      onShowToast(`⚠️ ${err instanceof Error ? err.message : 'Failed to unschedule post'}`);
-    } finally {
-      setBusyPostId(null);
-    }
-  };
-
-  const openScheduledPostInlineEditor = (post: SavedPostRecord) => {
-    setEditingScheduledPostId(post.id);
-    setEditScheduledTitle(post.title || '');
-    setEditScheduledCaption(post.deck?.caption || '');
-    setEditScheduledSlides(
-      (post.deck?.slides || []).map((s) => ({ ...s }))
-    );
-    setEditScheduledSlideIdx(0);
-  };
-
-  const handleSaveScheduledPostInlineEdit = async (post: SavedPostRecord) => {
-    setIsSavingScheduledEdit(true);
-    try {
-      const updatedSlides = editScheduledSlides.map((s, idx) =>
-        idx === 0 && editScheduledTitle.trim()
-          ? { ...s, enTitle: editScheduledTitle.trim() }
-          : s
-      );
-      await saveValidPost({
-        deck: {
-          ...post.deck,
-          id: post.id,
-          caption: editScheduledCaption,
-          slides: updatedSlides,
-          sourceMeta: {
-            ...post.deck.sourceMeta,
-            userReviewed: true,
-          },
-        },
-        postStatus: post.postStatus === 'posted' ? 'posted' : 'validated',
-        title: editScheduledTitle.trim() || post.title,
-        allowOverride: true,
-        userReviewed: true,
-      });
-      setEditingScheduledPostId(null);
-      onRefreshVault();
-      onShowToast(`✓ Saved changes to "${(editScheduledTitle || post.title).slice(0, 32)}"`);
-    } catch (err) {
-      onShowToast(`⚠️ ${err instanceof Error ? err.message : 'Failed to save changes'}`);
-    } finally {
-      setIsSavingScheduledEdit(false);
-    }
-  };
-
-  // Build Peak Board Days
-  const peakBoardDays: PeakBoardDaySlot[] = useMemo(() => {
-    const days: PeakBoardDaySlot[] = [];
-    const base = new Date(nowDate);
-    base.setHours(0, 0, 0, 0);
-
-    for (let i = 0; i < boardDaysCount; i++) {
-      const dt = new Date(base);
-      dt.setDate(base.getDate() + i);
-      const dateStr = getLocalTodayDateStr(dt);
-      const dayLabel =
-        i === 0
-          ? 'Today'
-          : i === 1
-          ? 'Tomorrow'
-          : dt.toLocaleDateString('en-US', { weekday: 'long' });
-      const subLabel = dt.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-      });
-
-      const peakSlots: Record<
-        PeakTimeSlot,
-        {
-          isFuture: boolean;
-          items: Array<{ post: SavedPostRecord; stage: string; timeShort: string }>;
-        }
-      > = {
-        '10:00': {
-          isFuture: isLocalSlotInFuture(dateStr, '10:00', nowDate),
-          items: [],
-        },
-        '12:00': {
-          isFuture: isLocalSlotInFuture(dateStr, '12:00', nowDate),
-          items: [],
-        },
-        '18:00': {
-          isFuture: isLocalSlotInFuture(dateStr, '18:00', nowDate),
-          items: [],
-        },
-      };
-
-      for (const { post, stage } of postsWithStage) {
-        const refIso =
-          post.scheduledFor ||
-          (post.postStatus === 'posted' ? post.postedAt : undefined);
-        if (!refIso) continue;
-        const parts = formatLocalDateTimeParts(refIso);
-        if (parts.datePart !== dateStr) continue;
-
-        const hourNum = Number.parseInt(parts.timeShort.split(':')[0] || '18', 10);
-        if (parts.timeShort === '10:00' || (hourNum >= 9 && hourNum <= 10)) {
-          peakSlots['10:00'].items.push({ post, stage, timeShort: parts.timeShort });
-        } else if (parts.timeShort === '12:00' || (hourNum >= 11 && hourNum <= 13)) {
-          peakSlots['12:00'].items.push({ post, stage, timeShort: parts.timeShort });
-        } else if (parts.timeShort === '18:00' || (hourNum >= 17 && hourNum <= 19)) {
-          peakSlots['18:00'].items.push({ post, stage, timeShort: parts.timeShort });
-        }
-      }
-
-      days.push({
-        dateStr,
-        dayLabel,
-        subLabel,
-        isToday: i === 0,
-        peakSlots,
-      });
-    }
-
-    return days;
-  }, [boardDaysCount, postsWithStage, nowDate]);
-
-  const scheduledCount = useMemo(
-    () => postsWithStage.filter((x) => x.stage === 'scheduled').length,
-    [postsWithStage]
-  );
 
   return (
-    <div className="space-y-3">
-      {/* Top Sub-Navigation */}
-      <div className="rounded-2xl border border-white/10 bg-[#0b1218]/95 p-3 flex flex-wrap items-center justify-between gap-2.5">
-        <div className="flex flex-wrap items-center gap-1.5 bg-black/40 p-1 rounded-xl border border-white/10">
-          <button
-            type="button"
-            onClick={() => setSubView('gather')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              subView === 'gather'
-                ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-400/40 shadow-xs'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Radar className="w-3.5 h-3.5 text-cyan-400" />
-            <span>1. Content Gatherer (Possible Posts from Trends)</span>
-            <span className="px-1.5 py-0.5 rounded bg-black/50 text-[10px] font-mono text-cyan-200 tabular-nums">
-              {candidates.length}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setSubView('peak-board')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              subView === 'peak-board'
-                ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/40 shadow-xs'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Clock className="w-3.5 h-3.5 text-emerald-400" />
-            <span>2. Scheduled Peak Slots (10:00 · 12:00 · 18:00)</span>
-            <span className="px-1.5 py-0.5 rounded bg-black/50 text-[10px] font-mono text-emerald-200 tabular-nums">
-              {scheduledCount} scheduled
-            </span>
-          </button>
-        </div>
-
-        <div className="flex items-center gap-2 text-[11px] font-mono text-slate-400">
-          <span>Future-Only Peak Windows:</span>
-          <span className="text-cyan-300 font-bold tabular-nums">10:00</span>
-          <span aria-hidden="true">·</span>
-          <span className="text-emerald-300 font-bold tabular-nums">12:00</span>
-          <span aria-hidden="true">·</span>
-          <span className="text-amber-300 font-bold tabular-nums">18:00</span>
-        </div>
-      </div>
-
-      {/* VIEW 1: AUTOMATED CONTENT GATHERER */}
-      {subView === 'gather' && (
-        <TopicRadarGatherView
-          candidates={candidates}
-          isScanningTrends={isScanningTrends}
-          scanProgressLabel={scanProgressLabel}
-          sourceFilter={sourceFilter}
-          onSetSourceFilter={setSourceFilter}
-          domainFilter={domainFilter}
-          onSetDomainFilter={setDomainFilter}
-          formatFilter={formatFilter}
-          onSetFormatFilter={setFormatFilter}
-          customRssFeeds={customRssFeeds}
-          onSetCustomRssFeeds={setCustomRssFeeds}
-          urlOrRssInput={urlOrRssInput}
-          onSetUrlOrRssInput={setUrlOrRssInput}
-          isExtractingInput={isExtractingInput}
-          onAddUrlOrRss={handleAddUrlOrRss}
-          showRssManager={showRssManager}
-          onSetShowRssManager={setShowRssManager}
-          selectedCandidateIds={selectedCandidateIds}
-          onSetSelectedCandidateIds={setSelectedCandidateIds}
-          programStartDate={programStartDate}
-          onSetProgramStartDate={setProgramStartDate}
-          todayStr={todayStr}
-          programDensity={programDensity}
-          onSetProgramDensity={setProgramDensity}
-          isAcceptingBatch={isAcceptingBatch}
-          acceptingSingleId={acceptingSingleId}
-          onAcceptSelectedBatch={handleAcceptSelectedBatch}
-          onAcceptSingleCandidate={handleAcceptSingleCandidate}
-          onDismissCandidate={handleDismissCandidate}
-          onRunBackgroundGatherer={runBackgroundGatherer}
-          getCandidateFutureSchedule={getCandidateFutureSchedule}
-          onUpdateCandidateSchedule={updateCandidateSchedule}
-          expandedCandidateId={expandedCandidateId}
-          onSetExpandedCandidateId={setExpandedCandidateId}
-          activeOutlineSlideIdx={activeOutlineSlideIdx}
-          onSetActiveOutlineSlideIdx={setActiveOutlineSlideIdx}
-          onUpdateCandidateDeck={updateCandidateDeck}
-          synthesizingCandidateId={synthesizingCandidateId}
-          onSynthesizeCandidateWithAi={handleSynthesizeCandidateWithAi}
-          regeneratingSlideKey={regeneratingSlideKey}
-          onRegenerateSingleSlide={handleRegenerateSingleCandidateSlide}
-          onLoadCandidateIntoStudio={onLoadCandidateIntoStudio}
-          onShowToast={onShowToast}
-        />
-      )}
-
-      {/* VIEW 2: SCHEDULED PEAK SLOTS REVIEW BOARD */}
-      {subView === 'peak-board' && (
-        <PeakScheduleBoardView
-          boardDays={peakBoardDays}
-          boardDaysCount={boardDaysCount}
-          onSetBoardDaysCount={setBoardDaysCount}
-          assigningSlotKey={assigningSlotKey}
-          onSetAssigningSlotKey={setAssigningSlotKey}
-          busyPostId={busyPostId}
-          candidates={candidates}
-          onEditInStudio={onEditInStudio}
-          onUnschedulePost={handleUnschedulePost}
-          onAssignCandidateToSlot={(candidate, datePart, peakTime) => {
-            updateCandidateSchedule(candidate.id, {
-              datePart,
-              timeShort: peakTime,
-            });
-            void handleAcceptSingleCandidate(candidate);
-          }}
-          editingScheduledPostId={editingScheduledPostId}
-          editScheduledTitle={editScheduledTitle}
-          editScheduledSlides={editScheduledSlides}
-          editScheduledSlideIdx={editScheduledSlideIdx}
-          isSavingScheduledEdit={isSavingScheduledEdit}
-          onStartEditingScheduledPost={openScheduledPostInlineEditor}
-          onCancelEditingScheduledPost={() => setEditingScheduledPostId(null)}
-          onSaveScheduledPostEdit={handleSaveScheduledPostInlineEdit}
-          onSetEditScheduledTitle={setEditScheduledTitle}
-          onSetEditScheduledSlideIdx={setEditScheduledSlideIdx}
-          onUpdateEditScheduledSlideTitle={(sIdx, val) => {
-            setEditScheduledSlides((prev) =>
-              prev.map((s, idx) => (idx === sIdx ? { ...s, enTitle: val } : s))
-            );
-          }}
-        />
-      )}
-    </div>
+    <TopicRadarGatherView
+      candidates={candidates}
+      isScanningTrends={isScanningTrends}
+      scanProgressLabel={scanProgressLabel}
+      sourceFilter={sourceFilter}
+      onSetSourceFilter={setSourceFilter}
+      domainFilter={domainFilter}
+      onSetDomainFilter={setDomainFilter}
+      formatFilter={formatFilter}
+      onSetFormatFilter={setFormatFilter}
+      customRssFeeds={customRssFeeds}
+      onSetCustomRssFeeds={setCustomRssFeeds}
+      urlOrRssInput={urlOrRssInput}
+      onSetUrlOrRssInput={setUrlOrRssInput}
+      isExtractingInput={isExtractingInput}
+      onAddUrlOrRss={handleAddUrlOrRss}
+      showRssManager={showRssManager}
+      onSetShowRssManager={setShowRssManager}
+      selectedCandidateIds={selectedCandidateIds}
+      onSetSelectedCandidateIds={setSelectedCandidateIds}
+      isAcceptingBatch={isAcceptingBatch}
+      acceptingSingleId={acceptingSingleId}
+      onQueueSelectedToDrafts={handleQueueSelectedToDrafts}
+      onMoveSingleToDraft={handleMoveSingleToDraft}
+      onDismissCandidate={handleDismissCandidate}
+      onRunBackgroundGatherer={runBackgroundGatherer}
+      expandedCandidateId={expandedCandidateId}
+      onOpenAndHydrateCandidate={handleOpenAndHydrateCandidate}
+      onCollapseCandidate={() => setExpandedCandidateId(null)}
+      activeOutlineSlideIdx={activeOutlineSlideIdx}
+      onSetActiveOutlineSlideIdx={setActiveOutlineSlideIdx}
+      onUpdateCandidateDeck={updateCandidateDeck}
+      onUpdateCandidateAngle={handleUpdateCandidateAngle}
+      hydratingCandidateId={hydratingCandidateId}
+      regeneratingSlideKey={regeneratingSlideKey}
+      onRegenerateSingleSlide={handleRegenerateSingleCandidateSlide}
+      onLoadCandidateIntoStudio={onLoadCandidateIntoStudio}
+      onShowToast={onShowToast}
+    />
   );
 };

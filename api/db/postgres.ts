@@ -37,7 +37,9 @@ export function getPostgresPool(connectionString?: string): pg.Pool | null {
   const url =
     connectionString ||
     readRuntimeEnv('DATABASE_URL') ||
-    readRuntimeEnv('POSTGRES_URL');
+    readRuntimeEnv('POSTGRES_URL') ||
+    readRuntimeEnv('NETLIFY_DATABASE_URL') ||
+    readRuntimeEnv('NETLIFY_DATABASE_URL_UNPOOLED');
   if (!url || !url.trim()) return null;
 
   if (!poolInstance) {
@@ -132,6 +134,10 @@ function rowToSavedPostRecord(row: Record<string, unknown>): SavedPostRecord {
       : sourceMeta?.userReviewed !== undefined
       ? Boolean(sourceMeta.userReviewed)
       : undefined;
+  const verifiedNumbers =
+    sourceMeta?.verifiedNumbers !== undefined
+      ? Boolean(sourceMeta.verifiedNumbers)
+      : undefined;
   const publishFailed =
     sourceMeta?.publishFailed !== undefined ? Boolean(sourceMeta.publishFailed) : undefined;
 
@@ -153,6 +159,7 @@ function rowToSavedPostRecord(row: Record<string, unknown>): SavedPostRecord {
     qualityPassed,
     ...(groundingVerified !== undefined ? { groundingVerified } : {}),
     ...(humanApproved !== undefined ? { humanApproved } : {}),
+    ...(verifiedNumbers !== undefined ? { verifiedNumbers } : {}),
     ...(publishFailed !== undefined ? { publishFailed } : {}),
     scheduledFor: row.scheduled_for
       ? row.scheduled_for instanceof Date

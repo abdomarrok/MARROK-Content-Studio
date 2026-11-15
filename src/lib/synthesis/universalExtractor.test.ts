@@ -94,7 +94,8 @@ describe('synthesizeUniversalCarousel (Zero AI Slop)', () => {
     const slides = synthesizeUniversalCarousel('Why did Anthropic move beyond Git?');
 
     expect(slides).toHaveLength(8);
-    expect(slides[0].type).toBe('hub');
+    expect(slides[0].type).not.toBe('hub');
+    expect(['compare', 'metric', 'row']).toContain(slides[0].type);
     expect(slides[0].enTitle).toContain('Anthropic');
     expect(slides[0].satLabels).toEqual(
       expect.arrayContaining(['Virtual FS', 'Server Merge', 'API VCS'])
@@ -128,7 +129,8 @@ describe('synthesizeUniversalCarousel (Zero AI Slop)', () => {
     const slides = synthesizeUniversalCarousel('Docker container isolation and minimal images');
 
     expect(slides).toHaveLength(8);
-    expect(slides[0].type).toBe('hub');
+    expect(slides[0].type).not.toBe('hub');
+    expect(['compare', 'metric', 'row']).toContain(slides[0].type);
     expect(slides[0].satLabels).toEqual(
       expect.arrayContaining(['Multi-Stage', 'Scratch Base', 'Minimal Image'])
     );
@@ -149,7 +151,8 @@ describe('synthesizeUniversalCarousel (Zero AI Slop)', () => {
     const slides = synthesizeUniversalCarousel('Redis 8 cluster performance and memory tradeoffs');
 
     expect(slides).toHaveLength(8);
-    expect(slides[0].type).toBe('hub');
+    expect(slides[0].type).not.toBe('hub');
+    expect(['compare', 'metric', 'row']).toContain(slides[0].type);
     expect(slides[0].satLabels).toEqual(
       expect.arrayContaining(['In-Memory', 'Active Sharding', 'LRU Eviction'])
     );
@@ -174,7 +177,8 @@ describe('synthesizeUniversalCarousel (Zero AI Slop)', () => {
     const slides = synthesizeUniversalCarousel(userNotes);
 
     expect(slides).toHaveLength(8);
-    expect(['hub', 'metric']).toContain(slides[0].type);
+    expect(slides[0].type).not.toBe('hub');
+    expect(['compare', 'metric', 'row']).toContain(slides[0].type);
     expect(slides[0].metricValue).toBe('45ms');
     // Slides reflect the user's specific points
     const fullText = JSON.stringify(slides);
@@ -306,7 +310,9 @@ AI agents act on behalf of human principals but cannot safely share user passwor
     const diversified = diversifyDeckArchetypesAndVisuals(rawSlides);
 
     expect(diversified).toHaveLength(8);
-    expect(diversified[0].type).toBe('hub');
+    expect(diversified[0].type).not.toBe('hub');
+    expect(['metric', 'compare', 'row']).toContain(diversified[0].type);
+    expect(diversified[0].layoutRationale).toBeTruthy();
     expect(diversified[7].type).toBe('cta');
 
     const midArchetypes = new Set(diversified.slice(1, 7).map((s) => s.type));

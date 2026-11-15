@@ -12,7 +12,14 @@
  */
 
 import { CarouselData, SlideData, ThemePalette } from '../types';
-import { getCanvasDimensionSpec } from './canvas/constants.ts';
+import {
+  CanvasDimensionSpec,
+  MIN_BODY_FONT_SIZE,
+  MIN_FOOTER_FONT_SIZE,
+  MIN_TITLE_FONT_SIZE,
+  getCanvasDimensionSpec,
+} from './canvas/constants.ts';
+import { computeSlideLayoutAwareness } from './canvas/layoutAwareness.ts';
 
 // ─── Character Limits (Spec §8) ────────────────────────────────────
 export const CHAR_LIMITS = {
@@ -256,6 +263,155 @@ function checkArabicLineEndings(slide: SlideData, idx: number): QACheckResult[] 
   return results;
 }
 
+const ARABIC_TRANSLATED_TERM_RULES: Array<{
+  pattern: RegExp;
+  translatedLabel: string;
+  englishTerm: string;
+}> = [
+  {
+    pattern: /(?:^|[\s،.(])(?:ال)?مقابس(?:\s+الشبكة|\s+الشبكية)?(?=$|[\s،.)!؟])/u,
+    translatedLabel: 'المقابس / مقابس الشبكة',
+    englishTerm: 'Sockets',
+  },
+  {
+    pattern: /زمن\s+(?:ال)?استجابة|(?<=^|[\s،.(])(?:ال)?كمون(?=$|[\s،.)!؟])/u,
+    translatedLabel: 'زمن الاستجابة / الكمون',
+    englishTerm: 'Latency',
+  },
+  {
+    pattern: /(?:ذاكرة\s+)?(?:ال)?تخزين\s+(?:ال)?مؤقت|الذاكرة\s+(?:ال)?مؤقتة|(?<=^|[\s،.(])الكاش(?=$|[\s،.)!؟])/u,
+    translatedLabel: 'الذاكرة المؤقتة / التخزين المؤقت',
+    englishTerm: 'Cache',
+  },
+  {
+    pattern: /(?:^|[\s،.(])(?:ال)?عنقود(?:ية)?(?=$|[\s،.)!؟])/u,
+    translatedLabel: 'العنقود',
+    englishTerm: 'Cluster',
+  },
+  {
+    pattern: /واجه(?:ة|ات)\s+(?:ال)?برمج(?:ة|ية)(?:\s+التطبيقات)?/u,
+    translatedLabel: 'واجهة برمجة التطبيقات',
+    englishTerm: 'API',
+  },
+  {
+    pattern: /طابور\s+الرسائل|طوابير\s+الرسائل|صفوف\s+الانتظار/u,
+    translatedLabel: 'طابور/صفوف الرسائل',
+    englishTerm: 'Queue',
+  },
+  {
+    pattern: /موازن\s+(?:ال)?أحمال|توازن\s+(?:ال)?أحمال/u,
+    translatedLabel: 'موازن الأحمال',
+    englishTerm: 'Load Balancer',
+  },
+  {
+    pattern: /بروتوكول\s+رافت|(?<=^|[\s،.(])رافت(?=$|[\s،.)!؟])/u,
+    translatedLabel: 'رافت',
+    englishTerm: 'Raft',
+  },
+  {
+    pattern: /(?:^|[\s،.(])كافكا(?=$|[\s،.)!؟])/u,
+    translatedLabel: 'كافكا',
+    englishTerm: 'Kafka',
+  },
+  {
+    pattern: /(?:^|[\s،.(])بوستجرس(?:كيول)?(?=$|[\s،.)!؟])/u,
+    translatedLabel: 'بوستجرس',
+    englishTerm: 'Postgres',
+  },
+  {
+    pattern: /(?:^|[\s،.(])ريديس(?=$|[\s،.)!؟])/u,
+    translatedLabel: 'ريديس',
+    englishTerm: 'Redis',
+  },
+  {
+    pattern: /(?:^|[\s،.(])دوكر(?=$|[\s،.)!؟])/u,
+    translatedLabel: 'دوكر',
+    englishTerm: 'Docker',
+  },
+  {
+    pattern: /(?:^|[\s،.(])كوبرنيتيس(?=$|[\s،.)!؟])/u,
+    translatedLabel: 'كوبرنيتيس',
+    englishTerm: 'Kubernetes',
+  },
+  {
+    pattern: /جيجابايت|غيغابايت/u,
+    translatedLabel: 'جيجابايت',
+    englishTerm: 'GB',
+  },
+  {
+    pattern: /ميجابايت|ميغابايت/u,
+    translatedLabel: 'ميجابايت',
+    englishTerm: 'MB',
+  },
+  {
+    pattern: /تيرابايت/u,
+    translatedLabel: 'تيرابايت',
+    englishTerm: 'TB',
+  },
+  {
+    pattern: /كيلوبايت/u,
+    translatedLabel: 'كيلوبايت',
+    englishTerm: 'KB',
+  },
+  {
+    pattern: /مللي\s+ثانية|ميلي\s+ثانية|ملي\s+ثانية/u,
+    translatedLabel: 'مللي ثانية',
+    englishTerm: 'ms',
+  },
+  {
+    pattern: /ميكروثانية|ميكرو\s+ثانية/u,
+    translatedLabel: 'ميكروثانية',
+    englishTerm: 'μs',
+  },
+  {
+    pattern: /نانوثانية|نانو\s+ثانية/u,
+    translatedLabel: 'نانوثانية',
+    englishTerm: 'ns',
+  },
+];
+
+/**
+ * Emit a non-blocking warning ONLY when an Arabic technical term or unit appears translated into Arabic
+ * instead of kept in English Latin script (e.g. "Sockets", "Latency", "Cache", "Cluster", "GB", "ms").
+ */
+function checkArabicTranslatedTechTerms(slide: SlideData, idx: number): QACheckResult[] {
+  const results: QACheckResult[] = [];
+  const fields: Array<{ key: string; text?: string }> = [
+    { key: 'arTitle', text: slide.arTitle },
+    { key: 'arBody', text: slide.arBody },
+    ...(slide.takeaways || []).map((t, tIdx) => ({
+      key: `takeaways[${tIdx}].ar`,
+      text: t.ar,
+    })),
+  ];
+
+  for (const { key, text } of fields) {
+    if (!text || typeof text !== 'string') continue;
+    const found: Array<{ translatedLabel: string; englishTerm: string }> = [];
+    for (const rule of ARABIC_TRANSLATED_TERM_RULES) {
+      if (rule.pattern.test(text)) {
+        found.push({ translatedLabel: rule.translatedLabel, englishTerm: rule.englishTerm });
+      }
+    }
+    if (found.length > 0) {
+      const summary = found
+        .map((f) => `"${f.translatedLabel}" → "${f.englishTerm}"`)
+        .join(', ');
+      results.push({
+        id: `translated-tech-term-${idx}-${key}`,
+        severity: 'warn',
+        slideIndex: idx,
+        field: key,
+        message: `Slide ${idx + 1} (${key}): Translated technical term detected (${summary}). Keep technical terms in English inside the Arabic sentence.`,
+        value: found.map((f) => f.translatedLabel).join(', '),
+        limit: 'Keep English term',
+      });
+    }
+  }
+
+  return results;
+}
+
 /**
  * Spec §8 Headline Rule:
  * - Slide 1 Hook: Strictly 2 to 5 words, ending in '.', '?', or '!'. Zero colons.
@@ -409,6 +565,10 @@ const KNOWN_BOILERPLATE_PATTERNS: { pattern: RegExp; description: string }[] = [
   {
     pattern: /تحليل معماري لمنظومة|تحليل هندسي معمق|الآليات الأساسية|الحدود التشغيلية|المقايضة الجوهرية|مقايضات الإنتاج|تنازلات الإنتاج|آليات النظام الأساسية|كيف تعمل منظومة .* تحت الضغط|شارك في النقاش/i,
     description: 'Template Arabic cliché or literal echo of English template',
+  },
+  {
+    pattern: /هذا العنصر يعرض|تفاصيل هندسية عامة|وصف تقني عام|نص عربي تجريبي/i,
+    description: 'Generic Arabic filler copy instead of specific technical explanation',
   },
   {
     pattern: /\sالمعتمد(?:\s*[.?!،؟]*$|\s)/,
@@ -935,35 +1095,38 @@ function checkArchetypeFields(slide: SlideData, idx: number): QACheckResult[] {
       });
     }
   } else if (slide.type === 'metric') {
-    if (!slide.metricValue || slide.metricValue.trim().length === 0) {
-      results.push({
-        id: `archetype-metric-missing-value-${idx}`,
-        severity: 'fail',
-        slideIndex: idx,
-        field: 'metricValue',
-        message: `Slide ${idx + 1} (metric archetype) has no metricValue.`,
-      });
-    }
-
-    if (!slide.metricDiff || slide.metricDiff.trim().length === 0) {
-      results.push({
-        id: `archetype-metric-missing-diff-${idx}`,
-        severity: 'warn',
-        slideIndex: idx,
-        field: 'metricDiff',
-        message: `Slide ${idx + 1} (metric archetype) is missing a metricDiff comparison badge.`,
-      });
-    } else {
-      // Confirm polarity indicator exists (▲, ▼, +, -)
-      const hasPolarity = /[▲▼+\-]/.test(slide.metricDiff);
-      if (!hasPolarity) {
+    const hasHookClaimCard = Boolean(slide.hookClaimCard?.statement);
+    if (!hasHookClaimCard) {
+      if (!slide.metricValue || slide.metricValue.trim().length === 0) {
         results.push({
-          id: `archetype-metric-polarity-${idx}`,
+          id: `archetype-metric-missing-value-${idx}`,
+          severity: 'fail',
+          slideIndex: idx,
+          field: 'metricValue',
+          message: `Slide ${idx + 1} (metric archetype) has no metricValue.`,
+        });
+      }
+
+      if (!slide.metricDiff || slide.metricDiff.trim().length === 0) {
+        results.push({
+          id: `archetype-metric-missing-diff-${idx}`,
           severity: 'warn',
           slideIndex: idx,
           field: 'metricDiff',
-          message: `Slide ${idx + 1} metricDiff ("${slide.metricDiff}") lacks a polarity indicator (▲ or ▼).`,
+          message: `Slide ${idx + 1} (metric archetype) is missing a metricDiff comparison badge.`,
         });
+      } else {
+        // Confirm polarity indicator exists (▲, ▼, +, -)
+        const hasPolarity = /[▲▼+\-]/.test(slide.metricDiff);
+        if (!hasPolarity) {
+          results.push({
+            id: `archetype-metric-polarity-${idx}`,
+            severity: 'warn',
+            slideIndex: idx,
+            field: 'metricDiff',
+            message: `Slide ${idx + 1} metricDiff ("${slide.metricDiff}") lacks a polarity indicator (▲ or ▼).`,
+          });
+        }
       }
     }
   } else if (slide.type === 'compare') {
@@ -985,6 +1148,70 @@ function checkArchetypeFields(slide: SlideData, idx: number): QACheckResult[] {
         field: 'ctaText',
         message: `Slide ${idx + 1} (CTA archetype) has no action button text.`,
       });
+    }
+  } else if (slide.type === 'subjectPair') {
+    const pair = slide.subjectPair;
+    if (!pair || (!pair.beforeSystem && !pair.afterSystem)) {
+      results.push({
+        id: `archetype-subjectpair-missing-systems-${idx}`,
+        severity: 'fail',
+        slideIndex: idx,
+        field: 'subjectPair',
+        message: `Slide ${idx + 1} (subjectPair archetype) must specify before and after systems.`,
+      });
+    } else {
+      if ((pair.logoWidthPct ?? 11) > 14) {
+        results.push({
+          id: `archetype-subjectpair-logo-size-${idx}`,
+          severity: 'fail',
+          slideIndex: idx,
+          field: 'subjectPair.logoWidthPct',
+          message: `Slide ${idx + 1}: Subject Pair logo width (${pair.logoWidthPct}%) exceeds 14% max limit.`,
+          value: `${pair.logoWidthPct}%`,
+          limit: '≤ 14%',
+        });
+      }
+      let logoCount = 0;
+      if (!pair.beforeAsText && pair.beforeLogoKey) logoCount++;
+      if (!pair.afterAsText && pair.afterLogoKey) logoCount++;
+      if (logoCount > 2) {
+        results.push({
+          id: `archetype-subjectpair-logo-count-${idx}`,
+          severity: 'fail',
+          slideIndex: idx,
+          field: 'subjectPair',
+          message: `Slide ${idx + 1}: Subject Pair has ${logoCount} logos (max 2 logos allowed).`,
+          value: logoCount,
+          limit: '≤ 2 logos',
+        });
+      }
+      if (pair.isEdited || pair.isNonLibrarySource) {
+        results.push({
+          id: `archetype-subjectpair-edited-${idx}`,
+          severity: 'fail',
+          slideIndex: idx,
+          field: 'subjectPair',
+          message: `Slide ${idx + 1}: Edited or non-library logo detected in Subject Pair. Use unedited bundled SVG or text name.`,
+        });
+      }
+      if (pair.isMerged || pair.isOverlapping) {
+        results.push({
+          id: `archetype-subjectpair-merged-${idx}`,
+          severity: 'fail',
+          slideIndex: idx,
+          field: 'subjectPair',
+          message: `Slide ${idx + 1}: Logos cannot be merged, blended, overlapped, or combined.`,
+        });
+      }
+      if (pair.usesMascot) {
+        results.push({
+          id: `archetype-subjectpair-mascot-${idx}`,
+          severity: 'fail',
+          slideIndex: idx,
+          field: 'subjectPair',
+          message: `Slide ${idx + 1}: Mascots are disallowed. Use official mark or styled text name.`,
+        });
+      }
     }
   }
 
@@ -1149,24 +1376,78 @@ function checkTruncatedDescriptions(slide: SlideData, idx: number): QACheckResul
 }
 
 /**
- * Check minimum font size (min 24px at 1080x1920). Element scale overrides < 0.75 shrink body text below 24px.
+ * Check minimum font sizes across ALL aspect ratios (9:16, 3:4, 4:5, 1:1):
+ * - Title & body text must be >= 24px (MIN_TITLE_FONT_SIZE / MIN_BODY_FONT_SIZE)
+ * - Footer text/badge must be >= 22px (MIN_FOOTER_FONT_SIZE)
  */
-function checkMinFontSizeViolation(slide: SlideData, idx: number): QACheckResult[] {
+function checkMinFontSizeViolation(
+  slide: SlideData,
+  idx: number,
+  spec: CanvasDimensionSpec,
+  carousel: CarouselData
+): QACheckResult[] {
   const results: QACheckResult[] = [];
   const overrides = slide.layoutOverrides;
-  if (!overrides) return results;
 
-  for (const [elKey, ov] of Object.entries(overrides)) {
-    if (ov && !ov.hidden && ov.scale !== undefined && ov.scale < 0.75) {
-      results.push({
-        id: `min-font-size-${idx}-${elKey}`,
-        severity: 'fail',
-        slideIndex: idx,
-        field: 'layoutOverrides',
-        message: `Slide ${idx + 1}: "${elKey}" scale (${Math.round(ov.scale * 100)}%) shrinks text below the 24px minimum readable floor.`,
-        value: `${Math.round(ov.scale * 100)}%`,
-        limit: '≥ 75% (24px)',
-      });
+  if (overrides) {
+    for (const [elKey, ov] of Object.entries(overrides)) {
+      if (!ov || ov.hidden || ov.scale === undefined) continue;
+      const isTextEl =
+        elKey === 'titleBlock' ||
+        elKey === 'arabicTitleBlock' ||
+        elKey === 'bodyBlock' ||
+        elKey === 'arabicBodyBlock';
+      const isCompact = spec.height < 1920;
+      const baseNominalFont =
+        elKey === 'titleBlock' || elKey === 'arabicTitleBlock'
+          ? isCompact
+            ? 62
+            : 72
+          : isCompact
+          ? spec.height <= 1080
+            ? 34
+            : 38
+          : 44;
+      const scaledNominalFont = Math.round(baseNominalFont * ov.scale);
+      if (ov.scale < 0.75 || (isTextEl && scaledNominalFont < MIN_BODY_FONT_SIZE)) {
+        results.push({
+          id: `min-font-size-${idx}-${elKey}`,
+          severity: 'fail',
+          slideIndex: idx,
+          field: 'layoutOverrides',
+          message: `Slide ${idx + 1}: "${elKey}" scale (${Math.round(ov.scale * 100)}%) shrinks text below the ${MIN_BODY_FONT_SIZE}px minimum on ${spec.shortLabel}.`,
+          value: isTextEl ? `${scaledNominalFont}px` : `${Math.round(ov.scale * 100)}%`,
+          limit: `≥ ${MIN_BODY_FONT_SIZE}px`,
+        });
+      }
+    }
+  }
+
+  // Verify resolved layout awareness typography sizes strictly meet the >=24px floor on this aspect ratio
+  if (!(slide.standaloneMeme || slide.imageFrameMode === 'full')) {
+    const layout = computeSlideLayoutAwareness(slide, carousel);
+    const textBlocks: Array<{
+      key: string;
+      minPx: number;
+      block: typeof layout.titleBlock;
+    }> = [
+      { key: 'titleBlock', minPx: MIN_TITLE_FONT_SIZE, block: layout.titleBlock },
+      { key: 'arabicTitleBlock', minPx: MIN_TITLE_FONT_SIZE, block: layout.arabicTitleBlock },
+      { key: 'bodyBlock', minPx: MIN_BODY_FONT_SIZE, block: layout.bodyBlock },
+      { key: 'arabicBodyBlock', minPx: MIN_BODY_FONT_SIZE, block: layout.arabicBodyBlock },
+    ];
+    for (const { key, minPx, block } of textBlocks) {
+      if (block && !block.hidden && block.lines.length > 0 && block.fontSize < minPx) {
+        results.push({
+          id: `min-font-size-${idx}-${key}-computed`,
+          severity: 'fail',
+          slideIndex: idx,
+          field: key,
+          message: `Slide ${idx + 1}: "${key}" resolved to ${block.fontSize}px on ${spec.shortLabel} (minimum ${minPx}px required across all ratios).`,
+          value: `${block.fontSize}px`,
+          limit: `≥ ${minPx}px`,
+        });
+      }
     }
   }
 
@@ -1444,6 +1725,39 @@ export function runPreExportChecklist(
         break;
       }
     }
+    const pair = s.subjectPair;
+    if (s.type === 'subjectPair' || pair) {
+      if (pair) {
+        if ((pair.logoWidthPct ?? 11) > 14) {
+          brandSafetySlide = i;
+          brandSafetyDetail = `Slide ${i + 1}: Subject Pair logo exceeds 14% max slide width (${pair.logoWidthPct}% > 14%).`;
+          break;
+        }
+        let logoCount = 0;
+        if (!pair.beforeAsText && pair.beforeLogoKey) logoCount++;
+        if (!pair.afterAsText && pair.afterLogoKey) logoCount++;
+        if (logoCount > 2) {
+          brandSafetySlide = i;
+          brandSafetyDetail = `Slide ${i + 1}: Subject Pair exceeds 2-logo limit (${logoCount} > 2).`;
+          break;
+        }
+        if (pair.isEdited || pair.isNonLibrarySource) {
+          brandSafetySlide = i;
+          brandSafetyDetail = `Slide ${i + 1}: Edited or non-library logo detected in Subject Pair. Use official bundled SVG or text name.`;
+          break;
+        }
+        if (pair.isMerged || pair.isOverlapping) {
+          brandSafetySlide = i;
+          brandSafetyDetail = `Slide ${i + 1}: Logos cannot be merged, blended, overlapped, or combined.`;
+          break;
+        }
+        if (pair.usesMascot) {
+          brandSafetySlide = i;
+          brandSafetyDetail = `Slide ${i + 1}: Mascots are disallowed. Use official mark or styled text name.`;
+          break;
+        }
+      }
+    }
   }
 
   // 0. Content Quality & Originality (clichés, topic echoes, filler labels, Arabic literal templates)
@@ -1485,11 +1799,11 @@ export function runPreExportChecklist(
     },
     {
       id: 'minFontSize',
-      label: 'Minimum Font Size (≥24px)',
+      label: 'Minimum Font Size (≥24px text, ≥22px footer)',
       passed: !minFontFailure,
       detail: minFontFailure
         ? minFontFailure.message
-        : 'All text & diagram node labels ≥ 24px at 1080×1920',
+        : `Title & body ≥ ${MIN_TITLE_FONT_SIZE}px and footer ≥ ${MIN_FOOTER_FONT_SIZE}px across 9:16, 3:4, 4:5, 1:1`,
       fixLabel: 'Restore ≥24px',
       slideIndex: minFontFailure?.slideIndex,
     },
@@ -1556,7 +1870,7 @@ export function runPreExportChecklist(
     },
     {
       id: 'brandLogoSafety',
-      label: 'Brand Assets & IP Safety (≤8%)',
+      label: 'Brand Assets & Subject Pair IP Safety (≤14% pair / ≤8% badge)',
       passed: brandSafetySlide === undefined,
       detail: brandSafetyDetail,
       fixLabel: 'Replace Logo with Text Name',
@@ -1628,16 +1942,39 @@ export function runQAChecks(carousel: CarouselData, options: QACheckOptions = {}
 
   const spec = getCanvasDimensionSpec(carousel.dimensionPreset);
 
+  // Deck-level minimum typography & footer checks across every aspect ratio (9:16, 3:4, 4:5, 1:1)
+  if (spec.minTitleFontSize < MIN_TITLE_FONT_SIZE || spec.minBodyFontSize < MIN_BODY_FONT_SIZE) {
+    results.push({
+      id: 'min-font-size-preset',
+      severity: 'fail',
+      field: 'dimensionPreset',
+      message: `${spec.shortLabel}: Minimum title/body font size is below ${MIN_BODY_FONT_SIZE}px (title=${spec.minTitleFontSize}px, body=${spec.minBodyFontSize}px).`,
+      value: `${Math.min(spec.minTitleFontSize, spec.minBodyFontSize)}px`,
+      limit: `≥ ${MIN_BODY_FONT_SIZE}px`,
+    });
+  }
+  if (spec.footerFontSize < MIN_FOOTER_FONT_SIZE || spec.footerBadgeSize < MIN_FOOTER_FONT_SIZE) {
+    results.push({
+      id: 'min-font-size-footer',
+      severity: 'fail',
+      field: 'dimensionPreset',
+      message: `${spec.shortLabel}: Footer font/badge size (${Math.min(spec.footerFontSize, spec.footerBadgeSize)}px) is below the ${MIN_FOOTER_FONT_SIZE}px minimum.`,
+      value: `${Math.min(spec.footerFontSize, spec.footerBadgeSize)}px`,
+      limit: `≥ ${MIN_FOOTER_FONT_SIZE}px`,
+    });
+  }
+
   // Per-slide checks
   for (let i = 0; i < slides.length; i++) {
     const isHook = i === 0 || slides[i].type === 'hub';
     results.push(...checkHeadlineSpecRule(slides[i], i, slides.length));
     results.push(...checkCharLimits(slides[i], i, isHook, isSingleSlide));
     results.push(...checkArabicLineEndings(slides[i], i));
+    results.push(...checkArabicTranslatedTechTerms(slides[i], i));
     results.push(...checkArabicSafeZone(slides[i], i, spec));
     results.push(...checkTikTokSafeZoneViolations(slides[i], i, spec));
     results.push(...checkTruncatedDescriptions(slides[i], i));
-    results.push(...checkMinFontSizeViolation(slides[i], i));
+    results.push(...checkMinFontSizeViolation(slides[i], i, spec, carousel));
     results.push(...checkArchetypeFields(slides[i], i));
     results.push(...checkMarkdownAndPunctuation(slides[i], i));
     results.push(...checkPlaceholders(slides[i], i));
@@ -1667,4 +2004,230 @@ export function qaReportSummary(report: QAReport): string {
     return `QA passed with ${report.warnCount} warning(s).`;
   }
   return `QA: All ${report.passCount} checks passed.`;
+}
+
+// ─── Gatherer Quality Gate & Originality Detector ───────────────────
+
+const SUMMARY_STOP_WORDS = new Set([
+  'the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'your', 'are', 'was', 'were',
+  'have', 'has', 'had', 'will', 'would', 'could', 'should', 'can', 'may', 'might', 'must',
+  'how', 'why', 'what', 'when', 'where', 'which', 'who', 'than', 'then', 'they', 'their',
+  'there', 'here', 'more', 'most', 'some', 'such', 'only', 'over', 'under', 'between',
+  'about', 'using', 'used', 'uses', 'make', 'makes', 'also', 'very', 'just', 'still',
+]);
+
+function extractMeaningfulTokens(text: string): string[] {
+  return (text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 4 && !SUMMARY_STOP_WORDS.has(w));
+}
+
+export interface SummaryOnlyDetectionResult {
+  isSummaryOnly: boolean;
+  overlapRatio: number;
+  reason?: string;
+}
+
+/**
+ * Detects whether a draft deck or candidate mainly summarizes the source article
+ * without adding a sharp product/startup takeaway ("what it means for your product").
+ */
+export function detectSummaryOnlyDraft(input: {
+  title?: string;
+  summary?: string;
+  marrokAngle?: string;
+  slides?: SlideData[];
+}): SummaryOnlyDetectionResult {
+  const sourceTokens = new Set(extractMeaningfulTokens(`${input.title || ''} ${input.summary || ''}`));
+  const slides = input.slides || [];
+  const draftBodyText = slides
+    .map((s) => `${s.enTitle || ''} ${s.enBody || ''}`)
+    .join(' ');
+  const draftTokens = extractMeaningfulTokens(draftBodyText);
+  const angle = (input.marrokAngle || '').trim();
+  const angleTokens = extractMeaningfulTokens(angle);
+  const titleTokens = new Set(extractMeaningfulTokens(input.title || ''));
+
+  const angleRepeatsHeadlineOnly =
+    angleTokens.length > 0 &&
+    titleTokens.size > 0 &&
+    angleTokens.filter((t) => !titleTokens.has(t)).length <= 1;
+
+  if (sourceTokens.size < 4 || draftTokens.length === 0) {
+    if (!angle || angle.length < 18 || angleRepeatsHeadlineOnly) {
+      return {
+        isSummaryOnly: true,
+        overlapRatio: 1,
+        reason: 'Draft repeats headline without an explicit "what it means for your product" angle.',
+      };
+    }
+    return { isSummaryOnly: false, overlapRatio: 0 };
+  }
+
+  let overlapCount = 0;
+  let novelCount = 0;
+  const seenDraft = new Set<string>();
+  for (const tok of draftTokens) {
+    if (seenDraft.has(tok)) continue;
+    seenDraft.add(tok);
+    if (sourceTokens.has(tok)) {
+      overlapCount += 1;
+    } else {
+      novelCount += 1;
+    }
+  }
+
+  const totalUniqueDraft = Math.max(1, overlapCount + novelCount);
+  const overlapRatio = Number((overlapCount / totalUniqueDraft).toFixed(2));
+
+  const isMultiSlide = slides.length > 1;
+  const hasStrongAngle =
+    angle.length >= 24 &&
+    !angleRepeatsHeadlineOnly &&
+    /\b(for|product|team|teams|startup|startups|sme|smes|scale|cost|latency|production|ship|avoid|adopt|migration|architecture|users|engineering|means|why|cuts?|reduces?)\b/i.test(
+      angle
+    );
+
+  // A multi-slide draft that shares >62% vocabulary with the raw source summary without novel framing
+  // OR lacks an original non-headline product angle triggers a summary-only originality warning.
+  if ((isMultiSlide && overlapRatio >= 0.62 && novelCount < 10) || angleRepeatsHeadlineOnly) {
+    return {
+      isSummaryOnly: true,
+      overlapRatio,
+      reason: angleRepeatsHeadlineOnly
+        ? 'Draft only echoes the source headline — rewrite the Marrok angle to explain what it means for your product.'
+        : `Draft mirrors ${Math.round(overlapRatio * 100)}% of the source summary — add original product implications, tradeoffs, or architecture takeaways.`,
+    };
+  }
+
+  if (!hasStrongAngle && overlapRatio >= 0.55) {
+    return {
+      isSummaryOnly: true,
+      overlapRatio,
+      reason: 'Draft reads close to a source summary. Sharpen the Marrok angle with concrete startup/product impact.',
+    };
+  }
+
+  return { isSummaryOnly: false, overlapRatio };
+}
+
+export interface GathererQualityGateResult {
+  passed: boolean;
+  blockingReasons: string[];
+  warnings: string[];
+  isSummaryOnly: boolean;
+  summaryOnlyReason?: string;
+}
+
+/**
+ * Quality Gate run on Inbox Gatherer candidates before Accept / Move to Draft.
+ * Blocks EN/AR title mismatch, filler Arabic, template clichés, invalid Slide 1 hubs,
+ * 3-in-a-row layout streaks, and missing/trivial Marrok angles.
+ */
+export function evaluateGathererCandidateQuality(input: {
+  title: string;
+  draftTitle?: string;
+  summary?: string;
+  marrokAngle?: string;
+  deck: CarouselData;
+}): GathererQualityGateResult {
+  const blockingReasons: string[] = [];
+  const warnings: string[] = [];
+  const deck = input.deck;
+  const slides = deck?.slides || [];
+
+  // 1. Originality: required editable "Marrok angle"
+  const cleanAngle = (input.marrokAngle || deck?.sourceMeta?.marrokAngle || '').trim();
+  if (cleanAngle.length < 15) {
+    blockingReasons.push(
+      'Missing "Marrok angle" (minimum 15 chars explaining what this means for your product).'
+    );
+  }
+
+  // 2. Run deck content quality checks (template clichés, filler Arabic, topic echoes, Slide 1 rules)
+  const contentChecks = checkContentQuality(deck);
+  for (const res of contentChecks) {
+    if (res.severity === 'fail') {
+      if (!blockingReasons.includes(res.message)) {
+        blockingReasons.push(res.message);
+      }
+    } else if (res.severity === 'warn') {
+      if (!warnings.includes(res.message)) {
+        warnings.push(res.message);
+      }
+    }
+  }
+
+  // 3. EN/AR Title alignment & bilingual completeness per slide
+  for (let i = 0; i < slides.length; i++) {
+    const s = slides[i];
+    if (s.standaloneMeme || s.imageFrameMode === 'full') continue;
+    const enTitle = (s.enTitle || '').trim();
+    const arTitle = (s.arTitle || '').trim();
+
+    if (!enTitle) {
+      blockingReasons.push(`Slide ${i + 1}: Missing English title (enTitle).`);
+      continue;
+    }
+
+    if (!arTitle || !/[\u0600-\u06FF]/.test(arTitle)) {
+      blockingReasons.push(`Slide ${i + 1}: EN/AR title mismatch — missing Arabic translation in arTitle.`);
+      continue;
+    }
+
+    const enWordCount = enTitle.split(/\s+/).filter(Boolean).length;
+    const arWordCount = arTitle.split(/\s+/).filter(Boolean).length;
+    if (enWordCount >= 6 && arWordCount <= 1) {
+      blockingReasons.push(
+        `Slide ${i + 1}: EN/AR title mismatch — English title has ${enWordCount} words while Arabic title has ${arWordCount} word.`
+      );
+    }
+
+    // Translated tech-term warning
+    const arTermWarnings = checkArabicTranslatedTechTerms(s, i);
+    for (const w of arTermWarnings) {
+      warnings.push(w.message);
+    }
+  }
+
+  // 4. Storyboard checks: Slide 1 never Hub, and no 3 identical layouts in a row
+  const isSingle = deck.postFormat === 'single' || slides.length === 1;
+  if (!isSingle && slides.length > 1) {
+    if (slides[0]?.type === 'hub') {
+      blockingReasons.push('Slide 1 must use a focused Hook layout (not Hub diagram).');
+    }
+    for (let i = 2; i < slides.length; i++) {
+      if (
+        slides[i].type === slides[i - 1].type &&
+        slides[i - 1].type === slides[i - 2].type &&
+        slides[i].type !== 'cta'
+      ) {
+        blockingReasons.push(
+          `Storyboard repeats "${slides[i].type}" 3 times in a row (Slides ${i - 1}–${i + 1}).`
+        );
+        break;
+      }
+    }
+  }
+
+  // 5. Originality / Summary-only warning
+  const summaryAudit = detectSummaryOnlyDraft({
+    title: input.title,
+    summary: input.summary,
+    marrokAngle: cleanAngle,
+    slides,
+  });
+  if (summaryAudit.isSummaryOnly && summaryAudit.reason) {
+    warnings.push(summaryAudit.reason);
+  }
+
+  return {
+    passed: blockingReasons.length === 0,
+    blockingReasons,
+    warnings,
+    isSummaryOnly: summaryAudit.isSummaryOnly,
+    summaryOnlyReason: summaryAudit.reason,
+  };
 }

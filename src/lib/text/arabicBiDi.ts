@@ -1,43 +1,14 @@
 import { normalizePunctuation, stripMarkdown } from './markdown.ts';
 
 /**
- * Standard technical metrics translator for natural Arabic presentation.
- * Converts trailing Latin unit tokens that cause BiDi punctuation inversion (e.g. "510 GB.")
- * into safe, natural Arabic words or un-flippable token structures.
+ * Cleans a technical metric string for Arabic presentation while strictly keeping
+ * numbers together with their English units (e.g. "510 GB", "15ms", "10x") — never translating units.
  */
 export function sanitizeMetricForArabic(rawMetric: string): string {
   if (!rawMetric) return '';
   const clean = normalizePunctuation(stripMarkdown(rawMetric)).trim();
-
-  // Handle standard storage/memory units
-  if (/\b(\d+(?:\.\d+)?)\s*GB\b/i.test(clean)) {
-    return clean.replace(/\b(\d+(?:\.\d+)?)\s*GB\b/gi, '$1 جيجابايت');
-  }
-  if (/\b(\d+(?:\.\d+)?)\s*TB\b/i.test(clean)) {
-    return clean.replace(/\b(\d+(?:\.\d+)?)\s*TB\b/gi, '$1 تيرابايت');
-  }
-  if (/\b(\d+(?:\.\d+)?)\s*MB\b/i.test(clean)) {
-    return clean.replace(/\b(\d+(?:\.\d+)?)\s*MB\b/gi, '$1 ميجابايت');
-  }
-
-  // Handle speed / latency units
-  if (/\b(\d+(?:\.\d+)?)\s*ms\b/i.test(clean)) {
-    return clean.replace(/\b(\d+(?:\.\d+)?)\s*ms\b/gi, '$1 مللي ثانية');
-  }
-  if (/\b(\d+(?:\.\d+)?)\s*s\b/i.test(clean)) {
-    return clean.replace(/\b(\d+(?:\.\d+)?)\s*s\b/gi, '$1 ثواني');
-  }
-  if (/\b(\d+(?:\.\d+)?)\s*μs\b/i.test(clean)) {
-    return clean.replace(/\b(\d+(?:\.\d+)?)\s*μs\b/gi, '$1 ميكروثانية');
-  }
-
-  // Handle multipliers: 10x -> 10 أضعاف or 10x
-  if (/\b(\d+(?:\.\d+)?)\s*x\b/i.test(clean)) {
-    return clean.replace(/\b(\d+(?:\.\d+)?)\s*x\b/gi, '$1 ضعفاً');
-  }
-
-  // Strip trailing periods so BiDi won't invert
-  return clean.replace(/[.?!]$/, '');
+  // Strip trailing sentence punctuation so BiDi won't invert; keep numbers + English units intact
+  return clean.replace(/[.?!]+$/, '').trim();
 }
 
 /**
@@ -65,9 +36,9 @@ export function fixArabicPunctuation(arabicText: string): string {
 
 /**
  * Sanitizes Arabic slide titles and body text to prevent BiDi reordering bugs (Spec §8).
+ * - Preserves English technical nouns and units verbatim (no silent term translation rewrites)
  * - Strips raw English markdown headers accidentally prepended (like ":Deepseek 4.1 Flash 1017 #")
  * - Fixes colons touching Latin words (e.g. "رحلة :Scion" -> "رحلة Scion")
- * - Replaces trailing Latin unit abbreviations that have natural Arabic equivalents
  * - Strips trailing periods from Arabic slide titles (slide graphic titles never need periods)
  */
 export function sanitizeArabicSlideText(
@@ -91,12 +62,8 @@ export function sanitizeArabicSlideText(
   // E.g. ":Anthropic" -> " Anthropic", "Scion:" -> "Scion "
   clean = clean.replace(/:\s*([a-zA-Z0-9])/g, ' $1').replace(/([a-zA-Z0-9])\s*:/g, '$1 ');
 
-  // Prevent trailing Latin unit with period inversion (e.g. "510 GB." or "510 .GB" -> "510 جيجابايت")
-  clean = clean
-    .replace(/\b(\d+(?:\.\d+)?)\s*\.?GB\.?/gi, '$1 جيجابايت')
-    .replace(/\b(\d+(?:\.\d+)?)\s*\.?TB\.?/gi, '$1 تيرابايت')
-    .replace(/\b(\d+(?:\.\d+)?)\s*\.?MB\.?/gi, '$1 ميجابايت')
-    .replace(/\b(\d+(?:\.\d+)?)\s*\.?ms\.?/gi, '$1 مللي ثانية');
+  // Tidy accidental stray dot before unit (e.g. "510 .GB" -> "510 GB") without translating units
+  clean = clean.replace(/\b(\d+(?:\.\d+)?)\s*\.(GB|TB|MB|KB|ms|μs|us)\b/gi, '$1 $2');
 
   // Translate math inequalities and constraints into natural Arabic words
   // Eliminates severe BiDi glyph flipping like "('150 >" from "< $150" across line wraps
@@ -133,11 +100,14 @@ export function sanitizeArabicSlideText(
   return repairTruncatedTextEllipsis(clean);
 }
 
+const LTR_TOKEN_PATTERN = String.raw`[A-Za-z0-9$€£%+\u00B5\u03BC]+(?:[._\-/:][A-Za-z0-9$€£%+\u00B5\u03BC]+)*(?:\+\+|#|[%+])?`;
+const LTR_PHRASE_PATTERN = `${LTR_TOKEN_PATTERN}(?:[ \\t\\u00A0]+${LTR_TOKEN_PATTERN})*`;
+
 /**
- * Wraps embedded Latin words, multi-word technical terms (e.g. "Durable Objects", "Workers"),
- * and technical metrics inside an RTL Arabic line with Unicode Left-to-Right Isolate
- * (\u2066 ... \u2069) plus Right-to-Left Marks (\u200F) anchoring line boundaries and trailing
- * punctuation so Canvas 2D and native text renderers never scramble word order or flip periods.
+ * Wraps embedded Latin technical terms, multi-word concepts (e.g. "Durable Objects", "Load Balancer"),
+ * and number+unit metrics (e.g. "510 GB", "15ms", "99.9%", "p99") inside an RTL Arabic line with Unicode
+ * Left-to-Right Isolate (\u2066 ... \u2069) plus Right-to-Left Marks (\u200F) so punctuation stays outside
+ * the isolate and word order never scrambles.
  */
 export function isolateEmbeddedLatinInArabic(text: string): string {
   if (!text) return '';
@@ -146,11 +116,9 @@ export function isolateEmbeddedLatinInArabic(text: string): string {
     return cleaned;
   }
   const stripped = cleaned.replace(/[\u200E\u200F\u2066\u2067\u2068\u2069\u202A-\u202E]/g, '');
-  // Isolate each embedded Latin/numeric phrase (without swallowing trailing sentence punctuation)
-  const isolated = stripped.replace(
-    /([A-Za-z0-9$€£%+][A-Za-z0-9$€£%+._\-/:]*[A-Za-z0-9%+]?(?:\s+[A-Za-z0-9$€£%+][A-Za-z0-9$€£%+._\-/:]*[A-Za-z0-9%+]?)*)/g,
-    '\u2066$1\u2069\u200F'
-  );
+  const phraseRegex = new RegExp(`(${LTR_PHRASE_PATTERN})`, 'g');
+  // Isolate each embedded Latin/numeric phrase (leaving trailing sentence punctuation outside)
+  const isolated = stripped.replace(phraseRegex, '\u2066$1\u2069\u200F');
   // Anchor both ends of the line with Right-to-Left Marks (\u200F) so leading Latin words stay on the right
   // and trailing punctuation (e.g. ".") stays on the far left of the RTL line.
   return `\u200F${isolated}\u200F`;
@@ -167,8 +135,7 @@ export function splitArabicForBidiRender(
   const clean = stripLegacyArabicFiller(
     text.replace(/[\u200E\u200F\u2066\u2067\u2068\u2069\u202A-\u202E]/g, '')
   );
-  const regex =
-    /([A-Za-z0-9$€£%+][A-Za-z0-9$€£%+._\-/:]*[A-Za-z0-9%+]?(?:\s+[A-Za-z0-9$€£%+][A-Za-z0-9$€£%+._\-/:]*[A-Za-z0-9%+]?)*)/g;
+  const regex = new RegExp(`(${LTR_PHRASE_PATTERN})`, 'g');
   const segments: Array<{ text: string; isLtr: boolean }> = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;

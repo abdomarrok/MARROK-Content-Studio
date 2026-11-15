@@ -85,6 +85,10 @@ export function getPublishBlockers(
   const qaFailures = qaReport.results.filter(
     (r) => r.severity === 'fail' && r.id !== 'fallback-draft-blocker'
   );
+  const qaWarnings = qaReport.results.filter((r) => r.severity === 'warn');
+  const translatedTermWarnings = qaWarnings.filter((r) =>
+    r.id.startsWith('translated-tech-term-')
+  );
   const contentQualityFailures = qaFailures.filter(
     (r) => r.id.startsWith('content-quality-') || r.id.startsWith('boilerplate-')
   );
@@ -103,7 +107,8 @@ export function getPublishBlockers(
 
   const riskStatus: 'PASS' | 'WARN' | 'BLOCK' =
     riskBlocks.length > 0 ? 'BLOCK' : riskWarns.length > 0 ? 'WARN' : 'PASS';
-  const structureStatus: 'PASS' | 'WARN' | 'BLOCK' = qaFailures.length > 0 ? 'BLOCK' : 'PASS';
+  const structureStatus: 'PASS' | 'WARN' | 'BLOCK' =
+    qaFailures.length > 0 ? 'BLOCK' : translatedTermWarnings.length > 0 ? 'WARN' : 'PASS';
   const contentQualityStatus: 'PASS' | 'WARN' | 'BLOCK' =
     contentQualityFailures.length > 0 ? 'BLOCK' : 'PASS';
 
@@ -175,7 +180,16 @@ export const PublishChecklist: React.FC<PublishChecklistProps> = ({
     [
       carousel.category || '',
       carousel.caption || '',
-      ...carousel.slides.map((s) => `${s.enTitle || ''} ${s.enBody || ''} ${s.arTitle || ''} ${s.arBody || ''}`),
+      ...carousel.slides.map(
+        (s) =>
+          `${s.enTitle || ''} ${s.enBody || ''} ${s.arTitle || ''} ${s.arBody || ''} ${
+            s.subjectPair
+              ? `${s.subjectPair.beforeSystem || ''} ${s.subjectPair.afterSystem || ''} ${
+                  s.subjectPair.storyOwner || ''
+                } ${s.subjectPair.beforeLogoKey || ''} ${s.subjectPair.afterLogoKey || ''}`
+              : ''
+          }`
+      ),
     ].join(' ')
   );
 
@@ -199,6 +213,9 @@ export const PublishChecklist: React.FC<PublishChecklistProps> = ({
   const needsHumanReview = (isOfflineDraft || engineType !== 'grounded') && !isReviewed;
   const qaFailures = qaReport.results.filter(
     (r) => r.severity === 'fail' && r.id !== 'fallback-draft-blocker'
+  );
+  const translatedTermWarnings = qaReport.results.filter(
+    (r) => r.severity === 'warn' && r.id.startsWith('translated-tech-term-')
   );
   const riskBlocks = (riskReport?.items || []).filter((i) => i.status === 'BLOCK');
   const riskWarns = (riskReport?.items || []).filter((i) => i.status === 'WARN');
@@ -408,42 +425,70 @@ ${facts.length > 0 ? `\nFACTS:\n${facts.map((f, i) => `${i + 1}. [${f.verified.t
           </div>
 
           {/* ITEM 4: Structure & limits */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-xl bg-black/40 border border-white/5">
-            <div className="flex items-start gap-2.5 min-w-0">
-              <div className="pt-0.5">{renderBadge(structureStatus)}</div>
-              <div className="min-w-0">
-                <div className="text-xs font-bold text-white">4. Structure & Limits</div>
-                <div className="text-xs text-slate-400 truncate">
-                  {qaFailures.length > 0
-                    ? `${qaFailures[0].message}${qaFailures.length > 1 ? ` (+${qaFailures.length - 1} more)` : ''}`
-                    : '1080×1920 safe zones, ≥24px typography, and story structure passed.'}
+          <div className="flex flex-col gap-2 p-2.5 rounded-xl bg-black/40 border border-white/5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-start gap-2.5 min-w-0">
+                <div className="pt-0.5">{renderBadge(structureStatus)}</div>
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-white">4. Structure & Limits</div>
+                  <div className="text-xs text-slate-400 truncate">
+                    {qaFailures.length > 0
+                      ? `${qaFailures[0].message}${qaFailures.length > 1 ? ` (+${qaFailures.length - 1} more)` : ''}`
+                      : translatedTermWarnings.length > 0
+                      ? `${translatedTermWarnings[0].message}${translatedTermWarnings.length > 1 ? ` (+${translatedTermWarnings.length - 1} more)` : ''}`
+                      : 'Safe zones, ≥24px text, ≥22px footer, and Arabic term policy passed.'}
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {qaFailures.length > 0 && (
-              <div className="shrink-0 self-end sm:self-center">
-                {qaFailures[0].slideIndex !== undefined && onJumpToSlide ? (
+              {qaFailures.length > 0 ? (
+                <div className="shrink-0 self-end sm:self-center">
+                  {qaFailures[0].slideIndex !== undefined && onJumpToSlide ? (
+                    <button
+                      type="button"
+                      onClick={() => onJumpToSlide(qaFailures[0].slideIndex!)}
+                      className="flex items-center gap-1 px-3 py-2 min-h-[44px] rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/35 text-cyan-200 text-xs font-semibold cursor-pointer"
+                    >
+                      <span>Fix Slide {qaFailures[0].slideIndex + 1}</span>
+                      <ArrowRight className="w-3 h-3" />
+                    </button>
+                  ) : onToggleOverrideBlock ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (overrideExportBlock) onToggleOverrideBlock?.();
+                        else setShowOverrideConfirmModal(true);
+                      }}
+                      className="px-2.5 py-1 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-200 text-xs font-semibold cursor-pointer"
+                    >
+                      {overrideExportBlock ? 'Override Active' : 'Override Limit'}
+                    </button>
+                  ) : null}
+                </div>
+              ) : translatedTermWarnings.length > 0 && translatedTermWarnings[0].slideIndex !== undefined && onJumpToSlide ? (
+                <div className="shrink-0 self-end sm:self-center">
                   <button
                     type="button"
-                    onClick={() => onJumpToSlide(qaFailures[0].slideIndex!)}
-                    className="flex items-center gap-1 px-3 py-2 min-h-[44px] rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/35 text-cyan-200 text-xs font-semibold cursor-pointer"
+                    onClick={() => onJumpToSlide(translatedTermWarnings[0].slideIndex!)}
+                    className="flex items-center gap-1 px-3 py-2 min-h-[44px] rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/35 text-amber-200 text-xs font-semibold cursor-pointer"
                   >
-                    <span>Fix Slide {qaFailures[0].slideIndex + 1}</span>
+                    <span>Review Slide {translatedTermWarnings[0].slideIndex + 1}</span>
                     <ArrowRight className="w-3 h-3" />
                   </button>
-                ) : onToggleOverrideBlock ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                    if (overrideExportBlock) onToggleOverrideBlock?.();
-                    else setShowOverrideConfirmModal(true);
-                  }}
-                    className="px-2.5 py-1 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-200 text-xs font-semibold cursor-pointer"
-                  >
-                    {overrideExportBlock ? 'Override Active' : 'Override Limit'}
-                  </button>
-                ) : null}
+                </div>
+              ) : null}
+            </div>
+
+            {translatedTermWarnings.length > 0 && (
+              <div
+                data-testid="qa-warnings-list"
+                className="pl-10 space-y-1 text-[11px] text-amber-300/90"
+              >
+                {translatedTermWarnings.slice(0, 3).map((w) => (
+                  <div key={w.id} className="truncate">
+                    • {w.message}
+                  </div>
+                ))}
               </div>
             )}
           </div>

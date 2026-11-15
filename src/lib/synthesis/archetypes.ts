@@ -98,6 +98,27 @@ export function seedSlideArchetypeData(
       updated.centerIcon = smart.numberIcon;
       break;
     }
+
+    case 'subjectPair': {
+      if (smart.subjectPair) {
+        updated.subjectPair = {
+          ...smart.subjectPair,
+          ...(slide.subjectPair || {}),
+        };
+      } else if (!updated.subjectPair) {
+        updated.subjectPair = {
+          beforeSystem: 'System A',
+          afterSystem: 'System B',
+          beforeLabel: 'BEFORE',
+          afterLabel: 'AFTER',
+          colorMode: 'official',
+          logoWidthPct: 11,
+          creativeMotif: 'chat-to-db',
+          flowLabel: 'PIPELINE MIGRATION',
+        };
+      }
+      break;
+    }
   }
 
   if (forceRefresh || isTypeChange || !updated.layoutRationale) {
