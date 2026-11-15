@@ -20,6 +20,7 @@ import {
   getCanvasDimensionSpec,
 } from './canvas/constants.ts';
 import { computeSlideLayoutAwareness } from './canvas/layoutAwareness.ts';
+import { isPlaceholderOrEmptyBrandValue } from './bundledTechSvgs.ts';
 
 // ─── Character Limits (Spec §8) ────────────────────────────────────
 export const CHAR_LIMITS = {
@@ -901,17 +902,25 @@ function checkCreditPresence(slides: SlideData[]): QACheckResult[] {
   return results;
 }
 
-/** Check for leftover placeholder text */
+/** Check for leftover placeholder text, empty brand fields, or default labels */
 function checkPlaceholders(slide: SlideData, idx: number): QACheckResult[] {
   const results: QACheckResult[] = [];
   const placeholderPatterns = [
     /CHANNEL NAME/i,
     /YOUR (?:BRAND|NAME|COMPANY)/i,
     /Lorem ipsum/i,
-    /TODO/i,
+    /\bTODO\b/i,
+    /\bTBD\b/i,
     /PLACEHOLDER/i,
     /\[INSERT/i,
     /XXX/,
+    /\bSystem\s+[AB12]\b/i,
+    /\bCompany\s+[AB12]\b/i,
+    /\bBrand\s+[AB12]\b/i,
+    /\bProduct\s+[AB12]\b/i,
+    /\bTool\s+[AB12]\b/i,
+    /\bPIPELINE\s+MIGRATION\b/i,
+    /\bDATASTREAM\s+MIGRATION\b/i,
   ];
 
   const textFields: (keyof SlideData)[] = ['enTitle', 'arTitle', 'enBody', 'arBody', 'enCredit', 'arCredit', 'ctaText'];
@@ -934,6 +943,74 @@ function checkPlaceholders(slide: SlideData, idx: number): QACheckResult[] {
     }
   }
 
+  // Strict check for Subject Pair empty or placeholder brand fields / default labels
+  if (slide.type === 'subjectPair' || slide.subjectPair) {
+    const pair = slide.subjectPair;
+    if (
+      !pair ||
+      isPlaceholderOrEmptyBrandValue(pair.beforeSystem) ||
+      isPlaceholderOrEmptyBrandValue(pair.afterSystem)
+    ) {
+      results.push({
+        id: `placeholder-${idx}-subjectPair-brands`,
+        severity: 'fail',
+        slideIndex: idx,
+        field: 'subjectPair',
+        message: `Slide ${idx + 1}: Subject Pair has empty or placeholder system names ("${pair?.beforeSystem || ''}" / "${pair?.afterSystem || ''}"). Extract two real system names from the source or switch layout.`,
+      });
+    }
+    if (pair?.flowLabel && isPlaceholderOrEmptyBrandValue(pair.flowLabel)) {
+      results.push({
+        id: `placeholder-${idx}-subjectPair-flowLabel`,
+        severity: 'fail',
+        slideIndex: idx,
+        field: 'subjectPair',
+        message: `Slide ${idx + 1}: Subject Pair flow label contains default placeholder text ("${pair.flowLabel}").`,
+      });
+    }
+    if (pair?.storyOwner && isPlaceholderOrEmptyBrandValue(pair.storyOwner)) {
+      results.push({
+        id: `placeholder-${idx}-subjectPair-storyOwner`,
+        severity: 'fail',
+        slideIndex: idx,
+        field: 'subjectPair',
+        message: `Slide ${idx + 1}: Subject Pair story owner contains placeholder text ("${pair.storyOwner}").`,
+      });
+    }
+  }
+
+  // Strict check for Compare empty or placeholder column labels
+  if (slide.type === 'compare') {
+    if (
+      isPlaceholderOrEmptyBrandValue(slide.compareLeftTitle) ||
+      isPlaceholderOrEmptyBrandValue(slide.compareRightTitle)
+    ) {
+      results.push({
+        id: `placeholder-${idx}-compare-titles`,
+        severity: 'fail',
+        slideIndex: idx,
+        field: 'compareLeftTitle',
+        message: `Slide ${idx + 1}: Compare layout has empty or placeholder column titles ("${slide.compareLeftTitle || ''}" / "${slide.compareRightTitle || ''}").`,
+      });
+    }
+  }
+
+  // Strict check for Diagram Nodes containing placeholder text
+  if (Array.isArray(slide.diagramNodes)) {
+    for (const node of slide.diagramNodes) {
+      if (isPlaceholderOrEmptyBrandValue(node.label)) {
+        results.push({
+          id: `placeholder-${idx}-diagramNodes`,
+          severity: 'fail',
+          slideIndex: idx,
+          field: 'diagramNodes',
+          message: `Slide ${idx + 1}: Diagram node contains empty or placeholder label ("${node.label || ''}").`,
+        });
+        break;
+      }
+    }
+  }
+
   return results;
 }
 
@@ -948,6 +1025,7 @@ function checkFirstFrame(slides: SlideData[], isSingleSlide: boolean = false): Q
     'row',
     'metric',
     'compare',
+    'subjectPair',
     'code',
     'number',
     'poster',
@@ -958,7 +1036,7 @@ function checkFirstFrame(slides: SlideData[], isSingleSlide: boolean = false): Q
       id: 'first-frame-type',
       severity: 'warn',
       slideIndex: 0,
-      message: `Slide 1 type is "${first.type}" — use a visual cover archetype (hub, metric, compare, or row) for best thumbnail impact.`,
+      message: `Slide 1 type is "${first.type}" — use a visual cover archetype (hub, metric, compare, subjectPair, or row) for best thumbnail impact.`,
     });
   }
 
@@ -1727,44 +1805,58 @@ export function runPreExportChecklist(
     }
     const pair = s.subjectPair;
     if (s.type === 'subjectPair' || pair) {
-      if (pair) {
-        if ((pair.logoWidthPct ?? 11) > 14) {
-          brandSafetySlide = i;
-          brandSafetyDetail = `Slide ${i + 1}: Subject Pair logo exceeds 14% max slide width (${pair.logoWidthPct}% > 14%).`;
-          break;
-        }
-        let logoCount = 0;
-        if (!pair.beforeAsText && pair.beforeLogoKey) logoCount++;
-        if (!pair.afterAsText && pair.afterLogoKey) logoCount++;
-        if (logoCount > 2) {
-          brandSafetySlide = i;
-          brandSafetyDetail = `Slide ${i + 1}: Subject Pair exceeds 2-logo limit (${logoCount} > 2).`;
-          break;
-        }
-        if (pair.isEdited || pair.isNonLibrarySource) {
-          brandSafetySlide = i;
-          brandSafetyDetail = `Slide ${i + 1}: Edited or non-library logo detected in Subject Pair. Use official bundled SVG or text name.`;
-          break;
-        }
-        if (pair.isMerged || pair.isOverlapping) {
-          brandSafetySlide = i;
-          brandSafetyDetail = `Slide ${i + 1}: Logos cannot be merged, blended, overlapped, or combined.`;
-          break;
-        }
-        if (pair.usesMascot) {
-          brandSafetySlide = i;
-          brandSafetyDetail = `Slide ${i + 1}: Mascots are disallowed. Use official mark or styled text name.`;
-          break;
-        }
+      if (
+        !pair ||
+        isPlaceholderOrEmptyBrandValue(pair.beforeSystem) ||
+        isPlaceholderOrEmptyBrandValue(pair.afterSystem)
+      ) {
+        brandSafetySlide = i;
+        brandSafetyDetail = `Slide ${i + 1}: Subject Pair has empty or placeholder system names ("${pair?.beforeSystem || ''}" / "${pair?.afterSystem || ''}").`;
+        break;
+      }
+      if (pair.flowLabel && isPlaceholderOrEmptyBrandValue(pair.flowLabel)) {
+        brandSafetySlide = i;
+        brandSafetyDetail = `Slide ${i + 1}: Subject Pair flow label contains default placeholder text ("${pair.flowLabel}").`;
+        break;
+      }
+      if ((pair.logoWidthPct ?? 11) > 14) {
+        brandSafetySlide = i;
+        brandSafetyDetail = `Slide ${i + 1}: Subject Pair logo exceeds 14% max slide width (${pair.logoWidthPct}% > 14%).`;
+        break;
+      }
+      let logoCount = 0;
+      if (!pair.beforeAsText && pair.beforeLogoKey) logoCount++;
+      if (!pair.afterAsText && pair.afterLogoKey) logoCount++;
+      if (logoCount > 2) {
+        brandSafetySlide = i;
+        brandSafetyDetail = `Slide ${i + 1}: Subject Pair exceeds 2-logo limit (${logoCount} > 2).`;
+        break;
+      }
+      if (pair.isEdited || pair.isNonLibrarySource) {
+        brandSafetySlide = i;
+        brandSafetyDetail = `Slide ${i + 1}: Edited or non-library logo detected in Subject Pair. Use official bundled SVG or text name.`;
+        break;
+      }
+      if (pair.isMerged || pair.isOverlapping) {
+        brandSafetySlide = i;
+        brandSafetyDetail = `Slide ${i + 1}: Logos cannot be merged, blended, overlapped, or combined.`;
+        break;
+      }
+      if (pair.usesMascot) {
+        brandSafetySlide = i;
+        brandSafetyDetail = `Slide ${i + 1}: Mascots are disallowed. Use official mark or styled text name.`;
+        break;
       }
     }
   }
 
-  // 0. Content Quality & Originality (clichés, topic echoes, filler labels, Arabic literal templates)
+  // 0. Content Quality & Originality (clichés, topic echoes, filler labels, placeholders, Arabic literal templates)
   const contentQualityFailure = qa.results.find(
     (r) =>
       r.severity === 'fail' &&
-      (r.id.startsWith('content-quality-') || r.id.startsWith('boilerplate-'))
+      (r.id.startsWith('content-quality-') ||
+        r.id.startsWith('boilerplate-') ||
+        r.id.startsWith('placeholder-'))
   );
 
   return [

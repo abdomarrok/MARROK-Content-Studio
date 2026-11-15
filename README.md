@@ -47,15 +47,17 @@ MARROK guarantees that slide elements never collide or overlay each other across
 - **Zero-Config 1-Click Theme Schematic:** Automatically derives the technical diagram prompt from the slide's `enTitle`, `diagramNodes`, and deck's exact hex colors (`theme.accent`, `theme.baseBg`, `theme.surface`), producing a matching dark OLED schematic with 1 click.
 - **Prompt-Based Image Editing:** Pass an existing slide diagram with natural language revision directives (validated under Vercel's 4.5 MB payload cap).
 
-### 🎨 The MARROK 8-Archetype Visual System
-1. **The Hook (`hub`):** Central customizable hero icon and tag pill connected to 2–6 orbiting satellites (`satLabels`) via dynamic radial vectors.
-2. **Technical Diagram (`row`):** 9 technical schematic variants (`topology`, `stack`, `isolation`, `takeaway`, `scatter`, `graph`, `clusters`, `split`, `features`) with connected nodes, connectors, and telemetry bars.
-3. **Step Number Counter (`number`):** Giant 220px accent numeral counter with optional micro-badge label for procedural workflows.
-4. **Metric Hero Card (`metric`):** Giant high-contrast metric value (e.g. `200x`, `0ms`, `99.9%`), category label, sparkline curve, and delta pill.
-5. **Code / Terminal Window (`code`):** Monospace terminal window with macOS dots, line numbers, CRT scanlines, and diff syntax (`$`, `+`, `-`, `✔`).
-6. **Comparison Split (`compare`):** Side-by-side legacy vs modern cards with problem/solution bullet points and circular `VS` badge.
-7. **Image Visual Card (`image`):** Elevated technical diagram or visual asset container with `contain` or `cover` fit, caption badge, and blueprint grid.
-8. **Final CTA (`cta`):** Geometric branding emblem, domain question, CTA pill, and required creator/source attribution credit.
+### 🎨 The MARROK 10-Archetype Visual System
+1. **The Hook / Hub (`hub`):** Central customizable hero icon and tag pill connected to 2–6 orbiting satellites (`satLabels`) via dynamic radial vectors (used on middle architecture overview slides; Slide 1 uses a focused Hook or Subject Pair layout).
+2. **Technical Diagram (`row`):** 9 technical schematic variants (`topology`, `stack`, `isolation`, `takeaway`, `scatter`, `graph`, `clusters`, `split`, `features`) with connected nodes, connectors, and telemetry bars (all labels $\ge 24\text{px}$).
+3. **Subject Pair (`subjectPair`):** Strict before-to-after / A-to-B system transition card (`BEFORE` dimmed vs `AFTER` highlighted) supporting up to 2 bundled unedited official SVG logos (`<= 14%` of slide width / `151px` at `1080px` width), story owner rendered as a styled text wordmark, topic-gated Marrok-drawn bridge motifs (`chat-to-db` for messaging + storage stories, `stream-flow` for general migrations), and required `"Not affiliated with <Company>"` disclaimer.
+4. **Step Number Counter (`number`):** Giant 220px accent numeral counter with optional micro-badge label for procedural workflows.
+5. **Metric Hero Card (`metric`):** Giant high-contrast metric value (e.g. `200x`, `0ms`, `99.9%`), category label, sparkline curve, and delta pill (automatically falls back when no numeric metric is present).
+6. **Code / Terminal Window (`code`):** Monospace terminal window with macOS dots, line numbers, CRT scanlines, and diff syntax (`$`, `+`, `-`, `✔`).
+7. **Comparison Split (`compare`):** Side-by-side legacy vs modern cards with problem/solution bullet points and circular `VS` badge.
+8. **Image Visual Card (`image`):** Elevated technical diagram or visual asset container with `contain` or `cover` fit, caption badge, and blueprint grid.
+9. **1-Slide Infographic Poster (`poster`):** Condensed single-slide breakdown with 3 bilingual takeaways and source attribution.
+10. **Final CTA (`cta`):** Geometric branding emblem, domain question, CTA pill, and required creator/source attribution credit.
 
 ### 📌 Dedicated Meme Studio, 1-Slide Infographic Poster & Video Modes (`src/lib/synthesis/singleSlideCondenser.ts`, `src/lib/canvas/videoFrameExtractor.ts`, `src/lib/canvas/singleSlideVideoExporter.ts`)
 - **4 First-Class Post Formats (`Carousel` · `1-Slide` · `Meme` · `Motion Reel`):**
@@ -82,7 +84,7 @@ MARROK guarantees that slide elements never collide or overlay each other across
 - **48kHz Procedural SFX Synthesizer & Video Exporter:** Synthesizes mathematical sound effects (`click`, `pop`, `thump`, `whoosh`) synced to scene keyframes and exports muxed **1080×1920 WebM/MP4 Video**, **16-bit PCM WAV Audio**, or **Standalone HTML**.
 
 ### 🚀 Consolidated Publish & Posts Hub — Direct Buffer + Zernio APIs (`src/components/studio/PublishingHubWorkspace.tsx`, `src/components/studio/PostManagerPanel.tsx`)
-Switch between **`1. Create Studio`** and **`2. Publish & Posts (N)`** from the top header to access a unified, 2-tab publishing and post lifecycle workspace:
+Switch between **`1. Create Studio`** and **`2. Publish & Posts (N)`** from the top header to access the flattened **`Inbox → Draft → Schedule`** workspace:
 - **100% Direct 4-Channel API Routing:**
   - **Buffer Free GraphQL API (`https://api.buffer.com`):** Directly publishes or schedules carousels and single-slide posts to **Instagram (`@marrok_org`)**, **Facebook (`Marrok (Algiers)`)**, and **LinkedIn (`Marrok`)** (10-slot rolling queue per channel, using `metadata.instagram.type: 'post'` for native multi-slide Instagram carousels).
   - **Zernio Free REST API v1 (`https://zernio.com/api/v1`) & Hosted MCP Server (`https://mcp.zernio.com/mcp`):** Directly publishes or schedules **TikTok Photo Carousels (`@marrokorg`, up to 35 `9:16` slides)** and **Instagram (`@marrok_org`)** with unlimited posts on Zernio's 2-account Free Tier.
@@ -91,7 +93,7 @@ Switch between **`1. Create Studio`** and **`2. Publish & Posts (N)`** from the 
 - **Dual Aspect-Ratio Auto-Staging & Post-Publish Cleanup (`api/controllers/publishController.ts`):**
   - Automatically renders and stages both `4:5` (`1080×1350` for IG/FB/LI) and `9:16` (`1080×1920` for TikTok) slide JPEGs to Cloudinary (`marrok_staging/*`) and sweeps/destroys staged assets `+1 hour` after publication so free storage never fills up.
 - **Unified Posts & Calendar Manager (`PostManagerPanel.tsx`):**
-  - Manage all **Drafts**, **Scheduled**, **Posted**, and **Needs Review** decks in one place with **List**, **7/14-Day Calendar**, and **Bulk Schedule** views, supporting 1-click **Edit in Studio**, **Reschedule**, **Unschedule to Drafts**, and **Delete** synced across Buffer, Zernio, and Vault.
+  - Manage all **Draft**, **Scheduled**, **Posted**, and **Needs Review** decks in one place with **List**, **7/14-Day Calendar**, and **Bulk Schedule** views, mandatory 2-flag safety gates (`Human Reviewed` + `Claims & Numbers Verified`), `>2/day` cadence warnings, and 1-click **Publish Now**, **Edit in Studio**, **Reschedule**, **Unschedule to Drafts**, and **Delete**.
 
 ### 🗄️ Neon Serverless PostgreSQL Content Vault (`api/db/postgres.ts`)
 - **Durable Cross-Device Cloud Sync:** Real-time persistence powered by Neon Serverless PostgreSQL with SSL connection pooling (`DATABASE_URL`), keeping draft decks, scheduled slots, and published history identical across desktop computers, tablets, and mobile phones.
@@ -109,16 +111,16 @@ Switch between **`1. Create Studio`** and **`2. Publish & Posts (N)`** from the 
 - `short_caption.txt` (Clean 2-line version for TikTok quick post)
 - `README.txt` (Creator publishing guide)
 
-### 📡 Automated Content Gatherer & Weekly Peak-Hour Program Review (`src/components/studio/WeeklyProgramReviewPanel.tsx`, `src/lib/gather/gatherClient.ts`)
-- **Live Engineering Trend Radar (`GET /api/gather/radar`):** Continuously scans and aggregates breaking technical breakthroughs from Hacker News, Lobste.rs, Reddit tech communities (`r/programming`, `r/LocalLLaMA`, `r/devops`), Cloudflare Engineering RSS, custom RSS/Atom feeds, and curated architectural deep-dives.
+### 📡 Automated Content Gatherer, Telegram Bot Webhook & Peak-Hour Program Review (`src/components/studio/WeeklyProgramReviewPanel.tsx`, `src/lib/gather/gatherClient.ts`, `api/controllers/mediaController.ts`)
+- **Live Engineering Trend Radar (`GET /api/gather/radar`):** Continuously scans and aggregates breaking technical breakthroughs from Hacker News, Lobste.rs, Reddit tech communities (`r/programming`, `r/LocalLLaMA`, `r/devops`), Cloudflare Engineering RSS, custom RSS/Atom feeds, and curated architectural deep-dives with 4-factor scoring (`Freshness`, `Engagement`, `Client Relevance`, `Platform Risk`).
 - **SSRF-Hardened URL Reader (`POST /api/gather/extract-url`):** Extracts clean articles, technical metrics, and architectural summaries from any public engineering blog, preventing loopback or private IP access.
-- **Peak-Hour Cadence Engine (10:00 · 12:00 · 18:00 DZ):** Auto-schedules approved posts to peak engagement windows while intelligently skipping slots that have already passed in the creator's current local day (`skipPast: true`).
-- **Human-in-the-Loop Batch Review:** Lets creators preview candidate titles, trigger background AI draft synthesis with vault deduplication (`isTopicAlreadyInVault`), inspect/edit slide outlines, and approve multi-post weekly schedules into Buffer and Zernio with 1 click.
+- **Direct Telegram Bot Webhook (`POST /api/gather/telegram-webhook`):** Send any `https://` engineering article URL to `@MarrokAutomationBot` on Telegram to extract, synthesize, quality-check, and save a draft to the Vault with inline **Approve**, **Next Slot (10·12·18)**, and **Reject** buttons (protected by `X-Telegram-Bot-Api-Secret-Token` and `TELEGRAM_ALLOWED_CHAT_IDS`).
+- **Lazy Inbox & Human-in-the-Loop Safety:** Generates lightweight Slide 1 Hook previews in `Inbox`, hydrates 8-slide storyboards on demand, requires an editable `Marrok angle`, and enforces the 2-flag review gate before scheduling or publishing.
 
 ### 🛡️ Security, Grounding Provenance & Pre-Publish Safety Gate
-- **Authentic Grounding Provenance:** Decks are marked `verified_live` (`Grounded`) **only** when Google Search grounding returns actual web sources. Ungrounded LLM outputs are marked `unverified_draft` (`Ungrounded AI`) with `userReviewed = false`, and offline fallback decks are marked `Offline Synthesizer`. Only an explicit human click on **"I reviewed this draft"** sets `userReviewed = true`.
-- **Platform Risk & QA Gate (`src/lib/riskChecks.ts` & `src/lib/qaChecks.ts`):** Evaluates Originality, Copyrighted IP/Audio, First-Frame Cover Quality, Unverified Numeric Claims, and Slide Repetition (`PASS` / `WARN` / `BLOCK`), plus placeholder text, Arabic line-ending punctuation, and $y \le 1760$ safe-zone clearance. Blocks export on `BLOCK` / `FAIL` unless explicitly overridden.
-- **Brand Logos & Wikimedia Attribution:** Official brand logos (`src/lib/techLogos.ts`) preserve their official colors on neutral tiles by default (SVG recoloring via `/api/proxy-image?color=` is strictly opt-in). When importing diagrams or media from Wikimedia Commons via the Media Search tool, include the author/license attribution in the Creator/Channel Credit field rendered on the CTA slide and in `claims_citations.txt`.
+- **Authentic Grounding Provenance:** Decks are marked `verified_live` (`Grounded`) **only** when Google Search grounding returns actual web sources. Ungrounded LLM outputs are marked `unverified_draft` (`Ungrounded AI`) with `userReviewed = false`, and offline fallback decks are marked `Offline Synthesizer`. Only an explicit human click on **"Human Reviewed"** sets `userReviewed = true`.
+- **Platform Risk, Zero-Placeholder & 24px Typography Gate (`src/lib/riskChecks.ts` & `src/lib/qaChecks.ts`):** Evaluates Originality, Copyrighted IP/Audio, First-Frame Cover Quality, Unverified Numeric Claims, Slide Repetition, and Brand/Logo compliance (`PASS` / `WARN` / `BLOCK`). Strictly blocks export when placeholder text (`System A`, `System B`, `PIPELINE MIGRATION`) or empty brand fields appear, and enforces $\ge 24\text{px}$ titles/body/diagram labels and $\ge 22\text{px}$ footers across all aspect ratios.
+- **Bundled Brand Logos & Wikimedia Attribution:** Official bundled brand SVGs (`src/lib/bundledTechSvgs.ts`) are never merged, cut, overlapped, or used as the Marrok mark, are capped at 2 logos per slide (`<= 14%` slide width), and include `"Not affiliated with <Company>"` with a one-tap `"Replace logos with styled text names"` action in Checks.
 
 ---
 
@@ -162,16 +164,19 @@ cp .env.example .env
 | `GEMINI_API_KEYS` | Optional | `""` | Comma-separated pool of additional Gemini API keys |
 | `FREE_BACKUP_AI_ENABLED` | Optional | `"true"` | Enables zero-key Pollinations AI text + 9:16 Flux image backup before offline fallback |
 | `FREE_TEXT_BACKUP_MODELS` | Optional | `"openai,mistral,llama"` | Comma-separated zero-key Pollinations text models |
-| `GEMINI_GENERATION_MODELS` | Optional | `gemini-3.8-flash,...` | Comma-separated model cascade for `/api/generate` and `/api/refine-slide` |
-| `GEMINI_IMAGE_MODELS` | Optional | `gemini-nano-banana-2.1,...` | Comma-separated model cascade for `/api/generate-image` |
+| `GEMINI_GENERATION_MODELS` | Optional | `gemini-4-hydrogen,...` | Comma-separated model cascade for `/api/generate` and `/api/refine-slide` |
+| `GEMINI_IMAGE_MODELS` | Optional | `gemini-3.1-flash-lite-image,...` | Comma-separated model cascade for `/api/generate-image` |
 | `CLOUDINARY_CLOUD_NAME` | Optional | `""` | Cloudinary cloud name for temporary slide image staging during publishing |
 | `CLOUDINARY_API_KEY` | Optional | `""` | Cloudinary API key for signed uploads and post-publish auto-cleanup |
 | `CLOUDINARY_API_SECRET` | Optional | `""` | Cloudinary API secret for SHA-1 signed upload and `image/destroy` cleanup |
 | `BUFFER_API_KEY` | Optional | `""` | Buffer Developer API token (`https://api.buffer.com`) for direct IG/FB/LinkedIn publishing |
 | `ZERNIO_API_KEY` | Optional | `""` | Zernio API token (`https://zernio.com/api/v1` + `https://mcp.zernio.com/mcp`) for direct TikTok Photo Carousel (with Commercial Music) & Instagram publishing |
 | `DATABASE_URL` | Optional | `""` | Neon PostgreSQL connection string (`postgresql://...`) for durable cross-device post sync |
-| `ALLOWED_ORIGIN` | Optional | `*` | CORS `Access-Control-Allow-Origin` header value |
-| `API_SHARED_SECRET` | Optional | `""` | Shared secret (`x-api-secret`) required when relying on server `GEMINI_API_KEY` |
+| `TELEGRAM_BOT_TOKEN` | Optional | `""` | Telegram Bot token (`@MarrokAutomationBot`) for mobile URL-to-Vault synthesis and inline review buttons |
+| `TELEGRAM_WEBHOOK_SECRET` | Optional | `""` | Secret token verified via `X-Telegram-Bot-Api-Secret-Token` on `POST /api/gather/telegram-webhook` |
+| `TELEGRAM_ALLOWED_CHAT_IDS` | Optional | `""` | Comma-separated allowlist of authorized Telegram Chat/User IDs (e.g. `928572639`) |
+| `ALLOWED_ORIGIN` | Optional | `https://marrok-content.netlify.app` | CORS `Access-Control-Allow-Origin` header value |
+| `API_SHARED_SECRET` | Optional | `""` | Shared secret (`x-api-secret`) for external automation/cron endpoints |
 | `RATE_LIMIT_RPM` | Optional | `30` | Per-IP requests per minute limit on AI endpoints |
 
 ### 4. Run Development Server

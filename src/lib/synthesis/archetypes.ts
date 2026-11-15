@@ -107,16 +107,21 @@ export function seedSlideArchetypeData(
         };
       } else if (!updated.subjectPair) {
         updated.subjectPair = {
-          beforeSystem: 'System A',
-          afterSystem: 'System B',
+          beforeSystem: '',
+          afterSystem: '',
           beforeLabel: 'BEFORE',
           afterLabel: 'AFTER',
           colorMode: 'official',
           logoWidthPct: 11,
-          creativeMotif: 'chat-to-db',
-          flowLabel: 'PIPELINE MIGRATION',
+          creativeMotif: 'stream-flow',
+          flowLabel: '',
         };
       }
+      // Also seed topic-matched diagram schematic fields so empty Subject Pair cleanly falls back to Mechanism schematic on canvas
+      updated.diagramVariant = updated.diagramVariant || smart.diagramVariant;
+      updated.diagramNodes = updated.diagramNodes || smart.diagramNodes;
+      updated.diagramEdges = updated.diagramEdges || smart.diagramEdges;
+      updated.diagramFooter = updated.diagramFooter || smart.diagramFooter;
       break;
     }
   }

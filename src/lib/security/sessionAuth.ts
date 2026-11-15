@@ -443,7 +443,11 @@ export function isCronOrWebhookSecretAuthorized(
   }
 
   if (cleanPath === '/api/gather/telegram-webhook' || cleanPath === '/gather/telegram-webhook') {
-    const expected = readRuntimeEnv('TELEGRAM_WEBHOOK_SECRET', envOverride);
+    const expected =
+      readRuntimeEnv('TELEGRAM_WEBHOOK_SECRET', envOverride) ||
+      readRuntimeEnv('TELEGRAM_SECRET', envOverride) ||
+      readRuntimeEnv('TELEGRAM_SECRET_TOKEN', envOverride) ||
+      readRuntimeEnv('TG_WEBHOOK_SECRET', envOverride);
     const provided = headerValue('x-telegram-bot-api-secret-token');
     return Boolean(expected && provided && constantTimeEqualText(provided, expected));
   }

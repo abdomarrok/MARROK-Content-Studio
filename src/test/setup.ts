@@ -92,6 +92,28 @@ if (typeof HTMLCanvasElement !== 'undefined') {
   });
 }
 
+// Auto-resolve HTMLImageElement onload in jsdom so canvas icon & SVG rendering completes immediately in tests
+if (typeof HTMLImageElement !== 'undefined') {
+  const originalSrcDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+  Object.defineProperty(HTMLImageElement.prototype, 'src', {
+    configurable: true,
+    get() {
+      return this.__mockSrc || originalSrcDescriptor?.get?.call(this) || '';
+    },
+    set(val: string) {
+      this.__mockSrc = val;
+      Object.defineProperty(this, 'complete', { configurable: true, value: true });
+      Object.defineProperty(this, 'naturalWidth', { configurable: true, value: 64 });
+      Object.defineProperty(this, 'naturalHeight', { configurable: true, value: 64 });
+      queueMicrotask(() => {
+        if (typeof this.onload === 'function') {
+          this.onload(new Event('load'));
+        }
+      });
+    },
+  });
+}
+
 afterEach(() => {
   cleanup();
   localStorage.clear();

@@ -543,7 +543,7 @@ export function getArchetypeGraphicTransform(
     nativeCenterX = SAFE_CONTENT_CENTER_X;
   } else if (slideType === 'subjectPair') {
     baseCardY = 240;
-    baseCardH = 490;
+    baseCardH = 540;
     nativeCenterX = SAFE_CONTENT_CENTER_X;
   } else if (slideType === 'number') {
     baseCardY = 240;

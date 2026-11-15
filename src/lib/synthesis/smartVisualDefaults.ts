@@ -1,6 +1,6 @@
 import type { CarouselData, DiagramNode, DiagramVariant, HookClaimCard, HubNodeReason, SlideData, SlideType, SubjectPairConfig } from '../../types.ts';
 import { TECH_ICONS_LIST } from '../techLogos.ts';
-import { getBundledIconMeta } from '../bundledTechSvgs.ts';
+import { getBundledIconMeta, isPlaceholderOrEmptyBrandValue, resolveRealTechSystem } from '../bundledTechSvgs.ts';
 import { CHAR_LIMITS, SINGLE_SLIDE_CHAR_LIMITS } from '../qaChecks.ts';
 import { autoFitTextToLimits, autoPolishHeadline } from '../text/headlines.ts';
 import { fixArabicPunctuation } from '../text/arabicBiDi.ts';
@@ -571,144 +571,192 @@ export function buildNonNumericHookClaimCard(
   };
 }
 
+const NON_OWNER_WORDS = new Set([
+  'how', 'why', 'when', 'what', 'where', 'who', 'which', 'we', 'they', 'our', 'their', 'this', 'that',
+  'team', 'teams', 'engineers', 'engineering', 'developers', 'company', 'companies', 'startup', 'startups',
+  'moving', 'migrating', 'switching', 'replacing', 'porting', 'upgrading', 'transitioning', 'building',
+  'scaling', 'running', 'storing', 'serving', 'cutting', 'reducing', 'dropping', 'slashing', 'inside',
+  'behind', 'lessons', 'production', 'architecture', 'database', 'storage', 'system', 'systems', 'service',
+]);
+
+const KNOWN_STORY_OWNERS = [
+  { pattern: /\bdiscord\b/i, name: 'Discord' },
+  { pattern: /\buber\b/i, name: 'Uber' },
+  { pattern: /\bnetflix\b/i, name: 'Netflix' },
+  { pattern: /\bstripe\b/i, name: 'Stripe' },
+  { pattern: /\bshopify\b/i, name: 'Shopify' },
+  { pattern: /\bairbnb\b/i, name: 'Airbnb' },
+  { pattern: /\bgithub\b/i, name: 'GitHub' },
+  { pattern: /\bslack\b/i, name: 'Slack' },
+  { pattern: /\bcloudflare\b/i, name: 'Cloudflare' },
+  { pattern: /\bfigma\b/i, name: 'Figma' },
+  { pattern: /\bnotion\b/i, name: 'Notion' },
+  { pattern: /\blinear\b/i, name: 'Linear' },
+  { pattern: /\bvercel\b/i, name: 'Vercel' },
+  { pattern: /\bdatadog\b/i, name: 'Datadog' },
+  { pattern: /\bdropbox\b/i, name: 'Dropbox' },
+  { pattern: /\blinkedin\b/i, name: 'LinkedIn' },
+  { pattern: /\bpinterest\b/i, name: 'Pinterest' },
+  { pattern: /\binstacart\b/i, name: 'Instacart' },
+  { pattern: /\bcoinbase\b/i, name: 'Coinbase' },
+  { pattern: /\bdoorDash\b/i, name: 'DoorDash' },
+];
+
+function isChatAndStorageTopic(text: string, owner?: string): boolean {
+  const combined = `${owner || ''} ${text}`;
+  const hasChatSignal = /\b(?:discord|slack|chat|messages?|messaging|channels?|dm|inbox)\b/i.test(combined);
+  const hasStorageSignal =
+    /\b(?:cassandra|scylla|scylladb|postgres|postgresql|mysql|mongodb|dynamodb|redis|cockroach|clickhouse|sqlite|database|db|storage|shards?|partitions?|reads?|writes?|queries|trillions?)\b/i.test(
+      combined
+    );
+  return hasChatSignal && hasStorageSignal;
+}
+
+function buildVerifiedSubjectPairConfig(
+  rawA: string,
+  rawB: string,
+  cleanText: string,
+  rawOwner?: string
+): SubjectPairConfig | undefined {
+  const sysA = resolveRealTechSystem(rawA);
+  const sysB = resolveRealTechSystem(rawB);
+  if (!sysA || !sysB) return undefined;
+  if (sysA.title.toLowerCase() === sysB.title.toLowerCase()) return undefined;
+
+  let ownerName: string | undefined;
+  if (rawOwner) {
+    const cleanOwner = rawOwner.trim().replace(/^['"`(\[]+|['"`.,;:!?)\]]+$/g, '');
+    if (
+      cleanOwner.length >= 2 &&
+      !NON_OWNER_WORDS.has(cleanOwner.toLowerCase()) &&
+      !isPlaceholderOrEmptyBrandValue(cleanOwner) &&
+      cleanOwner.toLowerCase() !== sysA.title.toLowerCase() &&
+      cleanOwner.toLowerCase() !== sysB.title.toLowerCase() &&
+      cleanOwner.toLowerCase() !== rawA.trim().toLowerCase() &&
+      cleanOwner.toLowerCase() !== rawB.trim().toLowerCase()
+    ) {
+      const ownerSys = resolveRealTechSystem(cleanOwner);
+      ownerName = ownerSys ? ownerSys.title : cleanOwner.charAt(0).toUpperCase() + cleanOwner.slice(1);
+    }
+  }
+
+  if (!ownerName) {
+    for (const candidate of KNOWN_STORY_OWNERS) {
+      if (
+        candidate.pattern.test(cleanText) &&
+        candidate.name.toLowerCase() !== sysA.title.toLowerCase() &&
+        candidate.name.toLowerCase() !== sysB.title.toLowerCase()
+      ) {
+        ownerName = candidate.name;
+        break;
+      }
+    }
+  }
+
+  const isChatDb = isChatAndStorageTopic(cleanText, ownerName);
+  const flowLabel = isChatDb
+    ? 'CHAT MESSAGES → COMPACTED SHARDS'
+    : `${sysA.title.toUpperCase()} → ${sysB.title.toUpperCase()}`;
+
+  return {
+    beforeSystem: sysA.title,
+    afterSystem: sysB.title,
+    beforeLogoKey: sysA.logoKey,
+    afterLogoKey: sysB.logoKey,
+    beforeAsText: sysA.asText,
+    afterAsText: sysB.asText,
+    storyOwner: ownerName,
+    storyOwnerMode: ownerName ? 'text' : undefined,
+    beforeLabel: 'BEFORE',
+    afterLabel: 'AFTER',
+    colorMode: 'official',
+    logoWidthPct: 11,
+    creativeMotif: isChatDb ? 'chat-to-db' : 'stream-flow',
+    flowLabel,
+  };
+}
+
 /**
- * Detects migration, replacement, A vs B, or before -> after technical stories.
- * Allocates 3-brand stories according to the approved rule:
- * - The story owner (e.g. Discord, Uber, Netflix) is allocated to storyOwner (styled text wordmark).
- * - The two systems (e.g. Cassandra -> ScyllaDB) occupy the two logo slots (BEFORE & AFTER).
+ * Strictly detects migration, replacement, A vs B, or before -> after stories ONLY when
+ * TWO real, named software/database/infrastructure products can be extracted with confidence.
+ * - Never fabricates placeholders ("System A", "System B", "PIPELINE MIGRATION", "DATASTREAM MIGRATION").
+ * - Never triggers on robotics, hardware, ML training-to-inference, or single-system explainers.
+ * - Allocates 3-brand stories with the story owner as styled text and the 2 systems in the BEFORE/AFTER slots.
  */
 export function detectSubjectPairFromText(
   fullText: string,
   slide?: SlideData
 ): SubjectPairConfig | undefined {
-  if (slide?.subjectPair?.beforeSystem && slide?.subjectPair?.afterSystem) {
-    return slide.subjectPair;
-  }
-  if (!fullText) return undefined;
-
-  const clean = fullText.replace(/\n+/g, ' ');
-
-  // 1. Check for 3-brand pattern: "<Company> migrated from <SysA> to <SysB>"
-  // e.g. "Discord migrated from Cassandra to ScyllaDB"
-  const threeBrandMatch = clean.match(
-    /\b([A-Za-z0-9_-]+)\s+(?:migrated|migrating|switched|switching|moving|moved|replaced)\s+(?:from\s+)?([A-Za-z0-9_-]+)\s+(?:to|with|for)\s+([A-Za-z0-9_-]+)/i
-  );
-  if (threeBrandMatch) {
-    const rawOwner = threeBrandMatch[1];
-    const rawA = threeBrandMatch[2];
-    const rawB = threeBrandMatch[3];
-
-    const metaA = getBundledIconMeta(rawA);
-    const metaB = getBundledIconMeta(rawB);
-
-    const isCreativeChat = /discord|chat|message|messaging|channel|bot/i.test(`${rawOwner} ${clean}`);
-
-    return {
-      beforeSystem: metaA ? metaA.title : rawA.charAt(0).toUpperCase() + rawA.slice(1),
-      afterSystem: metaB ? metaB.title : rawB.charAt(0).toUpperCase() + rawB.slice(1),
-      beforeLogoKey: metaA ? metaA.slug : undefined,
-      afterLogoKey: metaB ? metaB.slug : undefined,
-      beforeAsText: !metaA,
-      afterAsText: !metaB,
-      storyOwner: rawOwner.charAt(0).toUpperCase() + rawOwner.slice(1),
-      storyOwnerMode: 'text',
-      beforeLabel: 'BEFORE',
-      afterLabel: 'AFTER',
-      colorMode: 'official',
-      logoWidthPct: 11,
-      creativeMotif: isCreativeChat ? 'chat-to-db' : 'stream-flow',
-      flowLabel: isCreativeChat ? 'CHAT WORKLOAD → COMPACTED SHARDS' : 'DATASTREAM MIGRATION',
-    };
-  }
-
-  // 2. Pattern: "migrated/migrating/switched from <SysA> to <SysB>"
-  const migrationMatch = clean.match(
-    /\b(?:migrated|migrating|migration|switched|switching|moved|moving)\s+from\s+([A-Za-z0-9_-]+)\s+to\s+([A-Za-z0-9_-]+)/i
-  );
-  if (migrationMatch) {
-    const rawA = migrationMatch[1];
-    const rawB = migrationMatch[2];
-    const metaA = getBundledIconMeta(rawA);
-    const metaB = getBundledIconMeta(rawB);
-
-    // Look for company story owner elsewhere in text (e.g. Discord, Uber, Netflix, Stripe, Meta)
-    const companyMatch = clean.match(/\b(discord|uber|netflix|stripe|shopify|airbnb|github|slack|meta|google|amazon|apple|microsoft|cloudflare)\b/i);
-    const ownerName = companyMatch ? companyMatch[1].charAt(0).toUpperCase() + companyMatch[1].slice(1) : undefined;
-    const isCreativeChat = /discord|chat|message|messaging|channel|bot/i.test(clean);
-
-    return {
-      beforeSystem: metaA ? metaA.title : rawA.charAt(0).toUpperCase() + rawA.slice(1),
-      afterSystem: metaB ? metaB.title : rawB.charAt(0).toUpperCase() + rawB.slice(1),
-      beforeLogoKey: metaA ? metaA.slug : undefined,
-      afterLogoKey: metaB ? metaB.slug : undefined,
-      beforeAsText: !metaA,
-      afterAsText: !metaB,
-      storyOwner: ownerName,
-      storyOwnerMode: ownerName ? 'text' : undefined,
-      beforeLabel: 'BEFORE',
-      afterLabel: 'AFTER',
-      colorMode: 'official',
-      logoWidthPct: 11,
-      creativeMotif: isCreativeChat ? 'chat-to-db' : 'stream-flow',
-      flowLabel: isCreativeChat ? 'CHAT WORKLOAD → COMPACTED SHARDS' : 'DATASTREAM MIGRATION',
-    };
-  }
-
-  // 3. Pattern: "<SysA> -> <SysB>" or "<SysA> → <SysB>"
-  const arrowMatch = clean.match(/\b([A-Za-z0-9_-]+)\s*(?:->|→)\s*([A-Za-z0-9_-]+)/i);
-  if (arrowMatch) {
-    const rawA = arrowMatch[1];
-    const rawB = arrowMatch[2];
-    const metaA = getBundledIconMeta(rawA);
-    const metaB = getBundledIconMeta(rawB);
-    if (metaA || metaB) {
-      const companyMatch = clean.match(/\b(discord|uber|netflix|stripe|shopify|airbnb|github|slack|meta|google|amazon|apple|microsoft|cloudflare)\b/i);
-      const ownerName = companyMatch ? companyMatch[1].charAt(0).toUpperCase() + companyMatch[1].slice(1) : undefined;
-      const isCreativeChat = /discord|chat|message|messaging|channel|bot/i.test(clean);
-
-      return {
-        beforeSystem: metaA ? metaA.title : rawA.charAt(0).toUpperCase() + rawA.slice(1),
-        afterSystem: metaB ? metaB.title : rawB.charAt(0).toUpperCase() + rawB.slice(1),
-        beforeLogoKey: metaA ? metaA.slug : undefined,
-        afterLogoKey: metaB ? metaB.slug : undefined,
-        beforeAsText: !metaA,
-        afterAsText: !metaB,
-        storyOwner: ownerName,
-        storyOwnerMode: ownerName ? 'text' : undefined,
-        beforeLabel: 'BEFORE',
-        afterLabel: 'AFTER',
-        colorMode: 'official',
-        logoWidthPct: 11,
-        creativeMotif: isCreativeChat ? 'chat-to-db' : 'stream-flow',
-        flowLabel: isCreativeChat ? 'CHAT WORKLOAD → COMPACTED SHARDS' : 'DATASTREAM MIGRATION',
-      };
+  if (slide?.subjectPair) {
+    const sp = slide.subjectPair;
+    if (
+      !isPlaceholderOrEmptyBrandValue(sp.beforeSystem) &&
+      !isPlaceholderOrEmptyBrandValue(sp.afterSystem) &&
+      sp.beforeSystem.trim().toLowerCase() !== sp.afterSystem.trim().toLowerCase()
+    ) {
+      const sysA = resolveRealTechSystem(sp.beforeSystem);
+      const sysB = resolveRealTechSystem(sp.afterSystem);
+      if (sysA && sysB) {
+        const cleanFlow =
+          sp.flowLabel && !isPlaceholderOrEmptyBrandValue(sp.flowLabel)
+            ? sp.flowLabel
+            : isChatAndStorageTopic(`${fullText} ${sp.beforeSystem} ${sp.afterSystem}`, sp.storyOwner)
+            ? 'CHAT MESSAGES → COMPACTED SHARDS'
+            : `${sysA.title.toUpperCase()} → ${sysB.title.toUpperCase()}`;
+        return {
+          ...sp,
+          beforeSystem: sp.beforeSystem.trim(),
+          afterSystem: sp.afterSystem.trim(),
+          beforeLogoKey: sp.beforeLogoKey ?? sysA.logoKey,
+          afterLogoKey: sp.afterLogoKey ?? sysB.logoKey,
+          storyOwner:
+            sp.storyOwner && !isPlaceholderOrEmptyBrandValue(sp.storyOwner)
+              ? sp.storyOwner.trim()
+              : undefined,
+          flowLabel: cleanFlow,
+          creativeMotif: isChatAndStorageTopic(
+            `${fullText} ${sp.beforeSystem} ${sp.afterSystem}`,
+            sp.storyOwner
+          )
+            ? sp.creativeMotif || 'chat-to-db'
+            : 'stream-flow',
+        };
+      }
     }
   }
 
-  // 4. Check if text mentions Cassandra + ScyllaDB specifically or 2 known database/infra systems
-  if (/\b(?:cassandra|apachecassandra)\b/i.test(clean) && /\b(?:scylla|scylladb)\b/i.test(clean)) {
-    const metaA = getBundledIconMeta('apachecassandra');
-    const metaB = getBundledIconMeta('scylladb');
-    const companyMatch = clean.match(/\b(discord|uber|netflix|stripe|shopify|airbnb|github|slack|meta|google|amazon|apple|microsoft|cloudflare)\b/i);
-    const ownerName = companyMatch ? companyMatch[1].charAt(0).toUpperCase() + companyMatch[1].slice(1) : undefined;
-    const isCreativeChat = /discord|chat|message|messaging|channel|bot/i.test(clean);
+  if (!fullText) return undefined;
+  const clean = fullText.replace(/\n+/g, ' ');
 
-    return {
-      beforeSystem: metaA ? metaA.title : 'Apache Cassandra',
-      afterSystem: metaB ? metaB.title : 'ScyllaDB',
-      beforeLogoKey: metaA ? metaA.slug : 'apachecassandra',
-      afterLogoKey: metaB ? metaB.slug : 'scylladb',
-      beforeAsText: false,
-      afterAsText: false,
-      storyOwner: ownerName || (isCreativeChat ? 'Discord' : undefined),
-      storyOwnerMode: 'text',
-      beforeLabel: 'BEFORE',
-      afterLabel: 'AFTER',
-      colorMode: 'official',
-      logoWidthPct: 11,
-      creativeMotif: isCreativeChat ? 'chat-to-db' : 'stream-flow',
-      flowLabel: isCreativeChat ? 'CHAT WORKLOAD → COMPACTED SHARDS' : 'DATASTREAM MIGRATION',
-    };
+  // 1. Check 3-brand pattern: "<Company> migrated/moved/switched/replaced from <SysA> to/with <SysB>"
+  const threeBrandRegex =
+    /\b([A-Za-z0-9._-]+)\s+(?:has\s+|have\s+)?(?:migrated|migrating|switched|switching|moving|moved|replaced|replacing|transitioned|ported|ditched)\s+(?:from\s+)?(?:Apache\s+|Amazon\s+|Google\s+|Microsoft\s+)?([A-Za-z0-9.+_#-]+)\s+(?:to|with|for|into)\s+(?:Apache\s+|Amazon\s+|Google\s+|Microsoft\s+)?([A-Za-z0-9.+_#-]+)/gi;
+  for (const m of clean.matchAll(threeBrandRegex)) {
+    const built = buildVerifiedSubjectPairConfig(m[2], m[3], clean, m[1]);
+    if (built) return built;
+  }
+
+  // 2. Check explicit migration/replacement: "migrated/moved/switched from <SysA> to <SysB>" or "replaced/ditched <SysA> with/for <SysB>"
+  const migrationRegex =
+    /\b(?:migrated|migrating|migration|switched|switching|switch|moved|moving|move|transitioned|transitioning|ported|porting|upgraded|upgrading)\s+from\s+(?:Apache\s+|Amazon\s+|Google\s+|Microsoft\s+)?([A-Za-z0-9.+_#-]+)\s+(?:to|into)\s+(?:Apache\s+|Amazon\s+|Google\s+|Microsoft\s+)?([A-Za-z0-9.+_#-]+)/gi;
+  for (const m of clean.matchAll(migrationRegex)) {
+    const built = buildVerifiedSubjectPairConfig(m[1], m[2], clean);
+    if (built) return built;
+  }
+
+  const replacedRegex =
+    /\b(?:replaced|replacing|replace|ditched|ditching|ditch|swapped|swapping)\s+(?:Apache\s+|Amazon\s+|Google\s+|Microsoft\s+)?([A-Za-z0-9.+_#-]+)\s+(?:with|for|to)\s+(?:Apache\s+|Amazon\s+|Google\s+|Microsoft\s+)?([A-Za-z0-9.+_#-]+)/gi;
+  for (const m of clean.matchAll(replacedRegex)) {
+    const built = buildVerifiedSubjectPairConfig(m[1], m[2], clean);
+    if (built) return built;
+  }
+
+  // 3. Check explicit arrow or head-to-head comparison between two real named systems: "<SysA> -> <SysB>" or "<SysA> vs <SysB>"
+  const arrowOrVsRegex =
+    /\b(?:Apache\s+|Amazon\s+|Google\s+|Microsoft\s+)?([A-Za-z0-9.+_#-]+)\s*(?:->|→|\bvs\.?\b|\bversus\b|\bcompared\s+to\b)\s*(?:Apache\s+|Amazon\s+|Google\s+|Microsoft\s+)?([A-Za-z0-9.+_#-]+)/gi;
+  for (const m of clean.matchAll(arrowOrVsRegex)) {
+    const built = buildVerifiedSubjectPairConfig(m[1], m[2], clean);
+    if (built) return built;
   }
 
   return undefined;
@@ -743,7 +791,7 @@ export function analyzeSlideTextForArchetype(
     subjectPair: pair ? 8 : 0,
   };
 
-  if (pair && /\b(?:migrat(?:ed|ing|ion)|switched|switching|moving|replaced|transition|vs\.?)\b/i.test(fullText)) {
+  if (pair && /\b(?:migrat(?:ed|ing|ion)|switched|switching|moving|moved|replaced|transition|vs\.?)\b/i.test(fullText)) {
     scores.subjectPair += 6;
   }
 
@@ -808,14 +856,14 @@ export function analyzeSlideTextForArchetype(
     scores.metric += 2;
   }
 
-  // 5. Row (Mechanism / Architecture Schematic) signals
+  // 5. Row (Mechanism / Architecture / Robotics / ML / Explainer Schematic) signals
   if (
-    /\b(?:architecture|pipeline|topology|workflow|mechanism|diagram|cluster|isolation|routing|traversal|layer|stack|mesh)\b/i.test(
+    /\b(?:how\s+.+\s+works|architecture|pipeline|topology|workflow|mechanism|diagram|cluster|isolation|routing|traversal|layer|stack|mesh|robot(?:ic|ics|s)?|pick[- ]and[- ]place|gripper|actuator|sensor|kinematics|conveyor|wrist|camera|simulation|hardware|firmware|attention|transformer|diffusion|neural|verifier|bytecode|ebpf|kernel|consensus|quorum)\b/i.test(
       fullText
     ) ||
-    /آلية|معمارية|شبكة|طبقات|مسار|عزل/.test(arText)
+    /آلية|معمارية|شبكة|طبقات|مسار|عزل|روبوت/.test(arText)
   ) {
-    scores.row += 2;
+    scores.row += 4;
   }
 
   // Pick the highest-scoring archetype (tie-breaking order: subjectPair > code > compare > metric > number > row)
@@ -1598,10 +1646,7 @@ export function resolveSmartSlideVisuals(
       ? slide.compareRightBody
       : derivedCompare.rightBody;
 
-  const derivedSubjectPair =
-    !forceRefresh && slide.subjectPair
-      ? slide.subjectPair
-      : detectSubjectPairFromText(fullText, slide);
+  const derivedSubjectPair = detectSubjectPairFromText(fullText, slide);
 
   return {
     recommendedArchetype,
@@ -1695,36 +1740,30 @@ export function applyHookEngineToSlide1(
   );
   const plainArTitle = capHeadlineToTwelveWords(slide.arTitle || '', true);
 
-  const detectedPair = slide.subjectPair || detectSubjectPairFromText(combinedContextForExtraction, slide);
+  const detectedPair = detectSubjectPairFromText(combinedContextForExtraction, slide);
   const isSubjectPairStory = Boolean(detectedPair);
 
-  // Pick Slide 1 Hook cover layout (NEVER 'hub' per storyboard policy, NEVER empty metric without numbers or claim card):
-  // - Custom media/poster -> keep 'image' / 'poster'
-  // - Subject Pair story (migration / replacement) -> 'subjectPair'
-  // - Hard numeric win -> 'metric'
-  // - Non-numeric with claim card -> 'metric' (rendered as hookClaimCard, never empty hard metric)
-  // - Comparative / contrasting narrative -> 'compare'
-  // - Mechanism / schematic narrative -> 'row'
+  // Pick Slide 1 Hook cover layout (NEVER 'hub' per storyboard policy, NEVER empty metric, NEVER subjectPair without two verified real systems):
   const resolvedType: SlideType = (() => {
     if (slide.type === 'image' && (slide.imageUrl || slide.videoUrl)) return 'image';
-    if (slide.type === 'subjectPair' || isSubjectPairStory) return 'subjectPair';
+    if (isSubjectPairStory) return 'subjectPair';
+    const dynamicCover = inferDynamicCoverArchetype({
+      ...slide,
+      enBody: slide.enBody || sourceContextText,
+      subjectPair: undefined,
+    });
+    if (dynamicCover === 'row') return 'row';
     if (hasNumericWin) {
-      return slide.type === 'compare' || slide.type === 'code' || slide.type === 'row' ? slide.type : 'metric';
+      return slide.type === 'compare' || slide.type === 'code' ? slide.type : 'metric';
     }
-    if (nonNumericCard?.mode === 'contrast') {
-      return slide.type === 'compare' ? 'compare' : 'metric';
+    if (dynamicCover === 'compare') return 'compare';
+    if (nonNumericCard) {
+      return slide.type === 'compare' || slide.type === 'code' ? slide.type : 'metric';
     }
     if (slide.type === 'compare' || slide.type === 'code' || slide.type === 'row') {
       return slide.type;
     }
-    if (slide.type === 'metric' && nonNumericCard) {
-      return 'metric';
-    }
-    const dynamicCover = inferDynamicCoverArchetype(slide);
-    if (dynamicCover === 'metric' && !hasNumericWin && !nonNumericCard) {
-      return 'row';
-    }
-    return dynamicCover;
+    return 'row';
   })();
 
   const finalSatLabels =
@@ -1751,7 +1790,11 @@ export function applyHookEngineToSlide1(
     arBody: '',
     enTitle: plainEnTitle || slide.enTitle,
     arTitle: plainArTitle || slide.arTitle,
-    subjectPair: resolvedType === 'subjectPair' ? (detectedPair || smart.subjectPair) : slide.subjectPair,
+    subjectPair: resolvedType === 'subjectPair' ? detectedPair : undefined,
+    diagramVariant: resolvedType === 'row' ? (slide.diagramVariant || smart.diagramVariant) : slide.diagramVariant,
+    diagramNodes: smart.diagramNodes,
+    diagramEdges: smart.diagramEdges,
+    diagramFooter: smart.diagramFooter,
     satLabels: finalSatLabels,
     hubNodeReasons: finalReasons,
     satIcons: smart.satIcons,
@@ -1762,38 +1805,55 @@ export function applyHookEngineToSlide1(
     metricLabel: hasNumericWin ? smart.metricLabel : '',
     metricDiff: hasNumericWin ? smart.metricDiff : '',
     metricIcon: smart.metricIcon,
-    hookClaimCard: resolvedType === 'metric' ? nonNumericCard : undefined,
+    hookClaimCard: !hasNumericWin ? nonNumericCard : undefined,
     chartDirection: hasNumericWin ? smart.chartDirection : 'none',
   };
 
   hookSlide.cornerTag = deriveSlideCornerTag(hookSlide, 0, 6);
+  hookSlide.layoutRationale = explainArchetypeChoice(
+    { ...hookSlide, enBody: slide.enBody || sourceContextText },
+    0,
+    6
+  );
   return hookSlide;
 }
 
 /**
  * Determines the most scroll-stopping Slide 1 cover archetype based on the story angle:
- * - 'subjectPair' for system migrations, replacements, or before -> after shifts
- * - 'compare' for head-to-head showdowns, replacements, or paradigm shifts
- * - 'metric' for shocking benchmarks, dollar figures, latency drops, or scale numbers
- * - 'row' (isolation/topology schematic) for security vulnerabilities, zero-days, or protocol mechanics
- * - 'row' as the safe structural fallback (NEVER empty 'metric' or 'hub')
+ * - 'subjectPair' ONLY when two real named systems are verified in a migration/replacement/before-after relation
+ * - 'row' (mechanism schematic) for robotics, hardware, ML architecture, "how X works" explainers, security/kernel mechanics
+ * - 'compare' for head-to-head showdowns or paradigm trade-offs
+ * - 'metric' for hard benchmarks, dollar figures, latency drops, or Focused Hook Claim card on opinion/thesis pieces
  */
 export function inferDynamicCoverArchetype(slide: SlideData): SlideType {
   if (slide.type === 'image' && (slide.imageUrl || slide.videoUrl)) return 'image';
   if (slide.type === 'poster') return 'poster';
-  if (slide.type === 'subjectPair') return 'subjectPair';
 
   const title = (slide.enTitle || '').trim();
   const body = (slide.enBody || '').trim();
   const arTitle = (slide.arTitle || '').trim();
   const combined = `${title} ${body} ${arTitle}`;
 
-  // 0. Migration / before-after / subject pair story
-  if (slide.subjectPair || detectSubjectPairFromText(combined, slide)) {
+  // 0. Strict Subject Pair detection: when two real named systems are in a migration/before-after relation
+  const hasMigrationOrBeforeAfterCue =
+    /\b(?:migrat(?:ed|ing|ion|es)|mov(?:ed|ing)|switch(?:ed|ing)|transition(?:ed|ing)|replac(?:ed|ing)|port(?:ed|ing)|rewrot(?:e|ten)|from\s+[A-Za-z0-9.+_-]+(?:\s+[A-Za-z0-9.+_-]+)?\s+(?:to|onto|into))\b|->|➔|⟶|انتقل|هاجر|هجرة|استبدل/i.test(
+      combined
+    );
+  if (hasMigrationOrBeforeAfterCue && detectSubjectPairFromText(combined, slide)) {
     return 'subjectPair';
   }
 
-  // 1. Hard benchmark / financial shock / latency / scale number in the hook -> Metric cover
+  // 1. Robotics, hardware, physical pick-and-place, ML architecture, simulation, "How X works" explainer, or kernel/protocol mechanism -> Row schematic cover
+  if (
+    /\b(?:how\s+.+\s+works|pick[- ]and[- ]place|robot(?:ic|ics|s)?|gripper|actuator|sensor|kinematics|conveyor|wrist|camera|simulation|hardware|firmware|attention|transformer|diffusion|neural|inference|training|verifier|bytecode|cve-\d{4}|zero[- ]?day|exploit|vulnerability|sandbox|isolation|ebpf|kernel|handshake|protocol|wireguard|mtls|post[- ]?quantum|signature\s+size|quorum|consensus|state\s+machine)\b/i.test(
+      combined
+    ) ||
+    /^how\s+/i.test(title)
+  ) {
+    return 'row';
+  }
+
+  // 2. Hard benchmark / financial shock / latency / scale number in the hook -> Metric cover
   const hasNumbers = /(?:\$\d[\d,.]*\s*[KMBTkmbt]?|\b\d+(?:\.\d+)?\s*(?:%|x|X|ms|µs|ns|s|GB\/s|MB\/s|KB|MB|GB|TB|PB|req\/s|RPS|ops\/s|QPS|tokens\/s|GW|MW|billion|trillion|million)\b)/i.test(
     `${title} ${body}`
   );
@@ -1801,9 +1861,9 @@ export function inferDynamicCoverArchetype(slide: SlideData): SlideType {
     return 'metric';
   }
 
-  // 2. Head-to-head comparison / migration / replacement angle -> Compare cover
+  // 3. Head-to-head comparison / trade-off angle -> Compare cover
   if (
-    /\b(?:vs\.?|versus|compared\s+to|instead\s+of|replaces|replacing|migrating\s+from|move\s+beyond|beyond|ditched|ditching|outperforms|beats|tradeoff|trade-?off)\b/i.test(
+    /\b(?:vs\.?|versus|compared\s+to|instead\s+of|outperforms|beats|tradeoff|trade-?off)\b/i.test(
       combined
     ) ||
     /مقابل|بدلاً\s+من|مقارنة/.test(arTitle)
@@ -1811,91 +1871,101 @@ export function inferDynamicCoverArchetype(slide: SlideData): SlideType {
     return 'compare';
   }
 
-  // 3. Zero-day / CVE / protocol / kernel / isolation / architecture mechanism -> Row schematic cover
-  if (
-    /\b(?:cve-\d{4}|zero[- ]?day|exploit|vulnerability|sandbox|isolation|ebpf|kernel|handshake|protocol|wireguard|mtls|post[- ]?quantum|signature\s+size|container|architecture|quorum|consensus)\b/i.test(
-      combined
-    )
-  ) {
-    return 'row';
-  }
-
-  // Never fall back to 'hub' on Slide 1 Hook — use high-impact Focused Hook Claim card (rendered under 'metric' with hookClaimCard)
+  // 4. Opinion / thesis / non-numeric claim -> Focused Hook Claim card (rendered under 'metric' with hookClaimCard)
   return 'metric';
 }
 
 /**
  * Returns a crisp one-line explanation for why "Smart Match" or "Diversify Deck"
- * selected a slide's layout archetype and schematic variant.
+ * selected a slide's layout archetype and schematic variant, always quoting concrete terms
+ * from the source and never displaying generic placeholders like "System A -> System B".
  */
 export function explainArchetypeChoice(
   slide: SlideData,
   slideIndex: number = 0,
   totalSlides: number = 8
 ): string {
-  const fullText = `${slide.enTitle || ''} ${slide.enBody || ''}`;
+  const fullText = `${slide.enTitle || ''} ${slide.enBody || ''}`.trim();
   const type = slide.type;
+  const extractedTerms = extractKeyPhrasesFromSlide(slide).filter(
+    (p) => !isPlaceholderOrEmptyBrandValue(p)
+  );
+  const nodeTerms = (slide.diagramNodes || [])
+    .map((n) => (n.label || '').trim())
+    .filter((l) => l && !isGenericPlaceholderValue(l) && !isPlaceholderOrEmptyBrandValue(l));
+  const concreteTerms = nodeTerms.length >= 2 ? nodeTerms.slice(0, 3) : extractedTerms.slice(0, 3);
+  const quotedTermsStr =
+    concreteTerms.length >= 2
+      ? `"${concreteTerms.join('" -> "')}"`
+      : concreteTerms[0]
+      ? `"${concreteTerms[0]}"`
+      : `"${(slide.enTitle || 'source topic').slice(0, 36)}"`;
 
   if (type === 'subjectPair') {
-    const pair = slide.subjectPair;
-    const before = pair?.beforeSystem || 'Before';
-    const after = pair?.afterSystem || 'After';
-    const owner = pair?.storyOwner ? `for ${pair.storyOwner}` : '';
-    return `Picked Subject Pair visual (${before} → ${after} ${owner}) to map system migration and architectural shift.`.replace(/\s+/g, ' ').trim();
+    const verifiedPair = detectSubjectPairFromText(fullText, slide);
+    if (verifiedPair) {
+      const ownerClause = verifiedPair.storyOwner ? ` at ${verifiedPair.storyOwner}` : '';
+      return `Picked Subject Pair visual ("${verifiedPair.beforeSystem}" to "${verifiedPair.afterSystem}"${ownerClause}) because source explicitly compares or migrates between these two named systems.`;
+    }
+    return `Subject Pair skipped because two real system names could not be extracted from ${quotedTermsStr}; use a topic-matched layout.`;
   }
   if (type === 'cta' || (totalSlides > 1 && slideIndex === totalSlides - 1)) {
-    return 'Picked CTA closer for the final slide to drive comments and attribution.';
+    return `Picked CTA closer for Slide ${slideIndex + 1} to drive discussion and credit attribution.`;
   }
   if (type === 'compare') {
-    const vsMatch = fullText.match(/\b([A-Za-z0-9-]+)\s+(?:vs\.?|versus|instead\s+of|compared\s+to)\s+([A-Za-z0-9-]+)/i);
-    if (vsMatch) {
-      return `Picked Compare layout because copy contrasts "${vsMatch[1]} vs ${vsMatch[2]}".`;
+    const left = slide.compareLeftTitle && !isPlaceholderOrEmptyBrandValue(slide.compareLeftTitle) ? slide.compareLeftTitle : concreteTerms[0];
+    const right = slide.compareRightTitle && !isPlaceholderOrEmptyBrandValue(slide.compareRightTitle) ? slide.compareRightTitle : concreteTerms[1];
+    if (left && right) {
+      return `Picked Compare side-by-side layout contrasting "${left}" vs "${right}" from source (not a two-system migration of named software products).`;
     }
-    return 'Picked Compare side-by-side layout to contrast baseline vs optimized architecture.';
+    return `Picked Compare side-by-side layout for ${quotedTermsStr} to contrast architectural trade-offs.`;
   }
   if (type === 'metric') {
     const m = fullText.match(/(?:\$\d[\d,.]*[KMBTkmbt]?|\b\d+(?:\.\d+)?\s*(?:%|x|X|ms|µs|ns|KB|MB|GB|TB|GW|rps|req\/s)\b)/i);
-    if (m) {
-      return `Picked Metric card to spotlight the hard "${m[0].trim()}" benchmark figure.`;
+    if (m || (slide.metricValue && /\d/.test(slide.metricValue))) {
+      const numVal = (slide.metricValue || m?.[0] || '').trim();
+      return `Picked Metric card to spotlight measured "${numVal}" benchmark on ${quotedTermsStr}.`;
     }
-    return 'Picked Metric card to highlight quantitative performance and scale impact.';
+    const claimSnippet = (slide.hookClaimCard?.statement || slide.enTitle || 'core thesis').slice(0, 44).trim();
+    return `Picked Focused Hook Claim card for "${claimSnippet}" (not a two-system migration or hard metric).`;
   }
   if (type === 'code') {
-    return `Picked Code window (${(slide.codeLanguage || 'spec').toUpperCase()}) for implementation syntax & diff clarity.`;
+    return `Picked Code window (${(slide.codeLanguage || 'spec').toUpperCase()}) for ${quotedTermsStr} implementation syntax and diff clarity.`;
   }
   if (type === 'number') {
-    return `Picked Numbered Stage (${slide.stepNumber || `0${slideIndex + 1}`}) for sequential step-by-step progression.`;
+    return `Picked Numbered Stage (${slide.stepNumber || `0${slideIndex + 1}`}) for sequential progression across ${quotedTermsStr}.`;
   }
   if (type === 'hub') {
-    return 'Picked Orbital Hub diagram with 5 cause → effect nodes for ecosystem overview.';
+    const hubSample = (slide.satLabels || []).slice(0, 3).join(', ') || quotedTermsStr;
+    return `Picked Orbital Hub diagram mapping "${hubSample}" ecosystem relationships.`;
   }
   if (type === 'poster') {
-    return 'Picked Dense Poster layout to pack schematic + 3 bilingual takeaways on one frame.';
+    return `Picked Dense Poster layout to pack ${quotedTermsStr} schematic + 3 bilingual takeaways on one frame.`;
   }
   if (type === 'image') {
-    return 'Picked Media Card layout to frame custom visual asset with safe-zone chrome.';
+    return `Picked Media Card layout for ${quotedTermsStr} to frame visual asset within safe-zone chrome.`;
   }
 
-  // Row schematic variants
+  // Row schematic variants (Mechanism / Robotics / ML / Explainer)
   switch (slide.diagramVariant) {
     case 'isolation':
-      return 'Picked Isolation Grid schematic because copy focuses on security boundaries & blast radius.';
+      return `Picked Mechanism (Isolation Grid) schematic mapping ${quotedTermsStr} security boundaries (not a two-system migration).`;
     case 'graph':
-      return 'Picked Hierarchical Graph schematic to illustrate multi-hop routing and traversal.';
+      return `Picked Mechanism (Hierarchical Graph) schematic mapping ${quotedTermsStr} routing and traversal steps (not a two-system migration).`;
     case 'clusters':
-      return 'Picked Cluster Partition schematic to show sharding, centroids, and search pruning.';
+      return `Picked Mechanism (Cluster Partition) schematic mapping ${quotedTermsStr} sharding and pruning (not a two-system migration).`;
     case 'split':
-      return 'Picked Dual-Store Split schematic to contrast hot write buffers vs cold storage.';
+      return `Picked Mechanism (Dual-Store Split) schematic contrasting ${quotedTermsStr} hot vs cold paths (not a two-system migration).`;
     case 'stack':
-      return 'Picked 3-Tier Stack schematic to visualize vertical execution layers.';
+      return `Picked Mechanism (3-Tier Stack) schematic visualizing ${quotedTermsStr} vertical execution layers (not a two-system migration).`;
     case 'scatter':
-      return 'Picked Vector Scatter schematic to illustrate high-dimensional similarity lookup.';
+      return `Picked Mechanism (Vector Scatter) schematic illustrating ${quotedTermsStr} high-dimensional lookup (not a two-system migration).`;
     case 'takeaway':
-      return 'Picked Architectural Verdict card to summarize the core production trade-off.';
+      return `Picked Architectural Verdict schematic summarizing ${quotedTermsStr} production trade-offs.`;
     case 'features':
-      return 'Picked 3-Pillar Feature cards to present parallel system capabilities.';
+      return `Picked 3-Pillar Feature schematic presenting ${quotedTermsStr} capabilities.`;
     default:
-      return 'Picked 3-Node Topology flow to map Ingress → Processing → Target state.';
+      return `Picked Mechanism (3-Node Topology) flow mapping ${quotedTermsStr} from source steps (not a two-system migration).`;
   }
 }
 
@@ -1960,9 +2030,13 @@ export function diversifyDeckArchetypesAndVisuals(
       };
     }
 
-    // Slide 1 Cover: Always a Hook layout (metric / compare / row / code) — NEVER 'hub'
+    // Slide 1 Cover: Always a Hook layout (subjectPair / metric / compare / row / code) — NEVER 'hub'
     if (idx === 0) {
+      const hasValidSubjectPair = Boolean(
+        detectSubjectPairFromText(`${slide.enTitle || ''} ${slide.enBody || ''} ${slide.arTitle || ''}`, slide)
+      );
       const explicitHookCover =
+        (slide.type === 'subjectPair' && hasValidSubjectPair) ||
         slide.type === 'metric' ||
         slide.type === 'compare' ||
         slide.type === 'code' ||
@@ -1986,7 +2060,7 @@ export function diversifyDeckArchetypesAndVisuals(
           ? slide.diagramVariant ||
             (inferBestDiagramVariant(slide) !== 'topology'
               ? inferBestDiagramVariant(slide)
-              : 'isolation')
+              : 'topology')
           : slide.diagramVariant;
 
       const smartCover = resolveSmartSlideVisuals(
@@ -2004,6 +2078,7 @@ export function diversifyDeckArchetypesAndVisuals(
           ...slide,
           type: coverType,
           storyRole: 'hook',
+          subjectPair: coverType === 'subjectPair' ? smartCover.subjectPair : undefined,
           centerIcon: smartCover.centerIcon,
           centerTag: smartCover.centerTag,
           satLabels: smartCover.satLabels,
@@ -2026,18 +2101,18 @@ export function diversifyDeckArchetypesAndVisuals(
           diagramEdges: smartCover.diagramEdges,
           diagramFooter: smartCover.diagramFooter,
         },
-        false
+        false,
+        slide.enBody
       );
       nextCover.cornerTag = deriveSlideCornerTag(nextCover, 0, slides.length);
-      nextCover.layoutRationale =
-        coverType === 'compare'
-          ? 'Picked Compare Hook cover to contrast options right on Slide 1.'
-          : coverType === 'row'
-          ? 'Picked Schematic Hook cover to frame the core mechanism on Slide 1.'
-          : explainArchetypeChoice(nextCover, 0, slides.length);
+      nextCover.layoutRationale = explainArchetypeChoice(
+        { ...nextCover, enBody: slide.enBody },
+        0,
+        slides.length
+      );
       assignedTypes.push(nextCover.type);
       assignedSignatures.push(
-        nextCover.type === 'row' ? `row:${nextCover.diagramVariant || 'isolation'}` : nextCover.type
+        nextCover.type === 'row' ? `row:${nextCover.diagramVariant || 'topology'}` : nextCover.type
       );
       return nextCover;
     }
@@ -2163,6 +2238,20 @@ export function diversifyDeckArchetypesAndVisuals(
       true
     );
 
+    if (targetType === 'subjectPair' && smart.subjectPair && slide1CoverType !== 'subjectPair') {
+      const nextPair: SlideData = {
+        ...slide,
+        type: 'subjectPair',
+        storyRole,
+        subjectPair: smart.subjectPair,
+      };
+      nextPair.cornerTag = deriveSlideCornerTag(nextPair, idx, slides.length);
+      nextPair.layoutRationale = explainArchetypeChoice(nextPair, idx, slides.length);
+      assignedTypes.push('subjectPair');
+      assignedSignatures.push('subjectPair');
+      return nextPair;
+    }
+
     if (targetType === 'compare') {
       const nextCompare: SlideData = {
         ...slide,
@@ -2286,13 +2375,17 @@ export function autoFitSlideCopyToLimits(
       : fixArabicPunctuation(rawArBody);
 
   const hooked = !isSingle && slideIndex === 0
-    ? applyHookEngineToSlide1({
-        ...slide,
-        enTitle: fittedEnTitle || slide.enTitle,
-        arTitle: fittedArTitle || slide.arTitle,
-        enBody: fittedEnBody || slide.enBody,
-        arBody: fittedArBody || slide.arBody,
-      })
+    ? applyHookEngineToSlide1(
+        {
+          ...slide,
+          enTitle: fittedEnTitle || slide.enTitle,
+          arTitle: fittedArTitle || slide.arTitle,
+          enBody: fittedEnBody || slide.enBody,
+          arBody: fittedArBody || slide.arBody,
+        },
+        false,
+        rawEnBody
+      )
     : {
         ...slide,
         enTitle: fittedEnTitle || slide.enTitle,
@@ -2320,13 +2413,20 @@ export function autoSyncSlideGraphicsFromCopy(
       cornerTag: 'ACTION',
     };
   }
-  const smart = resolveSmartSlideVisuals(slide, slideIndex, true);
+  const hasExistingValidNodes =
+    slideIndex === 0 &&
+    !slide.enBody &&
+    slide.diagramNodes &&
+    slide.diagramNodes.length >= 3 &&
+    !isGenericPlaceholderValue(slide.diagramNodes[0]?.label);
+  const smart = resolveSmartSlideVisuals(slide, slideIndex, !hasExistingValidNodes);
   const synced: SlideData = {
     ...slide,
+    subjectPair: slide.subjectPair || smart.subjectPair,
     diagramVariant: slide.diagramVariant || smart.diagramVariant,
-    diagramNodes: smart.diagramNodes,
-    diagramEdges: smart.diagramEdges,
-    diagramFooter: smart.diagramFooter,
+    diagramNodes: hasExistingValidNodes ? slide.diagramNodes : smart.diagramNodes,
+    diagramEdges: hasExistingValidNodes && slide.diagramEdges ? slide.diagramEdges : smart.diagramEdges,
+    diagramFooter: hasExistingValidNodes && slide.diagramFooter ? slide.diagramFooter : smart.diagramFooter,
     compareLeftTitle: smart.compareLeftTitle,
     compareLeftBody: smart.compareLeftBody,
     compareRightTitle: smart.compareRightTitle,
@@ -2339,7 +2439,7 @@ export function autoSyncSlideGraphicsFromCopy(
     metricLabel: smart.metricLabel,
     metricDiff: smart.metricDiff,
     metricIcon: smart.metricIcon,
-    hookClaimCard: smart.hookClaimCard,
+    hookClaimCard: slide.hookClaimCard || smart.hookClaimCard,
     chartDirection: smart.chartDirection,
     stepNumber: smart.stepNumber,
     stepLabel: smart.stepLabel,
@@ -2350,6 +2450,7 @@ export function autoSyncSlideGraphicsFromCopy(
     satIcons: smart.satIcons,
   };
   synced.cornerTag = slide.cornerTag || deriveSlideCornerTag(synced, slideIndex, 8);
+  synced.layoutRationale = slide.layoutRationale || explainArchetypeChoice(synced, slideIndex, 8);
   return slideIndex === 0 ? applyHookEngineToSlide1(synced) : synced;
 }
 

@@ -824,6 +824,19 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
                   : 'Staging Ephemeral'}
               </span>
             </span>
+            {status?.telegramConfigured && (
+              <>
+                <span aria-hidden="true" className="text-slate-600">
+                  ·
+                </span>
+                <span
+                  data-testid="status-telegram"
+                  className="text-emerald-300"
+                >
+                  Telegram Ready
+                </span>
+              </>
+            )}
           </div>
         </div>
       </div>

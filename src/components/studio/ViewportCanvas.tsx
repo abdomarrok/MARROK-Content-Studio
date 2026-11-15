@@ -543,18 +543,19 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
   }, [isVideoActive, isVideoPlaying, isVideoMuted, activeMediaUrl]);
 
   return (
-    <div
-      tabIndex={0}
-      onKeyDown={handleKeyDown}
-      data-testid="viewport-stage-container"
-      data-dimension-preset={spec.id}
-      style={{ aspectRatio: `${spec.width} / ${spec.height}` }}
-      className={`relative mx-auto rounded-2xl overflow-hidden border border-white/15 bg-black shadow-2xl w-auto max-w-[min(420px,92vw)] ${
-        compactMobileStage
-          ? 'max-h-[min(320px,36dvh)] sm:max-h-[min(360px,38dvh)] lg:max-h-[min(620px,calc(100dvh-205px))]'
-          : 'max-h-[min(520px,calc(100dvh-250px))] sm:max-h-[min(620px,calc(100dvh-205px))]'
-      } shrink-0 outline-none focus:ring-1 focus:ring-cyan-500/40 select-none group transition-all duration-200`}
-    >
+    <div className="flex flex-col items-center w-full gap-1.5">
+      <div
+        tabIndex={0}
+        onKeyDown={handleKeyDown}
+        data-testid="viewport-stage-container"
+        data-dimension-preset={spec.id}
+        style={{ aspectRatio: `${spec.width} / ${spec.height}` }}
+        className={`relative mx-auto rounded-2xl overflow-hidden border border-white/15 bg-black shadow-2xl w-auto max-w-[min(420px,92vw)] ${
+          compactMobileStage
+            ? 'max-h-[min(320px,36dvh)] sm:max-h-[min(360px,38dvh)] lg:max-h-[min(620px,calc(100dvh-205px))]'
+            : 'max-h-[min(520px,calc(100dvh-250px))] sm:max-h-[min(620px,calc(100dvh-205px))]'
+        } shrink-0 outline-none focus:ring-1 focus:ring-cyan-500/40 select-none group transition-all duration-200`}
+      >
       <canvas
         ref={activeCanvasRef}
         onClick={handleCanvasClick}
@@ -718,85 +719,6 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
         </div>
       )}
 
-      {/* Floating Video Preview Controls Bar (Play/Pause, Mute/Unmute, Fit Mode Contain/Cover) */}
-      {isVideoActive && onUpdateSlideField && (
-        <div
-          data-testid="viewport-video-controls"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-          className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-1 rounded-xl bg-[#0b1118]/90 backdrop-blur-md border border-white/20 shadow-2xl z-30"
-        >
-          <button
-            type="button"
-            data-testid="viewport-video-play-toggle"
-            onClick={() => onUpdateSlideField('videoPlaying', !isVideoPlaying)}
-            className="flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold text-white hover:bg-white/15 transition-colors cursor-pointer"
-            title={isVideoPlaying ? 'Pause Video Preview' : 'Play Video Preview'}
-          >
-            {isVideoPlaying ? (
-              <>
-                <Pause className="w-3 h-3 text-amber-400" />
-                <span>Pause</span>
-              </>
-            ) : (
-              <>
-                <Play className="w-3 h-3 text-emerald-400" />
-                <span>Play</span>
-              </>
-            )}
-          </button>
-
-          <div className="w-px h-3.5 bg-white/15" />
-
-          <button
-            type="button"
-            data-testid="viewport-video-mute-toggle"
-            onClick={() => onUpdateSlideField('videoMuted', !isVideoMuted)}
-            className="flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold text-white hover:bg-white/15 transition-colors cursor-pointer"
-            title={isVideoMuted ? 'Unmute Video Preview' : 'Mute Video Preview'}
-          >
-            {isVideoMuted ? (
-              <>
-                <VolumeX className="w-3 h-3 text-slate-400" />
-                <span>Muted</span>
-              </>
-            ) : (
-              <>
-                <Volume2 className="w-3 h-3 text-cyan-400" />
-                <span>Audio On</span>
-              </>
-            )}
-          </button>
-
-          <div className="w-px h-3.5 bg-white/15" />
-
-          <button
-            type="button"
-            data-testid="viewport-video-fit-toggle"
-            onClick={() =>
-              onUpdateSlideField(
-                'imageFit',
-                activeFitMode === 'contain' ? 'cover' : 'contain'
-              )
-            }
-            className="flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold text-cyan-300 hover:bg-white/15 transition-colors cursor-pointer"
-            title="Toggle Video Fit Mode (Contain vs Cover)"
-          >
-            {activeFitMode === 'contain' ? (
-              <>
-                <Minimize2 className="w-3 h-3" />
-                <span>Contain</span>
-              </>
-            ) : (
-              <>
-                <Maximize2 className="w-3 h-3" />
-                <span>Cover</span>
-              </>
-            )}
-          </button>
-        </div>
-      )}
-
       {/* Magnetic Horizontal Center Snap Guide Line */}
       {isDragging && isSnappedCenterX && (
         <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 border-l border-dashed border-cyan-400/90 pointer-events-none z-20">
@@ -865,48 +787,7 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
           }}
           title="Drag to reposition, drag corners to scale, or double-click to edit text"
         >
-          {/* Smart Floating Element HUD Badge (Desktop lg:+) */}
-          <div
-            className={`hidden lg:flex absolute items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-mono uppercase tracking-wider text-black font-bold shadow-xl whitespace-nowrap z-20 ${
-              isPillInside ? 'top-1.5 left-2' : '-top-7 left-1/2 -translate-x-1/2'
-            }`}
-            style={{ backgroundColor: theme.accent }}
-          >
-            <Move className="w-2.5 h-2.5 stroke-[3]" />
-            <span>{activeBounds.label}</span>
-            {(currentDx !== 0 || currentDy !== 0 || currentScale !== 1) && (
-              <span className="bg-black/25 text-black px-1 rounded text-[8px] font-bold">
-                {currentDx >= 0 ? `+${currentDx}` : currentDx}x, {currentDy >= 0 ? `+${currentDy}` : currentDy}y
-                {currentScale !== 1 ? ` · ${Math.round(currentScale * 100)}%` : ''}
-              </span>
-            )}
-            {(currentDx !== 0 || currentDy !== 0 || currentScale !== 1) && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onUpdateLayoutOverride?.(selectedElementId!, null);
-                }}
-                className="hover:opacity-75 p-0.5 cursor-pointer"
-                title="Reset element overrides"
-              >
-                <RotateCcw className="w-2.5 h-2.5" />
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onSelectElement?.(null);
-              }}
-              className="hover:opacity-70 p-0.5 cursor-pointer ml-0.5"
-              title="Deselect element (Esc)"
-            >
-              <X className="w-2.5 h-2.5 stroke-[3]" />
-            </button>
-          </div>
-
-          {/* Interactive 4-Corner Resize Handles (NW, NE, SW, SE) */}
+          {/* Interactive 4-Corner Resize Handles (NW, NE, SW, SE) — Toolbars moved outside canvas so headline is never covered */}
           <div
             onPointerDown={(e) => handleCornerResizeDown('nw', e)}
             className="absolute -top-2 -left-2 w-3.5 h-3.5 rounded-sm border border-black shadow cursor-nwse-resize hover:scale-125 transition-transform z-30"
@@ -931,117 +812,6 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
             style={{ backgroundColor: theme.accent }}
             title="Drag corner to scale element (60% - 150%)"
           />
-
-          {/* Floating Quick-Action Toolbar on Selected Element (Desktop lg:+) */}
-          {!isDragging && !isResizing && (
-            <div
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => e.stopPropagation()}
-              className={`hidden lg:flex absolute left-1/2 -translate-x-1/2 items-center gap-0.5 bg-[#0b1118]/95 backdrop-blur-md border border-white/20 rounded-xl px-1.5 py-1 shadow-2xl z-30 whitespace-nowrap ${
-                isToolbarAbove ? '-top-14' : '-bottom-10'
-              }`}
-            >
-              <button
-                type="button"
-                onClick={handleQuickCenter}
-                className="p-1 rounded-lg hover:bg-white/15 text-slate-300 hover:text-white transition-colors cursor-pointer"
-                title="Center Horizontally (dx = 0)"
-              >
-                <AlignHorizontalSpaceAround className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickScale(-0.08)}
-                className="p-1 rounded-lg hover:bg-white/15 text-slate-300 hover:text-white transition-colors cursor-pointer"
-                title="Scale Down (-8%)"
-              >
-                <ZoomOut className="w-3.5 h-3.5" />
-              </button>
-              <span className="px-1 text-[9px] font-mono font-bold text-cyan-300">
-                {Math.round(currentScale * 100)}%
-              </span>
-              <button
-                type="button"
-                onClick={() => handleQuickScale(0.08)}
-                className="p-1 rounded-lg hover:bg-white/15 text-slate-300 hover:text-white transition-colors cursor-pointer"
-                title="Scale Up (+8%)"
-              >
-                <ZoomIn className="w-3.5 h-3.5" />
-              </button>
-
-              {isTextAlignable && (
-                <>
-                  <div className="w-px h-3.5 bg-white/15 mx-0.5" />
-                  <button
-                    type="button"
-                    onClick={() => handleQuickAlign('left')}
-                    className={`p-1 rounded-lg transition-colors cursor-pointer ${
-                      currentAlign === 'left'
-                        ? 'bg-cyan-500/25 text-cyan-300'
-                        : 'hover:bg-white/15 text-slate-300 hover:text-white'
-                    }`}
-                    title="Align Text Left"
-                  >
-                    <AlignLeft className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleQuickAlign('center')}
-                    className={`p-1 rounded-lg transition-colors cursor-pointer ${
-                      currentAlign === 'center'
-                        ? 'bg-cyan-500/25 text-cyan-300'
-                        : 'hover:bg-white/15 text-slate-300 hover:text-white'
-                    }`}
-                    title="Align Text Center"
-                  >
-                    <AlignCenter className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleQuickAlign('right')}
-                    className={`p-1 rounded-lg transition-colors cursor-pointer ${
-                      currentAlign === 'right'
-                        ? 'bg-cyan-500/25 text-cyan-300'
-                        : 'hover:bg-white/15 text-slate-300 hover:text-white'
-                    }`}
-                    title="Align Text Right"
-                  >
-                    <AlignRight className="w-3.5 h-3.5" />
-                  </button>
-                </>
-              )}
-
-              <div className="w-px h-3.5 bg-white/15 mx-0.5" />
-              <button
-                type="button"
-                onClick={handleQuickHide}
-                className="p-1 rounded-lg hover:bg-rose-500/20 text-slate-300 hover:text-rose-300 transition-colors cursor-pointer"
-                title="Hide Element on Slide"
-              >
-                <EyeOff className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => onUpdateLayoutOverride?.(selectedElementId!, null)}
-                className="p-1 rounded-lg hover:bg-white/15 text-slate-300 hover:text-white transition-colors cursor-pointer"
-                title="Reset Element Layout"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Top Floating Keyboard Shortcut Hint (Desktop lg:+) */}
-      {selectedElementId && (
-        <div className="hidden lg:flex absolute top-2 right-2 bg-black/85 backdrop-blur-md border border-white/20 rounded-full px-2.5 py-0.5 text-[8px] font-mono text-slate-300 shadow-xl items-center gap-1.5 pointer-events-none whitespace-nowrap z-20">
-          <span className="w-1.5 h-1.5 rounded-full animate-ping" style={{ backgroundColor: theme.accent }} />
-          <span>Drag corners: scale</span>
-          <span className="text-slate-500">•</span>
-          <span>Arrows: nudge</span>
-          <span className="text-slate-500">•</span>
-          <span>Dbl-click: edit</span>
         </div>
       )}
 
@@ -1276,15 +1046,208 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
       >
         <ChevronLeft className="w-5 h-5" />
       </button>
-      <button
-        type="button"
-        onClick={onNextSlide}
-        disabled={currentSlideIndex === carousel.slides.length - 1}
-        className="hidden sm:flex absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/60 hover:bg-black/80 border border-white/20 text-white items-center justify-center disabled:opacity-20 cursor-pointer transition-all"
-        title="Next Slide"
-      >
-        <ChevronRight className="w-5 h-5" />
-      </button>
+        <button
+          type="button"
+          onClick={onNextSlide}
+          disabled={currentSlideIndex === carousel.slides.length - 1}
+          className="hidden sm:flex absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/60 hover:bg-black/80 border border-white/20 text-white items-center justify-center disabled:opacity-20 cursor-pointer transition-all"
+          title="Next Slide"
+        >
+          <ChevronRight className="w-5 h-5" />
+        </button>
+      </div>
+
+      {/* External Docked Preview Zoom/Scale/Fit Toolbar (Strictly outside the canvas so it never covers the headline) */}
+      {(activeBounds || (isVideoActive && onUpdateSlideField)) && (
+        <div
+          data-testid="viewport-external-toolbar-dock"
+          className="flex flex-wrap items-center justify-center gap-1.5 px-2 py-1 rounded-xl bg-[#0b1118]/95 border border-white/15 shadow-lg max-w-[min(420px,92vw)]"
+        >
+          {activeBounds && selectedElementId && (
+            <div className="flex items-center gap-1">
+              <span
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-mono uppercase tracking-wider text-black font-bold whitespace-nowrap"
+                style={{ backgroundColor: theme.accent }}
+              >
+                <Move className="w-2.5 h-2.5 stroke-[3]" />
+                <span>{activeBounds.label}</span>
+              </span>
+
+              <button
+                type="button"
+                onClick={handleQuickCenter}
+                className="p-1 rounded-lg hover:bg-white/15 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                title="Center Horizontally (dx = 0)"
+              >
+                <AlignHorizontalSpaceAround className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => handleQuickScale(-0.08)}
+                className="p-1 rounded-lg hover:bg-white/15 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                title="Scale Down (-8%)"
+              >
+                <ZoomOut className="w-3.5 h-3.5" />
+              </button>
+              <span className="px-1 text-[9px] font-mono font-bold text-cyan-300">
+                {Math.round(currentScale * 100)}%
+              </span>
+              <button
+                type="button"
+                onClick={() => handleQuickScale(0.08)}
+                className="p-1 rounded-lg hover:bg-white/15 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                title="Scale Up (+8%)"
+              >
+                <ZoomIn className="w-3.5 h-3.5" />
+              </button>
+
+              {isTextAlignable && (
+                <>
+                  <div className="w-px h-3.5 bg-white/15 mx-0.5" />
+                  <button
+                    type="button"
+                    onClick={() => handleQuickAlign('left')}
+                    className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                      currentAlign === 'left'
+                        ? 'bg-cyan-500/25 text-cyan-300'
+                        : 'hover:bg-white/15 text-slate-300 hover:text-white'
+                    }`}
+                    title="Align Text Left"
+                  >
+                    <AlignLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleQuickAlign('center')}
+                    className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                      currentAlign === 'center'
+                        ? 'bg-cyan-500/25 text-cyan-300'
+                        : 'hover:bg-white/15 text-slate-300 hover:text-white'
+                    }`}
+                    title="Align Text Center"
+                  >
+                    <AlignCenter className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleQuickAlign('right')}
+                    className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                      currentAlign === 'right'
+                        ? 'bg-cyan-500/25 text-cyan-300'
+                        : 'hover:bg-white/15 text-slate-300 hover:text-white'
+                    }`}
+                    title="Align Text Right"
+                  >
+                    <AlignRight className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              )}
+
+              <div className="w-px h-3.5 bg-white/15 mx-0.5" />
+              <button
+                type="button"
+                onClick={handleQuickHide}
+                className="p-1 rounded-lg hover:bg-rose-500/20 text-slate-300 hover:text-rose-300 transition-colors cursor-pointer"
+                title="Hide Element on Slide"
+              >
+                <EyeOff className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => onUpdateLayoutOverride?.(selectedElementId, null)}
+                className="p-1 rounded-lg hover:bg-white/15 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                title="Reset Element Layout"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => onSelectElement?.(null)}
+                className="p-1 rounded-lg hover:bg-white/15 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                title="Deselect element (Esc)"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {isVideoActive && onUpdateSlideField && (
+            <div
+              data-testid="viewport-video-controls"
+              className="flex items-center gap-1"
+            >
+              <button
+                type="button"
+                data-testid="viewport-video-play-toggle"
+                onClick={() => onUpdateSlideField('videoPlaying', !isVideoPlaying)}
+                className="flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold text-white hover:bg-white/15 transition-colors cursor-pointer"
+                title={isVideoPlaying ? 'Pause Video Preview' : 'Play Video Preview'}
+              >
+                {isVideoPlaying ? (
+                  <>
+                    <Pause className="w-3 h-3 text-amber-400" />
+                    <span>Pause</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-3 h-3 text-emerald-400" />
+                    <span>Play</span>
+                  </>
+                )}
+              </button>
+
+              <div className="w-px h-3.5 bg-white/15" />
+
+              <button
+                type="button"
+                data-testid="viewport-video-mute-toggle"
+                onClick={() => onUpdateSlideField('videoMuted', !isVideoMuted)}
+                className="flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold text-white hover:bg-white/15 transition-colors cursor-pointer"
+                title={isVideoMuted ? 'Unmute Video Preview' : 'Mute Video Preview'}
+              >
+                {isVideoMuted ? (
+                  <>
+                    <VolumeX className="w-3 h-3 text-slate-400" />
+                    <span>Muted</span>
+                  </>
+                ) : (
+                  <>
+                    <Volume2 className="w-3 h-3 text-cyan-400" />
+                    <span>Audio On</span>
+                  </>
+                )}
+              </button>
+
+              <div className="w-px h-3.5 bg-white/15" />
+
+              <button
+                type="button"
+                data-testid="viewport-video-fit-toggle"
+                onClick={() =>
+                  onUpdateSlideField(
+                    'imageFit',
+                    activeFitMode === 'contain' ? 'cover' : 'contain'
+                  )
+                }
+                className="flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold text-cyan-300 hover:bg-white/15 transition-colors cursor-pointer"
+                title="Toggle Video Fit Mode (Contain vs Cover)"
+              >
+                {activeFitMode === 'contain' ? (
+                  <>
+                    <Minimize2 className="w-3 h-3" />
+                    <span>Contain</span>
+                  </>
+                ) : (
+                  <>
+                    <Maximize2 className="w-3 h-3" />
+                    <span>Cover</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

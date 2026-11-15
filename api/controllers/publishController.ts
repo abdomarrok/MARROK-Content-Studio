@@ -527,6 +527,11 @@ export async function handleGetPublishStatus(_req: Request, res: Response) {
       bufferApiConfigured: Boolean(config.bufferApiKey),
       zernioApiConfigured: Boolean(config.zernioApiKey),
       zernioMcpUrl: 'https://mcp.zernio.com/mcp',
+      telegramConfigured: Boolean(
+        config.telegramBotToken &&
+          config.telegramWebhookSecret &&
+          config.telegramAllowedChatIds.length > 0
+      ),
       autoCleanedPostIds: [],
       ...quotaStats,
       channels: liveChannels,

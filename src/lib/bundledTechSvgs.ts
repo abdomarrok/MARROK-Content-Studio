@@ -182,15 +182,297 @@ export const BUNDLED_TECH_ICONS: Record<string, BundledIconMeta> = (() => {
 
 export function getBundledIconMeta(key?: string | null): BundledIconMeta | null {
   if (!key) return null;
-  const clean = key.toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+  const trimmed = key.trim();
+  // Prevent lowercase common English words 'go' or 'next' from false-matching Go or Next.js
+  if (trimmed === 'go' || trimmed === 'next') return null;
+  const clean = trimmed.toLowerCase().replace(/[^a-z0-9]/g, '');
   if (BUNDLED_TECH_ICONS[clean]) return BUNDLED_TECH_ICONS[clean];
-  const direct = key.toLowerCase().trim();
+  const direct = trimmed.toLowerCase();
   if (BUNDLED_TECH_ICONS[direct]) return BUNDLED_TECH_ICONS[direct];
   return null;
 }
 
 export function isBundledTechIcon(key?: string | null): boolean {
   return Boolean(getBundledIconMeta(key));
+}
+
+/**
+ * Returns true if a brand/system/flow label is empty, generic filler, or a placeholder
+ * such as "System A", "System B", "PIPELINE MIGRATION", "DATASTREAM MIGRATION", "Before", "After", etc.
+ */
+export function isPlaceholderOrEmptyBrandValue(val?: string | null): boolean {
+  if (!val) return true;
+  const clean = val.trim();
+  if (!clean) return true;
+  if (
+    /^(?:system\s*[a-z0-9]?|brand\s*[a-z0-9]?|company\s*[a-z0-9]?|product\s*[a-z0-9]?|service\s*[a-z0-9]?|tool\s*[a-z0-9]?|app\s*[a-z0-9]?|db\s*[a-z0-9]?|database\s*[a-z0-9]?|source\s*[a-z0-9]?|target\s*[a-z0-9]?|option\s*[a-z0-9]?)$/i.test(
+      clean
+    )
+  ) {
+    return true;
+  }
+  if (
+    /^(?:before|after|legacy|modern|baseline|optimized|old|new|current|previous|next|future|default|custom|unknown|generic|sample|example|demo|test|mock|dummy|placeholder|tbd|todo|n\/a|none|null|undefined|xxx+|\?\?\?+)$/i.test(
+      clean
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(?:pipeline\s+migration|datastream\s+migration|system\s+[ab12]\b|company\s+[ab12]\b|brand\s+[ab12]\b|product\s+[ab12]\b|before\s*(?:->|→)\s*after|x\s+migrates\s+to\s+y|channel\s+name|your\s+(?:brand|name|company)|lorem\s+ipsum)\b/i.test(
+      clean
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+const NON_PRODUCT_WORDS = new Set([
+  'system', 'systems', 'service', 'services', 'server', 'servers', 'client', 'clients',
+  'database', 'databases', 'storage', 'cache', 'caching', 'cluster', 'clusters', 'node', 'nodes',
+  'pipeline', 'pipelines', 'workflow', 'workflows', 'architecture', 'monolith', 'microservices',
+  'legacy', 'modern', 'baseline', 'optimized', 'before', 'after', 'old', 'new', 'current', 'next',
+  'position', 'positions', 'target', 'targets', 'home', 'bin', 'bins', 'conveyor', 'pallet',
+  'camera', 'cameras', 'wrist', 'gripper', 'grippers', 'arm', 'arms', 'robot', 'robots', 'robotics',
+  'sensor', 'sensors', 'actuator', 'actuators', 'controller', 'controllers', 'motor', 'motors',
+  'simulation', 'simulations', 'reality', 'real', 'virtual', 'physical', 'hardware', 'firmware',
+  'training', 'inference', 'pretraining', 'finetuning', 'evaluation', 'benchmark', 'benchmarks',
+  'model', 'models', 'transformer', 'transformers', 'diffusion', 'attention', 'layer', 'layers',
+  'weights', 'activations', 'gradients', 'tokens', 'embeddings', 'vectors', 'matrix', 'tensor',
+  'cpu', 'gpu', 'tpu', 'npu', 'fpga', 'asic', 'ram', 'dram', 'sram', 'nvme', 'ssd', 'hdd', 'disk',
+  'memory', 'network', 'socket', 'sockets', 'packet', 'packets', 'thread', 'threads', 'process',
+  'kernel', 'userspace', 'bytecode', 'verifier', 'compiler', 'interpreter', 'runtime', 'vm',
+  'stage', 'phase', 'step', 'tier', 'level', 'mode', 'state', 'status', 'queue', 'stream', 'topic',
+  'table', 'index', 'shard', 'shards', 'partition', 'partitions', 'replica', 'replicas', 'quorum',
+  'read', 'reads', 'write', 'writes', 'query', 'queries', 'request', 'requests', 'response',
+  'cloud', 'onprem', 'edge', 'local', 'remote', 'public', 'private', 'hybrid', 'production',
+  'staging', 'development', 'testing', 'manual', 'automated', 'autonomous', 'sync', 'async',
+  'batch', 'streaming', 'realtime', 'offline', 'online', 'rest', 'rpc', 'http', 'https', 'tcp', 'udp',
+  'json', 'xml', 'yaml', 'csv', 'html', 'css', 'sql', 'nosql', 'acid', 'base', 'crud', 'api', 'apis',
+  'sdk', 'cli', 'gui', 'ui', 'ux', 'ide', 'ci', 'cd', 'devops', 'mlops', 'secops', 'finops',
+  'startup', 'startups', 'enterprise', 'team', 'teams', 'engineer', 'engineers', 'developer',
+  'company', 'business', 'product', 'platform', 'application', 'app', 'tool', 'tools', 'library',
+  'framework', 'module', 'package', 'plugin', 'extension', 'driver', 'agent', 'agents', 'bot', 'bots',
+  'pick', 'place', 'grasp', 'pose', 'trajectory', 'kinematics', 'torque', 'force', 'vision', 'lidar',
+]);
+
+/**
+ * Additional verified named software/database/infrastructure products that may not have a
+ * bundled Simple Icon SVG (they render via clean styled text wordmark fallback).
+ */
+const EXTRA_NAMED_TECH_PRODUCTS: Record<string, string> = {
+  dynamodb: 'Amazon DynamoDB',
+  'amazon dynamodb': 'Amazon DynamoDB',
+  aurora: 'Amazon Aurora',
+  'amazon aurora': 'Amazon Aurora',
+  redshift: 'Amazon Redshift',
+  spanner: 'Cloud Spanner',
+  'cloud spanner': 'Cloud Spanner',
+  bigtable: 'Cloud Bigtable',
+  bigquery: 'BigQuery',
+  snowflake: 'Snowflake',
+  databricks: 'Databricks',
+  memcached: 'Memcached',
+  valkey: 'Valkey',
+  dragonfly: 'DragonflyDB',
+  dragonflydb: 'DragonflyDB',
+  mariadb: 'MariaDB',
+  oracle: 'Oracle DB',
+  sqlserver: 'SQL Server',
+  'sql server': 'SQL Server',
+  mssql: 'SQL Server',
+  couchbase: 'Couchbase',
+  couchdb: 'CouchDB',
+  neo4j: 'Neo4j',
+  influxdb: 'InfluxDB',
+  timescaledb: 'TimescaleDB',
+  questdb: 'QuestDB',
+  pinecone: 'Pinecone',
+  milvus: 'Milvus',
+  qdrant: 'Qdrant',
+  weaviate: 'Weaviate',
+  chromadb: 'ChromaDB',
+  pgvector: 'pgvector',
+  pingora: 'Pingora',
+  haproxy: 'HAProxy',
+  traefik: 'Traefik',
+  caddy: 'Caddy',
+  istio: 'Istio',
+  linkerd: 'Linkerd',
+  consul: 'Consul',
+  nomad: 'Nomad',
+  aws: 'AWS',
+  azure: 'Microsoft Azure',
+  heroku: 'Heroku',
+  flyio: 'Fly.io',
+  'fly.io': 'Fly.io',
+  railway: 'Railway',
+  digitalocean: 'DigitalOcean',
+  linode: 'Linode',
+  hetzner: 'Hetzner',
+  angular: 'Angular',
+  vue: 'Vue.js',
+  vuejs: 'Vue.js',
+  svelte: 'Svelte',
+  solidjs: 'SolidJS',
+  remix: 'Remix',
+  astro: 'Astro',
+  nuxt: 'Nuxt',
+  webpack: 'Webpack',
+  rollup: 'Rollup',
+  esbuild: 'esbuild',
+  turbopack: 'Turbopack',
+  parcel: 'Parcel',
+  biome: 'Biome',
+  eslint: 'ESLint',
+  prettier: 'Prettier',
+  jest: 'Jest',
+  vitest: 'Vitest',
+  playwright: 'Playwright',
+  cypress: 'Cypress',
+  selenium: 'Selenium',
+  prisma: 'Prisma',
+  drizzle: 'Drizzle ORM',
+  typeorm: 'TypeORM',
+  sequelize: 'Sequelize',
+  hibernate: 'Hibernate',
+  grpc: 'gRPC',
+  trpc: 'tRPC',
+  protobuf: 'Protobuf',
+  zeromq: 'ZeroMQ',
+  activemq: 'ActiveMQ',
+  pulsar: 'Apache Pulsar',
+  'apache pulsar': 'Apache Pulsar',
+  kinesis: 'Amazon Kinesis',
+  celery: 'Celery',
+  sidekiq: 'Sidekiq',
+  bullmq: 'BullMQ',
+  airflow: 'Apache Airflow',
+  dagster: 'Dagster',
+  prefect: 'Prefect',
+  pytorch: 'PyTorch',
+  tensorflow: 'TensorFlow',
+  jax: 'JAX',
+  onnx: 'ONNX',
+  vllm: 'vLLM',
+  tensorrt: 'TensorRT',
+  openai: 'OpenAI',
+  llama: 'Llama',
+  mistral: 'Mistral',
+  gemini: 'Gemini',
+  deepseek: 'DeepSeek',
+  stripe: 'Stripe',
+  auth0: 'Auth0',
+  okta: 'Okta',
+  clerk: 'Clerk',
+  datadog: 'Datadog',
+  newrelic: 'New Relic',
+  'new relic': 'New Relic',
+  sentry: 'Sentry',
+  splunk: 'Splunk',
+  jaeger: 'Jaeger',
+  opentelemetry: 'OpenTelemetry',
+  slack: 'Slack',
+  ruby: 'Ruby',
+  rails: 'Ruby on Rails',
+  'ruby on rails': 'Ruby on Rails',
+  django: 'Django',
+  flask: 'Flask',
+  spring: 'Spring Boot',
+  'spring boot': 'Spring Boot',
+  laravel: 'Laravel',
+  php: 'PHP',
+  java: 'Java',
+  kotlin: 'Kotlin',
+  swift: 'Swift',
+  scala: 'Scala',
+  elixir: 'Elixir',
+  erlang: 'Erlang',
+  zig: 'Zig',
+  csharp: 'C#',
+  dotnet: '.NET',
+  '.net': '.NET',
+  deno: 'Deno',
+  bun: 'Bun',
+  freebsd: 'FreeBSD',
+  redhat: 'Red Hat',
+  rhel: 'RHEL',
+  centos: 'CentOS',
+  alpine: 'Alpine Linux',
+  wasm: 'WebAssembly',
+  webassembly: 'WebAssembly',
+  firecracker: 'Firecracker',
+  containerd: 'containerd',
+  podman: 'Podman',
+  cilium: 'Cilium',
+  tailscale: 'Tailscale',
+  wireguard: 'WireGuard',
+  openssl: 'OpenSSL',
+  boringssl: 'BoringSSL',
+  rustls: 'rustls',
+  raft: 'Raft',
+  paxos: 'Paxos',
+};
+
+export interface ResolvedTechSystem {
+  title: string;
+  logoKey?: string;
+  asText: boolean;
+}
+
+/**
+ * Strictly resolves whether a candidate token from source text is a real, named
+ * software/database/cloud/infrastructure product or system.
+ * Returns null for generic nouns, hardware/robotics parts, ML concepts, or placeholders.
+ */
+export function resolveRealTechSystem(rawCandidate?: string | null): ResolvedTechSystem | null {
+  if (!rawCandidate) return null;
+  const trimmed = rawCandidate
+    .trim()
+    .replace(/^['"`(\[]+|['"`.,;:!?)\]]+$/g, '')
+    .trim();
+  if (!trimmed || trimmed.length < 2) return null;
+  if (isPlaceholderOrEmptyBrandValue(trimmed)) return null;
+
+  const lower = trimmed.toLowerCase();
+  if (NON_PRODUCT_WORDS.has(lower)) return null;
+
+  // Disallow lowercase common English verbs/adjectives that collide with tech names
+  if (
+    (trimmed === 'go' || trimmed === 'next' || trimmed === 'spark' || trimmed === 'temporal' || trimmed === 'swift' || trimmed === 'rust') &&
+    trimmed === lower &&
+    (lower === 'go' || lower === 'next' || lower === 'spark' || lower === 'temporal' || lower === 'swift')
+  ) {
+    return null;
+  }
+
+  const bundled = getBundledIconMeta(trimmed);
+  if (bundled) {
+    return {
+      title: bundled.title,
+      logoKey: bundled.slug,
+      asText: false,
+    };
+  }
+
+  const alnum = lower.replace(/[^a-z0-9.+#]/g, '');
+  if (EXTRA_NAMED_TECH_PRODUCTS[lower]) {
+    return {
+      title: EXTRA_NAMED_TECH_PRODUCTS[lower],
+      logoKey: undefined,
+      asText: true,
+    };
+  }
+  if (EXTRA_NAMED_TECH_PRODUCTS[alnum]) {
+    return {
+      title: EXTRA_NAMED_TECH_PRODUCTS[alnum],
+      logoKey: undefined,
+      asText: true,
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -234,3 +516,4 @@ export function listBundledTechIcons(): BundledIconMeta[] {
   }
   return list.sort((a, b) => a.title.localeCompare(b.title));
 }
+

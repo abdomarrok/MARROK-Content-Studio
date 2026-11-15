@@ -19,20 +19,20 @@ export const SubjectPairArchetypeEditor: React.FC<SubjectPairArchetypeEditorProp
   const bundledIcons = React.useMemo(() => listBundledTechIcons(), []);
 
   const pair: SubjectPairConfig = currentSlide.subjectPair || smart?.subjectPair || {
-    beforeSystem: 'Cassandra',
-    afterSystem: 'ScyllaDB',
-    beforeLogoKey: 'apachecassandra',
-    afterLogoKey: 'scylladb',
+    beforeSystem: '',
+    afterSystem: '',
+    beforeLogoKey: undefined,
+    afterLogoKey: undefined,
     beforeAsText: false,
     afterAsText: false,
-    storyOwner: 'Discord',
+    storyOwner: '',
     storyOwnerMode: 'text',
     beforeLabel: 'BEFORE',
     afterLabel: 'AFTER',
     colorMode: 'official',
     logoWidthPct: 11,
-    creativeMotif: 'chat-to-db',
-    flowLabel: 'CHAT WORKLOAD → COMPACTED SHARDS',
+    creativeMotif: 'stream-flow',
+    flowLabel: '',
   };
 
   const updatePair = (updates: Partial<SubjectPairConfig>) => {
@@ -41,6 +41,9 @@ export const SubjectPairArchetypeEditor: React.FC<SubjectPairArchetypeEditorProp
       ...updates,
     });
   };
+
+  const isMissingRealBrands =
+    !pair.beforeSystem?.trim() || !pair.afterSystem?.trim();
 
   return (
     <div className="pt-3 border-t border-white/[0.08] animate-fade-in space-y-3">
@@ -54,6 +57,11 @@ export const SubjectPairArchetypeEditor: React.FC<SubjectPairArchetypeEditorProp
           Max 2 Logos · ≤14% Width
         </span>
       </div>
+      {isMissingRealBrands && (
+        <div className="px-2.5 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200">
+          Enter both real system names below. While empty, the canvas falls back to a topic-matched Mechanism diagram and Checks will block export.
+        </div>
+      )}
 
       {/* Story Owner text wordmark */}
       <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-1.5">

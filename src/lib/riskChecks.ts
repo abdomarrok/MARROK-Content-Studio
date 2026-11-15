@@ -10,6 +10,7 @@
  */
 
 import { CarouselData, NumericEvidenceDiscrepancy } from '../types';
+import { isPlaceholderOrEmptyBrandValue } from './bundledTechSvgs';
 
 export type RiskStatus = 'PASS' | 'WARN' | 'BLOCK';
 
@@ -204,35 +205,56 @@ function checkCopyright(carousel: CarouselData, rawInput: string = ''): RiskChec
     }
     const pair = carousel.slides[i].subjectPair;
     if (carousel.slides[i].type === 'subjectPair' || pair) {
-      if (pair) {
-        if ((pair.logoWidthPct ?? 11) > 14) {
-          return {
-            id: 'copyright',
-            label: 'Brand IP & Logo Safety',
-            status: 'BLOCK',
-            message: `Slide ${i + 1} Subject Pair logo exceeds 14% max slide width (${pair.logoWidthPct}% > 14%).`,
-          };
-        }
-        let logoCount = 0;
-        if (!pair.beforeAsText && pair.beforeLogoKey) logoCount++;
-        if (!pair.afterAsText && pair.afterLogoKey) logoCount++;
-        if (logoCount > 2) {
-          return {
-            id: 'copyright',
-            label: 'Brand IP & Logo Safety',
-            status: 'BLOCK',
-            message: `Slide ${i + 1} Subject Pair exceeds 2-logo limit (${logoCount} > 2).`,
-          };
-        }
-        if (pair.isEdited || pair.isNonLibrarySource || pair.isMerged || pair.isOverlapping || pair.usesMascot) {
-          return {
-            id: 'copyright',
-            label: 'Brand IP & Logo Safety',
-            status: 'BLOCK',
-            message: `Slide ${i + 1} Subject Pair violates logo integrity rules (must use unedited bundled SVGs or styled text, no mascots/merging/overlapping).`,
-          };
-        }
+      if (
+        !pair ||
+        isPlaceholderOrEmptyBrandValue(pair.beforeSystem) ||
+        isPlaceholderOrEmptyBrandValue(pair.afterSystem) ||
+        (pair.flowLabel && isPlaceholderOrEmptyBrandValue(pair.flowLabel)) ||
+        (pair.storyOwner && isPlaceholderOrEmptyBrandValue(pair.storyOwner))
+      ) {
+        return {
+          id: 'copyright',
+          label: 'Brand IP & Placeholder Gate',
+          status: 'BLOCK',
+          message: `Slide ${i + 1} Subject Pair contains empty or placeholder brand fields ("${pair?.beforeSystem || ''}" / "${pair?.afterSystem || ''}"). Extract real system names or switch layout.`,
+        };
       }
+      if ((pair.logoWidthPct ?? 11) > 14) {
+        return {
+          id: 'copyright',
+          label: 'Brand IP & Logo Safety',
+          status: 'BLOCK',
+          message: `Slide ${i + 1} Subject Pair logo exceeds 14% max slide width (${pair.logoWidthPct}% > 14%).`,
+        };
+      }
+      let logoCount = 0;
+      if (!pair.beforeAsText && pair.beforeLogoKey) logoCount++;
+      if (!pair.afterAsText && pair.afterLogoKey) logoCount++;
+      if (logoCount > 2) {
+        return {
+          id: 'copyright',
+          label: 'Brand IP & Logo Safety',
+          status: 'BLOCK',
+          message: `Slide ${i + 1} Subject Pair exceeds 2-logo limit (${logoCount} > 2).`,
+        };
+      }
+      if (pair.isEdited || pair.isNonLibrarySource || pair.isMerged || pair.isOverlapping || pair.usesMascot) {
+        return {
+          id: 'copyright',
+          label: 'Brand IP & Logo Safety',
+          status: 'BLOCK',
+          message: `Slide ${i + 1} Subject Pair violates logo integrity rules (must use unedited bundled SVGs or styled text, no mascots/merging/overlapping).`,
+        };
+      }
+    }
+    const slideText = `${carousel.slides[i].enTitle || ''} ${carousel.slides[i].arTitle || ''} ${carousel.slides[i].enBody || ''} ${carousel.slides[i].arBody || ''}`;
+    if (/\b(?:System\s+[AB12]|Company\s+[AB12]|Brand\s+[AB12]|PIPELINE\s+MIGRATION|DATASTREAM\s+MIGRATION)\b/i.test(slideText)) {
+      return {
+        id: 'copyright',
+        label: 'Brand IP & Placeholder Gate',
+        status: 'BLOCK',
+        message: `Slide ${i + 1} contains default placeholder text ("System A", "System B", or "PIPELINE MIGRATION").`,
+      };
     }
   }
 

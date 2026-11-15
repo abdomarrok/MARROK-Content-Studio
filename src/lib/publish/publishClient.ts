@@ -23,6 +23,7 @@ export interface PublishStatusResponse {
   bufferApiConfigured: boolean;
   zernioApiConfigured?: boolean;
   zernioMcpUrl?: string;
+  telegramConfigured?: boolean;
   storageEngine?: SavedPostStorageEngine;
   databaseConfigured?: boolean;
   autoCleanedPostIds: string[];

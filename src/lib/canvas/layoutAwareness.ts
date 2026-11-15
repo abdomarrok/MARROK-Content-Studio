@@ -543,7 +543,7 @@ export function computeSlideLayoutAwareness(
     if (ctx) {
       if (rawEnTitle) {
         enTitle = fitTextInBox(ctx, rawEnTitle, spec.safeTextWidthTitle, enTitleTarget, FONT_TITLE_EN, '800', {
-          maxLines: isHookNoBody ? 1 : titleScale > 1.15 ? 3 : 2,
+          maxLines: titleScale > 1.15 ? 3 : 2,
           minFontSize: enTitleMin,
           lineHeightFactor: 1.24,
           ellipsis: false,
@@ -551,7 +551,7 @@ export function computeSlideLayoutAwareness(
       }
       if (rawArTitle) {
         arTitle = fitTextInBox(ctx, rawArTitle, spec.safeTextWidthTitle, arTitleTarget, FONT_TITLE_AR, '800', {
-          maxLines: isHookNoBody ? 1 : arTitleScale > 1.15 ? 3 : 2,
+          maxLines: arTitleScale > 1.15 ? 3 : 2,
           minFontSize: arTitleMin,
           lineHeightFactor: 1.24,
           ellipsis: false,
@@ -575,10 +575,10 @@ export function computeSlideLayoutAwareness(
       }
     } else {
       if (rawEnTitle) {
-        enTitle = wrapHeadlessFallback(rawEnTitle, spec.safeTextWidthTitle, enTitleTarget, enTitleMin, isHookNoBody ? 1 : 2, 1.24, false);
+        enTitle = wrapHeadlessFallback(rawEnTitle, spec.safeTextWidthTitle, enTitleTarget, enTitleMin, 2, 1.24, false);
       }
       if (rawArTitle) {
-        arTitle = wrapHeadlessFallback(rawArTitle, spec.safeTextWidthTitle, arTitleTarget, arTitleMin, isHookNoBody ? 1 : 2, 1.24, true);
+        arTitle = wrapHeadlessFallback(rawArTitle, spec.safeTextWidthTitle, arTitleTarget, arTitleMin, 2, 1.24, true);
       }
       if (rawEnBody && !isHookNoBody) {
         enBody = wrapHeadlessFallback(rawEnBody, spec.safeTextWidthBody, enBodyTarget, enBodyMin, cap, 1.44, false);
@@ -844,19 +844,35 @@ export function computeSlideLayoutAwareness(
   } else {
     // Standard / Visual-Hero / Split-Balanced / Compact-Editorial order:
     // Graphic Card at top, followed by Title -> Arabic Title -> Body -> Arabic Body -> Takeaways
+    const rawTextCeilingY = gHidden
+      ? headerSafeFloorY + 20
+      : defaultCardY + cardH * Math.max(1, gScale) + gDy;
+    const rawSlack = Math.max(
+      0,
+      spec.safeFooterCeilingY - rawTextCeilingY - gapGraphicToTitle - takeawayClearance - measured.totalStackHeight
+    );
+
+    // When a Subject Pair cover slide (Slide 1 Hook with hidden body) has extra vertical slack,
+    // gently shift the graphic card down so the diagram and bilingual headlines fill the usable safe zone.
+    const autoBalanceCardShift =
+      slide.type === 'subjectPair' && isHookNoBody && !gHidden && !graphicOverride?.dy && rawSlack > 140
+        ? Math.min(Math.round(rawSlack * 0.35), 110)
+        : 0;
+    const balancedGDy = gDy + autoBalanceCardShift;
+
     const cy = defaultCardY + cardH / 2;
-    const effectiveTop = cy - (cardH / 2) * gScale + gDy;
-    const effectiveBottom = cy + (cardH / 2) * gScale + gDy;
+    const effectiveTop = cy - (cardH / 2) * gScale + balancedGDy;
+    const effectiveBottom = cy + (cardH / 2) * gScale + balancedGDy;
 
     graphicCard = {
       x: cardX + gDx,
-      y: defaultCardY + gDy,
+      y: defaultCardY + balancedGDy,
       width: cardW,
       height: cardH,
       effectiveTop,
       effectiveBottom,
       dx: gDx,
-      dy: gDy,
+      dy: balancedGDy,
       scale: gScale,
       opacity: gOpacity,
       hidden: gHidden,
@@ -864,10 +880,10 @@ export function computeSlideLayoutAwareness(
 
     const textCeilingY = gHidden
       ? headerSafeFloorY + 20
-      : Math.max(defaultCardY + cardH * Math.min(1, gScale), effectiveBottom);
+      : Math.max(defaultCardY + balancedGDy + cardH * Math.min(1, gScale), effectiveBottom);
 
     const remainingCushion = Math.max(0, spec.safeFooterCeilingY - textCeilingY - gapGraphicToTitle - takeawayClearance - measured.totalStackHeight);
-    const naturalTopCushion = Math.min(Math.max(remainingCushion * 0.24, gapGraphicToTitle), 88);
+    const naturalTopCushion = Math.min(Math.max(remainingCushion * 0.28, gapGraphicToTitle), 88);
     const baseTitleTop = textCeilingY + naturalTopCushion;
 
     // Title Block

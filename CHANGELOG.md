@@ -1,5 +1,20 @@
 # Changelog — MARROK Content Studio
 
+## [1.8.0] — Strict Subject Pair Visual Archetype, Zero-Placeholder Export Gate, Docked Viewport Toolbar & Telegram Bot Webhook
+
+### 1. Strict `Subject Pair` Visual Archetype & Bundled Brand Catalog (`src/lib/bundledTechSvgs.ts`, `src/lib/synthesis/smartVisualDefaults.ts`, `src/lib/canvas/archetypes/renderSubjectPair.ts`, `src/components/studio/archetypes/SubjectPairArchetypeEditor.tsx`)
+- **Strict Two-Product Detection (`detectSubjectPairFromText` & `resolveRealTechSystem`):** Selects `subjectPair` only when the source explicitly pairs two verified software/technology products in a migration, before-to-after transition, or head-to-head comparison, quoting both extracted names in `layoutRationale`. Non-migration topics (robotics, hardware, ML papers, how-X-works explainers, opinion pieces) automatically fall back to topic-aware `row` Mechanism schematics or media cards.
+- **Hard Brand & Logo Compliance:** Supports up to 2 bundled unedited Simple Icons / Devicon SVGs per slide, each capped at `14%` of slide width (`151px` at `1080px` width; `8%` / `86px` in single corner badge mode), renders the story owner (e.g. `Discord`) as a styled text wordmark, includes `"Not affiliated with <Company>"` with brand-guideline references in Checks, and provides a one-tap **"Replace logos with styled text names"** fix.
+- **Topic-Gated Creative Bridge Motifs:** Restricts the chat-bubble-to-database-stack motif (`creativeMotif: 'chat-to-db'`) to stories involving both chat/messaging and database storage; uses clean directional stream lines (`'stream-flow'`) for general migrations.
+
+### 2. Zero-Placeholder Policy, `24px` Diagram Labels & Docked Viewport Toolbar (`src/lib/qaChecks.ts`, `src/lib/riskChecks.ts`, `src/lib/canvas/archetypes/renderDiagram.ts`, `src/components/studio/ViewportCanvas.tsx`)
+- **Zero Placeholders on Canvas & Export Blocking:** Removed `"System A"`, `"System B"`, `"PIPELINE MIGRATION"`, `"DATASTREAM MIGRATION"`, and hardcoded default brand strings across synthesis, editor, and canvas rendering. Empty brand fields fall back to `row` Mechanism on canvas and block export (`canExport: false`, `status: 'BLOCK'`) in Checks.
+- **`24px` Minimum Label Floor & Layout Balance:** Scaled Subject Pair cards to `540px` height and updated all 9 schematic diagram variants in `renderDiagram.ts` so every label, tag, badge, and footer renders at $\ge 24\text{px}$ at `1080px` width.
+- **External Docked Preview Toolbar:** Moved the quick-action and zoom/fit toolbar out of the canvas overlay into a docked bar (`viewport-external-toolbar-dock`) above the stage so it never covers the slide headline.
+- **Telegram Bot Webhook & Status Badge (`api/config.ts`, `api/controllers/publishController.ts`, `PublishingHubWorkspace.tsx`):** Added `telegramConfigured` status reporting (`Telegram Ready` badge in the Publish & Posts status strip) and normalized `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, and `TELEGRAM_ALLOWED_CHAT_IDS` environment variable resolution.
+
+---
+
 ## [1.7.0] — Flattened Inbox → Draft → Schedule Workflow, 4-Factor Scoring, Lazy Storyboards, Review Safety Gate & Netlify DB/Cloudinary Detection
 
 ### 1. Flattened `Inbox → Draft → Schedule` Publishing Hub (`PublishingHubWorkspace.tsx`, `PostManagerPanel.tsx`, `WeeklyProgramReviewPanel.tsx`)

@@ -235,9 +235,24 @@ export function getServerConfig(envOverride?: NodeJS.ProcessEnv): ServerConfig {
     readRuntimeEnv('POSTGRES_URL', envOverride) ||
     readRuntimeEnv('NETLIFY_DATABASE_URL', envOverride) ||
     readRuntimeEnv('NETLIFY_DATABASE_URL_UNPOOLED', envOverride);
-  const telegramBotToken = readRuntimeEnv('TELEGRAM_BOT_TOKEN', envOverride);
-  const telegramWebhookSecret = readRuntimeEnv('TELEGRAM_WEBHOOK_SECRET', envOverride);
-  const telegramAllowedChatIds = readRuntimeEnv('TELEGRAM_ALLOWED_CHAT_IDS', envOverride)
+  const rawTelegramBotToken =
+    readRuntimeEnv('TELEGRAM_BOT_TOKEN', envOverride) ||
+    readRuntimeEnv('TELEGRAM_TOKEN', envOverride) ||
+    readRuntimeEnv('TG_BOT_TOKEN', envOverride);
+  const telegramBotToken = rawTelegramBotToken.replace(/^bot(?=\d+:)/i, '');
+  const telegramWebhookSecret =
+    readRuntimeEnv('TELEGRAM_WEBHOOK_SECRET', envOverride) ||
+    readRuntimeEnv('TELEGRAM_SECRET', envOverride) ||
+    readRuntimeEnv('TELEGRAM_SECRET_TOKEN', envOverride) ||
+    readRuntimeEnv('TG_WEBHOOK_SECRET', envOverride);
+  const rawTelegramChatIds =
+    readRuntimeEnv('TELEGRAM_ALLOWED_CHAT_IDS', envOverride) ||
+    readRuntimeEnv('TELEGRAM_ALLOWED_CHAT_ID', envOverride) ||
+    readRuntimeEnv('TELEGRAM_CHAT_IDS', envOverride) ||
+    readRuntimeEnv('TELEGRAM_CHAT_ID', envOverride) ||
+    readRuntimeEnv('TG_ALLOWED_CHAT_IDS', envOverride) ||
+    readRuntimeEnv('TG_CHAT_ID', envOverride);
+  const telegramAllowedChatIds = rawTelegramChatIds
     .split(',')
     .map((id) => id.trim())
     .filter(Boolean);
