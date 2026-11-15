@@ -1,9 +1,10 @@
 import type { Config, Context } from '@netlify/functions';
 import { sweepExpiredCloudinaryAssets } from '../../api/controllers/publishController.ts';
 import { readRuntimeEnv } from '../../src/lib/security/env.ts';
+import type { NetlifyLambdaEvent, NetlifyLambdaResult } from '../../src/lib/network/netlifyBridge.ts';
 
 /**
- * Netlify Scheduled Function v2 (UTC cron, <= 30s execution window).
+ * Netlify Scheduled Function (UTC cron, <= 30s execution window).
  * Promotes eligible overdue scheduled posts to 'posted' and destroys staged
  * Cloudinary assets +1h after publication, keeping GET endpoints 100% read-pure.
  */
@@ -54,37 +55,75 @@ export async function runScheduledPromotion(env: NodeJS.ProcessEnv = process.env
   };
 }
 
-export default async function handler(req: Request, _context: Context): Promise<Response> {
+function isWebRequest(input: unknown): input is Request {
+  return (
+    Boolean(input) &&
+    typeof input === 'object' &&
+    typeof (input as Request).json === 'function'
+  );
+}
+
+export async function handler(req: Request, context?: Context): Promise<Response>;
+export async function handler(
+  event: NetlifyLambdaEvent,
+  context?: Context
+): Promise<NetlifyLambdaResult>;
+export async function handler(
+  reqOrEvent: Request | NetlifyLambdaEvent,
+  _context?: Context
+): Promise<Response | NetlifyLambdaResult> {
+  const isReq = isWebRequest(reqOrEvent);
   try {
     let nextRun: string | undefined;
     try {
-      const payload = (await req.json()) as { next_run?: string };
-      nextRun = payload?.next_run;
+      if (isReq) {
+        const payload = (await reqOrEvent.json()) as { next_run?: string };
+        nextRun = payload?.next_run;
+      } else if (reqOrEvent && typeof reqOrEvent.body === 'string' && reqOrEvent.body) {
+        const payload = JSON.parse(reqOrEvent.body) as { next_run?: string };
+        nextRun = payload?.next_run;
+      }
     } catch {
       // Optional scheduled payload body
     }
 
     const result = await runScheduledPromotion();
-    return new Response(
-      JSON.stringify({
-        ...result,
-        nextRun: nextRun || null,
-        ranAt: new Date().toISOString(),
-      }),
-      {
+    const bodyStr = JSON.stringify({
+      ...result,
+      nextRun: nextRun || null,
+      ranAt: new Date().toISOString(),
+    });
+
+    if (isReq) {
+      return new Response(bodyStr, {
         status: 200,
         headers: { 'content-type': 'application/json' },
-      }
-    );
+      });
+    }
+    return {
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: bodyStr,
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Scheduled promotion failed';
     console.error('[ScheduledPromote]', msg);
-    return new Response(JSON.stringify({ ok: false, error: msg }), {
-      status: 500,
+    const errBody = JSON.stringify({ ok: false, error: msg });
+    if (isReq) {
+      return new Response(errBody, {
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    return {
+      statusCode: 500,
       headers: { 'content-type': 'application/json' },
-    });
+      body: errBody,
+    };
   }
 }
+
+export default handler;
 
 export const config: Config = {
   schedule: '*/15 * * * *',

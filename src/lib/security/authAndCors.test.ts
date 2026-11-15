@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import type { Server } from 'node:http';
 import { app } from '../../../api/index.ts';
-import netlifyApiHandler from '../../../netlify/functions/api.ts';
+import netlifyApiHandler, * as netlifyApiModule from '../../../netlify/functions/api.ts';
+import * as netlifyAuthModule from '../../../netlify/functions/auth.ts';
 import {
   SESSION_COOKIE_NAME,
   createSignedSessionToken,
@@ -317,5 +318,59 @@ describe('Phase A1 & A2: Universal API Auth, Login Hardening, Strict CORS & Netl
     expect(authed.headers.get('access-control-allow-origin')).toBe(
       'https://marrok-content.netlify.app'
     );
+  });
+
+  it('exports named D.handler(event, context) for ___netlify-bootstrap.mjs Lambda invocations', async () => {
+    expect(typeof netlifyApiModule.handler).toBe('function');
+    expect(typeof netlifyAuthModule.handler).toBe('function');
+
+    const sessionRes = await netlifyAuthModule.handler({
+      httpMethod: 'GET',
+      path: '/api/auth/session',
+      rawUrl: 'https://marrok-content.netlify.app/.netlify/functions/api/auth/session',
+      headers: {
+        host: 'marrok-content.netlify.app',
+        origin: 'https://marrok-content.netlify.app',
+      },
+    });
+    expect(sessionRes.statusCode).toBe(200);
+    expect(JSON.parse(sessionRes.body)).toMatchObject({
+      authenticated: false,
+      authConfigured: true,
+    });
+
+    const loginRes = await netlifyApiModule.handler({
+      httpMethod: 'POST',
+      path: '/.netlify/functions/api/auth/login',
+      rawUrl: 'https://marrok-content.netlify.app/.netlify/functions/api/auth/login',
+      headers: {
+        host: 'marrok-content.netlify.app',
+        origin: 'https://marrok-content.netlify.app',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS }),
+      isBase64Encoded: false,
+    });
+    expect(loginRes.statusCode).toBe(200);
+    const setCookieHeader =
+      loginRes.multiValueHeaders?.['Set-Cookie']?.[0] ||
+      loginRes.headers['set-cookie'] ||
+      '';
+    expect(setCookieHeader).toContain(`${SESSION_COOKIE_NAME}=`);
+
+    const cookiePair = setCookieHeader.split(';')[0];
+    const postsRes = await netlifyApiModule.handler({
+      httpMethod: 'GET',
+      path: '/.netlify/functions/api/posts',
+      rawUrl: 'https://marrok-content.netlify.app/.netlify/functions/api/posts',
+      headers: {
+        host: 'marrok-content.netlify.app',
+        origin: 'https://marrok-content.netlify.app',
+        cookie: cookiePair,
+      },
+    });
+    expect(postsRes.statusCode).toBe(200);
+    const parsedPosts = JSON.parse(postsRes.body);
+    expect(Array.isArray(parsedPosts.posts)).toBe(true);
   });
 });

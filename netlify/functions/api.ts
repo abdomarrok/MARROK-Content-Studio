@@ -1,11 +1,25 @@
 import type { Context } from '@netlify/functions';
-import { invokeExpressNetlifyBridge } from '../../src/lib/network/netlifyBridge.ts';
+import {
+  invokeUniversalNetlifyHandler,
+  type NetlifyLambdaEvent,
+  type NetlifyLambdaResult,
+} from '../../src/lib/network/netlifyBridge.ts';
 
 /**
- * Catch-all fallback Netlify Function reached via netlify.toml:
+ * Catch-all Netlify Function reached via netlify.toml:
  * `[[redirects]] from = "/api/*" to = "/.netlify/functions/api/:splat" status = 200`
- * Domain routes are handled directly by modular v2 functions (auth, posts, generate, publish, gather, proxy).
+ * Exports both `handler` (for `___netlify-bootstrap.mjs` `D.handler`) and `default` (V2 Web Request).
  */
-export default async function handler(req: Request, context: Context): Promise<Response> {
-  return invokeExpressNetlifyBridge(req, context);
+export async function handler(req: Request, context?: Context): Promise<Response>;
+export async function handler(
+  event: NetlifyLambdaEvent,
+  context?: Context
+): Promise<NetlifyLambdaResult>;
+export async function handler(
+  reqOrEvent: Request | NetlifyLambdaEvent,
+  context?: Context
+): Promise<Response | NetlifyLambdaResult> {
+  return invokeUniversalNetlifyHandler(reqOrEvent as Request, context);
 }
+
+export default handler;

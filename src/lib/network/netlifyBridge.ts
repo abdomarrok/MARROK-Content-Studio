@@ -4,6 +4,58 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Context } from '@netlify/functions';
 import { app } from '../../../api/index.ts';
 
+export interface NetlifyLambdaEvent {
+  rawUrl?: string;
+  path?: string;
+  httpMethod?: string;
+  headers?: Record<string, string | undefined>;
+  multiValueHeaders?: Record<string, string[] | undefined>;
+  queryStringParameters?: Record<string, string | undefined> | null;
+  rawQuery?: string;
+  body?: string | null;
+  isBase64Encoded?: boolean;
+}
+
+export interface NetlifyLambdaResult {
+  statusCode: number;
+  headers: Record<string, string>;
+  multiValueHeaders?: Record<string, string[]>;
+  body: string;
+  isBase64Encoded?: boolean;
+}
+
+function normalizeNetlifyPath(rawPath: string): string {
+  const pathOnly = (rawPath || '/').trim();
+  if (pathOnly.startsWith('/.netlify/functions/api/')) {
+    return `/api/${pathOnly.slice('/.netlify/functions/api/'.length)}`;
+  }
+  if (pathOnly === '/.netlify/functions/api') {
+    return '/api/health';
+  }
+  if (pathOnly.startsWith('/.netlify/functions/')) {
+    const rest = pathOnly.slice('/.netlify/functions/'.length);
+    if (rest === 'proxy') return '/api/proxy-image';
+    return `/api/${rest}`;
+  }
+  return pathOnly;
+}
+
+function isBinaryContentType(contentType: string): boolean {
+  const ct = (contentType || '').toLowerCase();
+  if (!ct) return false;
+  if (ct.includes('svg') || ct.includes('json') || ct.startsWith('text/') || ct.includes('xml') || ct.includes('javascript')) {
+    return false;
+  }
+  return (
+    ct.startsWith('image/') ||
+    ct.startsWith('video/') ||
+    ct.startsWith('audio/') ||
+    ct.includes('application/octet-stream') ||
+    ct.includes('application/zip') ||
+    ct.includes('application/pdf')
+  );
+}
+
 /**
  * Shared Netlify Functions v2 <-> Express Web Request/Response bridge.
  * Preserves multi-value Set-Cookie headers, client IP extraction, and normalizes
@@ -14,12 +66,7 @@ export async function invokeExpressNetlifyBridge(
   _context?: Context
 ): Promise<Response> {
   const url = new URL(req.url);
-  let normalizedPath = url.pathname;
-  if (normalizedPath.startsWith('/.netlify/functions/api/')) {
-    normalizedPath = `/api/${normalizedPath.slice('/.netlify/functions/api/'.length)}`;
-  } else if (normalizedPath === '/.netlify/functions/api') {
-    normalizedPath = '/api/health';
-  }
+  const normalizedPath = normalizeNetlifyPath(url.pathname);
   const pathWithQuery = `${normalizedPath}${url.search}`;
   const method = req.method.toUpperCase();
 
@@ -198,4 +245,158 @@ export async function invokeExpressNetlifyBridge(
       reject(err);
     }
   });
+}
+
+/**
+ * Netlify Lambda (`___netlify-bootstrap.mjs` `D.handler(event, context)`) bridge.
+ * Converts an AWS Lambda / Netlify Event into a Web Request, executes `invokeExpressNetlifyBridge`,
+ * and returns a structured `{ statusCode, headers, multiValueHeaders, body, isBase64Encoded }` result.
+ */
+export async function invokeExpressNetlifyLambdaEvent(
+  event: NetlifyLambdaEvent,
+  context?: Context
+): Promise<NetlifyLambdaResult> {
+  const headersInit = new Headers();
+  if (event.headers) {
+    for (const [k, v] of Object.entries(event.headers)) {
+      if (typeof v === 'string') {
+        headersInit.set(k, v);
+      }
+    }
+  }
+  if (!headersInit.has('cookie') && event.multiValueHeaders) {
+    const multiCookies =
+      event.multiValueHeaders.cookie || event.multiValueHeaders.Cookie;
+    if (Array.isArray(multiCookies) && multiCookies.length > 0) {
+      headersInit.set('cookie', multiCookies.filter(Boolean).join('; '));
+    }
+  }
+
+  const host =
+    headersInit.get('x-forwarded-host') ||
+    headersInit.get('host') ||
+    'marrok-content.netlify.app';
+  const proto = headersInit.get('x-forwarded-proto') || 'https';
+
+  let pathname = '/api/health';
+  let search = '';
+
+  if (event.rawUrl) {
+    try {
+      const parsed = new URL(event.rawUrl);
+      pathname = parsed.pathname;
+      search = parsed.search;
+    } catch {
+      // Fallback to event.path below
+    }
+  }
+
+  if (event.path) {
+    const normalizedEventPath = normalizeNetlifyPath(event.path);
+    if (normalizedEventPath.startsWith('/api/') || pathname === '/api/health') {
+      pathname = normalizedEventPath;
+    }
+  } else {
+    pathname = normalizeNetlifyPath(pathname);
+  }
+
+  if (!search) {
+    if (event.rawQuery) {
+      search = `?${event.rawQuery.replace(/^\?/, '')}`;
+    } else if (
+      event.queryStringParameters &&
+      Object.keys(event.queryStringParameters).length > 0
+    ) {
+      const usp = new URLSearchParams();
+      for (const [k, v] of Object.entries(event.queryStringParameters)) {
+        if (typeof v === 'string') usp.set(k, v);
+      }
+      const qs = usp.toString();
+      if (qs) search = `?${qs}`;
+    }
+  }
+
+  const fullUrl = `${proto}://${host}${pathname}${search}`;
+  const method = (event.httpMethod || 'GET').toUpperCase();
+
+  let bodyBytes: Uint8Array | undefined;
+  if (method !== 'GET' && method !== 'HEAD' && typeof event.body === 'string' && event.body.length > 0) {
+    bodyBytes = event.isBase64Encoded
+      ? Buffer.from(event.body, 'base64')
+      : Buffer.from(event.body, 'utf8');
+  }
+
+  const webReq = new Request(fullUrl, {
+    method,
+    headers: headersInit,
+    ...(bodyBytes ? { body: bodyBytes as unknown as BodyInit } : {}),
+  });
+
+  const webRes = await invokeExpressNetlifyBridge(webReq, context);
+
+  const responseHeaders: Record<string, string> = {};
+  const multiValueHeaders: Record<string, string[]> = {};
+
+  webRes.headers.forEach((val, key) => {
+    responseHeaders[key] = val;
+  });
+
+  const getSetCookieFn = (
+    webRes.headers as Headers & { getSetCookie?: () => string[] }
+  ).getSetCookie;
+  const setCookies =
+    typeof getSetCookieFn === 'function'
+      ? getSetCookieFn.call(webRes.headers)
+      : webRes.headers.get('set-cookie')
+      ? [webRes.headers.get('set-cookie')!]
+      : [];
+
+  if (setCookies.length > 0) {
+    responseHeaders['set-cookie'] = setCookies[0];
+    multiValueHeaders['Set-Cookie'] = setCookies;
+  }
+
+  const ab = await webRes.arrayBuffer();
+  const buf = Buffer.from(ab);
+  const isBinary = isBinaryContentType(responseHeaders['content-type'] || '');
+
+  return {
+    statusCode: webRes.status,
+    headers: responseHeaders,
+    ...(Object.keys(multiValueHeaders).length > 0 ? { multiValueHeaders } : {}),
+    body: isBinary ? buf.toString('base64') : buf.toString('utf8'),
+    ...(isBinary ? { isBase64Encoded: true } : {}),
+  };
+}
+
+function isWebRequestObject(input: unknown): input is Request {
+  return (
+    Boolean(input) &&
+    typeof input === 'object' &&
+    typeof (input as Request).arrayBuffer === 'function' &&
+    typeof (input as Request).url === 'string'
+  );
+}
+
+/**
+ * Dual-mode Netlify handler compatible with BOTH:
+ * - Netlify CJS/ESM `___netlify-bootstrap.mjs` (`D.handler(event, context)`)
+ * - Netlify Functions v2 (`export default (req: Request, context: Context) => Promise<Response>`)
+ */
+export async function invokeUniversalNetlifyHandler(
+  req: Request,
+  context?: Context
+): Promise<Response>;
+export async function invokeUniversalNetlifyHandler(
+  event: NetlifyLambdaEvent,
+  context?: Context
+): Promise<NetlifyLambdaResult>;
+export async function invokeUniversalNetlifyHandler(
+  reqOrEvent: Request | NetlifyLambdaEvent,
+  context?: Context
+): Promise<Response | NetlifyLambdaResult> {
+  if (isWebRequestObject(reqOrEvent)) {
+    return invokeExpressNetlifyBridge(reqOrEvent, context);
+  }
+  return invokeExpressNetlifyLambdaEvent(reqOrEvent, context);
 }
