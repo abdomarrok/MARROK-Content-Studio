@@ -327,19 +327,19 @@ async function writeToFileStore(
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, JSON.stringify(posts, null, 2), 'utf-8');
 
-    // Only rewrite src/lib/storage/bundledSavedPosts.ts when explicitly requested via SYNC_BUNDLED_SEED=true
-    // so runtime saves never bloat the source tree with multi-megabyte base64 payloads.
-    if (engine === 'local-disk' && !env.POSTS_STORAGE_FILE && env.SYNC_BUNDLED_SEED === 'true') {
+    // Only rewrite a custom dev seed target when explicitly requested via SYNC_BUNDLED_SEED=true
+    // and BUNDLED_SEED_TARGET (never reference .ts source paths with path.join in serverless functions
+    // because @vercel/nft / @netlify/zip-it-and-ship-it traces them as function entry overrides).
+    const explicitSeedTarget = readRuntimeEnv('BUNDLED_SEED_TARGET', env);
+    if (
+      engine === 'local-disk' &&
+      !env.POSTS_STORAGE_FILE &&
+      env.SYNC_BUNDLED_SEED === 'true' &&
+      explicitSeedTarget
+    ) {
       try {
-        const bundledModulePath = path.join(
-          process.cwd(),
-          'src',
-          'lib',
-          'storage',
-          'bundledSavedPosts.ts'
-        );
-        const tsContent = `import type { SavedPostRecord } from '../../types.ts';\n\n/**\n * Bundled repository seed posts for the Saved & Posted Vault.\n * Kept inside \`src/lib/storage/\` so Vite/Rolldown and Vercel Serverless builds\n * always resolve it even when runtime \`data/saved-posts.json\` is not present in git.\n */\nexport const BUNDLED_SAVED_POSTS: SavedPostRecord[] = ${JSON.stringify(posts, null, 2)};\n`;
-        await fs.writeFile(bundledModulePath, tsContent, 'utf-8');
+        const tsContent = `import type { SavedPostRecord } from '../../types.ts';\n\n/**\n * Bundled repository seed posts for the Saved & Posted Vault.\n */\nexport const BUNDLED_SAVED_POSTS: SavedPostRecord[] = ${JSON.stringify(posts, null, 2)};\n`;
+        await fs.writeFile(path.resolve(process.cwd(), explicitSeedTarget), tsContent, 'utf-8');
       } catch {
         // Non-fatal if source tree is read-only
       }

@@ -85,6 +85,14 @@ describe('Netlify & Vercel API Routing + Strict CORS', () => {
     expect(fileCount).toBeLessThanOrEqual(12);
   });
 
+  it('does not statically reference .ts source files via fs/path in postsController (prevents Netlify zip-it-and-ship-it bundle collision)', async () => {
+    const src = await fs.readFile(
+      path.resolve(process.cwd(), 'api', 'controllers', 'postsController.ts'),
+      'utf-8'
+    );
+    expect(src).not.toMatch(/path\.(join|resolve)\([^)]*bundledSavedPosts\.ts/);
+  });
+
   it('responds 200 OK on minimal /api/health without leaking key counts', async () => {
     const res = await fetch(`${baseUrl}/api/health`);
     expect(res.status).toBe(200);
