@@ -3,6 +3,7 @@ import { autoFitTextToLimits, enforceHeadlineSpecRule, extractCleanSubject, isNo
 import { normalizePunctuation, stripMarkdown } from '../text/markdown.ts';
 import { sanitizeArabicSlideText } from '../text/arabicBiDi.ts';
 import { KNOWN_TECH_LOGOS } from '../techLogos.ts';
+import { buildNonNumericHookClaimCard, extractSourceQuotedHubNodes } from './smartVisualDefaults.ts';
 
 export interface UniversalSynthesisOptions {
   brand?: string;
@@ -217,7 +218,19 @@ export function cleanRawInput(raw: string): { cleaned: string; lines: string[]; 
   if (isNonSemanticFileName(raw)) {
     return { cleaned: '', lines: [], paragraphs: [] };
   }
-  const withoutUrls = (raw || '').replace(/https?:\/\/\S+/gi, '').trim();
+  const withoutUrlsRaw = (raw || '').replace(/https?:\/\/\S+/gi, '').trim();
+  let urlDerivedTopic = '';
+  if (!withoutUrlsRaw && /https?:\/\//i.test(raw || '')) {
+    const urlParts: string[] = [];
+    for (const m of (raw || '').matchAll(/https?:\/\/((?:[a-z0-9-]+\.)+[a-z]{2,})(\/[^\s?#]*)?/gi)) {
+      const host = (m[1] || '').replace(/^www\./i, '').split('.')[0] || '';
+      const slug = (m[2] || '').replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[/_\-.+~]+/g, ' ').trim();
+      if (host) urlParts.push(host);
+      if (slug) urlParts.push(slug);
+    }
+    urlDerivedTopic = urlParts.join(' ').trim();
+  }
+  const withoutUrls = withoutUrlsRaw || urlDerivedTopic;
   // Strip single timestamps (0:00) and timestamp ranges (0:00-1:23 or 21:44-24:34)
   const withoutTimestamps = withoutUrls.replace(
     /\[\d{1,2}:\d{2}(?::\d{2})?(?:\s*-\s*\d{1,2}:\d{2}(?::\d{2})?)?\]|\(\d{1,2}:\d{2}(?::\d{2})?(?:\s*-\s*\d{1,2}:\d{2}(?::\d{2})?)?\)/g,
@@ -346,6 +359,48 @@ export function scanMetrics(text: string): ExtractedMetric[] {
   }
 
   return metrics;
+}
+
+/**
+ * Selects the strongest positive/win metric for the Slide 1 Hook instead of picking
+ * a trade-off/overhead metric simply because it matched an earlier regex pass.
+ */
+function selectWinningHookMetric(rawText: string, metrics: ExtractedMetric[]): ExtractedMetric | undefined {
+  if (!metrics.length) return undefined;
+  if (metrics.length === 1) return metrics[0];
+
+  const lower = rawText.toLowerCase();
+  const typePriority: Record<ExtractedMetric['type'], number> = {
+    multiplier: 5,
+    throughput: 4,
+    latency: 4,
+    percent: 3,
+    general: 2,
+    memory: 1,
+  };
+
+  let best = metrics[0];
+  let bestScore = -Infinity;
+
+  for (const m of metrics) {
+    const idx = lower.indexOf(m.raw.toLowerCase());
+    const clause =
+      idx >= 0 ? lower.slice(Math.max(0, idx - 75), Math.min(lower.length, idx + m.raw.length + 55)) : lower;
+
+    let score = typePriority[m.type] ?? 0;
+    if (/\b(?:reduced|reduce|cut|cuts|slashed|slash|dropped|drop|down\s+to|faster|speedup|improved|saved|lower|boosted|reached)\b/.test(clause)) {
+      score += 14;
+    }
+    if (/\b(?:trade-?off|increased|increase|overhead|footprint|spend|burn|deficit|spiked|loss)\b/.test(clause)) {
+      score -= 16;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = m;
+    }
+  }
+
+  return best;
 }
 
 /**
@@ -515,21 +570,32 @@ export function synthesizeUniversalCarousel(rawInput: string, options: Universal
 
   // 3. Extract Core Subject & Substantive Sentences/Points
   let coreSubject = '';
-  const firstLine = (lines[0] || 'System Architecture')
+  const rawFirstLine = (lines[0] || 'System Architecture')
     .replace(/\s*\([^)]*(?:Engineering|Blog|RSS|Research|Team|News| Lobsters|Reddit)[^)]*\)\s*$/i, '')
     .trim();
 
+  // If input is a single multi-sentence paragraph (no newlines), promote sentence 1 as subject
+  // and sentences 2+ as content lines so substantive articles never fall into generic short-prompt branches.
+  const firstLineSentences =
+    lines.length === 1 && rawFirstLine.length > 90
+      ? rawFirstLine
+          .split(/(?<=[.!?])\s+(?=[A-Z0-9"`'•-])/)
+          .map((s) => s.trim())
+          .filter((s) => s.length > 18)
+      : [rawFirstLine];
+
+  const firstLine = firstLineSentences[0] || rawFirstLine;
+
   // Filter out prompt wrapper headers ("Source URL:", "Technical Summary & Engineering Context:")
-  const contentLines = lines
-    .slice(1)
-    .filter(
-      (l) =>
-        l.length > 18 &&
-        !/^https?:\/\//i.test(l) &&
-        !/^(?:source\s+url|technical\s+summary\s*(?:&\s*engineering\s+context)?|key\s+quantitative\s+metrics)\s*:?$/i.test(
-          l.trim()
-        )
-    );
+  const trailingLines = firstLineSentences.length > 1 ? firstLineSentences.slice(1) : lines.slice(1);
+  const contentLines = trailingLines.filter(
+    (l) =>
+      l.length > 18 &&
+      !/^https?:\/\//i.test(l) &&
+      !/^(?:source\s+url|technical\s+summary\s*(?:&\s*engineering\s+context)?|key\s+quantitative\s+metrics)\s*:?$/i.test(
+        l.trim()
+      )
+  );
 
   // Expand multi-sentence paragraphs into distinct substantive points so RSS/article summaries
   // with 1-2 paragraphs never collapse into < 3 points!
@@ -601,6 +667,16 @@ export function synthesizeUniversalCarousel(rawInput: string, options: Universal
 
   // 4. Topic & Domain Classification
   const lower = cleaned.toLowerCase();
+  const hasRealNumbers = metrics.length > 0 || /\b\d+(?:\.\d+)?\s*(?:%|x|ms|s|gb|tb|mb|k|m|b|nodes|requests?)\b/i.test(cleaned);
+  const isHumorOrOpinion =
+    /\b(?:friday\s+deploy|works?\s+on\s+my\s+machine|git\s+push\s+--?force|tabs?\s+vs\.?\s+spaces?|senior\s+(?:dev|engineers?)|junior\s+dev|coffee|caffeine|meme|humor|satire|joke|irony|hot\s+take|unpopular\s+opinion|over-?engineer\w*|bike[- ]?shed|meeting\s+that\s+could|weekend\s+incident|stackoverflow|lgtm|yolo|nobody\s+reads\s+docs|legacy\s+code|tech\s+debt\s+is\s+a\s+feature|rewrite\s+it\s+in\s+rust|boring\s+postgres|fourteen\s+(?:paying\s+)?users|ship(?:ped)?\s+features?\s+before\s+lunch|resume[- ]driven)\b/i.test(
+      lower
+    ) ||
+    (!hasRealNumbers &&
+      /\b(?:i\s+think|we\s+need\s+to\s+stop|stop\s+(?:writing|building|overcomplicating)|why\s+developers|every\s+developer|unpopular\s+truth|hot\s+take|honest\s+truth|nobody\s+wants\s+to\s+admit)\b/i.test(
+        lower
+      ));
+
   const isAgentOrDelegation =
     /\b(agents?\s+aren['’]?t\s+humans|trusted\s+agent|agent\s+delegation|delegated?\s+auth|human[- ]in[- ]the[- ]loop|mcp\b|model\s+context\s+protocol|on\s+behalf\s+of|agentic\s+auth|scoped\s+delegation|oauth\s+delegation|ai\s+agents?)\b/i.test(
       lower
@@ -613,7 +689,18 @@ export function synthesizeUniversalCarousel(rawInput: string, options: Universal
   const isAiOrLlm = /\b(llm|gpt|transformer|attention|kv[- ]?cache|token|inference|embedding|rag|weights)\b/i.test(lower);
   const isDatabase = /\b(postgres|postgresql|pgbouncer|mysql|sqlite|wal|database|sql|acid|query planner)\b/i.test(lower);
 
-  // 5. If user provided multiple substantive bullet points or sentences (>= 2 points):
+  // 5. Humor / Opinion / Non-numeric hot takes get a dedicated authentic narrative instead of systems boilerplate
+  if (isHumorOrOpinion) {
+    return buildHumorOrOpinionStory(cleaned, coreSubject, userSubstantivePoints, {
+      brand,
+      brandUrl,
+      domainCategory,
+      targetCount,
+      metrics,
+    });
+  }
+
+  // 6. If user provided multiple substantive bullet points or sentences (>= 2 points):
   // Directly synthesize slides from the user's actual points!
   if (userSubstantivePoints.length >= 2 && !isExplicitHeadlineComparison) {
     return buildDeckFromUserPoints(coreSubject, userSubstantivePoints, {
@@ -623,10 +710,15 @@ export function synthesizeUniversalCarousel(rawInput: string, options: Universal
       targetCount,
       metrics,
       centerIcon: options.centerIcon,
+      rawSourceText: cleaned,
     });
   }
 
-  // 6. Domain-Specific Narrative Generation for Short Prompts / Topic Inputs
+  if (lines.length === 1 && firstLineSentences.length >= 2 && rawFirstLine.length > 110 && !isAgentOrDelegation) {
+    return buildGeneralSystemsStory(cleaned, { brand, brandUrl, targetCount, domainCategory, metrics });
+  }
+
+  // 7. Domain-Specific Narrative Generation for Short Prompts / Topic Inputs
   if (isAgentOrDelegation) {
     return buildAgentDelegationStory(coreSubject, { brand, brandUrl, targetCount, metrics });
   }
@@ -663,8 +755,8 @@ export function synthesizeUniversalCarousel(rawInput: string, options: Universal
     return buildComparativeStory(coreSubject, entities, metrics, { brand, brandUrl, targetCount, domainCategory });
   }
 
-  // Fallback: General Systems Architecture Story
-  return buildGeneralSystemsStory(coreSubject, { brand, brandUrl, targetCount, domainCategory, metrics });
+  // Fallback: Source-grounded prose & systems story (no canned boilerplate)
+  return buildGeneralSystemsStory(cleaned, { brand, brandUrl, targetCount, domainCategory, metrics });
 }
 
 interface StoryOptions {
@@ -700,95 +792,89 @@ function buildDeckFromUserPoints(
     targetCount: number;
     metrics: ExtractedMetric[];
     centerIcon?: string;
+    rawSourceText?: string;
   }
 ): SlideData[] {
   const { brand, brandUrl, domainCategory, targetCount, metrics } = options;
 
-  const combinedRaw = `${subject} ${userPoints.join(' ')}`;
+  const combinedRaw = `${options.rawSourceText || ''} ${subject} ${userPoints.join(' ')}`;
   const isFinancialOrMacro =
     /\$\s*\d+(?:\.\d+)?\s*(?:trillion|billion|million|T|B|M)\b|\b(?:valuation|billion|trillion|deficit|circular\s+financing|subsid|taxpayer|retiree|s&p\s*500|pension|401k|cash[- ]?out|economy|economic|inflation|energy\s+bill|electricity\s+bill|financial\s+engineering|for\s+every\s+\$1)\b|مليار|تريليون|خسائر|تمويل|تقييم|ضرائب|متقاعد|طاقة|اقتصاد|استثمار/i.test(
       combinedRaw
     );
 
   const { cleanSubject, arSubject } = extractCleanSubject(subject);
-  const hasPreamble = /^(?:this\s+(?:video|article|post|guide|talk)?\s+(?:explains|covers|discusses|breaks\s+down)|in\s+this\s+video)\b/i.test(subject.trim());
-  const enHook = hasPreamble
-    ? `${cleanSubject}, explained.`
-    : enforceHeadlineSpecRule(subject, { isHook: true, fallbackSubject: cleanSubject });
+  const enHook = enforceHeadlineSpecRule(subject, { isHook: true, fallbackSubject: cleanSubject });
   const arHook = isFinancialOrMacro
-    ? `الأبعاد المالية والاقتصادية لـ ${arSubject}.`
-    : `كيف تعمل منظومة ${arSubject} تحت الضغط؟`;
+    ? `مخاطر التقييمات الضخمة و${arSubject}`
+    : `لماذا يتغير تصميم ${arSubject} فعلياً؟`;
 
-  // Extract clean, meaningful satLabels from user points
-  const satLabels: string[] = [];
-  for (const pt of userPoints) {
-    const { topicTitle } = parsePointTopicAndBody(pt);
-    if (topicTitle) {
-      let pill = topicTitle.replace(/\(.*?\)/g, '').trim();
-      if (pill.length > 16) pill = pill.split(/\s+/).slice(0, 2).join(' ');
-      if (pill && !satLabels.includes(pill.toUpperCase())) {
-        satLabels.push(pill.toUpperCase());
+  // Extract strictly source-quoted Hub node labels + 1-line provenance reasons
+  const quotedHub = extractSourceQuotedHubNodes(combinedRaw, {
+    titleText: enHook,
+    category: domainCategory,
+    targetCount: 5,
+  });
+
+  const pickedMetric = selectWinningHookMetric(combinedRaw, metrics);
+  const formattedHookMetricValue = pickedMetric
+    ? pickedMetric.type === 'latency'
+      ? pickedMetric.value.replace(/\s+/g, '')
+      : pickedMetric.value
+    : '';
+  const hasNumericHook = Boolean(formattedHookMetricValue && /\d/.test(formattedHookMetricValue));
+  const nonNumericClaim = !hasNumericHook
+    ? buildNonNumericHookClaimCard(combinedRaw, {
+        enTitle: enHook,
+        enBody: userPoints.slice(0, 2).join(' '),
+      })
+    : undefined;
+
+  const useHubCover = !hasNumericHook && quotedHub.hubNodeReasons.length >= 4 && (!nonNumericClaim || nonNumericClaim.mode !== 'contrast');
+
+  const hookSlide: SlideData = useHubCover
+    ? {
+        type: 'hub',
+        storyRole: 'hook',
+        centerIcon: options.centerIcon || (isFinancialOrMacro ? 'dollarSign' : resolveTechLogo(subject) || 'cpu'),
+        satIcons: isFinancialOrMacro
+          ? ['dollarSign', 'trendingDown', 'lifecycle', 'factory', 'users']
+          : ['server', 'database', 'gauge', 'cpu', 'layers'],
+        satLabels: quotedHub.satLabels.slice(0, 5),
+        hubNodeReasons: quotedHub.hubNodeReasons,
+        hookClaimCard: nonNumericClaim,
+        enTitle: enHook,
+        arTitle: arHook,
+        enBody: '',
+        arBody: '',
       }
-    }
-  }
-  if (satLabels.length < 6) {
-    for (const pt of userPoints) {
-      const currencyPill = pt.match(/\$\s*\d+(?:\.\d+)?\s*(?:trillion|billion|million|T|B|M)/i);
-      if (currencyPill) {
-        const cleanCurr = currencyPill[0].replace(/\s+/g, '').replace(/trillion/i, 'T').replace(/billion/i, 'B').replace(/million/i, 'M').toUpperCase();
-        if (!satLabels.includes(cleanCurr)) satLabels.push(cleanCurr);
-      }
-      const words = pt.replace(/[^A-Za-z0-9\s]/g, '').split(/\s+/).filter((w) => w.length >= 4);
-      if (words[0] && !satLabels.includes(words[0].toUpperCase())) satLabels.push(words[0].toUpperCase().slice(0, 14));
-      if (satLabels.length >= 6) break;
-    }
-  }
-  const defaultSatPills = isFinancialOrMacro
-    ? ['Valuation', 'Deficits', 'Capital Flow', 'Grid Power', 'Retirees', 'Taxpayers']
-    : ['Architecture', 'Dataflow', 'Execution', 'Scale', 'Resilience', 'Telemetry'];
-  for (const p of defaultSatPills) {
-    if (satLabels.length >= 6) break;
-    if (!satLabels.includes(p.toUpperCase())) satLabels.push(p.toUpperCase());
-  }
+    : {
+        type: 'metric',
+        storyRole: 'hook',
+        centerIcon: options.centerIcon || (isFinancialOrMacro ? 'dollarSign' : resolveTechLogo(subject) || 'cpu'),
+        satLabels: quotedHub.satLabels.slice(0, 5),
+        hubNodeReasons: quotedHub.hubNodeReasons,
+        ...(hasNumericHook && pickedMetric
+          ? {
+              metricValue: formattedHookMetricValue,
+              metricLabel: (quotedHub.satLabels[0] || pickedMetric.type).toUpperCase(),
+              metricDiff: `SOURCE WIN: ${formattedHookMetricValue}`,
+              chartDirection: pickedMetric.type === 'latency' ? 'down' : 'up',
+            }
+          : {
+              metricValue: '',
+              metricLabel: '',
+              metricDiff: '',
+              chartDirection: 'none',
+              hookClaimCard: nonNumericClaim,
+            }),
+        enTitle: enHook,
+        arTitle: arHook,
+        enBody: '',
+        arBody: '',
+      };
 
-  let hubOverviewEn = isFinancialOrMacro
-    ? `An economic breakdown of ${cleanSubject}: capital commitments, unit losses, circular financing, and taxpayer risk.`
-    : `An architectural breakdown of ${cleanSubject}, covering core indexing algorithms, memory trade-offs, and production design.`;
-  if (hasPreamble && subject.length > 25) {
-    const strippedPreamble = subject
-      .replace(/^(?:this\s+(?:video|article|post|guide|talk)?\s+(?:explains|covers|discusses|breaks\s+down)|in\s+this\s+video)\s+(?:the\s+role\s+and\s+architecture\s+of\s+)?/i, '')
-      .replace(/[*_`]/g, '')
-      .replace(/\s+([.,;:!?])/g, '$1')
-      .trim();
-    if (strippedPreamble.length > 15) {
-      const capitalized = strippedPreamble.charAt(0).toUpperCase() + strippedPreamble.slice(1);
-      hubOverviewEn = autoFitTextToLimits(capitalized, 135);
-    }
-  } else if (userPoints[0]) {
-    const { topicBody } = parsePointTopicAndBody(userPoints[0]);
-    if (topicBody) {
-      hubOverviewEn = autoFitTextToLimits(topicBody.replace(/\s+([.,;:!?])/g, '$1'), 135);
-    }
-  }
-
-  const hubOverviewAr = isFinancialOrMacro
-    ? `قراءة مالية واقتصادية معمقة تكشف حجم التقييمات والالتزامات الرأسمالية وتأثيرها المباشر على المستهلكين ودافعي الضرائب.`
-    : `نظرة معمارية معمقة تشرح آليات عمل ${arSubject} وخوارزميات الفهرسة والتحديات في بيئات الإنتاج الفعلية.`;
-
-  const slides: SlideData[] = [
-    {
-      type: 'hub',
-      centerIcon: options.centerIcon || (isFinancialOrMacro ? 'dollarSign' : resolveTechLogo(subject) || 'cpu'),
-      satIcons: isFinancialOrMacro
-        ? ['dollarSign', 'trendingDown', 'lifecycle', 'factory', 'users', 'landmark']
-        : ['server', 'database', 'gauge', 'cpu', 'box', 'activity'],
-      satLabels: satLabels.slice(0, 6),
-      enTitle: enHook,
-      arTitle: arHook,
-      enBody: hubOverviewEn,
-      arBody: hubOverviewAr,
-    },
-  ];
+  const slides: SlideData[] = [hookSlide];
 
   // Distribute points across available content slots (targetCount - 2 = 6 slots)
   const maxContentSlots = targetCount - 2;
@@ -1263,14 +1349,15 @@ function buildDeckFromUserPoints(
       return;
     }
 
-    // 11. Context-Aware Dynamic Archetype Rotation (Eliminates Generic Ingress/Core/State Boilerplate)
-    const cleanTokens = (topicBody || point)
-      .replace(/[^A-Za-z0-9\s/-]/g, ' ')
-      .split(/\s+/)
-      .filter((w) => w.length >= 4 && !ENTITY_STOP_WORDS.has(w.toLowerCase()));
-    const phrase1 = cleanTokens.slice(0, 2).join(' ') || cleanSubject.slice(0, 16);
-    const phrase2 = cleanTokens.slice(2, 4).join(' ') || 'Core Mechanism';
-    const phrase3 = cleanTokens.slice(4, 6).join(' ') || 'Verified Output';
+    // 11. Context-Aware Dynamic Archetype Rotation (No generic filler)
+    const fallbackQuoted = extractSourceQuotedHubNodes(`${point} ${topicBody}`, {
+      titleText: enTitle,
+      category: domainCategory,
+      targetCount: 3,
+    });
+    const phrase1 = fallbackQuoted.satLabels[0] || cleanSubject.slice(0, 16).toUpperCase();
+    const phrase2 = fallbackQuoted.satLabels[1] || 'WORKFLOW STEP';
+    const phrase3 = fallbackQuoted.satLabels[2] || 'OUTCOME CHECK';
 
     const dynamicVariants: Array<'isolation' | 'clusters' | 'split' | 'features' | 'graph' | 'topology' | 'stack'> = [
       'topology',
@@ -1287,64 +1374,66 @@ function buildDeckFromUserPoints(
       type: 'row',
       diagramVariant: chosenVariant,
       diagramNodes: [
-        { label: phrase1.slice(0, 18), sublabel: 'Primary Context', status: 'ACTIVE', icon: 'layers' },
-        { label: phrase2.slice(0, 18), sublabel: 'Mechanism Execution', status: 'VERIFIED', icon: 'cpu' },
-        { label: phrase3.slice(0, 18), sublabel: 'Production Outcome', status: 'SECURED', icon: 'checkCircle' },
+        { label: phrase1.slice(0, 18), sublabel: 'From source point', status: 'SOURCE', icon: 'layers' },
+        { label: phrase2.slice(0, 18), sublabel: 'Applied mechanism', status: 'ACTIVE', icon: 'cpu' },
+        { label: phrase3.slice(0, 18), sublabel: 'Measured result', status: 'VERIFIED', icon: 'checkCircle' },
       ],
-      diagramEdges: ['EXECUTE', 'VERIFY'],
-      diagramFooter: `${cleanSubject.toUpperCase().slice(0, 28)} • ARCHITECTURE VERIFIED`,
+      diagramEdges: ['INPUT', 'RESULT'],
+      diagramFooter: `${cleanSubject.toUpperCase().slice(0, 28)} • FLOW`,
       enTitle,
-      arTitle: `آلية ${arSubject}: ${phrase1.slice(0, 18)}.`,
+      arTitle: `${effectiveTitle.slice(0, 26)} في ${arSubject}`,
       enBody: autoFitTextToLimits(topicBody, 135),
       arBody: hasArabicText
         ? sanitizeArabicSlideText(topicBody.slice(0, 135))
-        : `تحليل تفصيلي يوضح دور ${phrase1} في تعزيز كفاءة وموثوقية منظومة ${arSubject}.`,
+        : `دور ${phrase1.toLowerCase()} في تحسين نتائج ${arSubject} وتقليل الاحتكاك أثناء التنفيذ.`,
     });
   });
 
-  // Guarantee Spec §7: If no trade-off slide was created, add one before closing
+  // Guarantee a concrete takeaway slide before closing
   if (!slides.some((s) => s.diagramVariant === 'takeaway')) {
     slides.push(
       isFinancialOrMacro
         ? {
             type: 'row',
+            storyRole: 'takeaway',
             diagramVariant: 'takeaway',
             icons: [
               { icon: 'dollarSign', label: 'Private Gains' },
               { icon: 'scales', label: 'Public Risk' },
             ],
             diagramNodes: [
-              { label: 'Private Upside', sublabel: 'Insider equity & valuations', status: 'CAPTURED', icon: 'dollarSign' },
-              { label: 'Circular Capex', sublabel: '$1.4T compute & grid bets', status: 'LEVERAGED', icon: 'landmark' },
-              { label: 'Public Exposure', sublabel: 'Taxpayers, bills & retirees', status: 'EXPOSED', icon: 'scales' },
+              { label: quotedHub.satLabels[0] || 'Upside Capture', sublabel: 'Insider equity & valuations', status: 'CAPTURED', icon: 'dollarSign' },
+              { label: quotedHub.satLabels[1] || 'Capital Loop', sublabel: 'Recycled capex & bills', status: 'LEVERAGED', icon: 'landmark' },
+              { label: quotedHub.satLabels[2] || 'Public Exposure', sublabel: 'Taxpayers & retirees', status: 'EXPOSED', icon: 'scales' },
             ],
             diagramEdges: ['Leverage', 'Socialize'],
-            diagramFooter: 'ECONOMIC VERDICT: PRIVATE GAINS VS PUBLIC & RETIREE EXPOSURE',
-            enTitle: 'Private gains vs. public risk.',
-            arTitle: 'مكاسب المطلعين مقابل مخاطر الجمهور.',
-            enBody: 'Insiders lock in billions in liquidity while energy costs, index concentration, and taxpayer backstops shift risk to the public.',
-            arBody: 'يضمن المطلعون سيولة مليارية فورية بينما تنتقل فواتير الطاقة ومخاطر السوق والضمانات إلى الجمهور.',
+            diagramFooter: 'VERDICT: PRIVATE GAINS VS PUBLIC EXPOSURE',
+            enTitle: 'Who pays when capital bets miss?',
+            arTitle: 'من يتحمل الكلفة عند تعثر الرهانات الضخمة؟',
+            enBody: 'Follow unit economics and power commitments closely before assuming headline valuations represent durable profit.',
+            arBody: 'راقب عوائد التشغيل والتزامات الطاقة قبل افتراض أن التقييمات الضخمة تعكس أرباحاً مستدامة.',
           }
         : {
             type: 'row',
+            storyRole: 'takeaway',
             diagramVariant: 'takeaway',
-            icons: [{ icon: 'shieldAlert', label: 'Trade-off' }, { icon: 'activity', label: 'Evaluation' }],
+            icons: [{ icon: 'shieldAlert', label: 'Trade-off' }, { icon: 'activity', label: 'Outcome' }],
             diagramNodes: [
-              { label: 'Baseline Model', sublabel: 'Simpler initial setup', status: 'BASELINE', icon: 'layers' },
-              { label: `${cleanSubject.slice(0, 15)} Shift`, sublabel: 'Target architecture', status: 'ADOPTED', icon: 'zap' },
-              { label: 'Governance Cost', sublabel: 'Policy & audit overhead', status: 'BALANCE', icon: 'shieldAlert' },
+              { label: quotedHub.satLabels[0] || 'Old Habit', sublabel: 'Default setup friction', status: 'BEFORE', icon: 'layers' },
+              { label: quotedHub.satLabels[1] || `${cleanSubject.slice(0, 12)} Shift`, sublabel: 'Focused change', status: 'APPLIED', icon: 'zap' },
+              { label: quotedHub.satLabels[2] || 'Team Payoff', sublabel: 'Clear ownership & speed', status: 'AFTER', icon: 'shieldAlert' },
             ],
-            diagramEdges: ['Evaluate', 'Adopt'],
-            diagramFooter: `ARCHITECTURAL VERDICT: ${cleanSubject.toUpperCase().slice(0, 32)}`,
-            enTitle: `${cleanSubject.split(/\s+/).slice(0, 3).join(' ')} vs. operational overhead.`,
-            arTitle: `كفاءة ${arSubject} مقابل تكلفة الحوكمة.`,
-            enBody: `Adopting ${cleanSubject} unlocks stronger guarantees and scale, provided teams enforce clear operational boundaries and observability.`,
-            arBody: `تطبيق ${arSubject} يمنحك كفاءة وضمانات أعلى بشرط الالتزام بحدود الصلاحيات والمراقبة الدقيقة.`,
+            diagramEdges: ['Change', 'Verify'],
+            diagramFooter: `KEY LESSON: ${cleanSubject.toUpperCase().slice(0, 32)}`,
+            enTitle: `What teams should apply from ${cleanSubject.split(/\s+/).slice(0, 3).join(' ')}`,
+            arTitle: `الخطوة العملية التي يمكنك تطبيقها في ${arSubject}`,
+            enBody: `Adopt the parts of ${cleanSubject} that remove real bottlenecks for your users rather than copying complexity blindly.`,
+            arBody: `اعتمد من ${arSubject} ما يزيل الاختناقات الفعلية لدى عملائك بدلاً من إضافة تعقيد غير مبرر.`,
           }
     );
   }
 
-  // Pad to targetCount - 1 with varied, topic-grounded archetypes (Compare, Code, Number) if fewer points were provided
+  // Pad to targetCount - 1 with varied, topic-grounded archetypes if fewer points were given
   const padArchetypes: Array<'compare' | 'code' | 'number'> = ['compare', 'code', 'number'];
   let padIdx = 0;
   while (slides.length < targetCount - 1) {
@@ -1354,46 +1443,46 @@ function buildDeckFromUserPoints(
       slides.splice(1, 0, {
         type: 'number',
         stepNumber: `0${padIdx}`,
-        stepLabel: `STEP 0${padIdx} // CAPITAL DEFICIT`,
+        stepLabel: `STEP 0${padIdx} // UNIT ECONOMICS`,
         centerIcon: 'trendingDown',
         enTitle: 'Unit burn vs. operating revenue.',
         arTitle: 'فجوة العوائد والإنفاق الرأسمالي.',
-        enBody: 'Capital burn and infrastructure commitments far exceed current operating revenue, requiring massive external financing.',
-        arBody: 'تتجاوز الالتزامات الرأسمالية وتكاليف التشغيل العوائد الحالية، مما يفرض الاعتماد على تمويل خارجي مستمر.',
+        enBody: 'Capital commitments exceed current operating revenue, turning balance-sheet discipline into the decisive constraint.',
+        arBody: 'تتجاوز الالتزامات الرأسمالية وتكاليف التشغيل العوائد الحالية، ما يجعل الانضباط المالي عنصراً حاسماً.',
       });
     } else if (padType === 'compare') {
       slides.splice(Math.min(2, slides.length), 0, {
         type: 'compare',
-        compareLeftTitle: 'IMPLICIT / LEGACY MODEL',
-        compareLeftBody: `• Unscoped ${cleanSubject.slice(0, 18)} access\n• Shared static credentials\n• Fragile under edge conditions`,
-        compareRightTitle: 'EXPLICIT / SCOPED DESIGN',
-        compareRightBody: `• Cryptographically bounded ${cleanSubject.slice(0, 14)}\n• Least-privilege execution\n• Auditable production telemetry`,
-        enTitle: enforceHeadlineSpecRule(`Legacy vs scoped ${cleanSubject.split(/\s+/).slice(0, 2).join(' ')}`, { isHook: false }),
-        arTitle: `مقارنة: النهج التقليدي مقابل ${arSubject}.`,
-        enBody: `Contrasting implicit legacy assumptions against explicit, verifiable boundaries in ${cleanSubject}.`,
-        arBody: `مقارنة عملية توضح الفرق بين الصلاحيات المفتوحة تقليدياً والضوابط المحددة في ${arSubject}.`,
+        compareLeftTitle: `BEFORE ${quotedHub.satLabels[0] || 'CHANGE'}`,
+        compareLeftBody: `• Manual workarounds\n• Slow feedback cycles\n• Hidden rework cost`,
+        compareRightTitle: `WITH ${quotedHub.satLabels[1] || 'FOCUS'}`,
+        compareRightBody: `• Clear ownership rules\n• Predictable delivery\n• Measurable customer win`,
+        enTitle: enforceHeadlineSpecRule(`Old habit vs focused ${cleanSubject.split(/\s+/).slice(0, 2).join(' ')}`, { isHook: false }),
+        arTitle: `الفارق العملي قبل وبعد تطبيق ${arSubject}.`,
+        enBody: `Replacing vague defaults in ${cleanSubject} with concrete ownership eliminates repeat bottlenecks.`,
+        arBody: `استبدال الإعدادات العشوائية بضوابط واضحة في ${arSubject} يمنع تكرار الاختناقات نفسها.`,
       });
     } else if (padType === 'code') {
       slides.splice(Math.min(3, slides.length), 0, {
         type: 'code',
-        codeFileName: `${cleanSubject.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 16) || 'policy'}.yaml`,
+        codeFileName: `${cleanSubject.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 16) || 'rules'}.yaml`,
         codeLanguage: 'yaml',
-        codeSnippet: `# Production policy specification for ${cleanSubject.slice(0, 28)}\nmode: enforce_strict_bounds\ndelegation:\n  require_scoped_token: true\n  audit_trail: immutable`,
-        enTitle: enforceHeadlineSpecRule(`Enforcing ${cleanSubject.split(/\s+/).slice(0, 3).join(' ')} policy`, { isHook: false }),
-        arTitle: `تطبيق السياسات البرمجية في ${arSubject}.`,
-        enBody: `Declarative configuration enforces strict runtime boundaries and verifiable execution rules for ${cleanSubject}.`,
-        arBody: `تطبيق قواعد التحقق والصلاحيات برمجياً لضمان عدم تجاوز الحدود المسموح بها أثناء التشغيل.`,
+        codeSnippet: `# Guardrails derived from ${cleanSubject.slice(0, 24)}\nfocus: "${(quotedHub.satLabels[0] || 'primary').toLowerCase()}"\ncheck: "${(quotedHub.satLabels[1] || 'outcome').toLowerCase()}"\naudit_enabled: true`,
+        enTitle: enforceHeadlineSpecRule(`Concrete guardrails for ${cleanSubject.split(/\s+/).slice(0, 3).join(' ')}`, { isHook: false }),
+        arTitle: `تطبيق القواعد عملياً داخل ${arSubject}.`,
+        enBody: `Turning lessons from ${cleanSubject} into explicit rules stops regressions before customers notice.`,
+        arBody: `تحويل دروس ${arSubject} إلى قواعد تنفيذية واضحة يمنع عودة الأعطال قبل وصولها للمستخدم.`,
       });
     } else {
       slides.splice(Math.min(4, slides.length), 0, {
         type: 'number',
         stepNumber: `0${padIdx}`,
-        stepLabel: `PILLAR 0${padIdx} // VERIFICATION`,
+        stepLabel: `PILLAR 0${padIdx} // ${quotedHub.satLabels[2] || 'OUTCOME'}`,
         centerIcon: 'shieldAlert',
-        enTitle: enforceHeadlineSpecRule(`Verifiable ${cleanSubject.split(/\s+/).slice(0, 3).join(' ')} bounds`, { isHook: false }),
-        arTitle: `ضوابط التحقق والأمان في ${arSubject}.`,
-        enBody: `Every request and state transition in ${cleanSubject} is validated against explicit scope constraints before execution.`,
-        arBody: `يتم التحقق من كل عملية داخل منظومة ${arSubject} وفق صلاحيات محددة مسبقاً قبل السماح بالتنفيذ.`,
+        enTitle: enforceHeadlineSpecRule(`Checking ${cleanSubject.split(/\s+/).slice(0, 3).join(' ')} results`, { isHook: false }),
+        arTitle: `التحقق من أثر ${arSubject} على العمل.`,
+        enBody: `Track whether ${cleanSubject} actually shortens delivery cycles or lowers real costs for your team.`,
+        arBody: `قس الأثر الحقيقي لـ ${arSubject} على سرعة التسليم والتكلفة التشغيلية بدلاً من الوعود العامة.`,
       });
     }
   }
@@ -1403,23 +1492,24 @@ function buildDeckFromUserPoints(
     slides.splice(slides.length - 2, 1);
   }
 
-  // Closer Slide
+  // Closer Slide (always actionable Marrok CTA)
   slides.push({
     type: 'cta',
+    storyRole: 'cta',
     enTitle: isFinancialOrMacro
-      ? enforceHeadlineSpecRule(`Is ${cleanSubject} sustainable?`, { isCta: true })
-      : enforceHeadlineSpecRule(`Scaling ${cleanSubject}?`, { isCta: true }),
-    arTitle: isFinancialOrMacro ? `هل هذا النموذج المالي مستدام؟` : `تبني حلول ${arSubject}؟`,
+      ? enforceHeadlineSpecRule(`Audit your ${cleanSubject} exposure`, { isCta: true })
+      : enforceHeadlineSpecRule(`Apply ${cleanSubject} with Marrok`, { isCta: true }),
+    arTitle: isFinancialOrMacro ? `هل تراجع مخاطر ${arSubject} في مشروعك؟` : `طبّق دروس ${arSubject} في فريقك اليوم`,
     enBody: isFinancialOrMacro
-      ? 'Share your perspective on massive AI valuations, circular vendor financing, and who ultimately bears the economic risk.'
-      : 'Connect with software engineers to discuss system design, performance profiling, and production trade-offs.',
+      ? 'Review where unit costs and vendor lock-in hide in your roadmap before scaling commitments.'
+      : `Turn this ${cleanSubject} lesson into a simpler, faster workflow for your product and engineering team.`,
     arBody: isFinancialOrMacro
-      ? 'شارك برأيك في التعليقات حول استدامة التقييمات المليارية والتمويل الدائري وتأثيرها على الاقتصاد.'
-      : 'شارك برأيك وتجربتك في التعليقات حول تصميم الأنظمة المعمارية والمفاضلات التقنية.',
-    ctaText: 'Join discussion  •  شارك برأيك',
+      ? 'راجع تكاليف التشغيل والالتزامات التقنية في خطتك قبل التوسع في الإنفاق، وشاركنا سؤالك في التعليقات.'
+      : `حوّل درس ${arSubject} إلى خطوة عملية تبسّط العمل وتسرّع النتائج، وتواصل معنا لتطبيقه في منتجك.`,
+    ctaText: 'Save & Message Marrok  •  احفظ وراسلنا',
     url: brandUrl,
     enCredit: '',
-    arCredit: `${brand} · ${isFinancialOrMacro ? 'تحليل مالي واقتصادي' : `دراسة هندسية في ${domainCategory}`}`,
+    arCredit: `${brand} · ${isFinancialOrMacro ? 'قراءة مالية واقتصادية' : domainCategory}`,
   });
 
   return slides;
@@ -2193,7 +2283,7 @@ function buildComparativeStory(
       satLabels: [entities.rightShort, entities.leftShort, 'Throughput', 'Latency p99', 'Memory Footprint', 'Concurrency'],
       enTitle: `${entities.rightShort} vs. ${entities.leftShort}.`,
       arTitle: `مقارنة أداء ${entities.rightShort} ضد ${entities.leftShort}`,
-      enBody: `A head-to-head engineering comparison: architecture, throughput, memory footprint, and production trade-offs.`,
+      enBody: `Head-to-head engineering benchmark: architecture, throughput, memory footprint, and real deployment limits.`,
       arBody: `مقارنة هندسية شاملة توضح الفارق في استهلاك الموارد وسرعة تلبية الطلبات في بيئات الإنتاج.`,
     },
     {
@@ -2401,128 +2491,292 @@ function buildAgentDelegationStory(subject: string, opts: StoryOptions): SlideDa
 }
 
 /**
- * General Systems Architecture Story: Context-aware narrative with diverse visual archetypes
- * (Hub -> Compare -> Stack Row -> Code -> Isolation Row -> Features Row -> Takeaway Row -> CTA).
+ * Humor / Opinion / Cultural Commentary Story Builder:
+ * Avoids dry "architectural breakdown" jargon when the user inputs jokes, dev humor, or opinion takes.
+ * Quotes real nouns directly from the input and builds a quote/contrast hook card + clean story arc.
  */
-function buildGeneralSystemsStory(subject: string, opts: StoryOptions): SlideData[] {
-  const safeSubject = !subject || isNonSemanticFileName(subject) ? opts.domainCategory || 'System Architecture' : subject;
-  const { cleanSubject, arSubject } = extractCleanSubject(safeSubject);
-  const enHook = enforceHeadlineSpecRule(safeSubject, { isHook: true, fallbackSubject: 'Architecture' });
+function buildHumorOrOpinionStory(
+  rawSource: string,
+  subject: string,
+  userPoints: string[],
+  opts: StoryOptions
+): SlideData[] {
+  const { cleanSubject, arSubject } = extractCleanSubject(subject);
+  const fullContext = `${rawSource} ${userPoints.join(' ')}`.trim();
+  const quoted = extractSourceQuotedHubNodes(fullContext, {
+    titleText: subject,
+    category: opts.domainCategory || 'DEV CULTURE',
+    targetCount: 5,
+  });
+  const claimCard = buildNonNumericHookClaimCard(fullContext, { enTitle: subject, enBody: userPoints.join(' ') });
 
-  const words = cleanSubject
-    .replace(/[^A-Za-z0-9\s-]/g, ' ')
-    .split(/\s+/)
-    .filter((w) => w.length >= 3 && !ENTITY_STOP_WORDS.has(w.toLowerCase()));
-  const term1 = words[0] || 'Control Plane';
-  const term2 = words[1] || 'Execution Policy';
-  const term3 = words[2] || 'Telemetry State';
-  const slug = cleanSubject.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 18) || 'system_spec';
+  const enHook = enforceHeadlineSpecRule(subject, { isHook: true, fallbackSubject: cleanSubject });
+  const term0 = quoted.satLabels[0]?.toLowerCase() || cleanSubject.toLowerCase();
+  const term1 = quoted.satLabels[1]?.toLowerCase() || 'reality';
+  const term2 = quoted.satLabels[2]?.toLowerCase() || 'workflow';
 
   const candidates: SlideData[] = [
     {
-      type: 'hub',
-      centerIcon: resolveTechLogo(subject) || 'cpu',
-      satIcons: ['layers', 'lock', 'code', 'gauge', 'box', 'activity'],
-      satLabels: [
-        term1.toUpperCase().slice(0, 14),
-        term2.toUpperCase().slice(0, 14),
-        term3.toUpperCase().slice(0, 14),
-        'BOUNDARIES',
-        'VERIFICATION',
-        'OBSERVABILITY',
-      ],
+      type: claimCard?.mode === 'contrast' || quoted.hubNodeReasons.length < 4 ? 'metric' : 'hub',
+      storyRole: 'hook',
+      centerIcon: 'sparkles',
+      satIcons: ['terminal', 'alertTriangle', 'gitBranch', 'clock', 'zap'],
+      satLabels: quoted.satLabels.slice(0, 5),
+      hubNodeReasons: quoted.hubNodeReasons,
+      hookClaimCard: claimCard,
+      metricValue: '',
+      metricLabel: '',
+      metricDiff: '',
+      chartDirection: 'none',
       enTitle: enHook,
-      arTitle: `تحليل معماري لمنظومة ${arSubject}.`,
-      enBody: `A technical breakdown of ${cleanSubject}: core mechanisms, operational boundaries, and production trade-offs.`,
-      arBody: `تحليل هندسي معمق لمنظومة ${arSubject} يوضح آليات العمل والضوابط التشغيلية والمفاضلات في الإنتاج.`,
+      arTitle: `الحقيقة المضحكة وراء ${arSubject}`,
+      enBody: '',
+      arBody: '',
     },
     {
       type: 'compare',
-      compareLeftTitle: `IMPLICIT ${term1.toUpperCase().slice(0, 12)}`,
-      compareLeftBody: `• Unbounded ${term1.toLowerCase()} assumptions\n• Tightly coupled state mutations\n• Hard to audit under edge failures`,
-      compareRightTitle: `EXPLICIT ${term1.toUpperCase().slice(0, 12)}`,
-      compareRightBody: `• Strictly scoped ${term1.toLowerCase()} contracts\n• Deterministic verification gates\n• Full per-operation observability`,
-      enTitle: enforceHeadlineSpecRule(`Why implicit ${term1.toLowerCase()} fails`, { isHook: false }),
-      arTitle: `مقارنة: التصميم الضمني مقابل الصريح في ${arSubject}.`,
-      enBody: `Relying on implicit conventions in ${cleanSubject} creates hidden failure modes; explicit contracts make behavior predictable.`,
-      arBody: `الاعتماد على الافتراضات غير المقيدة في ${arSubject} يخلق ثغرات خفية، بينما تضمن العقود الصريحة استقرار النظام.`,
+      storyRole: 'problem',
+      compareLeftTitle: 'WHAT TEAMS SAY',
+      compareLeftBody: `• "Just push ${term0} before Friday"\n• Skip checking ${term1}\n• Hope nothing wakes alerts`,
+      compareRightTitle: 'WHAT ACTUALLY HAPPENS',
+      compareRightBody: `• Midnight ${term0} fire drills\n• Emergency fixes in ${term2}\n• Monday post-mortems again`,
+      enTitle: enforceHeadlineSpecRule(`Expectation vs reality with ${term0}`, { isHook: false }),
+      arTitle: `ما يُقال وقت الإطلاق مقابل الواقع الفعلي.`,
+      enBody: userPoints[0]
+        ? autoFitTextToLimits(userPoints[0], 135)
+        : `What sounds effortless when shipping ${cleanSubject} usually turns into avoidable weekend rework.`,
+      arBody: `ما يبدو سريعاً عند الحديث عن ${arSubject} يتحول غالباً إلى ضغط إضافي وإصلاحات متأخرة.`,
     },
     {
       type: 'row',
-      diagramVariant: 'isolation',
+      storyRole: 'mechanism',
+      diagramVariant: 'topology',
       diagramNodes: [
-        { label: `${term1} Boundary`, sublabel: 'Schema & Intent Check', status: 'VALIDATED', icon: 'lock' },
-        { label: `${term2} Core`, sublabel: 'Bounded Execution', status: 'ISOLATED', icon: 'cpu' },
-        { label: `${term3} Commit`, sublabel: 'Audited Output State', status: 'VERIFIED', icon: 'checkCircle' },
+        { label: quoted.satLabels[0] || 'SHORTCUT', sublabel: 'Rushed trigger', status: 'TRIGGER', icon: 'zap' },
+        { label: quoted.satLabels[1] || 'REACTION', sublabel: 'Team friction', status: 'FRICTION', icon: 'alertTriangle' },
+        { label: quoted.satLabels[2] || 'AFTERMATH', sublabel: 'Cleanup habit', status: 'REALITY', icon: 'checkCircle' },
       ],
-      diagramEdges: ['VALIDATE', 'ENFORCE'],
-      diagramFooter: `${cleanSubject.toUpperCase().slice(0, 28)} • BOUNDARY ISOLATION`,
-      enTitle: enforceHeadlineSpecRule(`Isolating ${term1.toLowerCase()} boundaries`, { isHook: false }),
-      arTitle: `عزل الحدود والتحقق في ${arSubject}.`,
-      enBody: `Enforcing strict boundaries around ${cleanSubject} prevents cascading faults and unauthorized state transitions.`,
-      arBody: `فرض حدود عزل صارمة داخل ${arSubject} يمنع انتقال الأعطال أو تنفيذ عمليات خارج النطاق المصرح به.`,
-    },
-    {
-      type: 'code',
-      codeFileName: `${slug}.yaml`,
-      codeLanguage: 'yaml',
-      codeSnippet: `# Declarative ${cleanSubject.slice(0, 28)} specification\npolicy: strict_verification\nscope:\n  target: "${term1.toLowerCase()}"\n  mode: "${term2.toLowerCase()}"\n  audit_log: enabled`,
-      enTitle: enforceHeadlineSpecRule(`Declarative ${term1.toLowerCase()} rules`, { isHook: false }),
-      arTitle: `توصيف القواعد البرمجية لـ ${arSubject}.`,
-      enBody: `Codifying ${cleanSubject} constraints as versioned configuration eliminates configuration drift across environments.`,
-      arBody: `تحويل قواعد وضوابط ${arSubject} إلى ملفات إعداد موثقة يمنع التضارب بين بيئات التطوير والإنتاج.`,
-    },
-    {
-      type: 'row',
-      diagramVariant: 'clusters',
-      diagramNodes: [
-        { label: 'Fast Path', sublabel: 'Low-Latency Reads', status: 'OPTIMIZED', icon: 'zap' },
-        { label: 'Policy Coordinator', sublabel: 'Concurrency & Quotas', status: 'GOVERNED', icon: 'sliders' },
-        { label: 'Audit Sink', sublabel: 'Immutable Telemetry', status: 'RECORDED', icon: 'database' },
-      ],
-      diagramEdges: ['ROUTE', 'AUDIT'],
-      diagramFooter: `EXECUTION TOPOLOGY • DETERMINISTIC CONTROL PLANE`,
-      enTitle: enforceHeadlineSpecRule(`Coordinating ${cleanSubject.split(/\s+/).slice(0, 3).join(' ')}`, { isHook: false }),
-      arTitle: `تنسيق المسارات والمراقبة في ${arSubject}.`,
-      enBody: `Separating fast-path operations from policy coordination keeps ${cleanSubject} responsive while preserving full auditability.`,
-      arBody: `فصل المسار السريع عن طبقة التحكم يحافظ على سرعة استجابة ${arSubject} مع توثيق كامل لجميع العمليات.`,
+      diagramEdges: ['TRIGGERS', 'LEADS TO'],
+      diagramFooter: `REALITY LOOP: ${cleanSubject.toUpperCase().slice(0, 26)}`,
+      enTitle: enforceHeadlineSpecRule(`How ${term0} turns into rework`, { isHook: false }),
+      arTitle: `كيف يتحول الاختصار إلى تكلفة مضاعفة.`,
+      enBody: userPoints[1]
+        ? autoFitTextToLimits(userPoints[1], 135)
+        : `Behind the joke around ${cleanSubject} sits a repeatable feedback loop between shortcuts and ${term1}.`,
+      arBody: `خلف النكتة الدارجة حول ${arSubject} دائماً ما تتكرر الحلقة نفسها بين التسرع وتراكم الإصلاحات.`,
     },
     {
       type: 'number',
-      stepNumber: '03',
-      stepLabel: `PILLAR 03 // OBSERVABILITY`,
-      centerIcon: 'gauge',
-      enTitle: enforceHeadlineSpecRule(`Measuring ${term1.toLowerCase()} in production`, { isHook: false }),
-      arTitle: `قياس الأداء والموثوقية في بيئة الإنتاج.`,
-      enBody: `Structured telemetry across every ${cleanSubject} boundary lets engineers detect anomalies before they impact downstream callers.`,
-      arBody: `المراقبة المهيكلة لكل مرحلة في ${arSubject} تتيح اكتشاف الاختناقات والأخطاء مبكراً قبل تأثر المستخدمين.`,
+      storyRole: 'proof',
+      stepNumber: '02',
+      stepLabel: `CHECKPOINT // ${quoted.satLabels[3] || 'DISCIPLINE'}`,
+      centerIcon: 'sliders',
+      enTitle: enforceHeadlineSpecRule(`The habit that fixes ${term0}`, { isHook: false }),
+      arTitle: `العادة البسيطة التي تمنع هذا السيناريو.`,
+      enBody: `Great teams laugh at ${cleanSubject} because they replaced heroic rescues with quiet, repeatable guardrails.`,
+      arBody: `الفرق الهادئة تبتسم أمام مواقف ${arSubject} لأنها استبدلت التدخلات البطولية بخطوات وقائية واضحة.`,
     },
     {
       type: 'row',
+      storyRole: 'takeaway',
       diagramVariant: 'takeaway',
-      icons: [{ icon: 'alertCircle', label: 'Complexity' }, { icon: 'shieldAlert', label: 'Trade-off' }],
+      icons: [{ icon: 'alertCircle', label: 'Shortcut' }, { icon: 'checkCircle', label: 'Craft' }],
       diagramNodes: [
-        { label: 'Baseline Simplicity', sublabel: 'Minimal initial setup', status: 'BASELINE', icon: 'layers' },
-        { label: `${term1.slice(0, 14)} Rigor`, sublabel: 'Explicit verification', status: 'ADOPTED', icon: 'zap' },
-        { label: 'Operational Discipline', sublabel: 'Ongoing policy upkeep', status: 'TRADE-OFF', icon: 'shieldAlert' },
+        { label: quoted.satLabels[0] || 'RUSHED MOVE', sublabel: 'Short-term laugh', status: 'RISKY', icon: 'alertTriangle' },
+        { label: quoted.satLabels[3] || 'CLEAR RULE', sublabel: 'Shared team agreement', status: 'ADOPTED', icon: 'sliders' },
+        { label: quoted.satLabels[4] || 'CALM WEEKEND', sublabel: 'Predictable shipping', status: 'GAIN', icon: 'checkCircle' },
       ],
-      diagramEdges: ['EVALUATE', 'ADOPT'],
-      diagramFooter: `ENGINEERING VERDICT: ${cleanSubject.toUpperCase().slice(0, 30)}`,
-      enTitle: enforceHeadlineSpecRule(`The ${term1.toLowerCase()} engineering tradeoff`, { isHook: false }),
-      arTitle: `المفاضلة الهندسية في تبني ${arSubject}.`,
-      enBody: `Explicit boundaries and verification in ${cleanSubject} add upfront design rigor, but eliminate catastrophic production blind spots.`,
-      arBody: `تطبيق الضوابط الصارمة في ${arSubject} يتطلب جهداً تأسيسياً، لكنه يحمي المنظومة من الأعطال والثغرات المكلفة.`,
+      diagramEdges: ['REPLACE', 'SHIP CALMLY'],
+      diagramFooter: `TAKEAWAY: ${cleanSubject.toUpperCase().slice(0, 28)}`,
+      enTitle: `Turn the ${cleanSubject.split(/\s+/).slice(0, 2).join(' ')} joke into a rule`,
+      arTitle: `حوّل الموقف المتكرر إلى قاعدة واضحة للفريق.`,
+      enBody: `Every recurring joke in engineering or product points directly to the one checklist step missing from the workflow.`,
+      arBody: `كل موقف ساخر يتكرر في العمل يكشف بوضوح خطوة التحقق الناقصة التي تستحق الإصلاح مرة واحدة.`,
     },
     {
       type: 'cta',
-      enTitle: enforceHeadlineSpecRule(`Building with ${cleanSubject}?`, { isCta: true }),
-      arTitle: `كيف تطبق ${arSubject} في مشاريعك؟`,
-      enBody: `Share your architectural patterns and lessons learned with ${cleanSubject} in the comments.`,
-      arBody: `شاركنا تجربتك وأفضل الممارسات الهندسية التي تعتمدها مع ${arSubject} في التعليقات.`,
-      ctaText: 'Join discussion  •  شارك برأيك',
+      storyRole: 'cta',
+      enTitle: enforceHeadlineSpecRule(`Need calmer workflows with Marrok?`, { isCta: true }),
+      arTitle: `تريد فريقك يشحن بثقة وبلا توتر؟`,
+      enBody: `Message Marrok to simplify your release checklists and build product workflows your whole team trusts.`,
+      arBody: `تواصل مع فريق مروك لبناء أنظمة وخطوات إطلاق واضحة تمنح فريقك سرعة واستقراراً حقيقياً.`,
+      ctaText: 'Save & Message Marrok  •  احفظ وراسلنا',
       url: opts.brandUrl,
       enCredit: '',
-      arCredit: `${opts.brand} · دراسة هندسية في ${opts.domainCategory || 'معمارية الأنظمة'}`,
+      arCredit: `${opts.brand} · ثقافة المنتجات والفرق التقنية`,
+    },
+  ];
+
+  return trimSlides(candidates, opts.targetCount);
+}
+
+/**
+ * General Source-Grounded Narrative Story (No Canned Architecture Clichés):
+ * Hooks -> Problem -> Mechanism -> Proof -> Takeaway -> CTA using quoted source nouns.
+ */
+function buildGeneralSystemsStory(rawSource: string, opts: StoryOptions): SlideData[] {
+  const sentences = rawSource
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 12);
+  const firstSentence = sentences[0] || rawSource;
+  const safeSubject = !firstSentence || isNonSemanticFileName(firstSentence) ? opts.domainCategory || 'Product Systems' : firstSentence;
+  const { cleanSubject, arSubject } = extractCleanSubject(safeSubject);
+
+  const quoted = extractSourceQuotedHubNodes(rawSource, {
+    titleText: firstSentence,
+    category: opts.domainCategory,
+    targetCount: 5,
+  });
+
+  const firstMetric = opts.metrics ? selectWinningHookMetric(rawSource, opts.metrics) : undefined;
+  const formattedFirstMetric = firstMetric
+    ? firstMetric.type === 'latency'
+      ? firstMetric.value.replace(/\s+/g, '')
+      : firstMetric.value
+    : '';
+  const hasNumeric = Boolean(formattedFirstMetric && /\d/.test(formattedFirstMetric));
+  const claimCard = !hasNumeric
+    ? buildNonNumericHookClaimCard(rawSource, { enTitle: firstSentence, enBody: sentences.slice(1).join(' ') })
+    : undefined;
+
+  const enHook = enforceHeadlineSpecRule(firstSentence, { isHook: true, fallbackSubject: cleanSubject });
+  const term1 = (quoted.satLabels[0] || cleanSubject.split(/\s+/)[0] || 'Core').toLowerCase();
+  const term2 = (quoted.satLabels[1] || 'execution').toLowerCase();
+  const term3 = (quoted.satLabels[2] || 'reliability').toLowerCase();
+  const slug = cleanSubject.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 18) || 'workflow_spec';
+
+  const isShortConcept = rawSource.trim().split(/\s+/).length <= 8;
+  const useHubCover =
+    !hasNumeric &&
+    ((quoted.hubNodeReasons.length >= 4 && (!claimCard || claimCard.mode !== 'contrast')) ||
+      (isShortConcept && quoted.satLabels.length >= 2 && (!claimCard || claimCard.mode !== 'contrast')));
+
+  const candidates: SlideData[] = [
+    {
+      type: useHubCover ? 'hub' : 'metric',
+      storyRole: 'hook',
+      centerIcon: resolveTechLogo(rawSource) || 'cpu',
+      satIcons: ['layers', 'lock', 'code', 'gauge', 'box'],
+      satLabels: quoted.satLabels.slice(0, 5),
+      hubNodeReasons: quoted.hubNodeReasons,
+      ...(hasNumeric && firstMetric
+        ? {
+            metricValue: formattedFirstMetric,
+            metricLabel: (quoted.satLabels[0] || 'KEY OUTCOME').toUpperCase(),
+            metricDiff: `SOURCE WIN: ${formattedFirstMetric}`,
+            chartDirection: firstMetric.type === 'latency' ? 'down' : 'up',
+          }
+        : {
+            metricValue: '',
+            metricLabel: '',
+            metricDiff: '',
+            chartDirection: 'none',
+            hookClaimCard: claimCard,
+          }),
+      enTitle: enHook,
+      arTitle: `ما الذي يغيره ${arSubject} فعلياً؟`,
+      enBody: '',
+      arBody: '',
+    },
+    {
+      type: 'compare',
+      storyRole: 'problem',
+      compareLeftTitle: `WITHOUT ${quoted.satLabels[0] || 'STRUCTURE'}`,
+      compareLeftBody: `• Manual coordination across ${term1}\n• Unclear handoffs into ${term2}\n• Slow recovery when load shifts`,
+      compareRightTitle: `WITH ${quoted.satLabels[1] || 'DESIGN'}`,
+      compareRightBody: `• Explicit ${term1} ownership\n• Focused ${term2} execution\n• Clear feedback across ${term3}`,
+      enTitle: enforceHeadlineSpecRule(`Where ${term1} breaks without clarity`, { isHook: false }),
+      arTitle: `لماذا يتعثر ${arSubject} عند غياب التصميم الواضح؟`,
+      enBody: sentences[1]
+        ? autoFitTextToLimits(sentences[1], 135)
+        : `Hidden friction around ${term1} quietly slows teams down long before metrics show an outage.`,
+      arBody: `الاحتكاك الصامت حول ${arSubject} يبطئ العمل يومياً قبل أن يظهر أي عطل كبير للمستخدمين.`,
+    },
+    {
+      type: 'row',
+      storyRole: 'mechanism',
+      diagramVariant: 'isolation',
+      diagramNodes: [
+        { label: quoted.satLabels[0] || 'INPUT RULE', sublabel: 'Clear entry contract', status: 'VALIDATED', icon: 'lock' },
+        { label: quoted.satLabels[1] || 'ACTIVE STEP', sublabel: 'Focused processing', status: 'ISOLATED', icon: 'cpu' },
+        { label: quoted.satLabels[2] || 'RESULT STATE', sublabel: 'Measured output', status: 'VERIFIED', icon: 'checkCircle' },
+      ],
+      diagramEdges: ['VALIDATE', 'DELIVER'],
+      diagramFooter: `${cleanSubject.toUpperCase().slice(0, 26)} • WORKFLOW`,
+      enTitle: enforceHeadlineSpecRule(`How ${term1} connects to ${term2}`, { isHook: false }),
+      arTitle: `ترابط ${arSubject} خطوة بخطوة.`,
+      enBody: sentences[2]
+        ? autoFitTextToLimits(sentences[2], 135)
+        : `Separating ${term1} checks from ${term2} keeps failures contained and outcomes predictable.`,
+      arBody: `فصل خطوات التحقق عن مرحلة التنفيذ في ${arSubject} يحصر الأخطاء ويحافظ على استقرار النتيجة.`,
+    },
+    {
+      type: 'row',
+      storyRole: 'mechanism',
+      diagramVariant: 'topology',
+      diagramNodes: [
+        { label: quoted.satLabels[0] || 'SOURCE EVENT', sublabel: 'Inbound signal', status: 'INBOUND', icon: 'network' },
+        { label: quoted.satLabels[1] || 'COORDINATOR', sublabel: 'Direct state transition', status: 'ROUTED', icon: 'gitBranch' },
+        { label: quoted.satLabels[2] || 'DURABLE ACK', sublabel: 'Confirmed result', status: 'COMMITTED', icon: 'checkCircle' },
+      ],
+      diagramEdges: ['ROUTE', 'COMMIT'],
+      diagramFooter: `${cleanSubject.toUpperCase().slice(0, 26)} • TOPOLOGY`,
+      enTitle: enforceHeadlineSpecRule(`Request flow through ${term1}`, { isHook: false }),
+      arTitle: `مسار التدفق والتنسيق داخل ${arSubject}.`,
+      enBody: `Keeping routing direct between ${term1} and ${term2} removes hidden queues and contention stalls.`,
+      arBody: `الربط المباشر بين مراحل ${arSubject} يمنع الطوابير المخفية ويحافظ على ثبات سرعة الاستجابة.`,
+    },
+    {
+      type: 'code',
+      storyRole: 'mechanism',
+      codeFileName: `${slug}.yaml`,
+      codeLanguage: 'yaml',
+      codeSnippet: `# Explicit ${cleanSubject.slice(0, 26)} rules\nprimary: "${term1}"\nhandoff: "${term2}"\ncheck: "${term3}"`,
+      enTitle: enforceHeadlineSpecRule(`Codifying ${term1} rules cleanly`, { isHook: false }),
+      arTitle: `تثبيت قواعد ${arSubject} بشكل واضح.`,
+      enBody: `Putting ${term1} and ${term2} expectations into explicit configuration removes guesswork across teams.`,
+      arBody: `توثيق قواعد ${arSubject} في إعدادات واضحة يلغي الاجتهاد الشخصي ويمنع تضارب البيئات.`,
+    },
+    {
+      type: 'number',
+      storyRole: 'proof',
+      stepNumber: '03',
+      stepLabel: `CHECK // ${quoted.satLabels[3] || 'RELIABILITY'}`,
+      centerIcon: 'gauge',
+      enTitle: enforceHeadlineSpecRule(`Spotting ${term1} bottlenecks early`, { isHook: false }),
+      arTitle: `قياس الأثر الفعلي في ${arSubject}.`,
+      enBody: `Measuring ${term1} and ${term3} directly shows whether changes save real user time and budget.`,
+      arBody: `المراقبة الواضحة لـ ${arSubject} تكشف الاختناقات مبكراً قبل أن يشتكي العملاء من البطء.`,
+    },
+    {
+      type: 'row',
+      storyRole: 'takeaway',
+      diagramVariant: 'takeaway',
+      icons: [{ icon: 'alertCircle', label: 'Cost' }, { icon: 'checkCircle', label: 'Payoff' }],
+      diagramNodes: [
+        { label: quoted.satLabels[0] || 'BASELINE', sublabel: 'Old default habit', status: 'BEFORE', icon: 'layers' },
+        { label: quoted.satLabels[1] || 'FOCUSED RULE', sublabel: 'Clear boundary', status: 'APPLIED', icon: 'zap' },
+        { label: quoted.satLabels[4] || 'DURABLE WIN', sublabel: 'Steadier delivery', status: 'AFTER', icon: 'checkCircle' },
+      ],
+      diagramEdges: ['SIMPLIFY', 'SHIP'],
+      diagramFooter: `TAKEAWAY: ${cleanSubject.toUpperCase().slice(0, 28)}`,
+      enTitle: enforceHeadlineSpecRule(`Focus on ${term1} before adding layers`, { isHook: false }),
+      arTitle: `ابدأ بضبط الأساسيات في ${arSubject} أولاً.`,
+      enBody: `Teams win with ${cleanSubject} when they tighten ${term1} and ${term2} before introducing extra moving parts.`,
+      arBody: `نجاح ${arSubject} يبدأ بتبسيط القواعد الأساسية ووضوح المسؤوليات قبل إضافة أي تعقيد جديد.`,
+    },
+    {
+      type: 'cta',
+      storyRole: 'cta',
+      enTitle: enforceHeadlineSpecRule(`Apply ${cleanSubject} with Marrok`, { isCta: true }),
+      arTitle: `هل تطبّق ${arSubject} في مشروعك الآن؟`,
+      enBody: `Turn this ${cleanSubject} lesson into clear execution steps with the Marrok engineering team.`,
+      arBody: `شاركنا التحدي الذي تواجهه مع ${arSubject} أو راسل فريق مروك لتصميم حل عملي لمشروعك.`,
+      ctaText: 'Save & Message Marrok  •  احفظ وراسلنا',
+      url: opts.brandUrl,
+      enCredit: '',
+      arCredit: `${opts.brand} · ${opts.domainCategory || 'تصميم الأنظمة والمنتجات'}`,
     },
   ];
 

@@ -298,21 +298,38 @@ describe('Automated Post Gathering, Review Queue & Peak-Hour (10 · 12 · 18) Pr
     const cleanDeck: CarouselData = JSON.parse(JSON.stringify(DEFAULT_STARTER_DECK));
     const arWords = ['الأولى', 'الثانية', 'الثالثة', 'الرابعة', 'الخامسة', 'السادسة', 'السابعة', 'الثامنة'];
     cleanDeck.slides.forEach((s, i) => {
-      s.enTitle = `Rust Proxy Architecture Step ${i + 1}.`;
-      s.arTitle = `هندسة الخادم الوكيل المرحلة ${arWords[i] || 'الحديثة'}.`;
+      s.enTitle =
+        i === 0 ? '70% lower CPU across edge nodes.' : `Rust Proxy Architecture Step ${i + 1}.`;
+      s.arTitle =
+        i === 0
+          ? 'خفض استهلاك المعالج بنسبة 70% في العقد.'
+          : `هندسة الخادم الوكيل المرحلة ${arWords[i] || 'الحديثة'}.`;
       s.enBody =
         i === 0
+          ? ''
+          : i === 1
           ? 'Reduced CPU utilization by 70% and memory by 67% across edge nodes.'
           : `Work-stealing async connection pool isolates stage ${i + 1} workload.`;
-      s.arBody = `تقليل استهلاك المعالج عبر مشاركة الاتصالات في المرحلة ${arWords[i] || 'الحديثة'} بنجاح.`;
+      s.arBody =
+        i === 0
+          ? ''
+          : `تقليل استهلاك المعالج عبر مشاركة الاتصالات في المرحلة ${arWords[i] || 'الحديثة'} بنجاح.`;
       s.metricValue = s.type === 'metric' || i === 0 ? '70%' : undefined;
+      if (i === 0 && s.type === 'hub') {
+        s.satLabels = ['Edge Proxies', 'Connection Pool', 'Async Workers', 'Zero-Copy Buffer', 'TLS Offload', 'Tokio Runtime'];
+        s.hubNodeReasons = s.satLabels.map((label) => ({
+          label,
+          quotedFrom: label,
+          reason: `Quoted from Rust Proxy architecture benchmark ("${label}").`,
+        }));
+      }
     });
 
     const savedResult = await runAutopilotForTopic({ headers: {} } as any, sampleTopic, [], {
       customGenerator: async () => ({
         deck: cleanDeck,
         engine: 'grounded',
-        model: 'gemini-3.8-flash',
+        model: 'gemini-4-hydrogen',
         statusCode: 200,
       }),
     });

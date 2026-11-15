@@ -50,8 +50,140 @@ export async function drawMetricSlide(
   ctx.stroke();
   ctx.restore();
 
-  // 4. Header Row: Metric Icon Badge + Real Source Term Label (>=24px)
+  // 4. Determine Numeric Win vs. Non-Numeric Quote / Contrast Claim Card
   const smart = resolveSmartSlideVisuals(slide, 1, false);
+  const rawMetricVal = (slide.metricValue !== undefined ? slide.metricValue : smart.metricValue) || '';
+  const hasNumeric = Boolean(rawMetricVal && /\d/.test(rawMetricVal) && slide.chartDirection !== 'none');
+  const hookClaim = !hasNumeric ? slide.hookClaimCard || smart.hookClaimCard : undefined;
+
+  if (!hasNumeric && hookClaim) {
+    // Top eyebrow pill (>= 24px)
+    const iconBadgeSize = 48;
+    const iconBadgeX = cardX + 36;
+    const iconBadgeY = cardY + 28;
+    drawRoundRect(ctx, iconBadgeX, iconBadgeY, iconBadgeSize, iconBadgeSize, 14, `${theme.accent}22`, `${theme.accent}55`, 1.5);
+    const claimIcon = await loadIconImage(slide.metricIcon || (hookClaim.mode === 'contrast' ? 'sliders' : 'sparkles'), theme.accent);
+    drawTintedImage(ctx, claimIcon, iconBadgeX + 10, iconBadgeY + 10, 28, 28, theme.accent);
+
+    const badgeText = (hookClaim.badge || 'KEY INSIGHT').toUpperCase();
+    const labelX = iconBadgeX + iconBadgeSize + 16;
+    ctx.save();
+    const fitBadge = fitTextInBox(ctx, badgeText, cardX + cardW - labelX - 32, 24, '"Plus Jakarta Sans", monospace', '700', {
+      minFontSize: 24,
+      ellipsis: false,
+    });
+    ctx.font = `700 ${Math.max(24, fitBadge.fontSize)}px "Plus Jakarta Sans", monospace`;
+    ctx.fillStyle = theme.accent;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(fitBadge.lines[0] || badgeText, labelX, iconBadgeY + iconBadgeSize / 2);
+    ctx.restore();
+
+    if (hookClaim.mode === 'contrast' && hookClaim.beforeLabel && hookClaim.afterLabel) {
+      // Side-by-side Before / After contrast boxes + claim statement below (>= 24px everywhere)
+      const panelGap = 20;
+      const panelW = Math.floor((cardW - 72 - panelGap) / 2);
+      const panelY = cardY + 104;
+      const panelH = 148;
+      const leftX = cardX + 36;
+      const rightX = leftX + panelW + panelGap;
+
+      drawRoundRect(ctx, leftX, panelY, panelW, panelH, 20, 'rgba(148, 163, 184, 0.10)', 'rgba(148, 163, 184, 0.35)', 1.5);
+      drawRoundRect(ctx, rightX, panelY, panelW, panelH, 20, `${theme.accent}18`, theme.accent, 2);
+
+      const fitLeft = fitTextInBox(ctx, hookClaim.beforeLabel, panelW - 32, 30, '"Plus Jakarta Sans", sans-serif', '700', {
+        maxLines: 3,
+        minFontSize: 24,
+        lineHeightFactor: 1.25,
+        ellipsis: false,
+      });
+      const fitRight = fitTextInBox(ctx, hookClaim.afterLabel, panelW - 32, 30, '"Plus Jakarta Sans", sans-serif', '800', {
+        maxLines: 3,
+        minFontSize: 24,
+        lineHeightFactor: 1.25,
+        ellipsis: false,
+      });
+
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#CBD5E1';
+      ctx.font = `700 ${Math.max(24, fitLeft.fontSize)}px "Plus Jakarta Sans", sans-serif`;
+      const leftMidY = panelY + panelH / 2 - ((fitLeft.lines.length - 1) * fitLeft.lineHeight) / 2;
+      fitLeft.lines.forEach((ln, idx) => ctx.fillText(ln, leftX + panelW / 2, leftMidY + idx * fitLeft.lineHeight));
+
+      ctx.fillStyle = theme.textWhite;
+      ctx.font = `800 ${Math.max(24, fitRight.fontSize)}px "Plus Jakarta Sans", sans-serif`;
+      const rightMidY = panelY + panelH / 2 - ((fitRight.lines.length - 1) * fitRight.lineHeight) / 2;
+      fitRight.lines.forEach((ln, idx) => ctx.fillText(ln, rightX + panelW / 2, rightMidY + idx * fitRight.lineHeight));
+      ctx.restore();
+
+      // Statement strip below contrast panels
+      const fitStmt = fitTextInBox(ctx, hookClaim.statement, cardW - 88, 30, '"Plus Jakarta Sans", sans-serif', '700', {
+        maxLines: 2,
+        minFontSize: 24,
+        lineHeightFactor: 1.3,
+        ellipsis: false,
+      });
+      ctx.save();
+      ctx.font = `700 ${Math.max(24, fitStmt.fontSize)}px "Plus Jakarta Sans", sans-serif`;
+      ctx.fillStyle = theme.textWhite;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const stmtStartY = cardY + 300;
+      fitStmt.lines.forEach((ln, idx) => ctx.fillText(ln, SAFE_CONTENT_CENTER_X, stmtStartY + idx * fitStmt.lineHeight));
+      ctx.restore();
+    } else {
+      // Quote-Style Claim Card (>= 26px headline quote, clean quotation accent)
+      ctx.save();
+      ctx.font = '900 72px Georgia, serif';
+      ctx.fillStyle = `${theme.accent}44`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText('“', cardX + 36, cardY + 96);
+      ctx.restore();
+
+      const fitQuote = fitTextInBox(ctx, hookClaim.statement, cardW - 110, 42, '"Plus Jakarta Sans", sans-serif', '800', {
+        maxLines: 4,
+        minFontSize: 26,
+        lineHeightFactor: 1.32,
+        ellipsis: false,
+      });
+      ctx.save();
+      ctx.font = `800 ${Math.max(26, fitQuote.fontSize)}px "Plus Jakarta Sans", sans-serif`;
+      ctx.fillStyle = theme.textWhite;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const totalQuoteH = (fitQuote.lines.length - 1) * fitQuote.lineHeight;
+      const quoteCenterY = cardY + 235 - totalQuoteH / 2;
+      fitQuote.lines.forEach((ln, idx) => ctx.fillText(ln, SAFE_CONTENT_CENTER_X, quoteCenterY + idx * fitQuote.lineHeight));
+      ctx.restore();
+    }
+
+    if (hookClaim.attribution) {
+      const fitAttr = fitTextInBox(ctx, hookClaim.attribution, cardW - 96, 24, '"Plus Jakarta Sans", monospace', '700', {
+        maxLines: 1,
+        minFontSize: 24,
+        ellipsis: false,
+      });
+      const pillW = Math.min(ctx.measureText(fitAttr.lines[0] || hookClaim.attribution).width + 52, cardW - 96);
+      const pillH = 46;
+      const pillX = SAFE_CONTENT_CENTER_X - pillW / 2;
+      const pillY = cardY + cardH - 64;
+      drawRoundRect(ctx, pillX, pillY, pillW, pillH, 23, `${theme.accent}1A`, `${theme.accent}55`, 1.5);
+      ctx.save();
+      ctx.font = `700 24px "Plus Jakarta Sans", monospace`;
+      ctx.fillStyle = theme.accent;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(fitAttr.lines[0] || hookClaim.attribution, SAFE_CONTENT_CENTER_X, pillY + pillH / 2);
+      ctx.restore();
+    }
+
+    return 670;
+  }
+
+  // 4b. Header Row: Metric Icon Badge + Real Source Term Label (>=24px)
   const iconBadgeSize = 48;
   const iconBadgeX = cardX + 36;
   const iconBadgeY = cardY + 28;
@@ -61,9 +193,9 @@ export async function drawMetricSlide(
   const iconImg = await loadIconImage(mIcon, theme.accent);
   drawTintedImage(ctx, iconImg, iconBadgeX + 10, iconBadgeY + 10, 28, 28, theme.accent);
 
-  const rawMetricLabel = slide.metricLabel || smart.metricLabel || 'SYSTEM BENCHMARK';
-  const cleanMetricLabel = /EXPOSURE\s+METRIC/i.test(rawMetricLabel)
-    ? smart.metricLabel || 'RESPONSE DELAY'
+  const rawMetricLabel = slide.metricLabel || smart.metricLabel || 'MEASURED OUTCOME';
+  const cleanMetricLabel = /EXPOSURE\s+METRIC|TELEMETRY\s+STAT/i.test(rawMetricLabel)
+    ? smart.metricLabel || 'MEASURED OUTCOME'
     : rawMetricLabel.toUpperCase();
   const metricLabelX = iconBadgeX + iconBadgeSize + 16;
   ctx.save();
@@ -84,7 +216,7 @@ export async function drawMetricSlide(
   ctx.restore();
 
   // 5. Before (struck-through) + Giant After Hero Value (always the win!)
-  const metricVal = slide.metricValue || smart.metricValue || '10x';
+  const metricVal = rawMetricVal;
   const beforeVal = (slide.metricBeforeValue || smart.metricBeforeValue || '').trim();
   const heroY = cardY + 178;
 
@@ -159,9 +291,9 @@ export async function drawMetricSlide(
   ctx.restore();
 
   // 6. Data-Integrity Chart: Direction matches the message (downward for drops/cuts, upward for gains, bar for comparisons, none when no data)
-  const rawDiffText = slide.metricDiff || smart.metricDiff || '▲ Measurable architectural speedup';
+  const rawDiffText = slide.metricDiff || smart.metricDiff || 'MEASURED RESULT';
   const cleanDiffText = /Dropping\s+Exposure/i.test(rawDiffText)
-    ? smart.metricDiff || '8x FASTER RESPONSE'
+    ? smart.metricDiff || 'MEASURED RESULT'
     : rawDiffText;
 
   const combinedMsg = `${slide.enTitle || ''} ${slide.enBody || ''} ${cleanDiffText}`;
@@ -248,7 +380,7 @@ export async function drawMetricSlide(
       ctx.fillStyle = '#081216';
       ctx.fill();
 
-      // Gauge Baseline Axis (Step 6: 12px BASELINE / 50% / PEAK // P99 labels deleted so all text is >=24px)
+      // Gauge Baseline Axis
       ctx.beginPath();
       ctx.strokeStyle = `${theme.accent}40`;
       ctx.lineWidth = 1.5;

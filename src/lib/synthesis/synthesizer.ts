@@ -22,13 +22,24 @@ import { enrichCarouselDiagrams } from './enrichment.ts';
 import { balanceCarouselVisualPacing } from './pacing.ts';
 import { synthesizeUniversalCarousel } from './universalExtractor.ts';
 import { seedSingleSlideTakeaways } from './singleSlideCondenser.ts';
+import { InsufficientSourceError, validateSourceSufficiency } from './inputSufficiency.ts';
+export { InsufficientSourceError } from './inputSufficiency.ts';
 
 /**
  * Universal Synthesis Engine:
- * Generates an authentic, topic-accurate 8-slide MARROK carousel directly from user input.
- * Fully algorithmic extraction: zero hardcoded topic presets.
+ * Generates an authentic, topic-accurate MARROK carousel directly from user input.
+ * Rejects thin/empty inputs before generating placeholder text.
  */
 export function synthesizeCarousel(input: SynthesisInput): CarouselData {
+  const sufficiency = validateSourceSufficiency({
+    prompt: input.prompt,
+    imageFileName: input.imageFileName,
+    hasMedia: input.hasMedia,
+  });
+  if (!sufficiency.isSufficient) {
+    throw new InsufficientSourceError(sufficiency);
+  }
+
   let rawText = (input.prompt || '').trim();
   if (!rawText && input.imageFileName) {
     const semanticTopic = extractTopicFromFileName(input.imageFileName);
@@ -37,13 +48,14 @@ export function synthesizeCarousel(input: SynthesisInput): CarouselData {
     }
   }
 
-  // If input is still empty or a non-semantic filename, fall back to domain hint or system architecture
   if (!rawText || isNonSemanticFileName(rawText)) {
-    if (input.categoryHint && input.categoryHint !== 'auto') {
+    if (input.hasMedia && input.categoryHint && input.categoryHint !== 'auto') {
       const hintMatch = DOMAIN_RULES.find((r) => r.category.includes(input.categoryHint!));
       rawText = hintMatch?.category || input.categoryHint;
+    } else if (input.hasMedia) {
+      rawText = 'Uploaded visual source analysis for social post';
     } else {
-      rawText = 'System Architecture & Engineering';
+      throw new InsufficientSourceError(sufficiency);
     }
   }
 
@@ -94,9 +106,9 @@ export function synthesizeCarousel(input: SynthesisInput): CarouselData {
   const { headline, cleanTitle, cleanSubject, arSubject } = extractCleanHeadline(rawText, domainCategory);
   const { lines, metrics } = extractUserInsights(rawText);
 
-  const rawMetric1 = metrics[0] || activeRule.metricFallback;
-  const metric1 = normalizePunctuation(stripMarkdown(rawMetric1)).replace(/[.?!]+$/, '');
-  const arMetric1 = sanitizeMetricForArabic(metric1);
+  const rawMetric1 = metrics[0] || '';
+  const metric1 = rawMetric1 ? normalizePunctuation(stripMarkdown(rawMetric1)).replace(/[.?!]+$/, '') : '';
+  const arMetric1 = metric1 ? sanitizeMetricForArabic(metric1) : '';
 
   // 4. Target Slide Count (Spec §7: 8 slides standard for carousel, 1 slide for Single-Slide Post)
   const isSinglePost = input.postFormat === 'single' || input.targetSlideCount === 1;
@@ -134,7 +146,7 @@ export function synthesizeCarousel(input: SynthesisInput): CarouselData {
       ...chosen,
       type: chosen.type === 'cta' || chosen.type === 'hub' ? 'poster' : chosen.type,
       enTitle: hookSlide?.enTitle || chosen.enTitle || headline,
-      arTitle: hookSlide?.arTitle || chosen.arTitle || `تحليل معماري لمنظومة ${arSubject}.`,
+      arTitle: hookSlide?.arTitle || chosen.arTitle || `قراءة في ${arSubject}.`,
       enBody: chosen.enBody || hookSlide?.enBody,
       arBody: chosen.arBody || hookSlide?.arBody,
       takeaways: seedSingleSlideTakeaways(chosen, domainCategory),
@@ -145,10 +157,17 @@ export function synthesizeCarousel(input: SynthesisInput): CarouselData {
 
     slides = enrichCarouselDiagrams([standaloneSlide], rawText, domainCategory, brand);
   } else {
-    // Strict Safety Invariant: Guarantee Slide 1 is hub, final slide is cta, and NO mid-deck slide has type 'cta'
+    // Enforce Story Arc: Hook (slide 1) -> Problem/Mechanism/Proof/Takeaway -> CTA (last slide)
     slides = slides.map((s, idx) => {
-      if (idx === 0) return { ...s, type: 'hub' };
-      if (idx === slides.length - 1) return { ...s, type: 'cta' };
+      if (idx === 0) {
+        return {
+          ...s,
+          storyRole: 'hook' as const,
+          enBody: '',
+          arBody: '',
+        };
+      }
+      if (idx === slides.length - 1) return { ...s, type: 'cta', storyRole: 'cta' as const };
       if (s.type === 'cta' || s.type === 'hub') return { ...s, type: 'row' };
       return s;
     });
@@ -156,43 +175,64 @@ export function synthesizeCarousel(input: SynthesisInput): CarouselData {
     // Dynamic Diagram & Satellite Enrichment
     slides = enrichCarouselDiagrams(slides, rawText, domainCategory, brand);
     slides = balanceCarouselVisualPacing(slides);
+    if (slides.length > 1) {
+      slides = slides.map((s, idx) =>
+        idx === 0 ? { ...s, storyRole: 'hook' as const, enBody: '', arBody: '' } : s
+      );
+    }
   }
 
-  // Derive meaningful bullet takeaways for captions directly from synthesized deck if user provided none
-  const userPoint1 = lines[0] || slides[1]?.enBody || slides[2]?.enBody || `Scaling ${cleanSubject} requires rethinking state isolation and memory allocation patterns.`;
-  const userPoint2 = lines[1] || slides[slides.length - 2]?.enBody || `Decoupled authoritative state ensures compute resources scale with actual payload size.`;
+  // Derive meaningful bullet takeaways for captions directly from synthesized deck
+  const userPoint1 = lines[0] || slides[1]?.enBody || slides[2]?.enBody || `What breaks first in ${cleanSubject} is rarely what teams monitor.`;
+  const userPoint2 = lines[1] || slides[slides.length - 2]?.enBody || `Every choice in ${cleanSubject} trades short-term speed against long-term control.`;
 
   // 6. Universal Hook Variants (A/B testing) adhering strictly to Spec §8 with dynamic cover archetypes
+  const hasRealMetric = Boolean(metric1);
   const hookVariants: HookVariant[] = [
     {
       tag: 'Curiosity & Shift',
       enTitle: slides[0]?.enTitle || headline,
-      arTitle: slides[0]?.arTitle || `تحليل معماري لمنظومة ${arSubject}`,
-      enBody: slides[0]?.enBody || `How architectural redesign solved scalability bottlenecks in ${domainCategory.toLowerCase()}.`,
-      arBody: slides[0]?.arBody || `كيف أدت التحديات الهندسية إلى إعادة التفكير بالكامل في بنية النظام.`,
+      arTitle: slides[0]?.arTitle || `ما الذي يتغير فعلاً في ${arSubject}؟`,
+      enBody: '',
+      arBody: '',
       centerIcon: slides[0]?.centerIcon || centerIcon,
-      coverArchetype: 'hub',
-      hookKicker: slides[0]?.hookKicker || `ARCHITECTURE SHIFT • ${cleanSubject.toUpperCase().slice(0, 16)}`,
+      coverArchetype: slides[0]?.type || 'hub',
+      hookKicker: slides[0]?.hookKicker || `${cleanSubject.toUpperCase().slice(0, 18)}`,
     },
+    ...(hasRealMetric
+      ? [
+          {
+            tag: 'Hard Metrics & Scale',
+            enTitle: enforceHeadlineSpecRule(`How ${cleanSubject} hits ${metric1}`, { isHook: true }),
+            arTitle: `الأرقام الفعلية خلف ${arSubject} (${arMetric1})`,
+            enBody: '',
+            arBody: '',
+            centerIcon: 'gauge',
+            coverArchetype: 'metric' as const,
+            hookKicker: `MEASURED WIN • ${metric1.toUpperCase().slice(0, 14)}`,
+          },
+        ]
+      : [
+          {
+            tag: 'Core Claim',
+            enTitle: enforceHeadlineSpecRule(slides[1]?.enTitle || headline, { isHook: true }),
+            arTitle: slides[1]?.arTitle || `الفكرة الأهم حول ${arSubject}`,
+            enBody: '',
+            arBody: '',
+            centerIcon: 'quote',
+            coverArchetype: 'metric' as const,
+            hookKicker: 'KEY CLAIM',
+          },
+        ]),
     {
-      tag: 'Hard Metrics & Scale',
-      enTitle: enforceHeadlineSpecRule(`How ${cleanSubject} hits ${metric1}`, { isHook: true }),
-      arTitle: `معايير وأرقام الأداء الحقيقية (${arMetric1})`,
-      enBody: `Key production benchmarks (${metric1}) and lessons learned under maximum concurrency.`,
-      arBody: `أهم معايير الأداء والدروس المستفادة (${arMetric1}) من تشغيل الأنظمة تحت أقصى ضغط.`,
-      centerIcon: 'gauge',
-      coverArchetype: 'metric',
-      hookKicker: `BENCHMARK SHOCK • ${metric1.toUpperCase().slice(0, 14)}`,
-    },
-    {
-      tag: 'Architecture Showdown',
-      enTitle: enforceHeadlineSpecRule(`Why ${cleanSubject} beats legacy limits`, { isHook: true }),
-      arTitle: `تجاوز اختناقات النظام المعمارية`,
-      enBody: `Moving beyond legacy bottlenecks to build modern high-efficiency software.`,
-      arBody: `تجاوز الأساليب القديمة لبناء برمجيات عالية الكفاءة والموثوقية.`,
+      tag: 'Contrasting Reality',
+      enTitle: enforceHeadlineSpecRule(`Why ${cleanSubject} shifts the model`, { isHook: true }),
+      arTitle: `المقارنة الحقيقية في ${arSubject}`,
+      enBody: '',
+      arBody: '',
       centerIcon: 'shieldAlert',
       coverArchetype: 'compare',
-      hookKicker: `PARADIGM VS LEGACY • ${cleanSubject.toUpperCase().slice(0, 14)}`,
+      hookKicker: `OLD VS NEW • ${cleanSubject.toUpperCase().slice(0, 14)}`,
     },
   ];
 
@@ -229,45 +269,42 @@ export function synthesizeCarousel(input: SynthesisInput): CarouselData {
       evidence: `Universal extractor metric scan from user input`,
     },
     {
-      text: `Core architectural mechanism: ${userPoint1}`,
+      text: `Key insight extracted: ${userPoint1}`,
       type: 'claim',
       verified: 'unverified',
-      evidence: `Universal NLP parsed insight from user text`,
+      evidence: `Parsed directly from source text`,
     },
     {
-      text: `Operational trade-offs and limits: ${userPoint2}`,
+      text: `Closing nuance / caveat: ${userPoint2}`,
       type: 'claim',
       verified: 'unverified',
-      evidence: `Spec §7 "Before You Switch / The Catch" hedge (offline draft)`,
+      evidence: `Spec §7 nuance / trade-off note (unverified draft)`,
     },
   ];
 
-  const slide1ArHeader = (slides[0]?.arTitle || `كيف تعمل منظومة ${arSubject}`).replace(/[:.]\s*\n+/g, ' — ').replace(/\n+/g, ' — ').trim();
+  const slide1ArHeader = (slides[0]?.arTitle || `قراءة في ${arSubject}`).replace(/[:.]\s*\n+/g, ' — ').replace(/\n+/g, ' — ').trim();
   const slide1EnHeader = (slides[0]?.enTitle || headline).replace(/[:.]\s*\n+/g, ' — ').replace(/\n+/g, ' — ').replace(/[:.]\s*$/, '').trim();
   const slide2Mechanism = (slides[1]?.enTitle || userPoint1).replace(/[.?!]+$/, '').trim();
   const slide2ArMechanism = (slides[1]?.arTitle || slides[1]?.arBody || '').split(/[.؟!،]/)[0].trim();
 
   const topicSeed = Array.from(slide1EnHeader).reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  const metricFragment = metric1 ? ` (${metric1})` : '';
   const openerVariants = [
     {
-      arLead: `${slide2ArMechanism || slide1ArHeader}: أين يكمن الاختناق الفعلي في بيئات الإنتاج؟`,
-      enLead: `Inside ${cleanSubject}: why ${slide2Mechanism.toLowerCase()} changes the production calculus (${metric1}).`,
+      arLead: `${slide2ArMechanism || slide1ArHeader} — ما الذي يحدث فعلياً وراء هذا الفارق؟`,
+      enLead: `Inside ${cleanSubject}: why ${slide2Mechanism.toLowerCase()} shifts real-world outcomes${metricFragment}.`,
     },
     {
-      arLead: `الأرقام وراء ${arSubject} (${metric1}): قراءة في البنية التنفيذية وحدود التوسع.`,
-      enLead: `When ${cleanSubject} hits production scale, ${slide2Mechanism.toLowerCase()} becomes the deciding factor.`,
+      arLead: `الأهم في ${arSubject}${metric1 ? ` (${metric1})` : ''}: النقطة التي يغفلها معظم الناس.`,
+      enLead: `When looking closely at ${cleanSubject}, ${slide2Mechanism.toLowerCase()} becomes the deciding factor.`,
     },
     {
-      arLead: `بعيداً عن العناوين السطحية — كيف تعالج منظومة ${arSubject} مشكلة ${slide2ArMechanism || 'الأداء'}؟`,
-      enLead: `Breaking down the engineering mechanics behind ${cleanSubject} and ${slide2Mechanism.toLowerCase()}.`,
+      arLead: `بعيداً عن الشعارات — كيف يتغير المشهد مع ${arSubject}؟`,
+      enLead: `Looking past the hype around ${cleanSubject} to examine ${slide2Mechanism.toLowerCase()}.`,
     },
     {
-      arLead: `من النظرية إلى التشغيل الفعلي: ما الذي يكشفه تحليل ${arSubject} عند مستوى ${metric1}؟`,
-      enLead: `From architecture to reality: how ${cleanSubject} handles ${slide2Mechanism.toLowerCase()} under load.`,
-    },
-    {
-      arLead: `معادلة التكلفة والأداء في ${arSubject}: قراءة تقنية في ${slide2ArMechanism || 'آليات التنفيذ'}.`,
-      enLead: `What the ${metric1} benchmark in ${cleanSubject} reveals about ${slide2Mechanism.toLowerCase()}.`,
+      arLead: `من الوعود النظرية إلى الواقع: ماذا تكشف تجربة ${arSubject}${metric1 ? ` عند ${metric1}` : ''}؟`,
+      enLead: `From theory to reality: what ${cleanSubject} actually looks like when ${slide2Mechanism.toLowerCase()}.`,
     },
   ];
   const chosenOpener = openerVariants[topicSeed % openerVariants.length];
@@ -276,18 +313,17 @@ export function synthesizeCarousel(input: SynthesisInput): CarouselData {
 
 ${chosenOpener.enLead}
 
-🔹 أبرز الآليات والنتائج / Key Engineering Takeaways:
-• Domain: ${domainCategory}
-• Core Mechanism: ${userPoint1}
-• Production Metric: ${metric1}
-• Operational Trade-off: ${userPoint2}
+🔹 أبرز النقاط / Key Highlights:
+• Topic: ${domainCategory}
+• Key Point: ${userPoint1}${metric1 ? `\n• Highlight Figure: ${metric1}` : ''}
+• Nuance: ${userPoint2}
 
-⚠️ Citations & Draft Facts (Offline Synthesizer Estimate):
-• Unverified offline draft — creator review required before publishing
-• No external source cited — add your primary source link before publishing
+⚠️ Citations & Draft Facts (Offline Draft):
+• No external source cited — verify all claims against your source before publishing
+• Add your primary source link before publishing
 
-👇 ${slides[slides.length - 1]?.arTitle || 'كيف تتعاملون مع هذا التحدي في بيئات الإنتاج لديكم؟'}
-${slides[slides.length - 1]?.enTitle || "What's your take on this architecture?"}
+👇 ${slides[slides.length - 1]?.arTitle || 'ما رأيك في هذا الطرح؟'}
+${slides[slides.length - 1]?.enTitle || 'How does this play out in your team?'}
 
 🎥 العلامة التجارية / Brand: https://marrok.org
 
@@ -295,18 +331,18 @@ ${hashtags}`;
 
   const captionVariants: CaptionVariant[] = [
     {
-      style: 'Executive Bulletins & Hard Metrics (Recommended)',
+      style: 'Direct & Insightful (Recommended)',
       caption: formattedBilingualCaption,
     },
     {
-      style: 'Narrative Breakdown & Story',
+      style: 'Narrative Story',
       caption: `${chosenOpener.arLead}
-الحل لا يكمن في الحلول المؤقتة، بل في إعادة تصميم المسار الهندسي من الجذور.
+القيمة الحقيقية لا تأتي من الشعارات، بل من فهم السبب الكامن وراء النتيجة.
 
-في هذه المراجعة التقنية لمنظومة ${cleanSubject}، نفكك كيف تتكامل آلية (${slide2Mechanism}) لتحقيق نتائج ملموسة (${metric1}) مع موازنة قيود التشغيل.
+في هذه المراجعة السريعة حول ${cleanSubject}، نركز على (${slide2Mechanism})${metric1 ? ` مع الرقم الأساسي (${metric1})` : ''} وما يعنيه عملياً.
 
-اسحب الشرائح لمتابعة التفصيل المعماري 👉
-Swipe through the slides for the full engineering breakdown.
+اسحب الشرائح لمتابعة التفاصيل 👉
+Swipe through for the full story.
 
 🔗 https://marrok.org
 
@@ -314,9 +350,9 @@ ${hashtags}`,
     },
   ];
 
-  const firstComment = `🔗 Add your primary source link here before publishing.\n\n${slides[slides.length - 1]?.enTitle || 'What are your thoughts on this architecture?'} Share your take below 👇`;
+  const firstComment = `🔗 Add your primary source link here before publishing.\n\n${slides[slides.length - 1]?.enTitle || 'Where do you agree or disagree?'} Share your perspective below 👇`;
   const shortCaption = `${chosenOpener.arLead}\n${chosenOpener.enLead} 👉`;
-  const screenHook = `${cleanSubject}: ${metric1}`;
+  const screenHook = metric1 ? `${cleanSubject}: ${metric1}` : slide1EnHeader;
 
   const sourceMeta: PostSourceMeta = {
     type: (input.inputMode === 'upload' || Boolean(input.imageFileName)) ? 'screenshot' : (rawText.length > 400 ? 'article' : 'notes'),

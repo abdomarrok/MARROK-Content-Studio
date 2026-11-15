@@ -187,6 +187,123 @@ async function fetchSafeImage(
   throw new Error('Too many redirects encountered');
 }
 
+export interface SafeRemoteTextOptions {
+  maxHops?: number;
+  maxBytes?: number;
+  timeoutMs?: number;
+  acceptHeader?: string;
+  userAgent?: string;
+  rejectOversize?: boolean;
+}
+
+/**
+ * Safely fetches remote text/XML/HTML over HTTPS with manual redirect traversal,
+ * hop-by-hop DNS & private/metadata IP validation (blocking 169.254.169.254, 127.0.0.1,
+ * localhost, and RFC1918/ULA ranges), redirect hop cap, and streaming response byte limit.
+ */
+export async function fetchSafeRemoteText(
+  initialUrl: string,
+  options?: SafeRemoteTextOptions
+): Promise<{ response: globalThis.Response; finalUrl: string; text: string; byteLength: number }> {
+  const maxHops = options?.maxHops ?? 3;
+  const maxBytes = options?.maxBytes ?? 400_000;
+  const timeoutMs = options?.timeoutMs ?? 6000;
+  const acceptHeader = options?.acceptHeader ?? 'text/plain,text/html,application/xml,*/*;q=0.8';
+  const userAgent = options?.userAgent ?? 'MARROK-Content-Gatherer/2.0';
+  const rejectOversize = options?.rejectOversize ?? false;
+
+  let currentUrl = initialUrl;
+  for (let hop = 0; hop <= maxHops; hop++) {
+    if (!isAllowedProxyUrl(currentUrl, false)) {
+      throw new Error('SSRF_BLOCKED_URL: Invalid or blocked URL. Only public https:// URLs are permitted.');
+    }
+
+    const parsed = new URL(currentUrl);
+    const isSafe = await resolveAndValidateHost(parsed.hostname);
+    if (!isSafe) {
+      throw new Error('SSRF_BLOCKED_IP: Target hostname resolved to a restricted or private IP address.');
+    }
+
+    const response = await fetch(currentUrl, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: {
+        'User-Agent': userAgent,
+        Accept: acceptHeader,
+      },
+    });
+
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      const location = response.headers.get('location');
+      if (!location) {
+        throw new Error(`Upstream redirect (${response.status}) missing Location header.`);
+      }
+      if (hop === maxHops) {
+        throw new Error(`Exceeded maximum redirect hops (${maxHops}).`);
+      }
+      currentUrl = new URL(location, currentUrl).toString();
+      continue;
+    }
+
+    const contentLengthHeader = response.headers.get('content-length');
+    if (contentLengthHeader) {
+      const declaredBytes = Number.parseInt(contentLengthHeader, 10);
+      if (Number.isFinite(declaredBytes) && declaredBytes > maxBytes && rejectOversize) {
+        throw new Error(`RESPONSE_TOO_LARGE: Content-Length ${declaredBytes} exceeds ${maxBytes} byte limit.`);
+      }
+    }
+
+    let text = '';
+    let byteLength = 0;
+    if (response.body && typeof response.body.getReader === 'function') {
+      const reader = response.body.getReader();
+      const chunks: Buffer[] = [];
+      let total = 0;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (!value) continue;
+          const remaining = maxBytes - total;
+          if (remaining <= 0) {
+            if (rejectOversize) {
+              throw new Error(`RESPONSE_TOO_LARGE: Stream exceeded ${maxBytes} byte limit.`);
+            }
+            break;
+          }
+          if (value.byteLength > remaining) {
+            if (rejectOversize) {
+              throw new Error(`RESPONSE_TOO_LARGE: Stream exceeded ${maxBytes} byte limit.`);
+            }
+            chunks.push(Buffer.from(value.subarray(0, remaining)));
+            total += remaining;
+            break;
+          }
+          chunks.push(Buffer.from(value));
+          total += value.byteLength;
+        }
+      } finally {
+        await reader.cancel().catch(() => {});
+      }
+      const combined = Buffer.concat(chunks);
+      byteLength = combined.byteLength;
+      text = combined.toString('utf-8');
+    } else {
+      const rawBuf = Buffer.from(await response.arrayBuffer());
+      if (rawBuf.byteLength > maxBytes && rejectOversize) {
+        throw new Error(`RESPONSE_TOO_LARGE: Payload exceeded ${maxBytes} byte limit.`);
+      }
+      const capped = rawBuf.byteLength > maxBytes ? rawBuf.subarray(0, maxBytes) : rawBuf;
+      byteLength = capped.byteLength;
+      text = capped.toString('utf-8');
+    }
+
+    return { response, finalUrl: currentUrl, text, byteLength };
+  }
+
+  throw new Error('Too many redirects encountered');
+}
+
 /**
  * CORS-safe image proxy with strict HTTPS + SSRF protection, 2MB size cap, CSP sandbox headers, and SVG sanitization.
  */

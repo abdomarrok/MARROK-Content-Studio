@@ -14,6 +14,7 @@ import {
   Download,
   Loader2,
   Sparkles,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   CarouselData,
@@ -28,6 +29,11 @@ import {
   isVideoSlide,
   getSlideMediaUrl,
 } from '../../../lib/canvas/constants.ts';
+import {
+  trackAndReplaceBlobUrl,
+  revokeBlobUrl,
+  isBlobObjectUrl,
+} from '../../../lib/media/blobUrlRegistry.ts';
 
 export const EXPECTATIONS_VS_REALITY_MEME_URL = '/assets/aistudio/1793547809949_4a78bc04.jpg';
 
@@ -145,6 +151,7 @@ export const ImageArchetypeEditor: React.FC<ImageArchetypeEditorProps> = ({
         try {
           const blobUrl = URL.createObjectURL(file);
           if (blobUrl) {
+            trackAndReplaceBlobUrl(currentSlide.videoUrl, blobUrl);
             applyVideoSource(blobUrl);
             return;
           }
@@ -172,6 +179,7 @@ export const ImageArchetypeEditor: React.FC<ImageArchetypeEditorProps> = ({
       }
 
       if (isMemeMode) {
+        revokeBlobUrl(currentSlide.videoUrl);
         if (onUpdateCarouselField) {
           onUpdateCarouselField('category', 'TECH HUMOR & LOGIC');
         }
@@ -347,7 +355,8 @@ export const ImageArchetypeEditor: React.FC<ImageArchetypeEditorProps> = ({
               <button
                 type="button"
                 data-testid="clear-media-btn"
-                onClick={() =>
+                onClick={() => {
+                  revokeBlobUrl(currentSlide.videoUrl);
                   applySlideBatchUpdates({
                     mediaType: undefined,
                     videoUrl: '',
@@ -355,8 +364,8 @@ export const ImageArchetypeEditor: React.FC<ImageArchetypeEditorProps> = ({
                     videoFileName: undefined,
                     imageUrl: '',
                     imageFrameMode: 'standard',
-                  })
-                }
+                  });
+                }}
                 className="flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-semibold cursor-pointer whitespace-nowrap"
                 title="Clear attached media and return to schematic diagram"
               >
@@ -366,6 +375,18 @@ export const ImageArchetypeEditor: React.FC<ImageArchetypeEditorProps> = ({
             )}
           </div>
         </div>
+
+        {isBlobObjectUrl(currentSlide.videoUrl) && (
+          <div
+            data-testid="blob-video-warning"
+            className="flex items-start gap-2 rounded-lg border border-amber-500/35 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-200"
+          >
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <span>
+              <strong>Session-only video preview (blob: URL):</strong> Local video blobs cannot be saved to the Vault or scheduled after closing this tab. Export the rendered <strong>MP4 / WebM</strong> video directly or clear/replace with a persistent video before saving.
+            </span>
+          </div>
+        )}
 
         <input
           ref={fileInputRef}

@@ -6,10 +6,15 @@ import {
   signCloudinaryParams,
   computeFreePlanQuotaStats,
   sweepExpiredCloudinaryAssets,
+  handleGetPublishStatus,
   handleDispatchPublish,
   handleManagePublishedPost,
 } from '../../api/controllers/publishController.ts';
-import { saveStoredPosts } from '../../api/controllers/postsController.ts';
+import { loadStoredPosts, saveStoredPosts } from '../../api/controllers/postsController.ts';
+import {
+  runScheduledPromotion,
+  config as scheduledPromoteConfig,
+} from '../../netlify/functions/scheduled-promote.ts';
 import {
   buildLocalScheduledIso,
   buildMetricoolCsvRowFromDeck,
@@ -660,6 +665,88 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
     expect(dispatchBody.post.publishFailed).toBe(true);
     expect(dispatchBody.post.postStatus).toBe('validated');
     expect(dispatchBody.post.postedAt).toBeUndefined();
+  });
+
+  it('keeps GET /api/publish/status strictly read-pure and delegates overdue promotion & +1h cleanup to Netlify Scheduled Function scheduled-promote', async () => {
+    expect(scheduledPromoteConfig.schedule).toBe('*/15 * * * *');
+
+    const tenMinutesAgoIso = new Date(Date.now() - 10 * 60_000).toISOString();
+    const seedPosts: SavedPostRecord[] = [
+      {
+        id: 'post_cron_due_1',
+        title: 'Overdue Staged Approved Post',
+        category: 'AI',
+        postStatus: 'validated',
+        humanApproved: true,
+        createdAt: tenMinutesAgoIso,
+        updatedAt: tenMinutesAgoIso,
+        creatorHandle: '@MARROK',
+        slideCount: 2,
+        qaPassed: true,
+        deck: DEFAULT_STARTER_DECK,
+        scheduledFor: tenMinutesAgoIso,
+        cloudinaryPublicIds: ['local_staging/cron_s1'],
+      },
+      {
+        id: 'post_cron_unapproved',
+        title: 'Overdue Unapproved Post',
+        category: 'AI',
+        postStatus: 'validated',
+        humanApproved: false,
+        createdAt: tenMinutesAgoIso,
+        updatedAt: tenMinutesAgoIso,
+        creatorHandle: '@MARROK',
+        slideCount: 2,
+        qaPassed: true,
+        deck: {
+          ...DEFAULT_STARTER_DECK,
+          sourceMeta: { ...DEFAULT_STARTER_DECK.sourceMeta, humanApproved: false },
+        },
+        scheduledFor: tenMinutesAgoIso,
+        cloudinaryPublicIds: ['local_staging/cron_unapproved_s1'],
+      },
+    ];
+
+    await saveStoredPosts(seedPosts);
+
+    // 1. GET /api/publish/status must be 100% read-pure (zero DB promotion mutations)
+    let statusBody: any = null;
+    await handleGetPublishStatus(
+      { headers: {} } as any,
+      {
+        status() {
+          return this;
+        },
+        json(payload: unknown) {
+          statusBody = payload;
+          return this;
+        },
+      } as any
+    );
+    expect(statusBody).toBeDefined();
+    expect(statusBody.autoCleanedPostIds).toEqual([]);
+
+    const afterGet = await loadStoredPosts();
+    expect(afterGet.posts.find((p) => p.id === 'post_cron_due_1')?.postStatus).toBe('validated');
+
+    // 2. Non-production Netlify Deploy Preview context must skip promotion cleanly
+    const previewRun = await runScheduledPromotion({ CONTEXT: 'deploy-preview' });
+    expect(previewRun.ok).toBe(true);
+    expect(previewRun.skipped).toBe(true);
+    expect(previewRun.promotedCount).toBe(0);
+
+    const afterPreview = await loadStoredPosts();
+    expect(afterPreview.posts.find((p) => p.id === 'post_cron_due_1')?.postStatus).toBe('validated');
+
+    // 3. Production scheduled execution promotes eligible overdue post while leaving unapproved post untouched
+    const prodRun = await runScheduledPromotion({ CONTEXT: 'production' });
+    expect(prodRun.ok).toBe(true);
+    expect(prodRun.skipped).toBeUndefined();
+    expect(prodRun.promotedPostIds).toEqual(['post_cron_due_1']);
+
+    const afterProd = await loadStoredPosts();
+    expect(afterProd.posts.find((p) => p.id === 'post_cron_due_1')?.postStatus).toBe('posted');
+    expect(afterProd.posts.find((p) => p.id === 'post_cron_unapproved')?.postStatus).toBe('validated');
   });
 });
 

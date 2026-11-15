@@ -1,4 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
+import { readRuntimeEnv } from '../src/lib/security/env.ts';
+import { PRODUCTION_NETLIFY_ORIGIN } from '../src/lib/security/corsPolicy.ts';
+import { constantTimeEqualText } from '../src/lib/security/sessionAuth.ts';
 
 export interface ServerConfig {
   geminiApiKey: string;
@@ -32,14 +35,14 @@ export interface CandidateGeminiKey {
 }
 
 const DEFAULT_GENERATION_MODELS = [
-  'gemini-3.8-flash',
+  'gemini-4-hydrogen',
   'gemini-3.1-flash-lite',
-  'gemini-flash-latest',
+  'gemini-3.5-flash-lite',
 ];
 
 const DEFAULT_IMAGE_MODELS = [
-  'gemini-nano-banana-2.1',
   'gemini-3.1-flash-lite-image',
+  'gemini-nano-banana-2.1',
 ];
 
 const DEFAULT_FREE_TEXT_BACKUP_MODELS = [
@@ -49,19 +52,22 @@ const DEFAULT_FREE_TEXT_BACKUP_MODELS = [
 ];
 
 const DEPRECATED_MODEL_MAP: Record<string, string> = {
-  'gemini-2.5-flash': 'gemini-3.8-flash',
-  'gemini-2.5-pro': 'gemini-3.8-flash',
-  'gemini-2.0-flash': 'gemini-3.8-flash',
-  'gemini-1.5-flash': 'gemini-3.8-flash',
-  'gemini-1.5-pro': 'gemini-3.8-flash',
+  'gemini-3.8-flash': 'gemini-4-hydrogen',
+  'gemini-2.5-flash': 'gemini-4-hydrogen',
+  'gemini-2.5-pro': 'gemini-4-hydrogen',
+  'gemini-2.0-flash': 'gemini-4-hydrogen',
+  'gemini-2.0-pro': 'gemini-4-hydrogen',
+  'gemini-1.5-flash': 'gemini-4-hydrogen',
+  'gemini-1.5-pro': 'gemini-4-hydrogen',
+  'gemini-pro': 'gemini-4-hydrogen',
   'gemini-2.5-flash-lite': 'gemini-3.1-flash-lite',
   'gemini-2.0-flash-lite': 'gemini-3.1-flash-lite',
   'gemini-1.5-flash-8b': 'gemini-3.1-flash-lite',
 };
 
 /**
- * Upgrades deprecated Gemini 1.5/2.0/2.5 model identifiers to active Gemini 3.x models
- * so existing environment variables on Vercel or local .env files never trigger 404 errors.
+ * Upgrades deprecated Gemini 1.5/2.0/2.5/3.8 model identifiers to verified active Gemini models
+ * so existing environment variables never trigger 404 errors.
  */
 export function normalizeGenerationModel(model: string): string {
   const trimmed = model.trim();
@@ -83,13 +89,13 @@ function parseModelList(
   return unique.length > 0 ? unique : fallback;
 }
 
-function parseApiKeyPool(env: NodeJS.ProcessEnv): string[] {
+function parseApiKeyPool(envOverride?: NodeJS.ProcessEnv): string[] {
   const rawSources = [
-    env.GEMINI_API_KEY,
-    env.GEMINI_API_KEY_BACKUP,
-    env.GEMINI_API_KEY_2,
-    env.GEMINI_API_KEY_3,
-    env.GEMINI_API_KEYS,
+    readRuntimeEnv('GEMINI_API_KEY', envOverride),
+    readRuntimeEnv('GEMINI_API_KEY_BACKUP', envOverride),
+    readRuntimeEnv('GEMINI_API_KEY_2', envOverride),
+    readRuntimeEnv('GEMINI_API_KEY_3', envOverride),
+    readRuntimeEnv('GEMINI_API_KEYS', envOverride),
   ];
 
   const keys: string[] = [];
@@ -147,9 +153,16 @@ export function resolveRequestGeminiKeys(
   addRawKeys(primaryCustom, true, 'custom primary key');
   addRawKeys(backupCustom, true, 'custom backup key');
 
+  const reqWithSession = req as Request & { marrokSession?: { sub: string } };
+  const secretHeader = String(req.headers['x-api-secret'] || '');
+  const hasSecretMatch = Boolean(
+    config.apiSharedSecret &&
+      secretHeader &&
+      constantTimeEqualText(secretHeader, config.apiSharedSecret)
+  );
   const canUseServerKeys =
     config.geminiApiKeys.length > 0 &&
-    (!config.apiSharedSecret || req.headers['x-api-secret'] === config.apiSharedSecret);
+    (!config.apiSharedSecret || hasSecretMatch || Boolean(reqWithSession.marrokSession));
 
   if (canUseServerKeys) {
     config.geminiApiKeys.forEach((serverKey, idx) => {
@@ -168,46 +181,48 @@ export function resolveRequestGeminiKeys(
 }
 
 /**
- * Validates and normalizes environment configuration at startup.
- * Never logs raw secret values.
+ * Validates and normalizes environment configuration at startup using Netlify.env.get() + process.env.
+ * Never logs raw secret values. Never defaults CORS to '*'.
  */
-export function getServerConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
-  const geminiApiKeys = parseApiKeyPool(env);
-  const geminiApiKey = geminiApiKeys[0] || (typeof env.GEMINI_API_KEY === 'string' && env.GEMINI_API_KEY.trim() !== 'MY_GEMINI_API_KEY' ? env.GEMINI_API_KEY.trim() : '');
+export function getServerConfig(envOverride?: NodeJS.ProcessEnv): ServerConfig {
+  const geminiApiKeys = parseApiKeyPool(envOverride);
+  const primaryKeyEnv = readRuntimeEnv('GEMINI_API_KEY', envOverride);
+  const geminiApiKey =
+    geminiApiKeys[0] ||
+    (primaryKeyEnv && primaryKeyEnv !== 'MY_GEMINI_API_KEY' ? primaryKeyEnv : '');
   const generationModels = parseModelList(
-    env.GEMINI_GENERATION_MODELS,
+    readRuntimeEnv('GEMINI_GENERATION_MODELS', envOverride) || undefined,
     DEFAULT_GENERATION_MODELS,
     normalizeGenerationModel
   );
-  const imageModels = parseModelList(env.GEMINI_IMAGE_MODELS, DEFAULT_IMAGE_MODELS);
-  const rawFreeBackup = (env.FREE_BACKUP_AI_ENABLED || 'true').trim().toLowerCase();
+  const imageModels = parseModelList(
+    readRuntimeEnv('GEMINI_IMAGE_MODELS', envOverride) || undefined,
+    DEFAULT_IMAGE_MODELS
+  );
+  const rawFreeBackup = (readRuntimeEnv('FREE_BACKUP_AI_ENABLED', envOverride) || 'true').toLowerCase();
   const freeBackupEnabled = rawFreeBackup !== 'false' && rawFreeBackup !== '0';
   const freeTextBackupModels = parseModelList(
-    env.FREE_TEXT_BACKUP_MODELS,
+    readRuntimeEnv('FREE_TEXT_BACKUP_MODELS', envOverride) || undefined,
     DEFAULT_FREE_TEXT_BACKUP_MODELS
   );
-  const allowedOrigin = typeof env.ALLOWED_ORIGIN === 'string' && env.ALLOWED_ORIGIN.trim()
-    ? env.ALLOWED_ORIGIN.trim()
-    : '*';
-  const apiSharedSecret = typeof env.API_SHARED_SECRET === 'string' ? env.API_SHARED_SECRET.trim() : '';
-  const parsedRpm = Number.parseInt(env.RATE_LIMIT_RPM || '30', 10);
+  const rawOrigin = readRuntimeEnv('ALLOWED_ORIGIN', envOverride);
+  const allowedOrigin = rawOrigin && rawOrigin !== '*' ? rawOrigin : PRODUCTION_NETLIFY_ORIGIN;
+  const apiSharedSecret = readRuntimeEnv('API_SHARED_SECRET', envOverride);
+  const parsedRpm = Number.parseInt(readRuntimeEnv('RATE_LIMIT_RPM', envOverride) || '30', 10);
   const rateLimitRpm = Number.isFinite(parsedRpm) && parsedRpm > 0 ? parsedRpm : 30;
-  // Vercel serverless function body limit is ~4.5 MB
-  const jsonBodyLimit = typeof env.JSON_BODY_LIMIT === 'string' && env.JSON_BODY_LIMIT.trim()
-    ? env.JSON_BODY_LIMIT.trim()
-    : '4.5mb';
-  const isVercel = Boolean(env.VERCEL || env.VERCEL_ENV);
-  const kvRestUrl = (env.KV_REST_API_URL || env.UPSTASH_REDIS_REST_URL || '').trim();
-  const kvRestToken = (env.KV_REST_API_TOKEN || env.UPSTASH_REDIS_REST_TOKEN || '').trim();
-  const cloudinaryCloudName = (env.CLOUDINARY_CLOUD_NAME || '').trim();
-  const cloudinaryApiKey = (env.CLOUDINARY_API_KEY || '').trim();
-  const cloudinaryApiSecret = (env.CLOUDINARY_API_SECRET || '').trim();
-  const bufferApiKey = (env.BUFFER_API_KEY || '').trim();
-  const zernioApiKey = (env.ZERNIO_API_KEY || '').trim();
-  const databaseUrl = (env.DATABASE_URL || env.POSTGRES_URL || '').trim();
-  const telegramBotToken = (env.TELEGRAM_BOT_TOKEN || '').trim();
-  const telegramWebhookSecret = (env.TELEGRAM_WEBHOOK_SECRET || '').trim();
-  const telegramAllowedChatIds = (env.TELEGRAM_ALLOWED_CHAT_IDS || '')
+  const jsonBodyLimit = readRuntimeEnv('JSON_BODY_LIMIT', envOverride) || '4.5mb';
+  const isVercel = Boolean(readRuntimeEnv('VERCEL', envOverride) || readRuntimeEnv('VERCEL_ENV', envOverride));
+  const kvRestUrl = readRuntimeEnv('KV_REST_API_URL', envOverride) || readRuntimeEnv('UPSTASH_REDIS_REST_URL', envOverride);
+  const kvRestToken = readRuntimeEnv('KV_REST_API_TOKEN', envOverride) || readRuntimeEnv('UPSTASH_REDIS_REST_TOKEN', envOverride);
+  const cloudinaryCloudName = readRuntimeEnv('CLOUDINARY_CLOUD_NAME', envOverride);
+  const cloudinaryApiKey = readRuntimeEnv('CLOUDINARY_API_KEY', envOverride);
+  const cloudinaryApiSecret = readRuntimeEnv('CLOUDINARY_API_SECRET', envOverride);
+  const bufferApiKey = readRuntimeEnv('BUFFER_API_KEY', envOverride);
+  const zernioApiKey = readRuntimeEnv('ZERNIO_API_KEY', envOverride);
+  const databaseUrl = readRuntimeEnv('DATABASE_URL', envOverride) || readRuntimeEnv('POSTGRES_URL', envOverride);
+  const telegramBotToken = readRuntimeEnv('TELEGRAM_BOT_TOKEN', envOverride);
+  const telegramWebhookSecret = readRuntimeEnv('TELEGRAM_WEBHOOK_SECRET', envOverride);
+  const telegramAllowedChatIds = readRuntimeEnv('TELEGRAM_ALLOWED_CHAT_IDS', envOverride)
     .split(',')
     .map((id) => id.trim())
     .filter(Boolean);

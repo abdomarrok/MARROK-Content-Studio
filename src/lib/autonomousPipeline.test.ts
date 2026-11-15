@@ -31,7 +31,10 @@ describe('runAutonomousPipeline', () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(apiDeck));
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await runAutonomousPipeline('test topic', { generateDiagram: false });
+    const result = await runAutonomousPipeline(
+      'How Cloudflare reduced edge worker cold starts by 4x using V8 snapshots',
+      { generateDiagram: false }
+    );
 
     expect(result.slides[0].enTitle).toContain('Authentic hook');
     expect(result.sourceMeta?.isFallback).not.toBe(true);
@@ -39,6 +42,17 @@ describe('runAutonomousPipeline', () => {
       '/api/generate',
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     );
+  });
+
+  it('rejects empty or thin inputs before calling /api/generate', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(runAutonomousPipeline('too short')).rejects.toMatchObject({
+      name: 'InsufficientSourceError',
+      code: 'INSUFFICIENT_SOURCE',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('falls back locally when the API returns malformed carousel JSON', async () => {

@@ -9,6 +9,8 @@ import type {
 } from '../../types.ts';
 import { renderSlideToCanvas } from '../canvas/renderSlide.ts';
 import { syncLocalVaultAfterManage } from '../storage/postsVaultClient.ts';
+import { isEligibleOverduePromotion } from './schedulePredicate.ts';
+import { withClientAuthHeaders } from '../security/clientSessionToken.ts';
 
 export type WeeklyCadencePreset = 'mon-wed-fri' | 'tue-thu-sat' | 'weekdays' | 'daily';
 
@@ -472,7 +474,8 @@ export async function uploadDeckSlidesForPublishing(
       try {
         res = await fetch('/api/publish/upload-media', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ postId, slides: chunk }),
         });
         if (res.ok) {
@@ -519,7 +522,8 @@ export async function uploadDeckSlidesForPublishing(
 export async function fetchPublishStatus(): Promise<PublishStatusResponse> {
   const res = await fetch('/api/publish/status', {
     method: 'GET',
-    headers: { Accept: 'application/json' },
+    credentials: 'include',
+    headers: withClientAuthHeaders({ Accept: 'application/json' }),
   });
   if (!res.ok) {
     throw new Error(`Failed to fetch publish status (${res.status})`);
@@ -533,7 +537,8 @@ export async function fetchPublishStatus(): Promise<PublishStatusResponse> {
 export async function fetchTikTokCommercialMusic(): Promise<TikTokMusicCatalogResponse> {
   const res = await fetch('/api/publish/tiktok-music', {
     method: 'GET',
-    headers: { Accept: 'application/json' },
+    credentials: 'include',
+    headers: withClientAuthHeaders({ Accept: 'application/json' }),
   });
   if (!res.ok) {
     throw new Error(`Failed to fetch TikTok music catalog (${res.status})`);
@@ -550,7 +555,8 @@ export async function dispatchPostPublish(
 ): Promise<DispatchPublishResponse> {
   const res = await fetch('/api/publish/dispatch', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
   });
 
@@ -605,7 +611,7 @@ export function derivePostLifecycleStage(
   post: SavedPostRecord,
   nowMs: number = Date.now()
 ): PostLifecycleStage {
-  if (post.qaPassed === false) {
+  if (post.qaPassed === false || post.publishFailed === true) {
     return 'attention';
   }
   const scheduledMs = post.scheduledFor ? Date.parse(post.scheduledFor) : NaN;
@@ -613,7 +619,10 @@ export function derivePostLifecycleStage(
     if (scheduledMs > nowMs) {
       return 'scheduled';
     }
-    return 'posted';
+    if (isEligibleOverduePromotion(post, nowMs)) {
+      return 'posted';
+    }
+    return post.postStatus === 'posted' ? 'posted' : 'draft';
   }
   if (post.postStatus === 'posted') {
     return 'posted';
@@ -630,7 +639,8 @@ export async function managePublishedPost(
 ): Promise<ManagePublishedPostResponse> {
   const res = await fetch('/api/publish/manage-post', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
   });
 
@@ -663,7 +673,8 @@ export async function cleanupPublishedCloudinaryMedia(options?: {
 }> {
   const res = await fetch('/api/publish/cleanup-media', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(options || {}),
   });
 

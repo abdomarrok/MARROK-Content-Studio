@@ -47,6 +47,7 @@ export interface UnderCanvasDeliveryDockProps {
   activeReelConfig: MotionReelData;
   theme: ThemePalette;
   isBlocked: boolean;
+  hasContentQualityBlocker?: boolean;
   blockersCount: number;
   copiedType: 'caption' | 'slide' | null;
   isExportingVideo: boolean;
@@ -75,6 +76,7 @@ export const UnderCanvasDeliveryDock: React.FC<UnderCanvasDeliveryDockProps> = (
   activeReelConfig,
   theme,
   isBlocked,
+  hasContentQualityBlocker = false,
   blockersCount,
   copiedType,
   isExportingVideo,
@@ -436,10 +438,14 @@ export const UnderCanvasDeliveryDock: React.FC<UnderCanvasDeliveryDockProps> = (
                 `⚠️ ${blockersCount} item${blockersCount > 1 ? 's' : ''} need attention in Publish before exporting.`
               );
             }}
-            className="py-1.5 px-3.5 rounded-xl font-bold text-xs uppercase tracking-wider bg-amber-500/15 border border-amber-500/40 text-amber-300 hover:bg-amber-500/25 transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
+            className={`py-1.5 px-3.5 rounded-xl font-bold text-xs uppercase tracking-wider border transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+              hasContentQualityBlocker
+                ? 'bg-rose-500/20 border-rose-500/55 text-rose-200 hover:bg-rose-500/30'
+                : 'bg-amber-500/15 border-amber-500/40 text-amber-300 hover:bg-amber-500/25'
+            }`}
             title="Click to view and resolve blockers in Publish checklist"
           >
-            <AlertTriangle className="w-3.5 h-3.5 stroke-[2.5] text-amber-400" />
+            <AlertTriangle className={`w-3.5 h-3.5 stroke-[2.5] ${hasContentQualityBlocker ? 'text-rose-400' : 'text-amber-400'}`} />
             <span>
               {blockersCount} Check{blockersCount > 1 ? 's' : ''} Needed →
             </span>

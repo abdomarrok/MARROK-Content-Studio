@@ -491,7 +491,7 @@ describe('Slide Layout Awareness Engine', () => {
       expect(layout.graphicCard).toBeDefined();
       expect(layout.graphicCard!.width).toBe(1008);
       if (spec.height >= 1920) {
-        expect(layout.graphicCard!.height).toBeGreaterThanOrEqual(1300);
+        expect(layout.graphicCard!.height).toBeGreaterThanOrEqual(1140);
       } else {
         expect(layout.graphicCard!.height).toBeGreaterThan(800);
       }

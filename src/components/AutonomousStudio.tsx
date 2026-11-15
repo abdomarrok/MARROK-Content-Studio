@@ -52,6 +52,10 @@ import {
   formatBilingualExportCaptionWithHashtags,
   type ExportBundleMode,
 } from '../lib/canvasExporter.ts';
+import {
+  trackAndReplaceBlobUrl,
+  revokeAllTrackedBlobUrls,
+} from '../lib/media/blobUrlRegistry.ts';
 import { runAutonomousPipeline, enrichAndPaceCarousel } from '../lib/autonomousPipeline.ts';
 import { sanitizeSlide } from '../lib/textSanitizer.ts';
 import {
@@ -64,6 +68,10 @@ import {
   autoSyncSlideGraphicsFromCopy,
   autoFitSlideCopyToLimits,
   explainArchetypeChoice,
+  validateSourceSufficiency,
+  InsufficientSourceError,
+  applyHookEngineToSlide1,
+  extractSourceQuotedHubNodes,
 } from '../lib/synthesizer.ts';
 import { runQAChecks, CHAR_LIMITS, type PreExportCheckId } from '../lib/qaChecks.ts';
 import { runPlatformRiskChecks } from '../lib/riskChecks.ts';
@@ -174,6 +182,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   onOpenPublishScheduleModal,
 }) => {
   const [promptInput, setPromptInput] = useState('');
+  const [inputValidationError, setInputValidationError] = useState<string | null>(null);
   const [categoryHint, setCategoryHint] = useState<string>('auto');
 
   // Intelligent Feed Cadence Analysis for Live Context via custom hook
@@ -257,6 +266,12 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   const deckRevisionRef = useRef(0);
   const isMountedRef = useRef(true);
   const stashedCarouselSlidesRef = useRef<SlideData[] | null>(null);
+
+  useEffect(() => {
+    return () => {
+      revokeAllTrackedBlobUrls();
+    };
+  }, []);
 
   const activePostFormat: PostFormat =
     carousel.postFormat === 'reel'
@@ -630,6 +645,9 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   // Smart Dock Text input with auto-expansion when pasting or typing long material (> 200 chars)
   const handlePromptChange = (val: string) => {
     setPromptInput(val);
+    if (inputValidationError) {
+      setInputValidationError(null);
+    }
     if (val.length > 200 && !isExpanded) {
       setIsExpanded(true);
     }
@@ -637,6 +655,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
   // Image or Video Upload with client-side downscaling / storyboard frame extraction
   const handleImageFile = useCallback(async (file: File) => {
+    setInputValidationError(null);
     if (isVideoFile(file)) {
       try {
         const videoBlobUrl =
@@ -655,6 +674,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
             const targetIndex = Math.min(currentSlideIndexRef.current, prev.slides.length - 1);
             if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
             const current = prev.slides[targetIndex];
+            trackAndReplaceBlobUrl(current.videoUrl, videoBlobUrl);
             const targetType: SlideType =
               current.type === 'poster' || prev.postFormat === 'single' || prev.slides.length === 1
                 ? 'poster'
@@ -898,6 +918,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
   const handleClearDock = () => {
     setPromptInput('');
+    setInputValidationError(null);
     setUploadedImage(null);
     setCategoryHint('auto');
     onShowToast('Cleared input dock');
@@ -906,10 +927,21 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   // Unified Autonomous Generation Handler
   const handleRunAutonomousPipeline = async (overridePrompt?: string) => {
     const query = (overridePrompt !== undefined ? overridePrompt : promptInput).trim();
-    if (!query && !uploadedImage) {
-      onShowToast('Please enter a topic, paste notes, or attach a screenshot');
+    const pipelineTargetFormat: 'carousel' | 'single' =
+      activePostFormat === 'single' ? 'single' : 'carousel';
+    const sufficiency = validateSourceSufficiency({
+      prompt: query,
+      categoryHint,
+      imageFileName: uploadedImage?.name,
+      hasMedia: Boolean(uploadedImage),
+      postFormat: pipelineTargetFormat,
+    });
+    if (!sufficiency.isSufficient) {
+      setInputValidationError(sufficiency.reason);
+      onShowToast(sufficiency.reason);
       return;
     }
+    setInputValidationError(null);
 
     // Automatically collapse overlay drawer when starting generation
     setIsExpanded(false);
@@ -1068,6 +1100,15 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       }
     } catch (err) {
       if (controller.signal.aborted || !isCurrentRun()) return;
+      if (
+        err instanceof InsufficientSourceError ||
+        (err && typeof err === 'object' && (err as { code?: string }).code === 'INSUFFICIENT_SOURCE')
+      ) {
+        const message = err instanceof Error ? err.message : 'Please paste a real topic or source before generating.';
+        setInputValidationError(message);
+        onShowToast(message);
+        return;
+      }
       console.error('Autonomous pipeline error:', err);
       onShowToast('Pipeline error — loaded resilient backup template.');
     } finally {
@@ -1080,6 +1121,21 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
   // Instant local synthesis fallback (0ms latency, zero network dependence)
   const handleInstantSynthesize = () => {
+    const targetFormat: 'carousel' | 'single' =
+      activePostFormat === 'single' ? 'single' : 'carousel';
+    const sufficiency = validateSourceSufficiency({
+      prompt: promptInput,
+      categoryHint,
+      imageFileName: uploadedImage?.name,
+      hasMedia: Boolean(uploadedImage),
+      postFormat: targetFormat,
+    });
+    if (!sufficiency.isSufficient) {
+      setInputValidationError(sufficiency.reason);
+      onShowToast(sufficiency.reason);
+      return;
+    }
+    setInputValidationError(null);
     setIsExpanded(false);
     setInspectorTab('copy');
     generationRunIdRef.current += 1;
@@ -1089,13 +1145,12 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     setPipelineStatus(null);
 
     try {
-      const targetFormat: 'carousel' | 'single' =
-        activePostFormat === 'single' ? 'single' : 'carousel';
       const generated = synthesizeCarousel({
         prompt: promptInput,
         categoryHint,
         inputMode: activeTab,
         imageFileName: uploadedImage?.name,
+        hasMedia: Boolean(uploadedImage),
         postFormat: targetFormat,
       });
       const processed = enrichAndPaceCarousel(generated, promptInput);
@@ -1134,6 +1189,15 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           : `⚡ Synthesized ${finalProcessed.slides.length}-slide carousel (Instant Offline Mode)`
       );
     } catch (err: unknown) {
+      if (
+        err instanceof InsufficientSourceError ||
+        (err && typeof err === 'object' && (err as { code?: string }).code === 'INSUFFICIENT_SOURCE')
+      ) {
+        const message = err instanceof Error ? err.message : 'Please paste a real topic or source before generating.';
+        setInputValidationError(message);
+        onShowToast(message);
+        return;
+      }
       onShowToast(err instanceof Error ? err.message : 'Instant synthesis failed.');
     }
   };
@@ -1435,11 +1499,12 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   );
   const dynamicHashtags = useMemo(() => deriveTopicHashtags(carousel), [carousel]);
   const publishBlockers = useMemo(
-    () => getPublishBlockers(carousel, isOfflineDraft, isReviewed, qaReport, riskReport),
-    [carousel, isOfflineDraft, isReviewed, qaReport, riskReport]
+    () => getPublishBlockers(carousel, isOfflineDraft, isReviewed, qaReport, riskReport, theme),
+    [carousel, isOfflineDraft, isReviewed, qaReport, riskReport, theme]
   );
   const blockersCount = publishBlockers.blockersCount;
   const isBlocked = blockersCount > 0 && !overrideExportBlock;
+  const hasContentQualityBlocker = publishBlockers.contentQualityStatus === 'BLOCK';
 
   const engineBadge =
     carousel.sourceMeta?.engine === 'grounded' || carousel.sourceMeta?.status === 'verified_live'
@@ -1828,6 +1893,79 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       return;
     }
 
+    if (checkId === 'contentQuality') {
+      applyDeckUpdate((prev) => {
+        const isMulti = prev.postFormat !== 'single' && prev.slides.length > 1;
+        const deckCorpus = [
+          promptInput,
+          prev.sourceMeta?.title || prev.category,
+          prev.caption,
+          ...prev.slides.map((s) => `${s.enTitle || ''} ${s.enBody || ''}`),
+        ]
+          .filter(Boolean)
+          .join(' ');
+        const stripTemplates = (value: string) =>
+          (value || '')
+            .replace(/\ba breakdown of technical mechanisms behind\b/gi, '')
+            .replace(/\btechnical breakdown of\b/gi, '')
+            .replace(/\bcore mechanisms?\b/gi, 'architecture paths')
+            .replace(/\boperational boundaries\b/gi, 'deployment limits')
+            .replace(/\b(?:real\s+)?production\s+trade-?offs?\b/gi, 'runtime limits')
+            .replace(/\barchitectural\s+trade-?offs?\b/gi, 'design limits')
+            .replace(/تحليل معماري لمنظومة/g, 'قراءة هندسية في')
+            .replace(/تحليل هندسي معمق/g, 'آلية العمل')
+            .replace(/مقايضات الإنتاج|تنازلات الإنتاج|آليات النظام الأساسية/g, 'حدود التشغيل الفعلية')
+            .replace(/\s*المعتمد\b/g, '')
+            .replace(/\s{2,}/g, ' ')
+            .trim();
+
+        const cleanedCaption = stripTemplates(prev.caption || '');
+
+        const cleanedSlides = prev.slides.map((slide, idx) => {
+          if (targetSlideIdx !== undefined && idx !== targetSlideIdx) return slide;
+          let updated: SlideData = {
+            ...slide,
+            enTitle: stripTemplates(slide.enTitle || ''),
+            arTitle: stripTemplates(slide.arTitle || ''),
+            enBody: isMulti && idx === 0 ? '' : stripTemplates(slide.enBody || ''),
+            arBody: isMulti && idx === 0 ? '' : stripTemplates(slide.arBody || ''),
+          };
+
+          if (updated.type === 'hub' || updated.diagramVariant === 'topology') {
+            const hubExtracted = extractSourceQuotedHubNodes(
+              `${updated.enTitle} ${updated.enBody} ${deckCorpus}`,
+              { titleText: updated.enTitle, category: prev.category }
+            );
+            updated = {
+              ...updated,
+              satLabels: hubExtracted.satLabels,
+              hubNodeReasons: hubExtracted.hubNodeReasons,
+            };
+          }
+
+          if (isMulti && idx === 0) {
+            updated = applyHookEngineToSlide1(updated, false, deckCorpus);
+            updated = {
+              ...updated,
+              storyRole: 'hook',
+              enBody: '',
+              arBody: '',
+            };
+          }
+
+          return sanitizeSlide(
+            autoSyncSlideGraphicsFromCopy(updated, idx),
+            idx,
+            prev.slides.length
+          );
+        });
+
+        return { ...prev, caption: cleanedCaption, slides: cleanedSlides };
+      });
+      onShowToast('Cleaned template phrasing & re-anchored Slide 1 + Hub nodes to source');
+      return;
+    }
+
     applyDeckUpdate((prev) => {
       const isSingle = prev.postFormat === 'single' || prev.slides.length === 1;
       const nextSlides = prev.slides.map((slide, idx) => {
@@ -2088,6 +2226,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       {/* 1. Compact Command Bar with Overlay Ingestion Drawer */}
       <StudioCommandBar
         promptInput={promptInput}
+        inputValidationError={inputValidationError}
         onPromptChange={handlePromptChange}
         onSetPromptInput={setPromptInput}
         categoryHint={categoryHint}
@@ -2228,6 +2367,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
               activeReelConfig={activeReelConfig}
               theme={theme}
               isBlocked={isBlocked}
+              hasContentQualityBlocker={hasContentQualityBlocker}
               blockersCount={blockersCount}
               copiedType={copiedType}
               isExportingVideo={isExportingVideo}
@@ -2422,18 +2562,26 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                       setInspectorTab('review');
                     }}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                      !isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption')
+                      hasContentQualityBlocker
+                        ? 'bg-rose-500/20 text-rose-200 border border-rose-500/55 shadow-sm'
+                        : !isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption')
                         ? 'bg-white/15 text-white shadow-sm border border-white/15'
                         : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
                     }`}
                   >
                     <CheckCircle2
-                      className="w-3.5 h-3.5"
-                      style={!isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption') ? { color: theme.accent } : undefined}
+                      className={`w-3.5 h-3.5 ${hasContentQualityBlocker ? 'text-rose-400' : ''}`}
+                      style={!hasContentQualityBlocker && !isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption') ? { color: theme.accent } : undefined}
                     />
                     <span>3. P. OK / Publish</span>
                     {blockersCount > 0 ? (
-                      <span className="text-[11px] font-mono tabular-nums text-amber-300">
+                      <span
+                        className={`text-[11px] font-mono tabular-nums px-1.5 py-0.5 rounded-md ${
+                          hasContentQualityBlocker
+                            ? 'bg-rose-500/30 text-rose-200 border border-rose-400/50 font-bold'
+                            : 'text-amber-300'
+                        }`}
+                      >
                         · {blockersCount}
                       </span>
                     ) : (
@@ -2512,18 +2660,26 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                       setInspectorTab('review');
                     }}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                      !isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption')
+                      hasContentQualityBlocker
+                        ? 'bg-rose-500/20 text-rose-200 border border-rose-500/55 shadow-sm'
+                        : !isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption')
                         ? 'bg-white/15 text-white shadow-sm border border-white/15'
                         : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
                     }`}
                   >
                     <CheckCircle2
-                      className="w-3.5 h-3.5"
-                      style={!isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption') ? { color: theme.accent } : undefined}
+                      className={`w-3.5 h-3.5 ${hasContentQualityBlocker ? 'text-rose-400' : ''}`}
+                      style={!hasContentQualityBlocker && !isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption') ? { color: theme.accent } : undefined}
                     />
                     <span>5. P. OK / Publish</span>
                     {blockersCount > 0 ? (
-                      <span className="text-[11px] font-mono tabular-nums text-amber-300">
+                      <span
+                        className={`text-[11px] font-mono tabular-nums px-1.5 py-0.5 rounded-md ${
+                          hasContentQualityBlocker
+                            ? 'bg-rose-500/30 text-rose-200 border border-rose-400/50 font-bold'
+                            : 'text-amber-300'
+                        }`}
+                      >
                         · {blockersCount}
                       </span>
                     ) : (
@@ -3001,6 +3157,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         isSheetOpen={isSheetOpen}
         inspectorTab={inspectorTab}
         isBlocked={isBlocked}
+        hasContentQualityBlocker={hasContentQualityBlocker}
         blockersCount={blockersCount}
         isExportingZip={isExportingZip}
         isMoreMenuOpen={isMoreMenuOpen}

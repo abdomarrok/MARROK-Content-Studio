@@ -16,3 +16,5 @@ playwright-report/
 bun.lock
 bun.lockb
 data/*.deleted.json
+backups/
+

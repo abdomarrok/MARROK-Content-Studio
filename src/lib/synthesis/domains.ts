@@ -3,6 +3,7 @@ import { KNOWN_TECH_LOGOS } from '../icons.ts';
 export interface SynthesisInput {
   prompt?: string;
   imageFileName?: string;
+  hasMedia?: boolean;
   categoryHint?: string;
   inputMode?: string;
   targetSlideCount?: number;

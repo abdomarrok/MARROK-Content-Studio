@@ -175,16 +175,28 @@ export function drawHeader(
   ctx.save();
   const displayBrandText = 'MARROK';
 
-  // Crisp compact authentic MARROK vector logo badge (32x32px)
-  const logoBadgeSize = 32;
+  // Crisp compact authentic MARROK vector logo badge scaled to active aspect preset
+  const logoBadgeSize = resolved.headerBadgeSize || 32;
   const logoBadgeX = resolved.headerMarginLeft ?? resolved.safeMarginLeft;
   const logoBadgeY = resolved.headerY;
+  const wordmarkFontSize = resolved.headerFontSize || 38;
+  const badgeScaleRatio = logoBadgeSize / 32;
 
   // Ambient badge glow matching studio header
   ctx.save();
   ctx.shadowColor = theme.accent;
   ctx.shadowBlur = 8;
-  drawRoundRect(ctx, logoBadgeX, logoBadgeY, logoBadgeSize, logoBadgeSize, 8, '#0D0D0D', `${theme.accent}66`, 1.2);
+  drawRoundRect(
+    ctx,
+    logoBadgeX,
+    logoBadgeY,
+    logoBadgeSize,
+    logoBadgeSize,
+    Math.max(5, Math.round(8 * badgeScaleRatio)),
+    '#0D0D0D',
+    `${theme.accent}66`,
+    1.2
+  );
   ctx.restore();
 
   // Render authentic SVG vector mark inside badge using Path2D
@@ -197,19 +209,19 @@ export function drawHeader(
     'transparent'
   );
 
-  // Brand Wordmark: clean 12px gap between the badge and full MARROK wordmark
-  const brandTextX = logoBadgeX + logoBadgeSize + 12;
-  ctx.font = '800 38px "Plus Jakarta Sans", sans-serif';
+  // Brand Wordmark: clean gap between the badge and full MARROK wordmark
+  const brandTextX = logoBadgeX + logoBadgeSize + Math.round(12 * badgeScaleRatio);
+  ctx.font = `800 ${wordmarkFontSize}px "Plus Jakarta Sans", sans-serif`;
   ctx.fillStyle = '#FFFFFF';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
-  ctx.fillText(displayBrandText, brandTextX, logoBadgeY + 30);
+  ctx.fillText(displayBrandText, brandTextX, logoBadgeY + Math.round(30 * badgeScaleRatio));
 
   // Pulsing Accent Dot next to Brand wordmark
   const brandWidth = ctx.measureText(displayBrandText).width;
-  const dotX = brandTextX + brandWidth + 12;
+  const dotX = brandTextX + brandWidth + Math.round(12 * badgeScaleRatio);
   ctx.beginPath();
-  ctx.arc(dotX, logoBadgeY + 17, 7.5, 0, Math.PI * 2);
+  ctx.arc(dotX, logoBadgeY + Math.round(17 * badgeScaleRatio), 7.5 * badgeScaleRatio, 0, Math.PI * 2);
   ctx.fillStyle = theme.accent;
   ctx.shadowColor = theme.accent;
   ctx.shadowBlur = 8;
@@ -218,14 +230,14 @@ export function drawHeader(
   ctx.shadowColor = 'transparent';
 
   // Top-Right Corner Tag (omitted on Meme posts or when categoryTag is empty)
-  // Enforces >= 24px at 1080x1920 (never shrinks below 24px on 9:16)
+  // Enforces >= 24px at 1080x1920 and proportional sizing on compact 4:5 / 1:1
   const cleanCategory = (categoryTag || '').trim();
   if (cleanCategory && carousel.postFormat !== 'meme') {
     const headerRightX = resolved.headerMarginRight ?? resolved.safeMarginRight;
-    const minLeftClearanceX = dotX + 26;
-    const maxCategoryW = Math.max(180, headerRightX - minLeftClearanceX);
-    const minTagSize = resolved.height >= 1920 ? 24 : 20;
-    let catFontSize = 26;
+    const minLeftClearanceX = dotX + Math.round(24 * badgeScaleRatio);
+    const maxCategoryW = Math.max(160, headerRightX - minLeftClearanceX);
+    const minTagSize = resolved.height >= 1920 ? 24 : Math.max(18, Math.round(24 * badgeScaleRatio));
+    let catFontSize = resolved.height >= 1920 ? 26 : Math.max(20, Math.round(26 * badgeScaleRatio));
     ctx.font = `700 ${catFontSize}px "Plus Jakarta Sans", sans-serif`;
     while (catFontSize > minTagSize && ctx.measureText(cleanCategory).width > maxCategoryW) {
       catFontSize -= 1;
@@ -233,16 +245,14 @@ export function drawHeader(
     }
     ctx.fillStyle = theme.categoryTag;
     ctx.textAlign = 'right';
-    ctx.fillText(cleanCategory, headerRightX, logoBadgeY + 27);
+    ctx.fillText(cleanCategory, headerRightX, logoBadgeY + Math.round(27 * badgeScaleRatio));
   }
   ctx.restore();
 }
 
 /**
- * 7. Safe-Zone Source & Brand Footer:
- * - Slide dots and swipe chips removed from artwork (TikTok shows its own).
- * - Renders "Source: <name>" on the left and "@MARROK" on the right at 24px
- *   strictly above TikTok's bottom 420px UI zone (y <= 1480 at 1080x1920).
+ * 7. Fixed Safe-Zone Source & Brand Footer Row:
+ * - Renders "Source: <name>" on the left and "@MARROK" on the right cleanly below safeFooterCeilingY.
  */
 export function drawPaginationFooter(
   ctx: CanvasRenderingContext2D,
@@ -258,11 +268,15 @@ export function drawPaginationFooter(
     (slide?.imageFrameMode === 'full' || Boolean(slide?.standaloneMeme)) &&
     Boolean(slide?.imageUrl || slide?.videoUrl);
 
-  // Place footer above the bottom 420px TikTok UI zone (y = 1472 <= 1480 on 1080x1920)
-  const footerY =
+  const fontSize = resolved.footerFontSize || (resolved.height >= 1920 ? 24 : 20);
+  const badgeSize = resolved.footerBadgeSize || (resolved.height >= 1920 ? 24 : 20);
+
+  // Reserve a fixed footer row strictly below safeFooterCeilingY (min 24px clearance above badge top)
+  const rawFooterY =
     resolved.height >= 1920 && !isFullMediaCard
       ? 1472
       : resolved.paginationDotY;
+  const footerY = Math.max(rawFooterY, resolved.safeFooterCeilingY + badgeSize / 2 + 24);
 
   const rawBrand = 'MARROK';
   const lastSlide = carousel?.slides?.[carousel.slides.length - 1];
@@ -284,12 +298,11 @@ export function drawPaginationFooter(
 
   const leftX = resolved.safeMarginLeft;
   const rightX = resolved.safeMarginRight;
-  const fontSize = resolved.height >= 1920 ? 24 : 20;
 
   ctx.save();
   ctx.textBaseline = 'middle';
 
-  // Left segment: "Source: <name>" at 24px when source is available
+  // Left segment: "Source: <name>" cleanly capped so it never runs into @MARROK
   if (rawCredit && !isFullMediaCard && slide?.type !== 'cta') {
     const cleanSource = rawCredit.length > 34 ? rawCredit.slice(0, 34).trim() : rawCredit;
     ctx.font = `700 ${fontSize}px "Plus Jakarta Sans", sans-serif`;
@@ -303,7 +316,7 @@ export function drawPaginationFooter(
     ctx.fillText(cleanSource, leftX + prefixW, footerY);
   }
 
-  // Right segment: Persistent MARROK badge + @MARROK at 24px
+  // Right segment: Persistent MARROK badge + @MARROK
   const handleText = `@${rawBrand}`;
   ctx.font = `700 ${fontSize}px "JetBrains Mono", "Plus Jakarta Sans", monospace`;
   ctx.textAlign = 'right';
@@ -311,11 +324,20 @@ export function drawPaginationFooter(
   ctx.fillText(handleText, rightX, footerY);
 
   const handleW = ctx.measureText(handleText).width;
-  const badgeSize = 24;
   const badgeX = rightX - handleW - badgeSize - 10;
   const badgeY = footerY - badgeSize / 2;
 
-  drawRoundRect(ctx, badgeX, badgeY, badgeSize, badgeSize, 6, '#0D0D0D', `${theme.accent}66`, 1);
+  drawRoundRect(
+    ctx,
+    badgeX,
+    badgeY,
+    badgeSize,
+    badgeSize,
+    Math.max(4, Math.round(badgeSize * 0.25)),
+    '#0D0D0D',
+    `${theme.accent}66`,
+    1
+  );
   drawMarrokVectorBadge(
     ctx,
     badgeX + badgeSize / 2,

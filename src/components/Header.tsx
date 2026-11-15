@@ -12,6 +12,7 @@ import {
   Send,
   Layers,
   FolderOpen,
+  LogOut,
 } from 'lucide-react';
 import { ThemePalette } from '../types.ts';
 
@@ -36,6 +37,8 @@ interface HeaderProps {
   isPeakProgramActive?: boolean;
   onPhaseChange?: (phase: 'studio' | 'publish') => void;
   onOpenPeakProgram?: () => void;
+  authenticatedUser?: string | null;
+  onLogout?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -56,6 +59,8 @@ export const Header: React.FC<HeaderProps> = ({
   isSavingPost = false,
   activePhase = 'studio',
   onPhaseChange,
+  authenticatedUser,
+  onLogout,
 }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -261,6 +266,19 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="sm:hidden">
                 {deckStatus === 'posted' ? 'Posted' : 'Save'}
               </span>
+            </button>
+          )}
+
+          {onLogout && authenticatedUser && (
+            <button
+              type="button"
+              onClick={onLogout}
+              title={`Sign out (${authenticatedUser})`}
+              aria-label="Sign out"
+              className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 min-h-[36px] text-xs font-semibold rounded-lg border border-white/10 bg-white/[0.04] text-slate-300 hover:text-white hover:bg-white/[0.08] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sign Out</span>
             </button>
           )}
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Globe, Image as ImageIcon, Upload, Link, X, Check, Loader2, Sparkles } from 'lucide-react';
 import { ThemePalette } from '../types';
+import { withClientAuthHeaders } from '../lib/security/clientSessionToken';
 
 interface MediaItem {
   name?: string;
@@ -47,7 +48,10 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({
 
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/search-media?q=${encodeURIComponent(searchQuery)}`);
+        const res = await fetch(`/api/search-media?q=${encodeURIComponent(searchQuery)}`, {
+          credentials: 'include',
+          headers: withClientAuthHeaders({ Accept: 'application/json' }),
+        });
         if (!res.ok) throw new Error('Search failed');
         const data = await res.json();
         if (active) {

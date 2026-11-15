@@ -7,12 +7,13 @@ import type {
 } from '../../src/types.ts';
 import { TECH_ICONS_LIST } from '../constants.ts';
 import { getServerConfig } from '../config.ts';
-import { isAllowedProxyUrl, resolveAndValidateHost } from './proxyController.ts';
+import { isAllowedProxyUrl, resolveAndValidateHost, fetchSafeRemoteText } from './proxyController.ts';
 import { handleGenerateCarousel } from './generateController.ts';
 import {
+  deleteSingleStoredPost,
   loadStoredPosts,
-  recordServerDeletedPostId,
   saveStoredPosts,
+  upsertSingleStoredPost,
   validateAndBuildPostRecord,
 } from './postsController.ts';
 import { runQAChecks } from '../../src/lib/qaChecks.ts';
@@ -72,7 +73,6 @@ export async function handleSearchMedia(req: Request, res: Response) {
     }
   }
 
-  res.setHeader('Access-Control-Allow-Origin', '*');
   return res.json({
     icons: matchedIcons.slice(0, 24),
     images: matchedImages.slice(0, 16),
@@ -600,11 +600,13 @@ async function fetchLobstersHottest(limit = 5): Promise<GatheredTopicItem[]> {
  */
 async function fetchCloudflareEngineeringRss(limit = 4): Promise<GatheredTopicItem[]> {
   try {
-    const res = await fetch('https://blog.cloudflare.com/rss/', {
-      signal: AbortSignal.timeout(3500),
+    const { response: res, text: xml } = await fetchSafeRemoteText('https://blog.cloudflare.com/rss/', {
+      maxHops: 3,
+      maxBytes: 400_000,
+      timeoutMs: 3500,
+      acceptHeader: 'application/rss+xml, application/xml, text/xml, */*',
     });
     if (!res.ok) return [];
-    const xml = await res.text();
     const itemMatches = xml.match(/<item>[\s\S]*?<\/item>/gi) || [];
     const results: GatheredTopicItem[] = [];
 
@@ -736,23 +738,18 @@ async function fetchRedditTechTrends(limit = 5): Promise<GatheredTopicItem[]> {
 
 /**
  * Fetches and parses any SSRF-validated custom RSS/Atom feed URL supplied by the user.
+ * Uses manual redirect traversal, hop-by-hop DNS/IP validation, hop limits, and size caps.
  */
-async function fetchCustomRssFeed(rssUrl: string, limit = 5): Promise<GatheredTopicItem[]> {
+export async function fetchCustomRssFeed(rssUrl: string, limit = 5): Promise<GatheredTopicItem[]> {
   try {
-    if (!rssUrl || !isAllowedProxyUrl(rssUrl, false)) return [];
-    const parsed = new URL(rssUrl);
-    const isSafeHost = await resolveAndValidateHost(parsed.hostname);
-    if (!isSafeHost) return [];
-
-    const res = await fetch(rssUrl, {
-      signal: AbortSignal.timeout(4000),
-      headers: {
-        'User-Agent': 'MARROK-Content-Gatherer/2.0',
-        Accept: 'application/rss+xml, application/xml, text/xml, application/atom+xml, */*',
-      },
+    const { response: res, text: xml } = await fetchSafeRemoteText(rssUrl, {
+      maxHops: 3,
+      maxBytes: 400_000,
+      timeoutMs: 4000,
+      acceptHeader: 'application/rss+xml, application/xml, text/xml, application/atom+xml, */*',
+      userAgent: 'MARROK-Content-Gatherer/2.0',
     });
     if (!res.ok) return [];
-    const xml = (await res.text()).slice(0, 400_000);
     const itemBlocks =
       xml.match(/<item\b[^>]*>[\s\S]*?<\/item>/gi) ||
       xml.match(/<entry\b[^>]*>[\s\S]*?<\/entry>/gi) ||
@@ -1112,44 +1109,14 @@ export async function fetchSafeUrlHtml(
   initialUrl: string,
   maxHops = 3
 ): Promise<{ response: globalThis.Response; finalUrl: string }> {
-  let currentUrl = initialUrl;
-
-  for (let hop = 0; hop <= maxHops; hop++) {
-    if (!isAllowedProxyUrl(currentUrl, false)) {
-      throw new Error('SSRF_BLOCKED_URL: Invalid or blocked URL. Only public https:// URLs are permitted.');
-    }
-
-    const parsed = new URL(currentUrl);
-    const isSafeHost = await resolveAndValidateHost(parsed.hostname);
-    if (!isSafeHost) {
-      throw new Error('SSRF_BLOCKED_IP: Target hostname resolved to a restricted or private IP address.');
-    }
-
-    const response = await fetch(currentUrl, {
-      redirect: 'manual',
-      signal: AbortSignal.timeout(7500),
-      headers: {
-        'User-Agent': 'MARROK-Content-Studio-Reader/2.0 (+https://marrok.org)',
-        Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8',
-      },
-    });
-
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get('location');
-      if (!location) {
-        throw new Error(`Upstream redirect (${response.status}) missing Location header.`);
-      }
-      if (hop === maxHops) {
-        throw new Error(`Exceeded maximum redirect hops (${maxHops}).`);
-      }
-      currentUrl = new URL(location, currentUrl).toString();
-      continue;
-    }
-
-    return { response, finalUrl: currentUrl };
-  }
-
-  throw new Error('Failed to resolve URL within redirect budget.');
+  const { response, finalUrl } = await fetchSafeRemoteText(initialUrl, {
+    maxHops,
+    maxBytes: 600_000,
+    timeoutMs: 7500,
+    acceptHeader: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8',
+    userAgent: 'MARROK-Content-Studio-Reader/2.0 (+https://marrok.org)',
+  });
+  return { response, finalUrl };
 }
 
 export async function extractUrlTopicInternal(
@@ -1171,7 +1138,13 @@ export async function extractUrlTopicInternal(
   }
 
   try {
-    const { response, finalUrl } = await fetchSafeUrlHtml(rawUrl, 3);
+    const { response, finalUrl, text: html } = await fetchSafeRemoteText(rawUrl, {
+      maxHops: 3,
+      maxBytes: 600_000,
+      timeoutMs: 7500,
+      acceptHeader: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8',
+      userAgent: 'MARROK-Content-Studio-Reader/2.0 (+https://marrok.org)',
+    });
 
     if (!response.ok) {
       return {
@@ -1182,7 +1155,6 @@ export async function extractUrlTopicInternal(
     }
 
     const parsed = new URL(finalUrl);
-    const html = (await response.text()).slice(0, 600_000);
     const ogTitleMatch =
       html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i) ||
       html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i);
@@ -1432,7 +1404,7 @@ export async function runAutopilotForTopic(
   const lastSlide = deck.slides[deck.slides.length - 1];
   if (lastSlide && (!lastSlide.enCredit || lastSlide.enCredit.toLowerCase().includes('marrok'))) {
     lastSlide.enCredit = `Source: ${topic.brand}`;
-    lastSlide.arCredit = 'المصدر التقني المعتمد.';
+    lastSlide.arCredit = 'المصدر التقني الأساسي.';
   }
 
   const numericAudit = compareSlideMetricsAgainstSource(deck, topic.extractedMetrics);
@@ -1692,7 +1664,21 @@ export async function handleAutopilotGatherAndSynthesize(
     }
   }
 
-  if (savedCount > 0) {
+  if (savedCount === 1) {
+    try {
+      await upsertSingleStoredPost(workingPosts[0], workingPosts);
+    } catch (dbErr) {
+      const msg = dbErr instanceof Error ? dbErr.message : 'Vault persistence failed';
+      res.status(500).json({
+        ok: false,
+        mode,
+        savedCount: 0,
+        error: msg,
+        results,
+      });
+      return;
+    }
+  } else if (savedCount > 1) {
     try {
       await saveStoredPosts(workingPosts);
     } catch (dbErr) {
@@ -1951,9 +1937,7 @@ export async function handleTelegramWebhook(req: Request, res: Response): Promis
     const targetIdx = posts.findIndex((p) => p.id === postId);
 
     if (action === 'reject') {
-      await recordServerDeletedPostId(postId);
-      const remaining = posts.filter((p) => p.id !== postId);
-      await saveStoredPosts(remaining);
+      await deleteSingleStoredPost(postId, posts);
       await answerTelegramCallbackQuery(
         config.telegramBotToken,
         callbackId,
@@ -2046,7 +2030,7 @@ export async function handleTelegramWebhook(req: Request, res: Response): Promis
       targetPost.scheduledFor = slot.scheduledForIso;
       targetPost.deck.scheduleSlot = slot.slotLabel;
       posts[targetIdx] = targetPost;
-      await saveStoredPosts(posts);
+      await upsertSingleStoredPost(targetPost, posts);
       await answerTelegramCallbackQuery(
         config.telegramBotToken,
         callbackId,
@@ -2070,7 +2054,7 @@ export async function handleTelegramWebhook(req: Request, res: Response): Promis
 
     // Default: 'approve'
     posts[targetIdx] = targetPost;
-    await saveStoredPosts(posts);
+    await upsertSingleStoredPost(targetPost, posts);
     await answerTelegramCallbackQuery(
       config.telegramBotToken,
       callbackId,
@@ -2124,7 +2108,7 @@ export async function handleTelegramWebhook(req: Request, res: Response): Promis
   });
 
   if (autopilotResult.status === 'saved' && autopilotResult.record) {
-    await saveStoredPosts([autopilotResult.record, ...existingPosts]);
+    await upsertSingleStoredPost(autopilotResult.record, existingPosts);
   }
 
   const previewText = formatTelegramPreviewMessage(autopilotResult);

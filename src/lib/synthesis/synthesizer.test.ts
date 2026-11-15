@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { synthesizeCarousel } from './synthesizer';
+import { InsufficientSourceError, synthesizeCarousel } from './synthesizer';
 
 describe('synthesizeCarousel offline citations', () => {
   it('does not fabricate authoritative sources or citations', () => {
@@ -17,10 +17,19 @@ describe('synthesizeCarousel offline citations', () => {
     expect(carousel.firstComment).toContain('Add your primary source link');
   });
 
-  it('eliminates raw non-semantic image filenames like 20760.png from titles and deck', () => {
+  it('rejects empty or thin inputs with InsufficientSourceError instead of fabricating copy', () => {
+    expect(() => synthesizeCarousel({ prompt: '' })).toThrow(InsufficientSourceError);
+    expect(() => synthesizeCarousel({ prompt: 'AI' })).toThrow(InsufficientSourceError);
+    expect(() =>
+      synthesizeCarousel({ imageFileName: '20760.png', inputMode: 'upload' })
+    ).toThrow(InsufficientSourceError);
+  });
+
+  it('eliminates raw non-semantic image filenames like 20760.png from titles and deck when real media is uploaded', () => {
     const carousel = synthesizeCarousel({
       imageFileName: '20760.png',
       inputMode: 'upload',
+      hasMedia: true,
     });
 
     const serialized = JSON.stringify(carousel);
@@ -28,26 +37,31 @@ describe('synthesizeCarousel offline citations', () => {
     expect(serialized).not.toContain('20760png');
     expect(serialized).not.toContain('.png');
 
-    // Slide 1 title should be clean and professional
-    expect(carousel.slides[0]?.enTitle).toBe('System Architecture & Engineering.');
-    expect(carousel.slides[0]?.arTitle).toContain('الأنظمة المعمارية');
+    // Slide 1 title should be clean, non-template, and have no body copy
+    expect(carousel.slides[0]?.enTitle?.length).toBeGreaterThan(8);
+    expect(carousel.slides[0]?.enTitle).not.toContain('System Architecture & Engineering.');
+    expect(carousel.slides[0]?.arTitle).toMatch(/[\u0600-\u06FF]/);
+    expect(carousel.slides[0]?.enBody).toBe('');
+    expect(carousel.slides[0]?.arBody).toBe('');
   });
 
-  it('converts human-named technical image filenames into proper topics', () => {
+  it('converts human-named technical image filenames into proper topics when media is uploaded', () => {
     const carousel = synthesizeCarousel({
       imageFileName: 'microservices-event-architecture.png',
       inputMode: 'upload',
+      hasMedia: true,
     });
 
-    expect(carousel.slides[0]?.enTitle?.toLowerCase()).toContain('microservices');
+    expect(JSON.stringify(carousel).toLowerCase()).toContain('microservices');
     expect(JSON.stringify(carousel)).not.toContain('.png');
   });
 
-  it('uses categoryHint when imageFileName is non-semantic', () => {
+  it('uses categoryHint when imageFileName is non-semantic and media is uploaded', () => {
     const carousel = synthesizeCarousel({
       imageFileName: 'IMG_20760.jpg',
       categoryHint: 'CYBERSECURITY & ZERO-TRUST',
       inputMode: 'upload',
+      hasMedia: true,
     });
 
     const serialized = JSON.stringify(carousel);

@@ -1,4 +1,4 @@
-import type { CarouselData, DiagramNode, DiagramVariant, SlideData, SlideType } from '../../types.ts';
+import type { CarouselData, DiagramNode, DiagramVariant, HookClaimCard, HubNodeReason, SlideData, SlideType } from '../../types.ts';
 import { TECH_ICONS_LIST } from '../techLogos.ts';
 import { CHAR_LIMITS, SINGLE_SLIDE_CHAR_LIMITS } from '../qaChecks.ts';
 import { autoFitTextToLimits, autoPolishHeadline } from '../text/headlines.ts';
@@ -20,10 +20,18 @@ const STOP_WORDS = new Set([
   'make', 'makes', 'made', 'using', 'used', 'uses', 'use', 'allow', 'allows', 'allowed',
   'create', 'creates', 'creating', 'become', 'becoming', 'becomes', 'while', 'where',
   // Generic meta/filler words that should never become Hub satellite labels
+  'tech', 'humor', 'opinion', 'article', 'story', 'system', 'systems', 'engineering', 'software',
   'technical', 'breakdown', 'mechanisms', 'mechanism', 'operational', 'boundaries', 'boundary',
+  'telemetry', 'stat', 'stats', 'metric', 'metrics', 'exposure', 'architecture', 'architectural',
   'stores', 'storing', 'stored', 'runaway', 'stop', 'stops', 'stopping', 'core', 'overview',
   'exploring', 'understanding', 'defining', 'managing', 'connecting', 'explains', 'explained',
   'deep', 'dive', 'guide', 'analysis', 'summary', 'modern', 'traditional', 'legacy',
+  // Prepositions, adverbs, verbs & quantifiers that must not be selected as standalone/partial Hub node labels
+  'onto', 'inside', 'outside', 'instead', 'rather', 'despite', 'whether', 'because', 'since',
+  'until', 'unless', 'fourteen', 'months', 'years', 'days', 'hours', 'minutes',
+  'migrated', 'reducing', 'cutting', 'removing', 'automating', 'parsing', 'complete', 'completes',
+  'runs', 'running', 'lets', 'let', 'spend', 'spends', 'spent', 'serve', 'serves', 'serving',
+  'shipped', 'shipping', 'parses', 'even', 'before', 'after', 'down', 'up', 'trillions', 'millions',
 ]);
 
 const GENERIC_PLACEHOLDER_LABELS = new Set([
@@ -232,25 +240,298 @@ export function extractKeyPhrasesFromSlide(slide: SlideData): string[] {
     addPhrase(formatted);
   }
 
-  // 4. Domain-specific cause -> effect sequence fallback so we always have >= 6 distinct non-overlapping labels
-  if (phrases.length < 6) {
-    const text = `${slide.enTitle || ''} ${slide.enBody || ''} ${slide.arTitle || ''} ${slide.arBody || ''}`.toLowerCase();
-    if (/discord|message|scylla|cassandra|trillion/i.test(text)) {
-      ['Write Ingest', 'Request Coalesce', 'Ring Partition', 'SSD Storage', 'Sub-ms Read', 'Zero GC Pause'].forEach(addPhrase);
-    } else if (/cloudflare|worker|durable|spending|cap/i.test(text)) {
-      ['Spending Caps', 'Edge Workers', 'Durable Objects', 'Billing Guard', 'Auto Cutoff', 'Zero Overrun'].forEach(addPhrase);
-    } else if (/\$|\b(?:valuation|billion|trillion|loss|losses|deficit|capital|financing|subsid|taxpayer|retiree|revenue|spend|economy|economic|energy)\b|مليار|تريليون|خسائر|تمويل|تقييم|ضرائب|طاقة|اقتصاد/i.test(text)) {
-      ['Capital Inflow', 'Compute Capex', 'Circular Spend', 'Unit Deficit', 'Grid Demand', 'Public Exposure'].forEach(addPhrase);
-    } else if (/security|breach|threat|ai|permission|quantum|اختراق|أمن|ذكاء/i.test(text)) {
-      ['Request Ingress', 'Identity Check', 'Scope Policy', 'Crypto Verify', 'Audit Telemetry', 'Zero-Trust Gate'].forEach(addPhrase);
-    } else if (/vector|embedding|hnsw|ivf|search|متجهات|بحث/i.test(text)) {
-      ['Input Query', 'Dense Embed', 'Graph Hop', 'Cluster Probe', 'Cosine Rank', 'Top-K Result'].forEach(addPhrase);
-    } else {
-      ['Traffic Ingress', 'Load Router', 'Worker Compute', 'State Commit', 'Read Replica', 'Client Output'].forEach(addPhrase);
+  return phrases;
+}
+
+const HUB_FILLER_TOKENS = new Set([
+  'tech', 'humor', 'comedy', 'meme', 'opinion', 'satire', 'joke', 'rant',
+  'telemetry', 'stat', 'stats', 'metric', 'metrics', 'exposure', 'boundaries',
+  'verification', 'observability', 'ingress', 'egress', 'engine', 'architecture',
+  'core', 'system', 'systems', 'target', 'state', 'node', 'stage', 'layer',
+  'الذي', 'التي', 'كيف', 'لماذا', 'فعليا', 'فعلياً', 'ماذا', 'الأنظمة', 'المعمارية',
+]);
+
+/**
+ * Extracts up to `targetCount` (default 5) non-repeating nouns/terms directly quoted from `sourceText`,
+ * filtering out title/category echoes and returning one-line provenance reasons per node.
+ */
+export function extractSourceQuotedHubNodes(
+  sourceText: string,
+  options?: { titleText?: string; category?: string; targetCount?: number }
+): { satLabels: string[]; hubNodeReasons: HubNodeReason[] } {
+  const targetCount = options?.targetCount ?? 5;
+  const cleanSource = (sourceText || '')
+    .replace(/https?:\/\/\S+/gi, ' ')
+    .replace(/[`"*_~[\]()<>]/g, ' ')
+    .replace(/[—–]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleanSource) {
+    return { satLabels: [], hubNodeReasons: [] };
+  }
+
+  const forbiddenEchoRoots = new Set<string>();
+  const addForbiddenText = (txt?: string) => {
+    if (!txt) return;
+    for (const rawTok of txt.toLowerCase().split(/[^a-z0-9\u0600-\u06FF]+/)) {
+      const t = rawTok.trim();
+      if (t.length >= 3 && !STOP_WORDS.has(t)) {
+        forbiddenEchoRoots.add(t.length > 5 && t.endsWith('s') ? t.slice(0, -1) : t);
+      }
+    }
+  };
+  addForbiddenText(options?.category);
+
+  const titleOnlyRoots = new Set<string>();
+  if (options?.titleText) {
+    for (const rawTok of options.titleText.toLowerCase().split(/[^a-z0-9\u0600-\u06FF]+/)) {
+      const t = rawTok.trim();
+      if (t.length >= 3 && !STOP_WORDS.has(t)) {
+        titleOnlyRoots.add(t.length > 5 && t.endsWith('s') ? t.slice(0, -1) : t);
+      }
     }
   }
 
-  return phrases;
+  const normalizeRoot = (token: string): string => {
+    const low = token.toLowerCase().replace(/[^a-z0-9\u0600-\u06FF]/g, '');
+    if (low.length > 5 && low.endsWith('s')) return low.slice(0, -1);
+    return low;
+  };
+
+  const candidates: HubNodeReason[] = [];
+  const usedRoots = new Set<string>();
+
+  const tryRegister = (rawPhrase: string, kind: 'compound' | 'metric-noun' | 'proper-noun' | 'source-term') => {
+    const cleaned = rawPhrase
+      .replace(/^[^A-Za-z0-9\u0600-\u06FF$]+|[^A-Za-z0-9\u0600-\u06FF%+$]+$/g, '')
+      .trim();
+    if (cleaned.length < 3) return;
+
+    const words = cleaned.split(/\s+/).filter(Boolean);
+    if (words.length === 0 || words.length > 3) return;
+    if (words.some((w) => STOP_WORDS.has(w.toLowerCase()))) return;
+    if (words.every((w) => HUB_FILLER_TOKENS.has(w.toLowerCase()))) return;
+    if (words.some((w) => /^https?$/i.test(w))) return;
+    // Do not accept leading/trailing verb forms (-ing/-ed) unless part of a known technical acronym or hyphenated term
+    if (
+      kind !== 'compound' &&
+      kind !== 'metric-noun' &&
+      words.some((w) => w.length > 6 && /(?:ing|ated|izes|ized)$/i.test(w) && !/routing|caching|sharding|indexing|pooling|tracing|logging|queuing|streaming/i.test(w))
+    ) {
+      return;
+    }
+
+    const labelWords = words.slice(0, 2);
+    const label = labelWords
+      .join(' ')
+      .toUpperCase()
+      .slice(0, 18)
+      .trim();
+    if (label.length < 3) return;
+
+    const roots = labelWords.map(normalizeRoot).filter((r) => r.length >= 3);
+    if (roots.length === 0) return;
+
+    // Never echo category tags (e.g. TECH / TECH HUMOR)
+    if (roots.every((r) => forbiddenEchoRoots.has(r) || HUB_FILLER_TOKENS.has(r))) return;
+    // Avoid picking single-word labels that simply repeat the headline word-for-word
+    if (roots.length === 1 && titleOnlyRoots.has(roots[0])) return;
+
+    const alreadyUsed = roots.some((r) => {
+      if (usedRoots.has(r)) return true;
+      for (const existing of usedRoots) {
+        if (r.length >= 4 && existing.length >= 4 && (existing.startsWith(r) || r.startsWith(existing))) {
+          return true;
+        }
+      }
+      return false;
+    });
+    if (alreadyUsed) return;
+
+    const quotedFrom = words.slice(0, 2).join(' ');
+    const reasonMap: Record<typeof kind, string> = {
+      'metric-noun': `Quoted "${quotedFrom}" directly from source metric claim.`,
+      compound: `Quoted "${quotedFrom}" verbatim from source narrative.`,
+      'proper-noun': `Quoted "${quotedFrom}" directly from named entity/component in source.`,
+      'source-term': `Quoted "${quotedFrom}" directly from key concept in source.`,
+    };
+
+    candidates.push({
+      label,
+      quotedFrom,
+      reason: reasonMap[kind],
+    });
+    roots.forEach((r) => usedRoots.add(r));
+  };
+
+  // A. Quoted strings inside source (e.g. "lease tokens", "Friday deploys")
+  for (const m of cleanSource.matchAll(/["'«»]([^"'«»]{3,24})["'«»]/g)) {
+    tryRegister(m[1], 'compound');
+  }
+
+  // B. Number + real noun phrases verbatim in source (e.g. "177 nodes", "99% uptime")
+  for (const m of cleanSource.matchAll(
+    /(?:\$\d[\d,.]*[KMBTkmbt]?|\b\d+(?:\.\d+)?\s*(?:%|x|ms|s|GB|TB|MB|KB|k)?)\s+([A-Za-z][A-Za-z-]{2,18})/gi
+  )) {
+    const nounWord = (m[1] || '').toLowerCase();
+    if (!STOP_WORDS.has(nounWord) && !/^(?:down|up|over|under|than|per)$/i.test(nounWord)) {
+      tryRegister(m[0], 'metric-noun');
+    }
+  }
+
+  // C. Hyphenated technical compounds & proper/CamelCase nouns (skip generic sentence-initial words)
+  for (const m of cleanSource.matchAll(/\b([A-Za-z][a-z0-9]+-[A-Za-z][A-Za-z0-9-]+)\b/g)) {
+    tryRegister(m[1], 'compound');
+  }
+  const sentenceInitialStarts = new Set<number>([0]);
+  for (const sm of cleanSource.matchAll(/[.!?]\s+/g)) {
+    if (sm.index !== undefined) sentenceInitialStarts.add(sm.index + sm[0].length);
+  }
+  for (const m of cleanSource.matchAll(/\b([A-Z][a-zA-Z0-9+]+(?:\s+[A-Z][a-zA-Z0-9+]+)?)\b/g)) {
+    const pos = m.index ?? 0;
+    const raw = m[1];
+    const isAllCapsOrCamel = /[A-Z]{2,}|[a-z][A-Z]/.test(raw);
+    if (sentenceInitialStarts.has(pos) && !isAllCapsOrCamel && !/\s/.test(raw)) {
+      continue;
+    }
+    tryRegister(raw, 'proper-noun');
+  }
+
+  // D. Meaningful adjacent noun-like pairs or standalone nouns in source order
+  const rawTokens = cleanSource
+    .replace(/[.?!,:;]/g, ' ')
+    .split(/\s+/)
+    .filter(
+      (w) =>
+        w.length >= 3 &&
+        !/^\d+$/.test(w) &&
+        !STOP_WORDS.has(w.toLowerCase()) &&
+        !HUB_FILLER_TOKENS.has(w.toLowerCase())
+    );
+
+  for (let i = 0; i < rawTokens.length - 1; i++) {
+    const a = rawTokens[i];
+    const b = rawTokens[i + 1];
+    if (/^[A-Za-z\u0600-\u06FF-]+$/.test(a) && /^[A-Za-z\u0600-\u06FF-]+$/.test(b)) {
+      if (a.length + b.length + 1 <= 18) {
+        tryRegister(`${a} ${b}`, 'source-term');
+      }
+    }
+    if (candidates.length >= targetCount) break;
+  }
+
+  for (const tok of rawTokens) {
+    if (candidates.length >= targetCount) break;
+    tryRegister(tok, 'source-term');
+  }
+
+  // E. If still fewer than targetCount and title tokens exist cleanly, allow 2-word title noun compounds (never raw single title echo)
+  if (candidates.length < targetCount) {
+    const fallbackPhrases = extractKeyPhrasesFromSlide({
+      type: 'hub',
+      enTitle: '',
+      enBody: cleanSource,
+    });
+    for (const p of fallbackPhrases) {
+      if (candidates.length >= targetCount) break;
+      tryRegister(p, 'source-term');
+    }
+  }
+
+  const finalNodes = candidates.slice(0, targetCount);
+  return {
+    satLabels: finalNodes.map((n) => n.label),
+    hubNodeReasons: finalNodes,
+  };
+}
+
+/**
+ * Builds a structured Quote-style claim card or Contrast visual for non-numeric Slide 1 hooks.
+ */
+export function buildNonNumericHookClaimCard(
+  sourceText: string,
+  slide?: Partial<SlideData>
+): HookClaimCard | undefined {
+  const text = `${sourceText || ''} ${slide?.enTitle || ''} ${slide?.enBody || ''}`
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return undefined;
+
+  // 1. Detect explicit Contrast ("X instead of Y", "X rather than Y", "X vs Y", "not X — Y")
+  const insteadMatch = text.match(
+    /([^.!?\n]{4,56}?)\s+(?:instead\s+of|rather\s+than)\s+(?:over\s+)?([^.!?\n]{4,44})/i
+  );
+  if (insteadMatch) {
+    const stripFillers = (s: string, keepTail: boolean) => {
+      const cleaned = s
+        .replace(/^(?:the\s+same|your|an?|over|on|into|inside|runs?\s+inside)\s+/i, '')
+        .trim()
+        .split(/\s+/)
+        .filter((w) => !/^(?:as|your|the|a|an|for)$/i.test(w));
+      const slice = keepTail ? cleaned.slice(-3) : cleaned.slice(0, 3);
+      return slice.join(' ').slice(0, 28).trim();
+    };
+    const afterClean = stripFillers(insteadMatch[1], true);
+    const beforeClean = stripFillers(insteadMatch[2], false);
+    if (afterClean.length >= 3 && beforeClean.length >= 3 && afterClean.toLowerCase() !== beforeClean.toLowerCase()) {
+      return {
+        mode: 'contrast',
+        badge: 'THE REAL SHIFT',
+        statement: `${afterClean} over ${beforeClean}`.slice(0, 72),
+        beforeLabel: beforeClean.toUpperCase(),
+        afterLabel: afterClean.toUpperCase(),
+        attribution: slide?.enCredit ? slide.enCredit.replace(/^Source:\s*/i, '') : undefined,
+      };
+    }
+  }
+
+  const contrastMatch =
+    text.match(/([^.!?\n]{4,48}?)\s+(?:vs\.?|versus)\s+([^.!?\n]{4,48})/i) ||
+    text.match(/\bnot\s+([^,;.\n]{3,32})[;,—-]+\s*(?:it'?s|but)?\s*([^.!?\n]{4,42})/i);
+
+  if (contrastMatch) {
+    const rawSideA = contrastMatch[1].replace(/^[\s•-]+/, '').trim();
+    const rawSideB = contrastMatch[2].replace(/^[\s•-]+/, '').trim();
+    const cleanA = rawSideA.split(/\s+/).slice(-3).join(' ').slice(0, 28);
+    const cleanB = rawSideB.split(/\s+/).slice(0, 3).join(' ').slice(0, 28);
+    if (cleanA.length >= 3 && cleanB.length >= 3 && cleanA.toLowerCase() !== cleanB.toLowerCase()) {
+      return {
+        mode: 'contrast',
+        badge: 'THE REAL SHIFT',
+        statement: `${cleanA} vs ${cleanB}`.slice(0, 72),
+        beforeLabel: cleanA.toUpperCase(),
+        afterLabel: cleanB.toUpperCase(),
+        attribution: slide?.enCredit ? slide.enCredit.replace(/^Source:\s*/i, '') : undefined,
+      };
+    }
+  }
+
+  // 2. Quote / Contrarian Claim / Question from source sentences
+  const sentences = (sourceText || slide?.enBody || slide?.enTitle || '')
+    .split(/(?<=[.?!؟\n])\s+/)
+    .map((s) => s.replace(/^[•*-]\s*/, '').replace(/^["'«»]|["'«»]$/g, '').trim())
+    .filter((s) => s.length >= 14);
+
+  const surprising =
+    sentences.find((s) => /[?!؟]/.test(s)) ||
+    sentences.find((s) => /\b(never|always|nobody|everyone|worst|best|actually|real|secret|truth|stop|mistake|breaks?|friday|coffee|senior|junior)\b/i.test(s)) ||
+    sentences[0] ||
+    (slide?.enTitle || '').trim();
+
+  const words = surprising.split(/\s+/).filter(Boolean);
+  const compactQuote = (words.length > 14 ? words.slice(0, 14).join(' ') : surprising)
+    .replace(/[,:;]+$/, '')
+    .trim();
+
+  if (!compactQuote) return undefined;
+
+  return {
+    mode: 'quote',
+    badge: /\?$/.test(compactQuote) ? 'OPEN QUESTION' : 'KEY CLAIM',
+    statement: compactQuote,
+    attribution: slide?.enCredit ? slide.enCredit.replace(/^Source:\s*/i, '') : undefined,
+  };
 }
 
 /**
@@ -426,6 +707,7 @@ export interface SmartSlideVisualDefaults {
   centerIcon: string;
   centerTag: string;
   satLabels: string[];
+  hubNodeReasons: HubNodeReason[];
   satIcons: string[];
   // Row / Poster Schematic
   diagramVariant: DiagramVariant;
@@ -442,6 +724,7 @@ export interface SmartSlideVisualDefaults {
   metricLabel: string;
   metricDiff: string;
   metricIcon: string;
+  hookClaimCard?: HookClaimCard;
   chartDirection: 'up' | 'down' | 'bar' | 'none';
   // Code
   codeFileName: string;
@@ -510,8 +793,18 @@ export function translateSlide1JargonToPlainOutcome(text: string): string {
 function capHeadlineToTwelveWords(headline: string, isArabic: boolean = false): string {
   const cleaned = headline.replace(/(?:\.\.\.|…)+$/g, '').trim();
   const words = cleaned.split(/\s+/).filter(Boolean);
-  if (words.length <= 12) return cleaned;
-  const sliced = words.slice(0, 12).join(' ').replace(/[,:;—–-]+$/, '');
+  const kept = words.slice(0, 12);
+  while (
+    !isArabic &&
+    kept.length > 4 &&
+    /^(?:from|to|with|of|for|in|on|by|at|and|or|the|a|an|that|as|into|than|via)$/i.test(
+      kept[kept.length - 1].replace(/[^a-zA-Z]/g, '')
+    )
+  ) {
+    kept.pop();
+  }
+  const sliced = kept.join(' ').replace(/[,:;—–-]+$/, '');
+  if (words.length <= 12 && kept.length === words.length) return cleaned;
   if (isArabic) return fixArabicPunctuation(sliced);
   return /[.?!]$/.test(sliced) ? sliced : `${sliced}.`;
 }
@@ -566,7 +859,14 @@ export function resolveSmartSlideVisuals(
     return 'SYSTEM CORE';
   })();
 
-  const genericCenterTags = new Set(['SYSTEM CORE', 'CLUSTER MESH', 'DATA ENGINE', 'AI GOVERNANCE']);
+  const genericCenterTags = new Set([
+    'SYSTEM CORE',
+    'CLUSTER MESH',
+    'DATA ENGINE',
+    'AI GOVERNANCE',
+    'TECH',
+    'TECH HUMOR',
+  ]);
   const centerTag =
     !forceRefresh &&
     slide.centerTag &&
@@ -576,18 +876,24 @@ export function resolveSmartSlideVisuals(
       ? slide.centerTag
       : derivedCenterTag;
 
-  const centerTagTokens = new Set(
-    centerTag
+  const titleAndCategoryEchoSet = new Set(
+    `${slide.enTitle || ''} ${slide.category || ''} ${centerTag}`
       .toLowerCase()
       .split(/[^a-z0-9]+/)
       .filter((t) => t.length >= 3)
   );
 
-  // Deduplicate any custom satLabels that repeat words or use generic filler ("TECHNICAL", "STORES", "STOP", "RUNAWAY")
+  // Deduplicate any custom satLabels that repeat words or use generic filler or echo title/category
   const cleanCustomSatLabels = (slide.satLabels || []).filter((raw) => {
     if (!raw || isGenericPlaceholderValue(raw)) return false;
+    const upper = raw.trim().toUpperCase();
     const lowerLabel = raw.trim().toLowerCase();
     if (STOP_WORDS.has(lowerLabel)) return false;
+    if (upper === 'TECH' || upper === 'TECH HUMOR' || upper === 'TELEMETRY STAT' || upper === 'EXPOSURE METRIC') {
+      return false;
+    }
+    const catUpper = (slide.category || '').trim().toUpperCase();
+    if (catUpper && upper === catUpper) return false;
     return true;
   });
 
@@ -613,20 +919,34 @@ export function resolveSmartSlideVisuals(
   const hasCustomSatLabels =
     !forceRefresh &&
     cleanCustomSatLabels.length >= 5 &&
-    !hasOverlappingCustomLabels;
+    !hasOverlappingCustomLabels &&
+    cleanCustomSatLabels.every((lbl) => {
+      const toks = lbl.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3);
+      return !(toks.length === 1 && titleAndCategoryEchoSet.has(toks[0]));
+    });
 
-  const nonCenterPhrases = phrases.filter((p) => {
-    const pTokens = p
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter((t) => t.length >= 3);
-    return !pTokens.some((t) => centerTagTokens.has(t));
+  const extractedHub = extractSourceQuotedHubNodes(fullText, {
+    titleText: slide.enTitle,
+    category: slide.category || centerTag,
+    targetCount: 5,
   });
-  const sourcePhrasesForHub = nonCenterPhrases.length >= 5 ? nonCenterPhrases : phrases;
 
   const satLabels = hasCustomSatLabels
     ? cleanCustomSatLabels.slice(0, 5)
-    : sourcePhrasesForHub.slice(0, 5).map((p) => p.toUpperCase().slice(0, 16));
+    : extractedHub.satLabels.slice(0, 5);
+
+  const hubNodeReasons: HubNodeReason[] = satLabels.map((lbl, idx) => {
+    const matched = extractedHub.hubNodeReasons.find(
+      (r) => r.label.toUpperCase() === lbl.toUpperCase()
+    ) || extractedHub.hubNodeReasons[idx];
+    return (
+      matched || {
+        label: lbl,
+        quotedFrom: lbl.toLowerCase(),
+        reason: `Quoted source concept representing "${lbl.toLowerCase()}" on this slide.`,
+      }
+    );
+  });
 
   const defaultSatIcons = ['server', 'database', 'gauge', 'users', 'robot', 'gitMerge'];
   const isDefaultSatIcons =
@@ -827,6 +1147,7 @@ export function resolveSmartSlideVisuals(
   const hasSourceNumber = /\d/.test(fullText) || Boolean(slide.metricValue && /\d/.test(slide.metricValue));
 
   const extractedMetric = (() => {
+    if (!hasSourceNumber) return '';
     if (parsedAfterWinValue) return parsedAfterWinValue;
     const currencyMatch = fullText.match(/\$\s*(\d+(?:[.,]\d+)?)\s*(trillion|billion|million|T|B|M|K)?/i);
     if (currencyMatch) {
@@ -846,17 +1167,32 @@ export function resolveSmartSlideVisuals(
       return `${gwMatch[1]} GW`;
     }
     // Prefer the WIN / reduction figure when multiple numbers exist
-    const allTechMetrics = Array.from(
+    const allTechMatches = Array.from(
       fullText.matchAll(/\b(\d+(?:\.\d+)?\s*(?:x|%|ms|μs|µs|ns|GB|MB|KB|TB|rps|req\/s|nodes?))\b/gi)
-    ).map((m) => m[1].replace(/\s+/g, ''));
-    if (allTechMetrics.length > 0) {
-      return allTechMetrics[0];
+    );
+    if (allTechMatches.length > 0) {
+      let bestVal = allTechMatches[0][1].replace(/\s+/g, '');
+      let bestScore = -Infinity;
+      for (const m of allTechMatches) {
+        const val = m[1].replace(/\s+/g, '');
+        const idx = m.index ?? 0;
+        const clause = lower.slice(Math.max(0, idx - 60), Math.min(lower.length, idx + val.length + 45));
+        let score = 0;
+        if (/\b(?:reduced|reduce|cut|slashed|drop|dropped|down\s+to|faster|speedup|saved|lower)\b/.test(clause)) score += 12;
+        if (/\b(?:trade-?off|increased|increase|overhead|footprint|cost|spend|burn)\b/.test(clause)) score -= 14;
+        if (/(?:x|ms|μs|µs|rps|req\/s)$/i.test(val)) score += 3;
+        if (score > bestScore) {
+          bestScore = score;
+          bestVal = val;
+        }
+      }
+      return bestVal;
     }
     const plainNum = fullText.match(/\b(\d[\d,.]*)\b/);
     if (plainNum) {
       return plainNum[1];
     }
-    return isFinancialOrMacro ? '$1.4T' : '15ms';
+    return '';
   })();
 
   const isDropOrReduction =
@@ -864,8 +1200,11 @@ export function resolveSmartSlideVisuals(
       lower
     );
 
-  // Always prefer the "after" / win value over the "before" value!
+  // Always prefer the "after" / win value over the "before" value; never fabricate a metric when source lacks numbers
   const metricValue = (() => {
+    if (!hasSourceNumber) {
+      return '';
+    }
     if (parsedAfterWinValue) {
       return parsedAfterWinValue;
     }
@@ -881,31 +1220,37 @@ export function resolveSmartSlideVisuals(
     return extractedMetric;
   })();
 
-  const metricBeforeValue = parsedBeforeValue && parsedBeforeValue !== metricValue ? parsedBeforeValue : undefined;
+  const metricBeforeValue =
+    hasSourceNumber && parsedBeforeValue && parsedBeforeValue !== metricValue
+      ? parsedBeforeValue
+      : undefined;
 
-  // Derive a clean, authentic domain term from the source (never "125MS TO EXPOSURE METRIC")
+  // Derive a clean, authentic domain term from the source (never "TELEMETRY STAT" or "EXPOSURE METRIC")
   const derivedRealMetricLabel = (() => {
+    if (!hasSourceNumber) return '';
     if (/latency|response|delay|ms\b|مللي\s*ثانية|استجابة/i.test(fullText)) return 'RESPONSE DELAY';
     if (/node|cluster|server|shard|عقدة|خادم/i.test(fullText)) return 'CLUSTER NODES';
     if (/message|chat|trillion|storage|رسالة|تخزين/i.test(fullText)) return 'MESSAGE STORAGE';
     if (/cost|spend|bill|price|\$|تكلفة|إنفاق/i.test(fullText)) return 'CLOUD SPEND';
     if (/memory|ram|buffer|gc\b|ذاكرة/i.test(fullText)) return 'MEMORY FOOTPRINT';
     if (/token|key|signature|kb\b|bytes?|مفتاح/i.test(fullText)) return 'PAYLOAD SIZE';
-    const cleanPhrase = phrases.find((p) => !/\d/.test(p) && p.length >= 4) || phrases[0] || 'BENCHMARK RESULT';
+    const cleanPhrase = phrases.find((p) => !/\d/.test(p) && p.length >= 4) || phrases[0] || 'MEASURED RESULT';
     return cleanPhrase.toUpperCase().slice(0, 24);
   })();
 
   const isNonsenseMetricLabel = (lbl?: string) =>
     !lbl ||
-    /EXPOSURE\s+METRIC|SCALE\s+METRIC|PERFORMANCE\s+MULTIPLIER|^p99\s+latency$|\bTO\s+EXPOSURE\b/i.test(lbl);
+    /EXPOSURE\s+METRIC|TELEMETRY\s+STAT|SCALE\s+METRIC|PERFORMANCE\s+MULTIPLIER|^p99\s+latency$|\bTO\s+EXPOSURE\b/i.test(lbl);
 
-  const metricLabel =
-    !forceRefresh && slide.metricLabel && !isNonsenseMetricLabel(slide.metricLabel)
-      ? slide.metricLabel
-      : derivedRealMetricLabel;
+  const metricLabel = !hasSourceNumber
+    ? ''
+    : !forceRefresh && slide.metricLabel && !isNonsenseMetricLabel(slide.metricLabel)
+    ? slide.metricLabel
+    : derivedRealMetricLabel;
 
   // Compute plain-language outcome badge (e.g. "8x FASTER • 88% DROP")
   const derivedPlainOutcomeBadge = (() => {
+    if (!hasSourceNumber) return '';
     if (metricBeforeValue && metricValue) {
       const bNum = parseFloat(metricBeforeValue.replace(/[^0-9.]/g, ''));
       const aNum = parseFloat(metricValue.replace(/[^0-9.]/g, ''));
@@ -923,24 +1268,29 @@ export function resolveSmartSlideVisuals(
       return `${pctInText[1]}% LOWER IN PRODUCTION`;
     }
     if (isDropOrReduction) {
-      return `VERIFIED REDUCTION`;
+      return 'MEASURED REDUCTION';
     }
-    return `VERIFIED OUTCOME`;
+    return 'MEASURED OUTCOME';
   })();
 
   const isNonsenseMetricDiff = (diff?: string) =>
     !diff ||
     diff === '▲ 94% faster' ||
-    /High\s+.*Exposure|Verified\s+.*Scale/i.test(diff);
+    /High\s+.*Exposure|Verified\s+.*Scale|TELEMETRY\s+STAT/i.test(diff);
 
-  const metricDiff =
-    !forceRefresh && slide.metricDiff && !isNonsenseMetricDiff(slide.metricDiff)
-      ? slide.metricDiff
-      : derivedPlainOutcomeBadge;
+  const metricDiff = !hasSourceNumber
+    ? ''
+    : !forceRefresh && slide.metricDiff && !isNonsenseMetricDiff(slide.metricDiff)
+    ? slide.metricDiff
+    : derivedPlainOutcomeBadge;
+
+  const hookClaimCard = !hasSourceNumber
+    ? slide.hookClaimCard || buildNonNumericHookClaimCard(fullText, slide)
+    : undefined;
 
   const chartDirection: 'up' | 'down' | 'bar' | 'none' = (() => {
-    if (slide.chartDirection) return slide.chartDirection;
     if (!hasSourceNumber) return 'none';
+    if (slide.chartDirection) return slide.chartDirection;
     if (metricBeforeValue) {
       const bNum = parseFloat(metricBeforeValue.replace(/[^0-9.]/g, ''));
       const aNum = parseFloat(metricValue.replace(/[^0-9.]/g, ''));
@@ -1061,6 +1411,7 @@ export function resolveSmartSlideVisuals(
     centerIcon,
     centerTag,
     satLabels,
+    hubNodeReasons,
     satIcons,
     diagramVariant: activeVariant,
     diagramNodes,
@@ -1074,6 +1425,7 @@ export function resolveSmartSlideVisuals(
     metricLabel,
     metricDiff,
     metricIcon,
+    hookClaimCard,
     chartDirection,
     codeFileName,
     codeLanguage,
@@ -1087,37 +1439,126 @@ export function resolveSmartSlideVisuals(
 
 /**
  * Rule 1: HOOK ENGINE (Slide 1 of any deck)
- * - Finds the single most surprising fact or number in the source and makes the WIN ("after") the focal point.
- * - Shows before/after as a small struck-through old value plus a huge new value, with a plain-language badge.
- * - Translates technical jargon on Slide 1 into plain outcomes for startup and SME owners.
- * - Enforces max 12 words per headline and sets storyRole: 'hook' so body text never appears on Slide 1.
+ * - Numeric sources: before/after metric focal point with WIN highlighted and jargon translated.
+ * - Non-numeric sources: Quote-style claim card or contrast visual (plus Hub when distinct concepts exist), zero fabricated numbers.
+ * - Multi-slide decks: strictly 1-line headline per language (<= 12 words EN + AR) and ZERO body text on Slide 1.
  */
-export function applyHookEngineToSlide1(slide: SlideData, isSingleSlide: boolean = false): SlideData {
+export function applyHookEngineToSlide1(
+  slide: SlideData,
+  isSingleSlide: boolean = false,
+  sourceContextText?: string
+): SlideData {
   if (isSingleSlide || slide.type === 'poster' || slide.standaloneMeme) {
     return slide;
   }
 
-  // First extract visuals while slide.enBody is still available so numbers in body aren't lost
-  const smart = resolveSmartSlideVisuals(slide, 0, true);
+  const combinedContextForExtraction = [
+    sourceContextText || '',
+    slide.enTitle || '',
+    slide.enBody || '',
+    // Only fall back to Arabic text for node extraction if no English text is available
+    ...(!/[A-Za-z]{3,}/.test(`${sourceContextText || ''} ${slide.enTitle || ''} ${slide.enBody || ''}`)
+      ? [slide.arTitle || '', slide.arBody || '']
+      : []),
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const smart = resolveSmartSlideVisuals(
+    {
+      ...slide,
+      enBody: slide.enBody || sourceContextText,
+    },
+    0,
+    true
+  );
+
+  const hasNumericWin = Boolean(smart.metricValue && /\d/.test(smart.metricValue));
+  const quotedHub =
+    slide.hubNodeReasons && slide.hubNodeReasons.length >= 4
+      ? {
+          satLabels: slide.satLabels || smart.satLabels,
+          hubNodeReasons: slide.hubNodeReasons,
+        }
+      : extractSourceQuotedHubNodes(combinedContextForExtraction, {
+          titleText: slide.enTitle,
+          category: slide.category || slide.centerTag,
+          targetCount: 5,
+        });
+
+  const nonNumericCard = !hasNumericWin
+    ? slide.hookClaimCard || smart.hookClaimCard || buildNonNumericHookClaimCard(combinedContextForExtraction, slide)
+    : undefined;
+
   const plainEnTitle = capHeadlineToTwelveWords(
     translateSlide1JargonToPlainOutcome(slide.enTitle || ''),
     false
   );
   const plainArTitle = capHeadlineToTwelveWords(slide.arTitle || '', true);
 
-  return {
+  // Pick Slide 1 cover layout:
+  // - Numeric source -> keep 'metric' or 'compare' or existing hub
+  // - Non-numeric contrast/opinion/claim -> 'metric' (renders Quote/Contrast Claim Card) or preserve 'hub' when it already holds distinct source concepts
+  const resolvedType: SlideType = (() => {
+    if (slide.type === 'image' && (slide.imageUrl || slide.videoUrl)) return 'image';
+    if (hasNumericWin) {
+      return slide.type === 'compare' || slide.type === 'code' || slide.type === 'row' ? slide.type : 'metric';
+    }
+    if (nonNumericCard?.mode === 'contrast' && quotedHub.hubNodeReasons.length < 4) {
+      return 'metric';
+    }
+    if (
+      (quotedHub.hubNodeReasons.length >= 4 && (!nonNumericCard || slide.type === 'hub')) ||
+      (slide.type === 'hub' && nonNumericCard?.mode !== 'contrast' && (quotedHub.satLabels.length >= 2 || smart.satLabels.length >= 2))
+    ) {
+      return 'hub';
+    }
+    if (nonNumericCard) {
+      return 'metric';
+    }
+    return slide.type || 'hub';
+  })();
+
+  const finalSatLabels =
+    quotedHub.satLabels.length >= 4
+      ? quotedHub.satLabels
+      : slide.type === 'hub' && slide.satLabels && slide.satLabels.length >= 2
+      ? slide.satLabels
+      : quotedHub.satLabels.length >= 2
+      ? quotedHub.satLabels
+      : smart.satLabels;
+  const finalReasons =
+    quotedHub.hubNodeReasons.length >= 1
+      ? quotedHub.hubNodeReasons
+      : slide.hubNodeReasons && slide.hubNodeReasons.length >= 1
+      ? slide.hubNodeReasons
+      : smart.hubNodeReasons;
+
+  const hookSlide: SlideData = {
     ...slide,
+    type: resolvedType,
     storyRole: 'hook',
-    cornerTag: deriveSlideCornerTag(slide, 0, 6),
+    // Multi-slide Slide 1 never displays body text
+    enBody: '',
+    arBody: '',
     enTitle: plainEnTitle || slide.enTitle,
     arTitle: plainArTitle || slide.arTitle,
-    metricBeforeValue: smart.metricBeforeValue,
-    metricValue: smart.metricValue,
-    metricLabel: smart.metricLabel,
-    metricDiff: smart.metricDiff,
+    satLabels: finalSatLabels,
+    hubNodeReasons: finalReasons,
+    satIcons: smart.satIcons,
+    centerIcon: smart.centerIcon,
+    centerTag: smart.centerTag,
+    metricBeforeValue: hasNumericWin ? smart.metricBeforeValue : undefined,
+    metricValue: hasNumericWin ? smart.metricValue : '',
+    metricLabel: hasNumericWin ? smart.metricLabel : '',
+    metricDiff: hasNumericWin ? smart.metricDiff : '',
     metricIcon: smart.metricIcon,
-    chartDirection: smart.chartDirection,
+    hookClaimCard: nonNumericCard,
+    chartDirection: hasNumericWin ? smart.chartDirection : 'none',
   };
+
+  hookSlide.cornerTag = deriveSlideCornerTag(hookSlide, 0, 6);
+  return hookSlide;
 }
 
 /**
@@ -1609,12 +2050,14 @@ export function autoSyncSlideGraphicsFromCopy(
     metricLabel: smart.metricLabel,
     metricDiff: smart.metricDiff,
     metricIcon: smart.metricIcon,
+    hookClaimCard: smart.hookClaimCard,
     chartDirection: smart.chartDirection,
     stepNumber: smart.stepNumber,
     stepLabel: smart.stepLabel,
     centerIcon: smart.centerIcon,
     centerTag: smart.centerTag,
     satLabels: smart.satLabels,
+    hubNodeReasons: smart.hubNodeReasons,
     satIcons: smart.satIcons,
   };
   synced.cornerTag = slide.cornerTag || deriveSlideCornerTag(synced, slideIndex, 8);
@@ -1637,7 +2080,16 @@ export function autoFinalizeCarouselDeck(deck: CarouselData): CarouselData {
 
   const finalizedSlides = repairAndDeRepeatSlideHeadlines(diversified).map((slide, idx) => {
     const fitted = autoFitSlideCopyToLimits(slide, idx, isSingle);
-    return autoSyncSlideGraphicsFromCopy(fitted, idx);
+    const synced = autoSyncSlideGraphicsFromCopy(fitted, idx);
+    if (!isSingle && idx === 0) {
+      return {
+        ...synced,
+        storyRole: 'hook' as const,
+        enBody: '',
+        arBody: '',
+      };
+    }
+    return synced;
   });
 
   return {

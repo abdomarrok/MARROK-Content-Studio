@@ -8,10 +8,14 @@ import {
   resolveDomainTheme,
   enrichCarouselDiagrams,
   balanceCarouselVisualPacing,
+  validateSourceSufficiency,
+  InsufficientSourceError,
+  applyHookEngineToSlide1,
 } from './synthesis';
 import { parseCarouselData } from './validation/carousel';
 import { parseImageDataUrl } from './validation/image';
 import { createRequestDeadline } from './network/requestDeadline';
+import { withClientAuthHeaders } from './security/clientSessionToken';
 
 const GENERATION_REQUEST_TIMEOUT_MS = 90000;
 const IMAGE_REQUEST_TIMEOUT_MS = 50000;
@@ -47,7 +51,8 @@ export function enrichAndPaceCarousel(
   let cleanCarousel = sanitizeFullCarousel(carousel);
 
   // Step 2: Auto-Fit Character Limits & Polish Headlines
-  const polishedSlides: SlideData[] = cleanCarousel.slides.map((slide) => {
+  const isSingleCarousel = cleanCarousel.postFormat === 'single' || cleanCarousel.slides.length <= 1;
+  const polishedSlides: SlideData[] = cleanCarousel.slides.map((slide, idx) => {
     const polishedTitle = autoPolishHeadline(slide.enTitle || '');
     const fittedEnTitle = autoFitTextToLimits(polishedTitle, CHAR_LIMITS.enTitle);
     const fittedEnBody = autoFitTextToLimits(slide.enBody || '', CHAR_LIMITS.enBody);
@@ -56,13 +61,18 @@ export function enrichAndPaceCarousel(
     const fixedArabicBody = fixArabicPunctuation(slide.arBody || '');
     const fittedArBody = autoFitTextToLimits(fixedArabicBody, CHAR_LIMITS.arBody);
 
-    return {
+    const updated: SlideData = {
       ...slide,
       enTitle: fittedEnTitle,
       enBody: fittedEnBody,
       arTitle: fittedArTitle,
       arBody: fittedArBody,
     };
+
+    if (!isSingleCarousel && idx === 0) {
+      return applyHookEngineToSlide1(updated, false, rawInput);
+    }
+    return updated;
   });
 
   // Step 3: Enrich diagrams and satellites with topic-relevant specifications
@@ -73,13 +83,28 @@ export function enrichAndPaceCarousel(
     cleanCarousel.brand || 'MARROK'
   );
   const balancedSlides =
-    cleanCarousel.postFormat === 'single' || enrichedSlides.length <= 1
+    isSingleCarousel
       ? enrichedSlides
       : balanceCarouselVisualPacing(enrichedSlides);
 
+  // Re-ensure Slide 1 multi-slide hook rule (zero body text on slide 0) after pacing
+  const hookSecuredSlides =
+    !isSingleCarousel && balancedSlides.length > 1
+      ? balancedSlides.map((s, idx) =>
+          idx === 0
+            ? {
+                ...s,
+                storyRole: 'hook' as const,
+                enBody: '',
+                arBody: '',
+              }
+            : s
+        )
+      : balancedSlides;
+
   cleanCarousel = {
     ...cleanCarousel,
-    slides: balancedSlides,
+    slides: hookSecuredSlides,
   };
 
   // Step 4: Quality verification check
@@ -115,8 +140,17 @@ export async function runAutonomousPipeline(
 
   const isSinglePost = postFormat === 'single';
 
-  // Step 1: Synthesize Content & Bilingual Structure
+  // Step 1: Validate input sufficiency (reject empty / < 20 chars / < 4 meaningful words without media)
   throwIfAborted(signal);
+  const sufficiency = validateSourceSufficiency({
+    prompt: rawInput,
+    imageFileName: imageName,
+    hasMedia: Boolean(imageBase64),
+  });
+  if (!sufficiency.isSufficient) {
+    throw new InsufficientSourceError(sufficiency);
+  }
+
   onProgress?.(
     isSinglePost
       ? 'Synthesizing standalone 1080×1920 single-slide post...'
@@ -126,7 +160,7 @@ export async function runAutonomousPipeline(
 
   const customKey = typeof window !== 'undefined' ? localStorage.getItem('marrok_custom_gemini_key') : null;
   const backupKey = typeof window !== 'undefined' ? localStorage.getItem('marrok_custom_gemini_backup_key') : null;
-  const requestHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+  const requestHeaders: Record<string, string> = withClientAuthHeaders({ 'Content-Type': 'application/json' });
   if (customKey) {
     requestHeaders['x-gemini-key'] = customKey;
   }
@@ -138,6 +172,7 @@ export async function runAutonomousPipeline(
   try {
     const res = await fetch('/api/generate', {
       method: 'POST',
+      credentials: 'include',
       headers: requestHeaders,
       signal: generationDeadline.signal,
       body: JSON.stringify({
@@ -199,6 +234,7 @@ export async function runAutonomousPipeline(
       categoryHint,
       inputMode,
       imageFileName: imageName,
+      hasMedia: Boolean(imageBase64),
       postFormat,
     });
     if (rawCarousel.sourceMeta) {
@@ -250,6 +286,7 @@ export async function runAutonomousPipeline(
 
         const imgRes = await fetch('/api/generate-image', {
           method: 'POST',
+          credentials: 'include',
           headers: requestHeaders,
           signal: imageDeadline.signal,
           body: JSON.stringify({

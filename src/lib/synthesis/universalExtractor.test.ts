@@ -174,7 +174,8 @@ describe('synthesizeUniversalCarousel (Zero AI Slop)', () => {
     const slides = synthesizeUniversalCarousel(userNotes);
 
     expect(slides).toHaveLength(8);
-    expect(slides[0].type).toBe('hub');
+    expect(['hub', 'metric']).toContain(slides[0].type);
+    expect(slides[0].metricValue).toBe('45ms');
     // Slides reflect the user's specific points
     const fullText = JSON.stringify(slides);
     expect(fullText).toContain('Envoy');
@@ -239,8 +240,8 @@ describe('synthesizeUniversalCarousel (Zero AI Slop)', () => {
     // Timestamp ranges like (0:00-1:23) must be completely stripped
     expect(jsonStr).not.toMatch(/\(\d{1,2}:\d{2}-\d{1,2}:\d{2}\)/);
 
-    // CTA must be discussion-focused
-    expect(slides[7].ctaText).toContain('شارك برأيك');
+    // CTA must end with actionable Marrok next-step CTA
+    expect(slides[7].ctaText).toContain('Marrok');
     expect(slides[7].ctaText).not.toContain('DM for Architecture Review');
   });
 

@@ -10,6 +10,8 @@ import type {
   SavedPostStorageEngine,
 } from '../../src/types.ts';
 import { getServerConfig } from '../config.ts';
+import { readRuntimeEnv } from '../../src/lib/security/env.ts';
+import { isAllowedProxyUrl, resolveAndValidateHost } from './proxyController.ts';
 import { parseCarouselData } from '../../src/lib/validation/carousel.ts';
 import { sanitizeFullCarousel } from '../../src/lib/textSanitizer.ts';
 import { runQAChecks } from '../../src/lib/qaChecks.ts';
@@ -19,15 +21,14 @@ import {
   getPostgresPool,
   queryPostgresPosts,
   queryPostgresDeletedIds,
-  countPostgresPosts,
   upsertPostgresPost,
+  upsertPostgresPostsBatch,
   deletePostgresPost,
   clearPostgresDeletedTombstone,
 } from '../db/postgres.ts';
 
 const KV_STORAGE_KEY = 'marrok:saved_posts:v1';
 const MAX_SAVED_POSTS = 100;
-const DEFAULT_REMOTE_VAULT_ORIGIN = 'https://marrok-tik-tok-carousel-studio.vercel.app';
 
 const serverDeletedIdsMemory = new Set<string>();
 
@@ -141,19 +142,25 @@ export async function clearServerDeletedPostId(
   }
 }
 
-function shouldSyncWithRemoteVault(env: NodeJS.ProcessEnv = process.env): string | null {
-  const isVercel = Boolean(env.VERCEL || env.VERCEL_ENV);
+export function shouldSyncWithRemoteVault(
+  env: NodeJS.ProcessEnv = process.env
+): string | null {
   const isTest = Boolean(env.POSTS_STORAGE_FILE || env.NODE_ENV === 'test' || env.VITEST);
-  if (isVercel || isTest) return null;
-  const origin = (env.REMOTE_VAULT_ORIGIN || DEFAULT_REMOTE_VAULT_ORIGIN).trim().replace(/\/+$/, '');
-  return origin || null;
+  if (isTest) return null;
+  const origin = (readRuntimeEnv('REMOTE_VAULT_ORIGIN', env) || '').trim().replace(/\/+$/, '');
+  if (!origin || !origin.startsWith('https://')) return null;
+  if (!isAllowedProxyUrl(origin, false)) return null;
+  return origin;
 }
 
 async function fetchRemoteVaultPosts(remoteOrigin: string): Promise<SavedPostRecord[] | null> {
   try {
+    const parsed = new URL(remoteOrigin);
+    if (!(await resolveAndValidateHost(parsed.hostname))) return null;
     const res = await fetch(`${remoteOrigin}/api/posts`, {
       method: 'GET',
       headers: { Accept: 'application/json' },
+      redirect: 'manual',
       signal: AbortSignal.timeout(2500),
     });
     if (!res.ok) return null;
@@ -307,7 +314,15 @@ async function writeToFileStore(
   posts: SavedPostRecord[],
   env: NodeJS.ProcessEnv = process.env
 ): Promise<SavedPostStorageEngine> {
-  const { filePath, engine } = resolveStorageFilePath(env);
+  const resolved = resolveStorageFilePath(env);
+  const isVitestDefaultRepoFile =
+    Boolean(env.VITEST || process.env.VITEST) &&
+    !env.POSTS_STORAGE_FILE &&
+    resolved.filePath === path.join(process.cwd(), 'data', 'saved-posts.json');
+  const filePath = isVitestDefaultRepoFile
+    ? path.join(os.tmpdir(), 'marrok-vitest-saved-posts.json')
+    : resolved.filePath;
+  const engine = resolved.engine;
   try {
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, JSON.stringify(posts, null, 2), 'utf-8');
@@ -340,6 +355,10 @@ async function writeToFileStore(
   }
 }
 
+/**
+ * READ-PURE loader for GET endpoints (/api/posts, /api/publish/status).
+ * Never mutates Postgres rows, never writes disk files, and never promotes scheduled posts on GET.
+ */
 export async function loadStoredPosts(env: NodeJS.ProcessEnv = process.env): Promise<{
   posts: SavedPostRecord[];
   storageEngine: SavedPostStorageEngine;
@@ -349,59 +368,39 @@ export async function loadStoredPosts(env: NodeJS.ProcessEnv = process.env): Pro
   const config = getServerConfig(env);
   const deletedIds = await loadServerDeletedPostIds(env);
 
-  // 1. Neon Serverless PostgreSQL Cloud Persistence
+  // 1. Neon Serverless PostgreSQL Cloud Persistence (READ-PURE)
   if (config.databaseUrl) {
     try {
       const pool = getPostgresPool(config.databaseUrl);
       if (pool) {
-        const count = await countPostgresPosts(pool);
-        if (count === 0) {
-          console.log('[PostsStore] Neon PostgreSQL empty, auto-migrating seed posts...');
-          const { posts: localPosts } = await readFromFileStore(env);
-          const initialSeeds = (localPosts.length > 0 ? localPosts : getBundledSeedPosts()).filter(
-            (s) => !deletedIds.has(s.id)
-          );
-          for (const seed of initialSeeds) {
-            const sig = normalizePostTitleSignature(seed);
-            await upsertPostgresPost(pool, seed, sig);
-          }
-        }
         const pgPosts = (await queryPostgresPosts(pool)).filter((p) => !deletedIds.has(p.id));
         if (pgPosts.length > 0) {
-          const nowMs = Date.now();
-          const nowIso = new Date(nowMs).toISOString();
-          const promotedPosts: SavedPostRecord[] = [];
-          for (const post of pgPosts) {
-            const schedMs = post.scheduledFor ? Date.parse(post.scheduledFor) : NaN;
-            if (Number.isFinite(schedMs) && schedMs <= nowMs) {
-              const promoted: SavedPostRecord = {
-                ...post,
-                postStatus: 'posted',
-                postedAt: post.postedAt || post.scheduledFor,
-                scheduledFor: undefined,
-                updatedAt: nowIso,
-              };
-              const sig = normalizePostTitleSignature(promoted);
-              await upsertPostgresPost(pool, promoted, sig);
-              promotedPosts.push(promoted);
-            } else {
-              promotedPosts.push(post);
-            }
-          }
           return {
-            posts: deduplicateSavedPosts(promotedPosts),
+            posts: deduplicateSavedPosts(pgPosts),
             storageEngine: 'neon-postgres',
             isCloudPersistent: true,
             deletedIds: Array.from(deletedIds),
           };
         }
+        const { posts: seedCandidates } = await readFromFileStore(env);
+        const seeds = deduplicateSavedPosts(
+          (seedCandidates.length > 0 ? seedCandidates : getBundledSeedPosts()).filter(
+            (s) => !deletedIds.has(s.id)
+          )
+        );
+        return {
+          posts: seeds,
+          storageEngine: 'neon-postgres',
+          isCloudPersistent: true,
+          deletedIds: Array.from(deletedIds),
+        };
       }
     } catch (pgErr) {
       console.warn('[PostsStore] Neon PostgreSQL query failed, falling back to local file store:', pgErr);
     }
   }
 
-  // 2. Vercel KV / Upstash Redis
+  // 2. Vercel KV / Upstash Redis (READ-PURE)
   if (config.kvRestUrl && config.kvRestToken) {
     const kvPosts = await readFromKv(config.kvRestUrl, config.kvRestToken);
     if (kvPosts !== null) {
@@ -419,20 +418,12 @@ export async function loadStoredPosts(env: NodeJS.ProcessEnv = process.env): Pro
 
   const { posts: rawLocalPosts, engine } = await readFromFileStore(env);
   const localPosts = deduplicateSavedPosts(rawLocalPosts.filter((p) => !deletedIds.has(p.id)));
-  if (localPosts.length !== rawLocalPosts.length) {
-    await writeToFileStore(localPosts, env);
-  }
+
   const remoteOrigin = shouldSyncWithRemoteVault(env);
   if (remoteOrigin) {
     const remotePosts = await fetchRemoteVaultPosts(remoteOrigin);
     if (remotePosts && remotePosts.length > 0) {
       const merged = mergePostLists(localPosts, remotePosts, deletedIds);
-      if (merged.length !== localPosts.length) {
-        await writeToFileStore(merged, env);
-      }
-      if (merged.length !== remotePosts.length) {
-        void pushPostsToRemoteVault(remoteOrigin, merged);
-      }
       return {
         posts: merged,
         storageEngine: engine,
@@ -450,6 +441,105 @@ export async function loadStoredPosts(env: NodeJS.ProcessEnv = process.env): Pro
   };
 }
 
+/**
+ * Persists a single SavedPostRecord cleanly with a single-row UPSERT in Postgres
+ * instead of rewriting all 100 Vault rows.
+ */
+export async function upsertSingleStoredPost(
+  post: SavedPostRecord,
+  existingListHint?: SavedPostRecord[],
+  env: NodeJS.ProcessEnv = process.env
+): Promise<SavedPostStorageEngine> {
+  const config = getServerConfig(env);
+  const sig = normalizePostTitleSignature(post);
+
+  // 1. Neon Serverless PostgreSQL: 1 single-row INSERT ... ON CONFLICT DO UPDATE
+  if (config.databaseUrl) {
+    try {
+      const pool = getPostgresPool(config.databaseUrl);
+      if (pool) {
+        await upsertPostgresPost(pool, post, sig);
+        if (existingListHint) {
+          const next = deduplicateSavedPosts([
+            post,
+            ...existingListHint.filter((p) => p.id !== post.id),
+          ]);
+          void writeToFileStore(next, env);
+        }
+        return 'neon-postgres';
+      }
+    } catch (pgErr) {
+      console.warn('[PostsStore] Neon PostgreSQL single-row upsert failed, falling back:', pgErr);
+    }
+  }
+
+  const baseList = existingListHint ?? (await loadStoredPosts(env)).posts;
+  const merged = deduplicateSavedPosts([post, ...baseList.filter((p) => p.id !== post.id)]).slice(
+    0,
+    MAX_SAVED_POSTS
+  );
+
+  if (config.kvRestUrl && config.kvRestToken) {
+    const ok = await writeToKv(config.kvRestUrl, config.kvRestToken, merged);
+    if (ok) return 'cloud-kv';
+  }
+
+  const engine = await writeToFileStore(merged, env);
+  const remoteOrigin = shouldSyncWithRemoteVault(env);
+  if (remoteOrigin) {
+    void pushPostsToRemoteVault(remoteOrigin, merged);
+  }
+  return engine;
+}
+
+/**
+ * Deletes a single post and persists tombstone without rewriting remaining Postgres rows.
+ */
+export async function deleteSingleStoredPost(
+  id: string,
+  existingListHint?: SavedPostRecord[],
+  env: NodeJS.ProcessEnv = process.env
+): Promise<SavedPostStorageEngine> {
+  const cleanId = String(id || '').trim();
+  const config = getServerConfig(env);
+
+  if (cleanId) {
+    await recordServerDeletedPostId(cleanId, env);
+  }
+
+  if (config.databaseUrl) {
+    try {
+      const pool = getPostgresPool(config.databaseUrl);
+      if (pool) {
+        if (existingListHint) {
+          void writeToFileStore(
+            existingListHint.filter((p) => p.id !== cleanId),
+            env
+          );
+        }
+        return 'neon-postgres';
+      }
+    } catch {
+      // Fallback below if Postgres unavailable
+    }
+  }
+
+  const baseList = existingListHint ?? (await loadStoredPosts(env)).posts;
+  const filtered = baseList.filter((p) => p.id !== cleanId);
+
+  if (config.kvRestUrl && config.kvRestToken) {
+    const ok = await writeToKv(config.kvRestUrl, config.kvRestToken, filtered);
+    if (ok) return 'cloud-kv';
+  }
+
+  const engine = await writeToFileStore(filtered, env);
+  const remoteOrigin = shouldSyncWithRemoteVault(env);
+  if (remoteOrigin && cleanId) {
+    void pushPostsToRemoteVault(remoteOrigin, filtered);
+  }
+  return engine;
+}
+
 export async function saveStoredPosts(
   posts: SavedPostRecord[],
   env: NodeJS.ProcessEnv = process.env
@@ -461,21 +551,17 @@ export async function saveStoredPosts(
 
   const config = getServerConfig(env);
 
-  // 1. Neon Serverless PostgreSQL Cloud Persistence
+  // 1. Neon Serverless PostgreSQL Cloud Persistence (Transactional UNNEST Batch)
   if (config.databaseUrl) {
     try {
       const pool = getPostgresPool(config.databaseUrl);
       if (pool) {
-        for (const post of sorted) {
-          const sig = normalizePostTitleSignature(post);
-          await upsertPostgresPost(pool, post, sig);
-        }
-        // Mirror to local disk backup in background
+        await upsertPostgresPostsBatch(pool, sorted, normalizePostTitleSignature);
         void writeToFileStore(sorted, env);
         return 'neon-postgres';
       }
     } catch (pgErr) {
-      console.warn('[PostsStore] Neon PostgreSQL save failed, falling back to file store:', pgErr);
+      console.warn('[PostsStore] Neon PostgreSQL batch save failed, falling back to file store:', pgErr);
     }
   }
 
@@ -624,6 +710,16 @@ export function validateAndBuildPostRecord(
   }
 
   const sanitizedDeck: CarouselData = sanitizeFullCarousel(parsedDeck);
+  const blobSlides = sanitizedDeck.slides
+    .map((s, idx) => ({ idx, url: typeof s.videoUrl === 'string' ? s.videoUrl.trim() : '' }))
+    .filter((item) => item.url.toLowerCase().startsWith('blob:'));
+  if (blobSlides.length > 0) {
+    return {
+      ok: false,
+      error: 'Slides with temporary browser blob: video URLs cannot be saved to the persistent Vault. Export the MP4 or clear the local video clip first.',
+      details: blobSlides.map((b) => `Slide ${b.idx + 1}: ephemeral ${b.url.slice(0, 28)}...`),
+    };
+  }
   const humanApproved =
     input.humanApproved !== undefined
       ? input.humanApproved
@@ -837,11 +933,7 @@ export async function handleSavePost(req: Request, res: Response) {
     // Explicitly saving a post clears any prior deletion tombstone for its ID
     await clearServerDeletedPostId(validation.record.id);
 
-    const updatedList = [
-      validation.record,
-      ...existing.filter((p) => p.id !== validation.record.id),
-    ];
-    const storageEngine = await saveStoredPosts(updatedList);
+    const storageEngine = await upsertSingleStoredPost(validation.record, existing);
     const savedRecord: SavedPostRecord = {
       ...validation.record,
       storageEngine,
@@ -881,9 +973,7 @@ export async function handleUpdatePostStatus(req: Request, res: Response) {
       postedAt: postStatus === 'posted' ? posts[idx].postedAt || nowIso : undefined,
     };
 
-    const nextPosts = [...posts];
-    nextPosts[idx] = updated;
-    const storageEngine = await saveStoredPosts(nextPosts);
+    const storageEngine = await upsertSingleStoredPost(updated, posts);
 
     return res.json({
       post: { ...updated, storageEngine },
@@ -913,12 +1003,8 @@ export async function handleDeletePost(req: Request, res: Response) {
         // Non-fatal if remote is unreachable
       }
     }
-    if (id) {
-      await recordServerDeletedPostId(id);
-    }
     const { posts } = await loadStoredPosts();
-    const filtered = posts.filter((p) => p.id !== id);
-    const storageEngine = await saveStoredPosts(filtered);
+    const storageEngine = await deleteSingleStoredPost(id, posts);
 
     return res.json({
       deletedId: id,

@@ -1,13 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import os from 'node:os';
+import path from 'node:path';
 import {
   initPostgresSchema,
   queryPostgresPosts,
   upsertPostgresPost,
+  upsertPostgresPostsBatch,
   updatePostgresPostStatus,
   deletePostgresPost,
   resetPostgresPoolForTesting,
+  setPostgresPoolForTesting,
 } from '../../api/db/postgres.ts';
-import { loadStoredPosts, saveStoredPosts } from '../../api/controllers/postsController.ts';
+import {
+  loadStoredPosts,
+  saveStoredPosts,
+  upsertSingleStoredPost,
+} from '../../api/controllers/postsController.ts';
 import { DEFAULT_STARTER_DECK } from '../lib/presets.ts';
 import type { SavedPostRecord } from '../types.ts';
 
@@ -172,5 +180,175 @@ describe('Neon PostgreSQL Vault Persistence & Safe Fallbacks', () => {
     expect(Array.isArray(result.posts)).toBe(true);
     // Should fallback to local-disk or vercel-tmp
     expect(['local-disk', 'vercel-tmp', 'browser-vault']).toContain(result.storageEngine);
+  });
+
+  it('uses transactional UNNEST bulk upsert (BEGIN + 1 UNNEST query + COMMIT) and issues ROLLBACK on failure', async () => {
+    const queries: string[] = [];
+    const clientQuery = vi.fn().mockImplementation(async (sql: string) => {
+      queries.push(sql.trim().split(/\s+/).slice(0, 4).join(' '));
+      if (sql.includes('INSERT INTO saved_posts')) {
+        return {
+          rows: [
+            {
+              id: 'p1',
+              title: 'Batch Post 1',
+              post_status: 'validated',
+              deck: DEFAULT_STARTER_DECK,
+              qa_passed: true,
+              slide_count: 1,
+              created_at: new Date(),
+              updated_at: new Date(),
+            },
+            {
+              id: 'p2',
+              title: 'Batch Post 2',
+              post_status: 'validated',
+              deck: DEFAULT_STARTER_DECK,
+              qa_passed: true,
+              slide_count: 1,
+              created_at: new Date(),
+              updated_at: new Date(),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const release = vi.fn();
+    const mockPool = {
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+      connect: vi.fn().mockResolvedValue({ query: clientQuery, release }),
+      on: vi.fn(),
+    } as any;
+
+    const now = new Date().toISOString();
+    const makePost = (id: string, title: string): SavedPostRecord => ({
+      id,
+      title,
+      category: 'SYSTEMS',
+      postStatus: 'validated',
+      createdAt: now,
+      updatedAt: now,
+      creatorHandle: 'MARROK',
+      slideCount: 1,
+      qaPassed: true,
+      deck: DEFAULT_STARTER_DECK,
+    });
+
+    const saved = await upsertPostgresPostsBatch(mockPool, [
+      makePost('p1', 'Batch Post 1'),
+      makePost('p2', 'Batch Post 2'),
+    ]);
+    expect(saved).toHaveLength(2);
+    expect(queries[0]).toBe('BEGIN');
+    expect(queries[1]).toContain('INSERT INTO saved_posts');
+    expect(queries[2]).toBe('COMMIT');
+    expect(release).toHaveBeenCalledTimes(1);
+
+    // Must execute single UNNEST statement instead of 100 individual INSERT statements
+    const unnestSql = clientQuery.mock.calls.find((c) => String(c[0]).includes('INSERT INTO saved_posts'))?.[0];
+    expect(unnestSql).toContain('SELECT * FROM UNNEST');
+
+    // Verify ROLLBACK when UNNEST fails inside transaction
+    const rollbackQueries: string[] = [];
+    const failingClientQuery = vi.fn().mockImplementation(async (sql: string) => {
+      rollbackQueries.push(sql.trim());
+      if (sql.includes('INSERT INTO saved_posts')) {
+        throw new Error('simulated constraint violation');
+      }
+      return { rows: [] };
+    });
+    const failingPool = {
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+      connect: vi.fn().mockResolvedValue({ query: failingClientQuery, release: vi.fn() }),
+      on: vi.fn(),
+    } as any;
+
+    await expect(
+      upsertPostgresPostsBatch(failingPool, [makePost('p3', 'Err 1'), makePost('p4', 'Err 2')])
+    ).rejects.toThrow('simulated constraint violation');
+    expect(rollbackQueries).toContain('BEGIN');
+    expect(rollbackQueries).toContain('ROLLBACK');
+    expect(rollbackQueries).not.toContain('COMMIT');
+  });
+
+  it('executes single-row INSERT via upsertSingleStoredPost and keeps loadStoredPosts strictly read-pure', async () => {
+    const executedSql: string[] = [];
+    const now = new Date().toISOString();
+    const mockRow = {
+      id: 'single_row_1',
+      title: 'Single Row Post',
+      category: 'AI',
+      post_status: 'validated',
+      deck: DEFAULT_STARTER_DECK,
+      qa_passed: true,
+      slide_count: 1,
+      created_at: new Date(now),
+      updated_at: new Date(now),
+      scheduled_for: new Date(Date.now() - 3600_000), // overdue in DB, must NOT be mutated by GET/load
+      posted_at: null,
+    };
+
+    const mockPool = {
+      query: vi.fn().mockImplementation(async (sql: string) => {
+        executedSql.push(sql);
+        if (sql.includes('CREATE TABLE')) return { rows: [] };
+        if (sql.includes('SELECT id FROM deleted_post_tombstones')) return { rows: [] };
+        if (sql.includes('SELECT * FROM saved_posts')) return { rows: [mockRow] };
+        if (sql.includes('INSERT INTO saved_posts')) return { rows: [mockRow] };
+        return { rows: [] };
+      }),
+      on: vi.fn(),
+      end: vi.fn().mockResolvedValue(undefined),
+    } as any;
+
+    setPostgresPoolForTesting(mockPool);
+    const fakeEnv: NodeJS.ProcessEnv = {
+      DATABASE_URL: 'postgresql://user:pass@ep-test.neon.tech/neondb',
+      POSTS_STORAGE_FILE: path.join(os.tmpdir(), `marrok-pg-single-test-${Date.now()}.json`),
+    };
+
+    const existingList: SavedPostRecord[] = Array.from({ length: 15 }, (_, idx) => ({
+      id: `existing_${idx}`,
+      title: `Existing ${idx}`,
+      category: 'AI',
+      postStatus: 'validated',
+      createdAt: now,
+      updatedAt: now,
+      creatorHandle: 'MARROK',
+      slideCount: 1,
+      qaPassed: true,
+      deck: DEFAULT_STARTER_DECK,
+    }));
+
+    const targetPost: SavedPostRecord = {
+      id: 'single_row_1',
+      title: 'Single Row Post',
+      category: 'AI',
+      postStatus: 'validated',
+      createdAt: now,
+      updatedAt: now,
+      creatorHandle: 'MARROK',
+      slideCount: 1,
+      qaPassed: true,
+      deck: DEFAULT_STARTER_DECK,
+    };
+
+    const engine = await upsertSingleStoredPost(targetPost, existingList, fakeEnv);
+    expect(engine).toBe('neon-postgres');
+
+    // Exactly ONE INSERT INTO saved_posts call, NOT 15!
+    const insertCalls = executedSql.filter((s) => s.includes('INSERT INTO saved_posts'));
+    expect(insertCalls).toHaveLength(1);
+
+    // loadStoredPosts must be 100% read-pure: zero INSERT/UPDATE/DELETE queries even when overdue rows exist
+    executedSql.length = 0;
+    const loaded = await loadStoredPosts(fakeEnv);
+    expect(loaded.storageEngine).toBe('neon-postgres');
+    expect(loaded.posts[0]?.postStatus).toBe('validated'); // NOT promoted on GET
+    const writeCallsDuringGet = executedSql.filter((s) =>
+      /\b(INSERT|UPDATE|DELETE)\b/i.test(s)
+    );
+    expect(writeCallsDuringGet).toEqual([]);
   });
 });

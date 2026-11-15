@@ -12,6 +12,7 @@
  */
 
 import { CarouselData, SlideData, ThemePalette } from '../types';
+import { getCanvasDimensionSpec } from './canvas/constants.ts';
 
 // ─── Character Limits (Spec §8) ────────────────────────────────────
 export const CHAR_LIMITS = {
@@ -374,8 +375,44 @@ const KNOWN_BOILERPLATE_PATTERNS: { pattern: RegExp; description: string }[] = [
     description: 'Generic fallback template summary ("A breakdown of technical mechanisms...")',
   },
   {
+    pattern: /(?:technical|architectural)\s+breakdown\s+of\b/i,
+    description: 'Template cliché ("technical breakdown of ...")',
+  },
+  {
+    pattern: /\bcore\s+mechanisms\b/i,
+    description: 'Template cliché ("core mechanisms")',
+  },
+  {
+    pattern: /\boperational\s+boundaries\b/i,
+    description: 'Template cliché ("operational boundaries")',
+  },
+  {
+    pattern: /\bThe\s+core\s+trade-?off\b/i,
+    description: 'Template cliché ("The core trade-off")',
+  },
+  {
+    pattern: /\bproduction\s+trade-?offs?\b/i,
+    description: 'Template cliché ("production trade-offs")',
+  },
+  {
+    pattern: /\barchitectural\s+trade-?offs?\b/i,
+    description: 'Template cliché ("architectural trade-offs")',
+  },
+  {
+    pattern: /^Join the discussion\b/i,
+    description: 'Generic CTA boilerplate ("Join the discussion")',
+  },
+  {
     pattern: /النقلة المعمارية لمنظومة/i,
     description: 'Generic template Arabic title ("النقلة المعمارية لمنظومة...")',
+  },
+  {
+    pattern: /تحليل معماري لمنظومة|تحليل هندسي معمق|الآليات الأساسية|الحدود التشغيلية|المقايضة الجوهرية|مقايضات الإنتاج|تنازلات الإنتاج|آليات النظام الأساسية|كيف تعمل منظومة .* تحت الضغط|شارك في النقاش/i,
+    description: 'Template Arabic cliché or literal echo of English template',
+  },
+  {
+    pattern: /\sالمعتمد(?:\s*[.?!،؟]*$|\s)/,
+    description: 'Fake Arabic placeholder word ("المعتمد") — use pure RTL BiDi isolation instead',
   },
   {
     pattern: /When system frequency increases, legacy architectures become memory bottlenecks/i,
@@ -398,6 +435,205 @@ const KNOWN_BOILERPLATE_PATTERNS: { pattern: RegExp; description: string }[] = [
     description: 'Auto-generated camera or screenshot filename in copy',
   },
 ];
+
+const CONTENT_QUALITY_FILLER_LABELS = new Set([
+  'TECH',
+  'TECH HUMOR',
+  'HUMOR',
+  'OPINION',
+  'TELEMETRY STAT',
+  'EXPOSURE METRIC',
+  'BOUNDARIES',
+  'VERIFICATION',
+  'OBSERVABILITY',
+  'STORES TRILLIONS',
+  'SYSTEM INGRESS',
+  'TRAFFIC INGRESS',
+  'EXECUTION CORE',
+  'TARGET STATE',
+  'PLACEHOLDER',
+  'SAMPLE METRIC',
+]);
+
+/**
+ * Content Quality Gate:
+ * Blocks export on template clichés, topic-repeating headlines, Hub node echoes/fillers,
+ * literal Arabic template echoes, and Slide 1 multi-slide violations.
+ */
+export function checkContentQuality(carousel: CarouselData): QACheckResult[] {
+  const results: QACheckResult[] = [];
+  const slides = carousel.slides || [];
+  const isSingleSlide = carousel.postFormat === 'single' || slides.length === 1;
+  const categoryNorm = (carousel.category || '').trim().toUpperCase();
+  const categoryTokens = new Set(
+    categoryNorm
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t.length >= 3)
+  );
+
+  for (let i = 0; i < slides.length; i++) {
+    const s = slides[i];
+    if (s.standaloneMeme || s.imageFrameMode === 'full') continue;
+
+    // 1. Headline merely repeats category / topic name without adding a claim or insight
+    const cleanHeadline = (s.enTitle || '').trim();
+    if (cleanHeadline && categoryTokens.size > 0) {
+      const hTokens = cleanHeadline
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((t) => t.length >= 3);
+      if (hTokens.length > 0 && hTokens.length <= 4) {
+        const allInCategory = hTokens.every((t) => categoryTokens.has(t));
+        const hasNumberOrQuestion = /\d|\?/.test(cleanHeadline);
+        if (allInCategory && !hasNumberOrQuestion) {
+          results.push({
+            id: `content-quality-headline-echo-${i}`,
+            severity: 'fail',
+            slideIndex: i,
+            field: 'enTitle',
+            message: `Slide ${i + 1} headline ("${cleanHeadline}") merely repeats the topic/category name instead of a specific hook or insight.`,
+          });
+        }
+      }
+    }
+
+    // 2. Slide 1 Hook discipline on multi-slide decks: zero body copy & <= 12 words
+    if (i === 0 && !isSingleSlide && slides.length > 1) {
+      if ((s.enBody || '').trim() || (s.arBody || '').trim()) {
+        results.push({
+          id: `content-quality-slide1-body-0`,
+          severity: 'fail',
+          slideIndex: 0,
+          field: 'enBody',
+          message: 'Slide 1 Hook must contain zero body copy (leave enBody & arBody blank on multi-slide decks).',
+        });
+      }
+      const wordCount = cleanHeadline ? cleanHeadline.split(/\s+/).filter(Boolean).length : 0;
+      if (wordCount > 12) {
+        results.push({
+          id: `content-quality-slide1-words-0`,
+          severity: 'fail',
+          slideIndex: 0,
+          field: 'enTitle',
+          message: `Slide 1 Hook has ${wordCount} words (max 12 words for scannability).`,
+        });
+      }
+    }
+
+    // 3. Hub node labels: no filler labels, no category/title echoes
+    if (s.satLabels && s.satLabels.length > 0) {
+      const titleTokens = new Set(
+        `${s.enTitle || ''} ${s.centerTag || ''}`
+          .toLowerCase()
+          .split(/[^a-z0-9]+/)
+          .filter((t) => t.length >= 3)
+      );
+      for (const rawLbl of s.satLabels) {
+        const norm = (rawLbl || '').trim().toUpperCase();
+        if (!norm) continue;
+        if (CONTENT_QUALITY_FILLER_LABELS.has(norm)) {
+          results.push({
+            id: `content-quality-filler-label-${i}`,
+            severity: 'fail',
+            slideIndex: i,
+            field: 'satLabels',
+            message: `Slide ${i + 1} Hub node "${norm}" is generic filler — replace with a real noun/term quoted from the source.`,
+          });
+          break;
+        }
+        if (categoryNorm && norm === categoryNorm) {
+          results.push({
+            id: `content-quality-hub-echo-${i}`,
+            severity: 'fail',
+            slideIndex: i,
+            field: 'satLabels',
+            message: `Slide ${i + 1} Hub node "${norm}" echoes the category badge instead of a distinct source concept.`,
+          });
+          break;
+        }
+        const lblTokens = norm.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3);
+        if (lblTokens.length === 1 && (categoryTokens.has(lblTokens[0]) || titleTokens.has(lblTokens[0]))) {
+          results.push({
+            id: `content-quality-hub-echo-${i}`,
+            severity: 'fail',
+            slideIndex: i,
+            field: 'satLabels',
+            message: `Slide ${i + 1} Hub node "${norm}" echoes the headline/topic ("${s.enTitle}"). Quote distinct source nouns.`,
+          });
+          break;
+        }
+      }
+      if (s.type === 'hub' && (!s.hubNodeReasons || s.hubNodeReasons.length === 0)) {
+        results.push({
+          id: `content-quality-hub-provenance-${i}`,
+          severity: 'fail',
+          slideIndex: i,
+          field: 'satLabels',
+          message: `Slide ${i + 1} Hub nodes lack source-quoted provenance justification.`,
+        });
+      }
+    }
+
+    // 4. Metric / Diagram filler label check
+    if (CONTENT_QUALITY_FILLER_LABELS.has((s.metricLabel || '').trim().toUpperCase())) {
+      results.push({
+        id: `content-quality-metric-filler-${i}`,
+        severity: 'fail',
+        slideIndex: i,
+        field: 'metricLabel',
+        message: `Slide ${i + 1} metric label "${s.metricLabel}" is generic filler.`,
+      });
+    }
+    if (s.diagramNodes && s.diagramNodes.length > 0) {
+      const badNode = s.diagramNodes.find((n) =>
+        CONTENT_QUALITY_FILLER_LABELS.has((n.label || '').trim().toUpperCase())
+      );
+      if (badNode) {
+        results.push({
+          id: `content-quality-node-filler-${i}`,
+          severity: 'fail',
+          slideIndex: i,
+          field: 'diagramNodes',
+          message: `Slide ${i + 1} diagram node "${badNode.label}" is generic filler.`,
+        });
+      }
+    }
+
+    // 5. Literal Arabic echo check: arTitle/arBody with >= 3 words must actually contain Arabic letters
+    for (const arKey of ['arTitle', 'arBody'] as const) {
+      const arText = (s[arKey] || '').trim();
+      if (arText && !/[\u0600-\u06FF]/.test(arText) && arText.split(/\s+/).length >= 3) {
+        results.push({
+          id: `content-quality-arabic-missing-${i}-${arKey}`,
+          severity: 'fail',
+          slideIndex: i,
+          field: arKey,
+          message: `Slide ${i + 1} ${arKey} contains English-only text ("${arText.slice(0, 32)}") instead of genuine Arabic.`,
+        });
+      }
+    }
+    results.push(...checkBoilerplatePhrases(s, i));
+  }
+
+  // Also flag template clichés in the deck caption if present
+  const captionText = (carousel.caption || '').trim();
+  if (captionText) {
+    for (const { pattern, description } of KNOWN_BOILERPLATE_PATTERNS) {
+      if (pattern.test(captionText)) {
+        results.push({
+          id: 'content-quality-caption-boilerplate',
+          severity: 'fail',
+          field: 'caption',
+          message: `Deck caption contains template cliché: ${description}.`,
+        });
+        break;
+      }
+    }
+  }
+
+  return results;
+}
 
 /** Check that slide does not contain unedited generic boilerplate phrases */
 function checkBoilerplatePhrases(slide: SlideData, idx: number): QACheckResult[] {
@@ -758,20 +994,23 @@ function checkArchetypeFields(slide: SlideData, idx: number): QACheckResult[] {
 /**
  * Check Arabic RTL text safe-zone bounds (right margin clearance >= 135px and vertical boundary y <= 1760)
  */
-function checkArabicSafeZone(slide: SlideData, idx: number): QACheckResult[] {
+function checkArabicSafeZone(slide: SlideData, idx: number, spec = getCanvasDimensionSpec()): QACheckResult[] {
   const results: QACheckResult[] = [];
+  const scaleFactor = spec.height / 1920;
+  const ceiling = spec.safeFooterCeilingY;
 
   if (slide.arBody) {
     const lines = slide.arBody.split('\n');
-    if (lines.length > 4) {
+    const maxRecommendedLines = spec.height <= 1080 ? 3 : 4;
+    if (lines.length > maxRecommendedLines) {
       results.push({
         id: `arabic-safezone-lines-${idx}`,
         severity: 'warn',
         slideIndex: idx,
         field: 'arBody',
-        message: `Slide ${idx + 1} Arabic body has ${lines.length} lines (max 4 recommended to avoid clipping past y=1760 safe zone).`,
+        message: `Slide ${idx + 1} Arabic body has ${lines.length} lines (max ${maxRecommendedLines} recommended to clear fixed footer ceiling y=${ceiling}).`,
         value: lines.length,
-        limit: '≤ 4 lines',
+        limit: `≤ ${maxRecommendedLines} lines`,
       });
     }
 
@@ -789,18 +1028,20 @@ function checkArabicSafeZone(slide: SlideData, idx: number): QACheckResult[] {
         break;
       }
     }
-    // Check for explicit vertical offset pushing text below y=1760 safe zone
+    // Check for explicit vertical offset pushing text below active preset footer ceiling
     const arDy = slide.layoutOverrides?.arabicBodyBlock?.dy ?? 0;
     const enDy = slide.layoutOverrides?.bodyBlock?.dy ?? 0;
-    if (arDy > 120 || enDy > 160) {
+    const maxArDy = Math.round(120 * scaleFactor);
+    const maxEnDy = Math.round(160 * scaleFactor);
+    if (arDy > maxArDy || enDy > maxEnDy) {
       results.push({
         id: `vertical-overflow-${idx}`,
         severity: 'fail',
         slideIndex: idx,
         field: 'layoutOverrides',
-        message: `Slide ${idx + 1} vertical offset pushes text below the y=1760 TikTok bottom safe zone.`,
+        message: `Slide ${idx + 1} vertical offset pushes text past the y=${ceiling} footer ceiling (${spec.shortLabel}).`,
         value: Math.max(arDy, enDy),
-        limit: 'y ≤ 1760',
+        limit: `y ≤ ${ceiling}`,
       });
     }
   }
@@ -809,15 +1050,15 @@ function checkArabicSafeZone(slide: SlideData, idx: number): QACheckResult[] {
 }
 
 /**
- * Check if key text or diagram elements sit inside TikTok UI zones:
- * - Top ~150px
- * - Bottom ~420px (y > 1500 at 1080x1920 when manually shifted down)
- * - Right ~120px (x > 960 at 1080x1920 when manually shifted right)
+ * Check if key text or diagram elements violate active preset safe zones (scaled proportionally from 9:16 to 4:5 and 1:1).
  */
-function checkTikTokSafeZoneViolations(slide: SlideData, idx: number): QACheckResult[] {
+function checkTikTokSafeZoneViolations(slide: SlideData, idx: number, spec = getCanvasDimensionSpec()): QACheckResult[] {
   const results: QACheckResult[] = [];
   const overrides = slide.layoutOverrides;
   if (!overrides) return results;
+
+  const hScale = spec.height / 1920;
+  const wScale = (spec.safeContentWidth || 846) / 846;
 
   const headerDy = overrides.headerBadge?.dy ?? 0;
   const graphicDy = overrides.graphicCard?.dy ?? 0;
@@ -826,34 +1067,45 @@ function checkTikTokSafeZoneViolations(slide: SlideData, idx: number): QACheckRe
   const bodyDy = overrides.bodyBlock?.dy ?? 0;
   const arBodyDy = overrides.arabicBodyBlock?.dy ?? 0;
 
-  if (headerDy < -35 || graphicDy < -75 || titleDy < -140) {
+  if (
+    headerDy < Math.round(-35 * hScale) ||
+    graphicDy < Math.round(-75 * hScale) ||
+    titleDy < Math.round(-140 * hScale)
+  ) {
     results.push({
       id: `tiktok-safezone-top-${idx}`,
       severity: 'fail',
       slideIndex: idx,
       field: 'layoutOverrides',
-      message: `Slide ${idx + 1}: Key element sits inside the TikTok top ~150px UI zone. Auto-fix to restore top clearance.`,
+      message: `Slide ${idx + 1}: Key element sits inside the top UI safe margin (${spec.shortLabel}). Auto-fix to restore top clearance.`,
     });
   }
 
-  if (bodyDy > 75 || arBodyDy > 55 || graphicDy > 140 || titleDy > 110 || arTitleDy > 95) {
+  if (
+    bodyDy > Math.round(75 * hScale) ||
+    arBodyDy > Math.round(55 * hScale) ||
+    graphicDy > Math.round(140 * hScale) ||
+    titleDy > Math.round(110 * hScale) ||
+    arTitleDy > Math.round(95 * hScale)
+  ) {
     results.push({
       id: `tiktok-safezone-bottom-${idx}`,
       severity: 'fail',
       slideIndex: idx,
       field: 'layoutOverrides',
-      message: `Slide ${idx + 1}: Key text or diagram sits inside the TikTok bottom ~420px caption/audio zone.`,
+      message: `Slide ${idx + 1}: Key text or diagram sits past the bottom footer safe ceiling (y=${spec.safeFooterCeilingY}, ${spec.shortLabel}).`,
     });
   }
 
+  const maxRightDx = Math.round(65 * wScale);
   for (const [elKey, ov] of Object.entries(overrides)) {
-    if (ov && !ov.hidden && (ov.dx ?? 0) > 65) {
+    if (ov && !ov.hidden && (ov.dx ?? 0) > maxRightDx) {
       results.push({
         id: `tiktok-safezone-right-${idx}-${elKey}`,
         severity: 'fail',
         slideIndex: idx,
         field: 'layoutOverrides',
-        message: `Slide ${idx + 1}: Element "${elKey}" sits inside the TikTok right ~120px action icons column (dx=+${ov.dx}px).`,
+        message: `Slide ${idx + 1}: Element "${elKey}" sits past the right safe-zone margin (dx=+${ov.dx}px, limit=${maxRightDx}px).`,
       });
       break;
     }
@@ -955,6 +1207,7 @@ export function computeWcagContrastRatio(fgHex: string, bgHex: string): number {
 }
 
 export type PreExportCheckId =
+  | 'contentQuality'
   | 'overflow'
   | 'contrast'
   | 'minFontSize'
@@ -1193,7 +1446,24 @@ export function runPreExportChecklist(
     }
   }
 
+  // 0. Content Quality & Originality (clichés, topic echoes, filler labels, Arabic literal templates)
+  const contentQualityFailure = qa.results.find(
+    (r) =>
+      r.severity === 'fail' &&
+      (r.id.startsWith('content-quality-') || r.id.startsWith('boilerplate-'))
+  );
+
   return [
+    {
+      id: 'contentQuality',
+      label: 'Content Quality & Source Grounding',
+      passed: !contentQualityFailure,
+      detail: contentQualityFailure
+        ? contentQualityFailure.message
+        : 'Original copy, source-quoted labels, natural Arabic & clean Slide 1 hook',
+      fixLabel: 'Auto-Clean Content',
+      slideIndex: contentQualityFailure?.slideIndex,
+    },
     {
       id: 'overflow',
       label: 'Text Overflow & Limits',
@@ -1341,6 +1611,7 @@ export function runQAChecks(carousel: CarouselData, options: QACheckOptions = {}
   results.push(...checkCreditPresence(slides));
   results.push(...checkFirstFrame(slides, isSingleSlide));
   results.push(...checkDuplicateBodyText(slides));
+  results.push(...checkContentQuality(carousel));
 
   // Check if deck is an unreviewed draft (either offline fallback or ungrounded draft)
   if (
@@ -1355,15 +1626,16 @@ export function runQAChecks(carousel: CarouselData, options: QACheckOptions = {}
     });
   }
 
+  const spec = getCanvasDimensionSpec(carousel.dimensionPreset);
+
   // Per-slide checks
   for (let i = 0; i < slides.length; i++) {
     const isHook = i === 0 || slides[i].type === 'hub';
     results.push(...checkHeadlineSpecRule(slides[i], i, slides.length));
-    results.push(...checkBoilerplatePhrases(slides[i], i));
     results.push(...checkCharLimits(slides[i], i, isHook, isSingleSlide));
     results.push(...checkArabicLineEndings(slides[i], i));
-    results.push(...checkArabicSafeZone(slides[i], i));
-    results.push(...checkTikTokSafeZoneViolations(slides[i], i));
+    results.push(...checkArabicSafeZone(slides[i], i, spec));
+    results.push(...checkTikTokSafeZoneViolations(slides[i], i, spec));
     results.push(...checkTruncatedDescriptions(slides[i], i));
     results.push(...checkMinFontSizeViolation(slides[i], i));
     results.push(...checkArchetypeFields(slides[i], i));

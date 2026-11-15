@@ -17,6 +17,7 @@ import {
 } from '../prompts/systemPrompt.ts';
 import { parseCarouselData } from '../../src/lib/validation/carousel.ts';
 import { parseImageDataUrl, parseRawBase64Image } from '../../src/lib/validation/image.ts';
+import { validateSourceSufficiency } from '../../src/lib/synthesis/inputSufficiency.ts';
 
 type GeminiPart =
   | { text: string }
@@ -27,11 +28,42 @@ interface GroundingSupportItem {
   groundingChunkIndices?: number[];
 }
 
-const TOTAL_REQUEST_BUDGET_MS = 45_000;
-const GROUNDED_ATTEMPT_TIMEOUT_MS = 12_000;
-const DIRECT_TEXT_TIMEOUT_MS = 16_000;
-const DIRECT_IMAGE_TIMEOUT_MS = 28_000;
-const FREE_BACKUP_TIMEOUT_MS = 11_000;
+export interface GoogleGenAIClientLike {
+  models: {
+    generateContent: (args: any) => Promise<any>;
+  };
+}
+
+type GoogleGenAICtor = new (opts: {
+  apiKey: string;
+  httpOptions?: { headers?: Record<string, string> };
+}) => GoogleGenAIClientLike;
+
+let customGoogleGenAICtorForTesting: GoogleGenAICtor | null = null;
+
+export function setGoogleGenAICtorForTesting(ctor: GoogleGenAICtor | null): void {
+  customGoogleGenAICtorForTesting = ctor;
+}
+
+function createGoogleGenAIClient(apiKey: string): GoogleGenAIClientLike {
+  const Ctor: GoogleGenAICtor =
+    customGoogleGenAICtorForTesting || (GoogleGenAI as unknown as GoogleGenAICtor);
+  return new Ctor({
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
+    },
+  });
+}
+
+const TOTAL_REQUEST_BUDGET_MS = 23_000;
+const REFINE_TOTAL_BUDGET_MS = 20_000;
+const GROUNDED_ATTEMPT_TIMEOUT_MS = 8_500;
+const DIRECT_TEXT_TIMEOUT_MS = 12_000;
+const DIRECT_IMAGE_TIMEOUT_MS = 15_000;
+const FREE_BACKUP_TIMEOUT_MS = 6_500;
 
 const OVERLOAD_COOLDOWN_MS = 60_000;
 const NOT_FOUND_COOLDOWN_MS = 300_000;
@@ -127,6 +159,51 @@ function classifyModelError(err: unknown): 'overload' | 'not_found' | 'timeout' 
     return 'timeout';
   }
   return 'other';
+}
+
+export function isGemini4Model(model: string): boolean {
+  return /^gemini-4-/i.test(model.trim());
+}
+
+/**
+ * Builds @google/genai GenerateContentConfig cleanly:
+ * Per Gemini 4 API spec, omits deprecated sampling params (temperature, topP, topK, candidateCount, thinkingBudget)
+ * when targeting gemini-4-hydrogen, gemini-4-argon, or gemini-4-carbon.
+ */
+export function buildGeminiContentConfig(
+  model: string,
+  options: {
+    systemInstruction?: string;
+    temperature?: number;
+    tools?: Array<{ googleSearch: Record<string, never> }>;
+    responseMimeType?: string;
+    responseSchema?: unknown;
+    abortSignal?: AbortSignal;
+  }
+): Record<string, unknown> {
+  const cfg: Record<string, unknown> = {};
+  if (options.systemInstruction !== undefined) cfg.systemInstruction = options.systemInstruction;
+  if (!isGemini4Model(model) && options.temperature !== undefined) {
+    cfg.temperature = options.temperature;
+  }
+  if (options.tools !== undefined) cfg.tools = options.tools;
+  if (options.responseMimeType !== undefined) cfg.responseMimeType = options.responseMimeType;
+  if (options.responseSchema !== undefined) cfg.responseSchema = options.responseSchema;
+  if (options.abortSignal !== undefined) cfg.abortSignal = options.abortSignal;
+  return cfg;
+}
+
+export function createCombinedDeadlineSignal(
+  parentSignal: AbortSignal | undefined,
+  attemptTimeoutMs: number
+): AbortSignal {
+  const safeTimeout = Math.max(500, Math.floor(attemptTimeoutMs));
+  const stepSignal = AbortSignal.timeout(safeTimeout);
+  if (!parentSignal) return stepSignal;
+  if (typeof AbortSignal.any === 'function') {
+    return AbortSignal.any([parentSignal, stepSignal]);
+  }
+  return stepSignal;
 }
 
 export function recordModelUnavailable(model: string, err: unknown): void {
@@ -425,6 +502,18 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
   }
 
   const hasImage = Boolean(imagePayload);
+  const sufficiency = validateSourceSufficiency({
+    prompt: safePrompt,
+    imageFileName: safeImageName,
+    hasMedia: hasImage,
+  });
+  if (!sufficiency.isSufficient) {
+    return res.status(400).json({
+      error: sufficiency.reason,
+      code: 'INSUFFICIENT_SOURCE',
+      details: sufficiency,
+    });
+  }
   const isLongInput = safePrompt.length > 200;
   const bypassCache =
     Boolean(req.body?.forceRefresh) ||
@@ -479,6 +568,9 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
     }
   };
 
+  const overallAbort = new AbortController();
+  const overallTimer = setTimeout(() => overallAbort.abort(new Error('Generation budget exceeded')), TOTAL_REQUEST_BUDGET_MS);
+
   try {
     const parts: GeminiPart[] = [];
 
@@ -510,23 +602,16 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
     const remainingBudgetMs = () => TOTAL_REQUEST_BUDGET_MS - (Date.now() - requestStartTime);
 
     keyLoop: for (const { key, label } of candidateKeys) {
-      if (remainingBudgetMs() < 4000) break;
+      if (overallAbort.signal.aborted || remainingBudgetMs() < 3000) break;
 
-      const activeAi = new GoogleGenAI({
-        apiKey: key,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          },
-        },
-      });
+      const activeAi = createGoogleGenAIClient(key);
 
       const failedModelsInAttempt = new Set<string>();
       const prioritizedForGrounded = getPrioritizedModels(config.generationModels);
-      const primaryModel = prioritizedForGrounded[0] || 'gemini-3.8-flash';
+      const primaryModel = prioritizedForGrounded[0] || 'gemini-4-hydrogen';
 
       // Attempt 1: Single Grounded Attempt (only for short text prompts without images)
-      if (!isLongInput && !hasImage && remainingBudgetMs() >= 6000) {
+      if (!isLongInput && !hasImage && !overallAbort.signal.aborted && remainingBudgetMs() >= 4500) {
         const timeoutMs = Math.min(GROUNDED_ATTEMPT_TIMEOUT_MS, remainingBudgetMs() - 1000);
         try {
           console.info(
@@ -536,14 +621,14 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
           const response = await activeAi.models.generateContent({
             model: primaryModel,
             contents: { parts },
-            config: {
+            config: buildGeminiContentConfig(primaryModel, {
               systemInstruction: MARROK_SYSTEM_PROMPT,
               temperature: 0.2,
               tools: [{ googleSearch: {} }],
               responseMimeType: 'application/json',
               responseSchema: CAROUSEL_RESPONSE_SCHEMA,
-              abortSignal: AbortSignal.timeout(timeoutMs),
-            },
+              abortSignal: createCombinedDeadlineSignal(overallAbort.signal, timeoutMs),
+            }),
           });
 
           const rawText = response.text;
@@ -606,7 +691,7 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
       // Attempt 2: Ungrounded Direct Schema Attempt across prioritized fallback models
       const directCandidates = getPrioritizedModels(config.generationModels, failedModelsInAttempt);
       for (const model of directCandidates) {
-        if (remainingBudgetMs() < 4000) break;
+        if (overallAbort.signal.aborted || remainingBudgetMs() < 3000) break;
         const baseTimeout = hasImage ? DIRECT_IMAGE_TIMEOUT_MS : DIRECT_TEXT_TIMEOUT_MS;
         const timeoutMs = Math.min(baseTimeout, remainingBudgetMs() - 500);
 
@@ -618,13 +703,13 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
           const directResponse = await activeAi.models.generateContent({
             model,
             contents: { parts },
-            config: {
+            config: buildGeminiContentConfig(model, {
               systemInstruction: MARROK_SYSTEM_PROMPT,
               temperature: 0.2,
               responseMimeType: 'application/json',
               responseSchema: CAROUSEL_RESPONSE_SCHEMA,
-              abortSignal: AbortSignal.timeout(timeoutMs),
-            },
+              abortSignal: createCombinedDeadlineSignal(overallAbort.signal, timeoutMs),
+            }),
           });
 
           const directText = directResponse.text;
@@ -653,12 +738,12 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
       }
 
       // Attempt 3: Lightweight fast JSON-mode pass without strict responseSchema overhead on Lite/Flash
-      if (!jsonResult && !hasImage && remainingBudgetMs() >= 4000) {
+      if (!jsonResult && !hasImage && !overallAbort.signal.aborted && remainingBudgetMs() >= 3000) {
         const liteModel =
           config.generationModels.find((m) => m.includes('lite')) ||
           config.generationModels[config.generationModels.length - 1] ||
           'gemini-3.1-flash-lite';
-        const timeoutMs = Math.min(9_000, remainingBudgetMs() - 500);
+        const timeoutMs = Math.min(8_000, remainingBudgetMs() - 500);
         try {
           console.info(
             `[AI-Gateway] Trying lightweight fast JSON pass on ${liteModel} (${label})...`
@@ -666,12 +751,12 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
           const liteResponse = await activeAi.models.generateContent({
             model: liteModel,
             contents: `${userPromptText}\n\n${JSON_SCHEMA_COMPACT_GUIDE}`,
-            config: {
+            config: buildGeminiContentConfig(liteModel, {
               systemInstruction: MARROK_SYSTEM_PROMPT,
               temperature: 0.2,
               responseMimeType: 'application/json',
-              abortSignal: AbortSignal.timeout(timeoutMs),
-            },
+              abortSignal: createCombinedDeadlineSignal(overallAbort.signal, timeoutMs),
+            }),
           });
           const liteText = liteResponse.text;
           if (liteText) {
@@ -806,12 +891,15 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
     };
     res.setHeader('X-Marrok-Engine', 'offline');
     return res.json(fallbackData);
+  } finally {
+    clearTimeout(overallTimer);
   }
 }
 
 /**
  * Per-Slide Bilingual AI Refinement Controller
- * Rotates across all available Gemini keys + models, then zero-key Pollinations AI before offline fallback.
+ * Rotates across Gemini keys + models and zero-key Pollinations backup within a single bounded
+ * overall AbortSignal deadline so requests never exceed synchronous serverless timeout limits.
  */
 export async function handleRefineSlide(req: Request, res: Response) {
   const config = getServerConfig();
@@ -854,114 +942,129 @@ arTitle: ${arTitle}
 enBody: ${enBody}
 arBody: ${arBody}`;
 
-  for (const { key, label } of candidateKeys) {
-    const activeAi = new GoogleGenAI({
-      apiKey: key,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
+  const requestedBudgetMs = Number(req.body?.budgetMs);
+  const totalBudgetMs =
+    Number.isFinite(requestedBudgetMs) && requestedBudgetMs >= 500 && requestedBudgetMs <= REFINE_TOTAL_BUDGET_MS
+      ? requestedBudgetMs
+      : REFINE_TOTAL_BUDGET_MS;
+  const deadlineAt = Date.now() + totalBudgetMs;
+  const remainingBudgetMs = () => deadlineAt - Date.now();
+  const overallAbort = new AbortController();
+  const overallTimer = setTimeout(() => overallAbort.abort(new Error('Slide refine deadline exceeded')), totalBudgetMs);
 
-    const refineModels = getPrioritizedModels(config.generationModels);
-    for (const model of refineModels) {
-      try {
-        const response = await activeAi.models.generateContent({
-          model,
-          contents: refinePrompt,
-          config: {
-            temperature: 0.3,
-            responseMimeType: 'application/json',
-            abortSignal: AbortSignal.timeout(12_000),
-          },
-        });
+  try {
+    for (const { key, label } of candidateKeys) {
+      if (overallAbort.signal.aborted || remainingBudgetMs() < 350) break;
 
-        const rawText = response.text;
-        if (rawText) {
-          const cleanText = rawText.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-          const parsed = JSON.parse(cleanText);
-          if (parsed && typeof parsed.enTitle === 'string' && typeof parsed.enBody === 'string') {
-            modelCooldownUntil.delete(model);
-            res.setHeader('X-Marrok-Engine', 'ungrounded');
-            res.setHeader('X-Marrok-Model', model);
-            return res.json({
-              enTitle: parsed.enTitle.trim(),
-              arTitle: typeof parsed.arTitle === 'string' ? parsed.arTitle.trim() : arTitle,
-              enBody: parsed.enBody.trim(),
-              arBody: typeof parsed.arBody === 'string' ? parsed.arBody.trim() : arBody,
-              engine: 'ungrounded',
-              model,
-            });
-          }
-        }
-      } catch (err: unknown) {
-        recordModelUnavailable(model, err);
-        console.info(
-          `[AI-Gateway] Slide refine on ${model} (${label}) unavailable (${formatModelFallbackReason(err, key)}); trying next fallback.`
-        );
-      }
-    }
-  }
+      const activeAi = createGoogleGenAIClient(key);
 
-  // Zero-Key Pollinations Free Backup for Slide Refine
-  if (config.freeBackupEnabled) {
-    for (const freeModel of config.freeTextBackupModels) {
-      try {
-        const freeRes = await fetch('https://text.pollinations.ai/openai', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: AbortSignal.timeout(9_000),
-          body: JSON.stringify({
-            model: freeModel,
-            temperature: 0.3,
-            response_format: { type: 'json_object' },
-            messages: [
-              {
-                role: 'system',
-                content: 'You are a bilingual English and Modern Standard Arabic systems architecture editor. Return ONLY valid JSON with keys: enTitle, arTitle, enBody, arBody.',
-              },
-              {
-                role: 'user',
-                content: refinePrompt,
-              },
-            ],
-          }),
-        });
+      const refineModels = getPrioritizedModels(config.generationModels);
+      for (const model of refineModels) {
+        if (overallAbort.signal.aborted || remainingBudgetMs() < 300) break;
+        const stepTimeoutMs = Math.min(8_500, Math.max(250, remainingBudgetMs() - 100));
 
-        if (freeRes.ok) {
-          const payload = await freeRes.json();
-          const rawContent: string = payload?.choices?.[0]?.message?.content || '';
-          if (rawContent) {
-            const cleanText = rawContent.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+        try {
+          const response = await activeAi.models.generateContent({
+            model,
+            contents: refinePrompt,
+            config: buildGeminiContentConfig(model, {
+              temperature: 0.3,
+              responseMimeType: 'application/json',
+              abortSignal: createCombinedDeadlineSignal(overallAbort.signal, stepTimeoutMs),
+            }),
+          });
+
+          const rawText = response.text;
+          if (rawText) {
+            const cleanText = rawText.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
             const parsed = JSON.parse(cleanText);
             if (parsed && typeof parsed.enTitle === 'string' && typeof parsed.enBody === 'string') {
-              const modelTag = `pollinations/${freeModel}`;
+              modelCooldownUntil.delete(model);
               res.setHeader('X-Marrok-Engine', 'ungrounded');
-              res.setHeader('X-Marrok-Model', modelTag);
+              res.setHeader('X-Marrok-Model', model);
               return res.json({
                 enTitle: parsed.enTitle.trim(),
                 arTitle: typeof parsed.arTitle === 'string' ? parsed.arTitle.trim() : arTitle,
                 enBody: parsed.enBody.trim(),
                 arBody: typeof parsed.arBody === 'string' ? parsed.arBody.trim() : arBody,
                 engine: 'ungrounded',
-                model: modelTag,
+                model,
               });
             }
           }
+        } catch (err: unknown) {
+          recordModelUnavailable(model, err);
+          console.info(
+            `[AI-Gateway] Slide refine on ${model} (${label}) unavailable (${formatModelFallbackReason(err, key)}); trying next fallback.`
+          );
         }
-      } catch (_err) {
-        // continue to next free model
       }
     }
-  }
 
-  res.setHeader('X-Marrok-Engine', 'offline');
-  return res.json({
-    enTitle,
-    arTitle,
-    enBody,
-    arBody,
-    engine: 'offline',
-  });
+    // Zero-Key Pollinations Free Backup for Slide Refine (within remaining deadline)
+    if (config.freeBackupEnabled && !overallAbort.signal.aborted && remainingBudgetMs() >= 1500) {
+      for (const freeModel of config.freeTextBackupModels) {
+        if (overallAbort.signal.aborted || remainingBudgetMs() < 1000) break;
+        const stepTimeoutMs = Math.min(6_000, Math.max(500, remainingBudgetMs() - 250));
+
+        try {
+          const freeRes = await fetch('https://text.pollinations.ai/openai', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: createCombinedDeadlineSignal(overallAbort.signal, stepTimeoutMs),
+            body: JSON.stringify({
+              model: freeModel,
+              temperature: 0.3,
+              response_format: { type: 'json_object' },
+              messages: [
+                {
+                  role: 'system',
+                  content: 'You are a bilingual English and Modern Standard Arabic systems architecture editor. Return ONLY valid JSON with keys: enTitle, arTitle, enBody, arBody.',
+                },
+                {
+                  role: 'user',
+                  content: refinePrompt,
+                },
+              ],
+            }),
+          });
+
+          if (freeRes.ok) {
+            const payload = await freeRes.json();
+            const rawContent: string = payload?.choices?.[0]?.message?.content || '';
+            if (rawContent) {
+              const cleanText = rawContent.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+              const parsed = JSON.parse(cleanText);
+              if (parsed && typeof parsed.enTitle === 'string' && typeof parsed.enBody === 'string') {
+                const modelTag = `pollinations/${freeModel}`;
+                res.setHeader('X-Marrok-Engine', 'ungrounded');
+                res.setHeader('X-Marrok-Model', modelTag);
+                return res.json({
+                  enTitle: parsed.enTitle.trim(),
+                  arTitle: typeof parsed.arTitle === 'string' ? parsed.arTitle.trim() : arTitle,
+                  enBody: parsed.enBody.trim(),
+                  arBody: typeof parsed.arBody === 'string' ? parsed.arBody.trim() : arBody,
+                  engine: 'ungrounded',
+                  model: modelTag,
+                });
+              }
+            }
+          }
+        } catch (_err) {
+          // continue to next free model
+        }
+      }
+    }
+
+    res.setHeader('X-Marrok-Engine', 'offline');
+    return res.json({
+      enTitle,
+      arTitle,
+      enBody,
+      arBody,
+      engine: 'offline',
+    });
+  } finally {
+    clearTimeout(overallTimer);
+  }
 }

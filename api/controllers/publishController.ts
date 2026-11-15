@@ -8,11 +8,16 @@ import type {
 } from '../../src/types.ts';
 import { getServerConfig, type ServerConfig } from '../config.ts';
 import {
+  deleteSingleStoredPost,
   loadStoredPosts,
-  recordServerDeletedPostId,
   saveStoredPosts,
+  upsertSingleStoredPost,
   validateAndBuildPostRecord,
 } from './postsController.ts';
+import {
+  isEligibleOverduePromotion,
+  isPostUnapprovedAutomatedDraft,
+} from '../../src/lib/publish/schedulePredicate.ts';
 import { stripLeadingDuplicateTikTokTitle } from '../../src/lib/publish/tiktokTitle.ts';
 
 const LOCAL_MEDIA_CACHE = new Map<string, { buffer: Buffer; createdAt: number }>();
@@ -236,36 +241,48 @@ export async function destroyCloudinaryAsset(
   }
 }
 
-/**
- * Stores a base64 JPEG in the local server cache as a resilient fallback when offline.
- */
-function storeLocalFallbackMedia(
-  dataUrl: string,
-  assetKey: string,
-  req: Request
-): { secureUrl: string; publicId: string; provider: 'local-staging' } {
-  const base64Part = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
-  const buffer = Buffer.from(base64Part, 'base64');
+export const ALLOWED_STAGING_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+]);
+export const MAX_STAGING_SLIDE_BYTES = 4 * 1024 * 1024; // 4 MB per slide
 
-  if (LOCAL_MEDIA_CACHE.size >= MAX_LOCAL_CACHE_ITEMS) {
-    const oldestKey = LOCAL_MEDIA_CACHE.keys().next().value;
-    if (oldestKey) LOCAL_MEDIA_CACHE.delete(oldestKey);
+export function validateStagingSlideDataUrl(
+  dataUrl: string
+): { ok: true; mimeType: string; bytes: number } | { ok: false; status: number; error: string } {
+  const match = /^data:([^;]+);base64,([A-Za-z0-9+/=\s]+)$/i.exec(dataUrl.trim());
+  if (!match) {
+    return {
+      ok: false,
+      status: 415,
+      error: 'Unsupported slide media format: expected base64 data:image/(jpeg|png|webp) URL.',
+    };
   }
-
-  const safeKey = assetKey.replace(/[^a-zA-Z0-9_-]/g, '_');
-  LOCAL_MEDIA_CACHE.set(`local_staging/${safeKey}`, { buffer, createdAt: Date.now() });
-
-  const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
-  const host = (req.headers['x-forwarded-host'] as string) || req.get('host') || 'localhost:3000';
-  const origin = process.env.APP_URL && !process.env.APP_URL.includes('localhost')
-    ? process.env.APP_URL.replace(/\/+$/, '')
-    : `${proto}://${host}`;
-
-  return {
-    secureUrl: `${origin}/api/publish/media/${encodeURIComponent(safeKey)}.jpg`,
-    publicId: `local_staging/${safeKey}`,
-    provider: 'local-staging',
-  };
+  const mimeType = match[1].toLowerCase().trim();
+  if (!ALLOWED_STAGING_MIME_TYPES.has(mimeType)) {
+    return {
+      ok: false,
+      status: 415,
+      error: `Unsupported slide MIME type "${mimeType}". Allowed: image/jpeg, image/png, image/webp.`,
+    };
+  }
+  const cleanB64 = match[2].replace(/\s+/g, '');
+  const buf = Buffer.from(cleanB64, 'base64');
+  if (buf.byteLength === 0) {
+    return { ok: false, status: 400, error: 'Slide image payload is empty.' };
+  }
+  if (buf.byteLength > MAX_STAGING_SLIDE_BYTES) {
+    return {
+      ok: false,
+      status: 413,
+      error: `Slide image exceeds maximum staging size of ${Math.round(
+        MAX_STAGING_SLIDE_BYTES / (1024 * 1024)
+      )} MB.`,
+    };
+  }
+  return { ok: true, mimeType, bytes: buf.byteLength };
 }
 
 /**
@@ -280,6 +297,7 @@ export async function sweepExpiredCloudinaryAssets(options?: {
 }): Promise<{
   cleanedPublicIds: string[];
   cleanedPostIds: string[];
+  promotedPostIds: string[];
   remainingStagedCount: number;
   updatedPosts: SavedPostRecord[];
 }> {
@@ -290,44 +308,33 @@ export async function sweepExpiredCloudinaryAssets(options?: {
 
   const cleanedPublicIds: string[] = [];
   const cleanedPostIds: string[] = [];
+  const promotedPostIds: string[] = [];
+  const mutatedPosts: SavedPostRecord[] = [];
   let remainingStagedCount = 0;
-  let didMutate = false;
 
   const updatedPosts = await Promise.all(
     posts.map(async (post) => {
       let currentPost = post;
+      let rowChanged = false;
       const scheduledMs = currentPost.scheduledFor ? Date.parse(currentPost.scheduledFor) : NaN;
-      const isScheduleDue = Number.isFinite(scheduledMs) && now >= scheduledMs;
-      const hasDispatchedOrStagedMedia =
-        currentPost.postStatus === 'posted' ||
-        Boolean(currentPost.cloudinaryPublicIds && currentPost.cloudinaryPublicIds.length > 0) ||
-        Boolean(currentPost.bufferPostIds && currentPost.bufferPostIds.length > 0) ||
-        Boolean(currentPost.zernioPostIds && currentPost.zernioPostIds.length > 0);
+      const isUnapprovedAutomatedDraft = isPostUnapprovedAutomatedDraft(currentPost);
 
-      const isUnapprovedAutomatedDraft =
-        currentPost.humanApproved === false ||
-        currentPost.deck?.sourceMeta?.humanApproved === false;
-
-      // 1. Only promote due scheduled posts to 'posted' if they were actually staged/dispatched, approved, and did not fail
-      if (
-        isScheduleDue &&
-        !currentPost.publishFailed &&
-        !isUnapprovedAutomatedDraft &&
-        hasDispatchedOrStagedMedia &&
-        (currentPost.postStatus !== 'posted' || currentPost.scheduledFor)
-      ) {
+      // 1. Unified shared eligibility predicate for scheduled -> posted promotion
+      if (isEligibleOverduePromotion(currentPost, now)) {
         currentPost = {
           ...currentPost,
           postStatus: 'posted',
           postedAt: currentPost.postedAt || currentPost.scheduledFor,
           scheduledFor: undefined,
-          updatedAt: new Date().toISOString(),
+          updatedAt: new Date(now).toISOString(),
         };
-        didMutate = true;
+        promotedPostIds.push(currentPost.id);
+        rowChanged = true;
       }
 
       const pubIds = currentPost.cloudinaryPublicIds || [];
       if (pubIds.length === 0 || currentPost.cloudinaryCleanedAt) {
+        if (rowChanged) mutatedPosts.push(currentPost);
         return currentPost;
       }
 
@@ -338,6 +345,7 @@ export async function sweepExpiredCloudinaryAssets(options?: {
       // Never auto-destroy Cloudinary assets if publication failed or is unapproved (unless explicitly targeted)
       if ((currentPost.publishFailed || isUnapprovedAutomatedDraft) && !isTargeted) {
         remainingStagedCount += pubIds.length;
+        if (rowChanged) mutatedPosts.push(currentPost);
         return currentPost;
       }
 
@@ -356,27 +364,37 @@ export async function sweepExpiredCloudinaryAssets(options?: {
         await Promise.all(pubIds.map((pid) => destroyCloudinaryAsset(pid, config)));
         cleanedPublicIds.push(...pubIds);
         cleanedPostIds.push(currentPost.id);
-        didMutate = true;
-        return {
+        const cleanedRecord: SavedPostRecord = {
           ...currentPost,
           cloudinaryPublicIds: [],
-          cloudinaryCleanedAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
+          cloudinaryCleanedAt: new Date(now).toISOString(),
+          updatedAt: new Date(now).toISOString(),
         };
+        mutatedPosts.push(cleanedRecord);
+        return cleanedRecord;
       }
 
       remainingStagedCount += pubIds.length;
+      if (rowChanged) mutatedPosts.push(currentPost);
       return currentPost;
     })
   );
 
-  if (didMutate) {
-    await saveStoredPosts(updatedPosts);
+  if (mutatedPosts.length === 1) {
+    await upsertSingleStoredPost(mutatedPosts[0], updatedPosts);
+  } else if (mutatedPosts.length > 1) {
+    if (config.databaseUrl) {
+      // Persist ONLY mutated rows cleanly in a single UNNEST transaction
+      await saveStoredPosts(mutatedPosts);
+    } else {
+      await saveStoredPosts(updatedPosts);
+    }
   }
 
   return {
     cleanedPublicIds,
     cleanedPostIds,
+    promotedPostIds,
     remainingStagedCount,
     updatedPosts,
   };
@@ -448,48 +466,7 @@ export function computeFreePlanQuotaStats(posts: SavedPostRecord[]) {
   };
 }
 
-/**
- * Uploads a base64 JPEG data URL to a public, ephemeral HTTPS host (uguu.se, 3-hour TTL)
- * when Cloudinary credentials are not configured in environment secrets, ensuring Buffer's
- * GraphQL media workers and Metricool CSV imports always receive a public HTTPS image/jpeg URL.
- */
-async function uploadSlideToPublicEphemeralHost(
-  dataUrl: string,
-  publicId: string
-): Promise<{ secureUrl: string; publicId: string; provider: 'cloudinary' }> {
-  const base64Part = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
-  const buffer = Buffer.from(base64Part, 'base64');
-  const safeName = `${publicId.replace(/[^a-zA-Z0-9_-]/g, '_')}.jpg`;
-
-  const form = new FormData();
-  form.append('files[]', new Blob([buffer], { type: 'image/jpeg' }), safeName);
-
-  const res = await fetch('https://uguu.se/upload', {
-    method: 'POST',
-    body: form,
-    signal: AbortSignal.timeout(15_000),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Public HTTPS staging failed (${res.status})`);
-  }
-
-  const payload = (await res.json()) as {
-    success?: boolean;
-    files?: Array<{ url?: string }>;
-  };
-
-  const publicHttpsUrl = payload.files?.[0]?.url;
-  if (!publicHttpsUrl || !publicHttpsUrl.startsWith('https://')) {
-    throw new Error('Public HTTPS staging did not return a valid https:// URL');
-  }
-
-  return {
-    secureUrl: publicHttpsUrl,
-    publicId: `ephemeral_staging/${publicId}`,
-    provider: 'cloudinary',
-  };
-}
+// (Removed legacy ephemeral third-party host staging; all media staging uses signed Cloudinary only.)
 
 /**
  * GET /api/publish/status
@@ -497,9 +474,10 @@ async function uploadSlideToPublicEphemeralHost(
 export async function handleGetPublishStatus(_req: Request, res: Response) {
   try {
     const config = getServerConfig();
-    // Run automatic background sweep for any expired scheduled posts
-    const sweepResult = await sweepExpiredCloudinaryAssets();
-    const quotaStats = computeFreePlanQuotaStats(sweepResult.updatedPosts);
+    // READ-PURE: never mutate Postgres rows or Cloudinary assets inside GET handlers.
+    // Overdue promotion & media cleanup run on the Netlify Scheduled Function / POST cleanup-media.
+    const { posts } = await loadStoredPosts();
+    const quotaStats = computeFreePlanQuotaStats(posts);
 
     let liveChannels = quotaStats.channels;
     const bufferMap = config.bufferApiKey
@@ -547,7 +525,7 @@ export async function handleGetPublishStatus(_req: Request, res: Response) {
       bufferApiConfigured: Boolean(config.bufferApiKey),
       zernioApiConfigured: Boolean(config.zernioApiKey),
       zernioMcpUrl: 'https://mcp.zernio.com/mcp',
-      autoCleanedPostIds: sweepResult.cleanedPostIds,
+      autoCleanedPostIds: [],
       ...quotaStats,
       channels: liveChannels,
     });
@@ -559,57 +537,49 @@ export async function handleGetPublishStatus(_req: Request, res: Response) {
 
 /**
  * POST /api/publish/upload-media
- * Uploads an array of base64 slide JPEGs to Cloudinary (with signed SHA-1 auth),
- * or to a public ephemeral HTTPS host when Cloudinary secrets are not configured,
- * and returns public HTTPS URLs + public_ids for post-publish cleanup.
+ * Validates MIME & size and uploads slide images exclusively to signed Cloudinary staging.
+ * Returns 503 with explicit configuration instructions when Cloudinary secrets are absent.
  */
 export async function handleUploadPublishMedia(req: Request, res: Response) {
   try {
     const config = getServerConfig();
+    if (!isCloudinaryConfigured(config)) {
+      return res.status(503).json({
+        error:
+          'Cloudinary media staging is not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in Netlify Environment Variables.',
+      });
+    }
+
     const { postId = `post_${Date.now()}`, slides } = req.body || {};
 
     if (!Array.isArray(slides) || slides.length === 0) {
-      return res.status(400).json({ error: 'slides array of base64 JPEG dataUrls is required' });
+      return res.status(400).json({ error: 'slides array of base64 image dataUrls is required' });
+    }
+    if (slides.length > 35) {
+      return res.status(400).json({ error: 'Maximum 35 slides permitted per staging upload batch.' });
+    }
+
+    const validatedSlides: Array<{ slideIdx: number; dataUrl: string }> = [];
+    for (let idx = 0; idx < slides.length; idx++) {
+      const item = slides[idx] as { index?: number; dataUrl?: string };
+      const slideIdx = typeof item?.index === 'number' ? item.index + 1 : idx + 1;
+      const dataUrl = String(item?.dataUrl || '');
+      const check = validateStagingSlideDataUrl(dataUrl);
+      if (!check.ok) {
+        return res.status(check.status).json({
+          error: `Slide ${slideIdx}: ${check.error}`,
+        });
+      }
+      validatedSlides.push({ slideIdx, dataUrl });
     }
 
     const cleanPostId = String(postId).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 48);
     const batchTs = Math.floor(Date.now() / 1000);
-    const canUseCloudinary = isCloudinaryConfigured(config);
 
     const uploaded = await Promise.all(
-      slides.map(async (item: { index?: number; dataUrl?: string }, idx: number) => {
-        const slideIdx = typeof item.index === 'number' ? item.index + 1 : idx + 1;
-        const dataUrl = String(item.dataUrl || '');
-        if (!dataUrl.startsWith('data:image/')) {
-          throw new Error(`Slide ${slideIdx} is missing a valid data:image/* payload`);
-        }
-
+      validatedSlides.map(async ({ slideIdx, dataUrl }) => {
         const publicId = `${cleanPostId}_s${slideIdx}_${batchTs}`;
-        if (canUseCloudinary) {
-          try {
-            return await uploadSlideToCloudinary(dataUrl, publicId, config);
-          } catch (cloudErr) {
-            console.warn(
-              `[PublishController] Cloudinary upload fallback for slide ${slideIdx}:`,
-              cloudErr
-            );
-          }
-        }
-
-        // If Cloudinary is not configured or failed, stage to a public ephemeral HTTPS URL
-        // so Buffer GraphQL API, Zernio REST API, and Metricool CSV imports can download the JPEG over HTTPS.
-        if (!process.env.VITEST) {
-          try {
-            return await uploadSlideToPublicEphemeralHost(dataUrl, publicId);
-          } catch (ephemeralErr) {
-            console.warn(
-              `[PublishController] Public HTTPS ephemeral staging fallback for slide ${slideIdx}:`,
-              ephemeralErr
-            );
-          }
-        }
-
-        return storeLocalFallbackMedia(dataUrl, publicId, req);
+        return uploadSlideToCloudinary(dataUrl, publicId, config);
       })
     );
 
@@ -617,12 +587,12 @@ export async function handleUploadPublishMedia(req: Request, res: Response) {
       postId: cleanPostId,
       urls: uploaded.map((u) => u.secureUrl),
       publicIds: uploaded.map((u) => u.publicId),
-      provider: uploaded[0]?.provider || 'cloudinary',
+      provider: 'cloudinary',
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Failed to upload slide media';
     console.error('[PublishController] Media upload error:', msg);
-    return res.status(500).json({ error: msg });
+    return res.status(502).json({ error: msg });
   }
 }
 
@@ -1745,7 +1715,7 @@ export async function handleDispatchPublish(req: Request, res: Response) {
         savedRecord,
         ...existingPosts.filter((p) => p.id !== savedRecord!.id),
       ];
-      await saveStoredPosts(nextPosts);
+      await upsertSingleStoredPost(savedRecord, existingPosts);
     }
 
     const quotaStats = computeFreePlanQuotaStats(nextPosts);
@@ -1911,10 +1881,8 @@ export async function handleManagePublishedPost(req: Request, res: Response) {
         }
       }
 
-      await recordServerDeletedPostId(cleanId);
-
       const remainingPosts = posts.filter((p) => p.id !== cleanId);
-      await saveStoredPosts(remainingPosts);
+      await deleteSingleStoredPost(cleanId, posts);
       const quotaStats = computeFreePlanQuotaStats(remainingPosts);
 
       return res.json({
@@ -1948,7 +1916,7 @@ export async function handleManagePublishedPost(req: Request, res: Response) {
         updatedRecord,
         ...posts.filter((p) => p.id !== cleanId),
       ];
-      await saveStoredPosts(nextPosts);
+      await upsertSingleStoredPost(updatedRecord, posts);
       const quotaStats = computeFreePlanQuotaStats(nextPosts);
 
       return res.json({
@@ -2050,7 +2018,7 @@ export async function handleManagePublishedPost(req: Request, res: Response) {
         updatedRecord,
         ...posts.filter((p) => p.id !== cleanId),
       ];
-      await saveStoredPosts(nextPosts);
+      await upsertSingleStoredPost(updatedRecord, posts);
       const quotaStats = computeFreePlanQuotaStats(nextPosts);
 
       return res.json({

@@ -1138,6 +1138,18 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                               </span>
                             </>
                           )}
+                          {(post.offlineDraft || post.storageEngine === 'browser-vault') && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span
+                                title="Saved offline in browser IndexedDB — sync with server Vault when online"
+                                className="inline-flex items-center gap-1 font-bold text-amber-300"
+                              >
+                                <AlertTriangle className="w-3 h-3" />
+                                Offline Local Draft
+                              </span>
+                            </>
+                          )}
                           {hasBoilerplateOutline && (
                             <>
                               <span aria-hidden="true">·</span>

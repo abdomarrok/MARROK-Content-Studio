@@ -21,9 +21,9 @@ export const SAFE_TEXT_WIDTH_BODY = 810;
 export const SAFE_TEXT_CENTER_X = 507;
 
 export const SAFE_HEADER_Y = 206;
-export const SAFE_FOOTER_CEILING_Y = 1555;
+export const SAFE_FOOTER_CEILING_Y = 1428;
 export const SAFE_MAX_Y = 1650;
-export const PAGINATION_DOT_Y = 1605;
+export const PAGINATION_DOT_Y = 1472;
 
 export const GRID_SPACING = 108;
 export const GRID_LINE_WIDTH = 2;
@@ -49,8 +49,14 @@ export interface CanvasDimensionSpec {
   safeTextWidthTitle: number;
   safeTextWidthBody: number;
   headerY: number;
+  headerHeight: number;
+  headerBadgeSize: number;
+  headerFontSize: number;
   headerMarginLeft?: number;
   headerMarginRight?: number;
+  footerFontSize: number;
+  footerBadgeSize: number;
+  minBodyFontSize: number;
   graphicScale: number;
   graphicOffsetX: number;
   graphicOffsetY: number;
@@ -85,8 +91,14 @@ export const CANVAS_DIMENSION_PRESETS: Record<CanvasDimensionPreset, CanvasDimen
     safeTextWidthTitle: SAFE_TEXT_WIDTH_TITLE,
     safeTextWidthBody: SAFE_TEXT_WIDTH_BODY,
     headerY: SAFE_HEADER_Y,
+    headerHeight: 72,
+    headerBadgeSize: 32,
+    headerFontSize: 38,
     headerMarginLeft: 136,
     headerMarginRight: 920,
+    footerFontSize: 24,
+    footerBadgeSize: 24,
+    minBodyFontSize: 24,
     graphicScale: 1,
     graphicOffsetX: 0,
     graphicOffsetY: 0,
@@ -109,6 +121,12 @@ export const CANVAS_DIMENSION_PRESETS: Record<CanvasDimensionPreset, CanvasDimen
     safeTextWidthTitle: 880,
     safeTextWidthBody: 850,
     headerY: 64,
+    headerHeight: 58,
+    headerBadgeSize: 28,
+    headerFontSize: 32,
+    footerFontSize: 20,
+    footerBadgeSize: 20,
+    minBodyFontSize: 20,
     graphicScale: 0.72,
     graphicOffsetX: 151,
     graphicOffsetY: 16,
@@ -131,6 +149,12 @@ export const CANVAS_DIMENSION_PRESETS: Record<CanvasDimensionPreset, CanvasDimen
     safeTextWidthTitle: 880,
     safeTextWidthBody: 850,
     headerY: 72,
+    headerHeight: 62,
+    headerBadgeSize: 29,
+    headerFontSize: 34,
+    footerFontSize: 21,
+    footerBadgeSize: 21,
+    minBodyFontSize: 20,
     graphicScale: 0.76,
     graphicOffsetX: 130,
     graphicOffsetY: 18,
@@ -153,6 +177,12 @@ export const CANVAS_DIMENSION_PRESETS: Record<CanvasDimensionPreset, CanvasDimen
     safeTextWidthTitle: 890,
     safeTextWidthBody: 860,
     headerY: 52,
+    headerHeight: 50,
+    headerBadgeSize: 24,
+    headerFontSize: 28,
+    footerFontSize: 18,
+    footerBadgeSize: 18,
+    minBodyFontSize: 18,
     graphicScale: 0.54,
     graphicOffsetX: 248,
     graphicOffsetY: 22,
@@ -175,11 +205,17 @@ export const CANVAS_DIMENSION_PRESETS: Record<CanvasDimensionPreset, CanvasDimen
     safeTextWidthTitle: 850,
     safeTextWidthBody: 820,
     headerY: 112,
+    headerHeight: 72,
+    headerBadgeSize: 32,
+    headerFontSize: 38,
+    footerFontSize: 24,
+    footerBadgeSize: 24,
+    minBodyFontSize: 24,
     graphicScale: 1,
     graphicOffsetX: 15,
     graphicOffsetY: 0,
-    safeFooterCeilingY: 1620,
-    paginationDotY: 1670,
+    safeFooterCeilingY: 1428,
+    paginationDotY: 1472,
     cadRefLabel: 'SYS_REF // 1080x1920.IG_REELS',
   },
 };

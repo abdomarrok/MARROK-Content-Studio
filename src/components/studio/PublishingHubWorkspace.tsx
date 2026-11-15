@@ -581,12 +581,14 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
                 ? 'text-emerald-300'
                 : storageEngine === 'local-disk'
                 ? 'text-cyan-300'
-                : 'text-slate-400'
+                : 'text-amber-300'
             }`}
             title={
               storageEngine === 'neon-postgres'
                 ? 'Durable Neon PostgreSQL cloud pooler connected across all devices'
-                : 'Local vault storage'
+                : storageEngine === 'browser-vault' || storageEngine === 'vercel-tmp'
+                ? 'Offline Local Draft mode — browser storage active while backend database is offline'
+                : 'Local disk storage'
             }
           >
             <Database className="w-3 h-3 shrink-0" />
@@ -597,7 +599,7 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
                 ? 'Cloud KV'
                 : storageEngine === 'local-disk'
                 ? 'Local Disk'
-                : 'Local Vault'}
+                : 'Offline Local Draft'}
             </span>
           </span>
           <span aria-hidden="true" className="text-slate-600">·</span>
@@ -616,7 +618,7 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
             title={
               status?.cloudinaryConfigured
                 ? `Cloudinary connected (${status.cloudinaryCloudName})`
-                : 'Cloudinary environment variables missing on Vercel'
+                : 'Cloudinary environment variables missing in Netlify Functions'
             }
           >
             <Cloud className="w-3 h-3 shrink-0" />

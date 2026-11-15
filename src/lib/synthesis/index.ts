@@ -1,4 +1,5 @@
 export * from './domains.ts';
+export * from './inputSufficiency.ts';
 export * from './smartVisualDefaults.ts';
 export * from './archetypes.ts';
 export * from './pacing.ts';

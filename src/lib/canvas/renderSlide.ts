@@ -198,7 +198,7 @@ export async function renderSlideToCanvas(
       24,
       clipTop,
       spec.width - 48,
-      Math.max(0, ceilingY - clipTop + 12)
+      Math.max(0, ceilingY - clipTop + 2)
     );
     ctx.clip();
 
@@ -265,7 +265,7 @@ export async function renderSlideToCanvas(
       ctx.textBaseline = 'alphabetic';
       let lineY = tb.firstBaselineY;
       for (const line of tb.lines) {
-        if (lineY + tb.lineHeight * 0.7 > ceilingY + 8) break;
+        if (lineY + tb.lineHeight * 0.25 > ceilingY) break;
         drawHeadlineLineWithAccentHighlights(ctx, line, x, lineY, textAlign, theme);
         lineY += tb.lineHeight;
       }
@@ -287,7 +287,7 @@ export async function renderSlideToCanvas(
       ctx.textBaseline = 'alphabetic';
       let lineY = atb.firstBaselineY;
       for (const line of atb.lines) {
-        if (lineY + atb.lineHeight * 0.7 > ceilingY + 8) break;
+        if (lineY + atb.lineHeight * 0.25 > ceilingY) break;
         ctx.fillText(isolateEmbeddedLatinInArabic(line), x, lineY);
         lineY += atb.lineHeight;
       }
@@ -309,7 +309,7 @@ export async function renderSlideToCanvas(
       ctx.textBaseline = 'alphabetic';
       let lineY = bb.firstBaselineY;
       for (const line of bb.lines) {
-        if (lineY + bb.lineHeight * 0.7 > ceilingY + 8) break;
+        if (lineY + bb.lineHeight * 0.25 > ceilingY) break;
         ctx.fillText(line, x, lineY);
         lineY += bb.lineHeight;
       }
@@ -331,7 +331,7 @@ export async function renderSlideToCanvas(
       ctx.textBaseline = 'alphabetic';
       let lineY = abb.firstBaselineY;
       for (const line of abb.lines) {
-        if (lineY + abb.lineHeight * 0.7 > ceilingY + 8) break;
+        if (lineY + abb.lineHeight * 0.25 > ceilingY) break;
         ctx.fillText(isolateEmbeddedLatinInArabic(line), x, lineY);
         lineY += abb.lineHeight;
       }

@@ -19,6 +19,7 @@ import {
   managePublishedPost,
   resolveNextFutureSlotForTime,
 } from '../publish/publishClient.ts';
+import { withClientAuthHeaders } from '../security/clientSessionToken.ts';
 
 export type GatherSourceType =
   | 'reddit'
@@ -159,7 +160,8 @@ export async function fetchTopicRadar(options?: {
   const query = params.toString();
   const res = await fetch(`/api/gather/radar${query ? `?${query}` : ''}`, {
     method: 'GET',
-    headers: { Accept: 'application/json' },
+    credentials: 'include',
+    headers: withClientAuthHeaders({ Accept: 'application/json' }),
   });
 
   if (!res.ok) {
@@ -175,7 +177,8 @@ export async function fetchTopicRadar(options?: {
 export async function extractArticleFromUrl(url: string): Promise<ExtractUrlResponse> {
   const res = await fetch('/api/gather/extract-url', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ url: url.trim() }),
   });
 

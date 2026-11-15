@@ -38,6 +38,7 @@ export interface MobileStudioBottomBarProps {
   isSheetOpen: boolean;
   inspectorTab: 'copy' | 'visual' | 'position' | 'caption' | 'review';
   isBlocked: boolean;
+  hasContentQualityBlocker?: boolean;
   blockersCount: number;
   isExportingZip: boolean;
   isMoreMenuOpen: boolean;
@@ -69,6 +70,7 @@ export const MobileStudioBottomBar: React.FC<MobileStudioBottomBarProps> = ({
   isSheetOpen,
   inspectorTab,
   isBlocked,
+  hasContentQualityBlocker = false,
   blockersCount,
   isExportingZip,
   isMoreMenuOpen,
@@ -133,6 +135,7 @@ export const MobileStudioBottomBar: React.FC<MobileStudioBottomBarProps> = ({
           .filter((item) => !item.hidden)
           .map((item) => {
             const Icon = item.icon;
+            const isReviewRed = item.id === 'review' && hasContentQualityBlocker;
             return (
               <button
                 key={item.id}
@@ -146,24 +149,30 @@ export const MobileStudioBottomBar: React.FC<MobileStudioBottomBarProps> = ({
                   }
                 }}
                 className={`flex-1 min-w-0 flex items-center justify-center gap-1 py-2 px-1.5 min-h-[40px] rounded-xl text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
-                  item.active
+                  isReviewRed
+                    ? item.active
+                      ? 'bg-rose-500/30 text-rose-200 border border-rose-400/70 shadow-sm'
+                      : 'bg-rose-500/20 text-rose-300 border border-rose-500/55 active:bg-rose-500/30'
+                    : item.active
                     ? 'bg-white/15 text-white border border-white/25 shadow-sm'
                     : 'bg-white/[0.04] text-slate-300 border border-white/[0.08] active:bg-white/10'
                 }`}
-                style={item.active ? { color: theme.accent } : undefined}
+                style={item.active && !isReviewRed ? { color: theme.accent } : undefined}
               >
-                <Icon className="w-3.5 h-3.5 shrink-0" />
+                <Icon className={`w-3.5 h-3.5 shrink-0 ${isReviewRed ? 'text-rose-300' : ''}`} />
                 <span>{item.label}</span>
                 {item.id === 'review' && (
                   <span
                     data-testid="mobile-pok-status-badge"
                     className={`text-[9px] font-mono tabular-nums px-1 py-0.2 rounded shrink-0 ${
-                      isBlocked
+                      isReviewRed
+                        ? 'bg-rose-500/40 text-rose-100 border border-rose-400/70'
+                        : isBlocked
                         ? 'bg-rose-500/25 text-rose-300 border border-rose-400/40'
                         : 'bg-emerald-500/20 text-emerald-400 border border-emerald-400/30'
                     }`}
                   >
-                    {isBlocked ? `!${blockersCount}` : '✓'}
+                    {isBlocked || hasContentQualityBlocker ? `!${Math.max(1, blockersCount)}` : '✓'}
                   </span>
                 )}
               </button>
@@ -379,7 +388,9 @@ export const MobileStudioBottomBar: React.FC<MobileStudioBottomBarProps> = ({
           disabled={isExportingZip}
           className={`flex items-center gap-1 px-2.5 py-2 min-h-[40px] rounded-xl font-bold text-[11px] transition-all shadow-md cursor-pointer shrink-0 focus-visible:ring-2 focus-visible:ring-cyan-400 whitespace-nowrap ${
             isBlocked
-              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+              ? hasContentQualityBlocker
+                ? 'bg-rose-500/25 text-rose-200 border border-rose-500/55'
+                : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
               : 'text-slate-950 active:scale-95'
           }`}
           style={!isBlocked ? { backgroundColor: theme.accent } : undefined}
@@ -399,7 +410,7 @@ export const MobileStudioBottomBar: React.FC<MobileStudioBottomBarProps> = ({
           {isExportingZip ? (
             <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
           ) : isBlocked ? (
-            <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <AlertTriangle className={`w-3.5 h-3.5 shrink-0 ${hasContentQualityBlocker ? 'text-rose-300' : 'text-amber-400'}`} />
           ) : activePostFormat === 'reel' ? (
             <Film className="w-3.5 h-3.5 stroke-[2.5] shrink-0" />
           ) : (

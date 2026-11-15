@@ -129,6 +129,7 @@ export interface StudioCommandBarProps {
   onSelectTheme: (palette: ThemePalette) => void;
   onOpenThemeCustomizer?: () => void;
   onOpenPublishScheduleModal?: (tab?: 'single' | 'bulk' | 'storage') => void;
+  inputValidationError?: string | null;
   onShowToast: (msg: string) => void;
 }
 
@@ -173,6 +174,7 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
   onSelectTheme,
   onOpenThemeCustomizer,
   onOpenPublishScheduleModal,
+  inputValidationError,
   onShowToast,
 }) => {
   return (
@@ -216,7 +218,9 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
           onRunAutonomousPipeline();
         }}
         className={`flex flex-nowrap items-center gap-1.5 sm:gap-2 bg-[#0b1118]/95 border rounded-2xl p-1.5 sm:p-2 shadow-xl backdrop-blur-xl transition-all duration-200 ${
-          isDragOver
+          inputValidationError
+            ? 'border-rose-500/60 bg-rose-950/15 ring-1 ring-rose-500/35'
+            : isDragOver
             ? 'border-cyan-400 bg-cyan-950/20 ring-2 ring-cyan-400/40'
             : isExpanded
             ? 'border-white/25 ring-1 ring-white/15'
@@ -449,6 +453,23 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
           )}
         </button>
       </form>
+
+      {inputValidationError && (
+        <div
+          role="alert"
+          data-testid="input-validation-error"
+          className="mt-1.5 flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-rose-500/15 border border-rose-500/45 text-rose-100 text-xs"
+        >
+          <span>{inputValidationError}</span>
+          <button
+            type="button"
+            onClick={() => onSetIsExpanded(true)}
+            className="shrink-0 px-2.5 py-1 rounded-lg bg-rose-500/25 hover:bg-rose-500/35 border border-rose-400/50 text-[11px] font-semibold text-white cursor-pointer"
+          >
+            Paste Source Notes
+          </button>
+        </div>
+      )}
 
       {/* Floating Overlay Ingestion Drawer */}
       {isExpanded && (

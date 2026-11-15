@@ -6,12 +6,50 @@ import type {
 } from '../../types.ts';
 import { parseCarouselData } from '../validation/carousel.ts';
 import { sanitizeFullCarousel } from '../textSanitizer.ts';
+import { runQAChecks } from '../qaChecks.ts';
+import { findNonPersistableBlobVideoSlides } from '../media/blobUrlRegistry.ts';
+import { withClientAuthHeaders } from '../security/clientSessionToken.ts';
 
 const IDB_NAME = 'marrok_posts_vault_v1';
 const IDB_STORE = 'saved_posts';
 const IDB_VERSION = 1;
 const FALLBACK_LS_KEY = 'marrok_posts_vault_fallback_v1';
 const DELETED_IDS_LS_KEY = 'marrok_posts_deleted_ids_v1';
+
+export class VaultApiError extends Error {
+  status: number;
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = 'VaultApiError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+function isNonFallbackHttpStatus(status: number): boolean {
+  // Explicit client / auth / validation / unconfigured service responses (4xx and 503) must surface
+  // directly to the caller and never fall back silently to local IndexedDB.
+  return (status >= 400 && status < 500) || status === 503;
+}
+
+async function readApiErrorPayload(
+  res: Response,
+  fallbackMessage: string
+): Promise<{ message: string; code?: string }> {
+  try {
+    const payload = (await res.json()) as {
+      error?: string;
+      details?: string[];
+      code?: string;
+    };
+    const errMsg = payload?.error || fallbackMessage;
+    const details = Array.isArray(payload?.details) && payload.details[0] ? ` (${payload.details[0]})` : '';
+    return { message: `${errMsg}${details}`, code: payload?.code };
+  } catch {
+    return { message: `${fallbackMessage} (HTTP ${res.status})` };
+  }
+}
 
 let cachedBundledPosts: SavedPostRecord[] | null = null;
 
@@ -247,15 +285,13 @@ function mergeRecords(
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 }
 
-const DEFAULT_REMOTE_VAULT_ORIGIN = 'https://marrok-tik-tok-carousel-studio.vercel.app';
-
 function getRemoteVaultOrigin(): string | null {
   if (typeof window === 'undefined') return null;
   if (import.meta.env?.MODE === 'test') return null;
-  const configured = (import.meta.env?.VITE_REMOTE_VAULT_ORIGIN || DEFAULT_REMOTE_VAULT_ORIGIN)
+  const configured = (import.meta.env?.VITE_REMOTE_VAULT_ORIGIN || '')
     .trim()
     .replace(/\/+$/, '');
-  if (!configured) return null;
+  if (!configured || !configured.startsWith('https://')) return null;
   if (window.location.origin === configured) return null;
   return configured;
 }
@@ -264,13 +300,13 @@ export interface VaultLoadResult {
   posts: SavedPostRecord[];
   storageEngine: SavedPostStorageEngine;
   isCloudPersistent: boolean;
+  offlineFallback?: boolean;
 }
 
 /**
- * Loads saved validated/posted carousels by reconciling the bundled repository seed posts,
- * backend (/api/posts), remote Vercel deployment vault, and the durable Browser IndexedDB Vault.
- * If the Vercel serverless /tmp store cold-started, automatically re-hydrates /api/posts
- * from the browser's IndexedDB + bundled Vault.
+ * Loads saved validated/posted carousels from /api/posts and reconciles with the local IndexedDB cache.
+ * Surfaces 400/401/403/503 auth & configuration errors directly instead of silently masking them.
+ * Falls back to honest offline IndexedDB storage ONLY on network failures or transient 5xx outages.
  */
 export async function loadVaultPosts(): Promise<VaultLoadResult> {
   let deletedIds = readDeletedIds();
@@ -281,7 +317,8 @@ export async function loadVaultPosts(): Promise<VaultLoadResult> {
     const [res, remoteRes] = await Promise.all([
       fetch('/api/posts', {
         method: 'GET',
-        headers: { Accept: 'application/json' },
+        credentials: 'include',
+        headers: withClientAuthHeaders({ Accept: 'application/json' }),
       }),
       remoteOrigin
         ? fetch(`${remoteOrigin}/api/posts`, {
@@ -307,67 +344,82 @@ export async function loadVaultPosts(): Promise<VaultLoadResult> {
       }
     }
 
-    if (res.ok) {
-      const data = (await res.json()) as {
-        posts?: SavedPostRecord[];
-        deletedIds?: string[];
-        storageEngine?: SavedPostStorageEngine;
-        isCloudPersistent?: boolean;
-      };
-      deletedIds = mergeServerDeletedIds(data.deletedIds);
-      const serverPosts = (Array.isArray(data.posts) ? data.posts : []).filter(
-        (p) => !deletedIds.has(p.id)
-      );
-      const filteredLocalPosts = localPosts.filter((p) => !deletedIds.has(p.id));
-      const mergedServerAndRemote = mergeRecords(remotePosts, serverPosts);
-      const merged = mergeRecords(mergedServerAndRemote, filteredLocalPosts).filter(
-        (p) => !deletedIds.has(p.id)
-      );
-
-      // Persist reconciled set locally
-      await writeLocalVault(merged);
-
-      const deletedIdsArray = Array.from(deletedIds);
-
-      // If client IndexedDB/remote had posts missing from local server, push them up with deletedIds
-      if (merged.length > serverPosts.length) {
-        fetch('/api/posts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ syncPosts: merged, deletedIds: deletedIdsArray }),
-        }).catch(() => {
-          // Non-blocking background sync
-        });
+    if (!res.ok) {
+      const { message, code } = await readApiErrorPayload(res, 'Failed to load Vault posts');
+      if (isNonFallbackHttpStatus(res.status)) {
+        throw new VaultApiError(message, res.status, code);
       }
-
-      // If local/IndexedDB had posts missing from remote Vercel server, push them to remote too
-      if (remoteOrigin && merged.length > remotePosts.length) {
-        fetch(`${remoteOrigin}/api/posts`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ syncPosts: merged, deletedIds: deletedIdsArray }),
-        }).catch(() => {
-          // Non-blocking background sync
-        });
-      }
-
-      return {
-        posts: merged,
-        storageEngine: data.storageEngine || 'vercel-tmp',
-        isCloudPersistent: Boolean(data.isCloudPersistent),
-      };
+      throw new Error(message);
     }
+
+    const data = (await res.json()) as {
+      posts?: SavedPostRecord[];
+      deletedIds?: string[];
+      storageEngine?: SavedPostStorageEngine;
+      isCloudPersistent?: boolean;
+    };
+    deletedIds = mergeServerDeletedIds(data.deletedIds);
+    const serverPosts = (Array.isArray(data.posts) ? data.posts : [])
+      .filter((p) => !deletedIds.has(p.id))
+      .map((p) => ({ ...p, offlineDraft: false }));
+    const filteredLocalPosts = localPosts.filter((p) => !deletedIds.has(p.id));
+    const mergedServerAndRemote = mergeRecords(remotePosts, serverPosts);
+    const merged = mergeRecords(mergedServerAndRemote, filteredLocalPosts).filter(
+      (p) => !deletedIds.has(p.id)
+    );
+
+    await writeLocalVault(merged);
+
+    const deletedIdsArray = Array.from(deletedIds);
+
+    // Sync any unsynced offline local drafts back up to the authenticated server when online
+    if (merged.length > serverPosts.length) {
+      fetch('/api/posts', {
+        method: 'POST',
+        credentials: 'include',
+        headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ syncPosts: merged, deletedIds: deletedIdsArray }),
+      }).catch(() => {
+        // Non-blocking background sync
+      });
+    }
+
+    if (remoteOrigin && merged.length > remotePosts.length) {
+      fetch(`${remoteOrigin}/api/posts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ syncPosts: merged, deletedIds: deletedIdsArray }),
+      }).catch(() => {
+        // Non-blocking background sync
+      });
+    }
+
+    return {
+      posts: merged,
+      storageEngine: data.storageEngine || 'local-disk',
+      isCloudPersistent: Boolean(data.isCloudPersistent),
+      offlineFallback: false,
+    };
   } catch (err) {
-    console.warn('[PostsVaultClient] Backend unreachable, serving from IndexedDB Vault:', err);
+    if (err instanceof VaultApiError) {
+      throw err;
+    }
+    console.warn('[PostsVaultClient] Backend unreachable (network/5xx), serving offline IndexedDB Vault:', err);
   }
 
-  const offlinePosts =
+  const rawOfflinePosts =
     localPosts.length > 0 ? localPosts : await readLocalVault({ includeOfflineSeed: true });
+  const offlinePosts = rawOfflinePosts.map((p) => ({
+    ...p,
+    offlineDraft: p.offlineDraft ?? true,
+    storageEngine: p.storageEngine || ('browser-vault' as const),
+  }));
 
   return {
     posts: offlinePosts,
     storageEngine: 'browser-vault',
     isCloudPersistent: false,
+    offlineFallback: true,
   };
 }
 
@@ -381,9 +433,20 @@ export interface SaveValidPostParams {
 
 /**
  * Validates and saves a post as 'validated' or 'posted' via /api/posts
- * and mirrors it to the Browser IndexedDB Vault.
+ * and mirrors it to the Browser IndexedDB cache.
+ * Surfaces 400/401/403/503 errors directly; falls back to IndexedDB with `offlineDraft: true`
+ * and honest QA status ONLY on network failures or transient 5xx responses (500/502/504).
  */
 export async function saveValidPost(params: SaveValidPostParams): Promise<SavedPostRecord> {
+  const blobVideoSlides = findNonPersistableBlobVideoSlides(params.deck);
+  if (blobVideoSlides.length > 0) {
+    throw new VaultApiError(
+      'Temporary browser video URLs (blob:) expire when this tab closes and cannot be saved to the Vault. Export the MP4/WebM video directly or clear/replace the video clip before saving.',
+      400,
+      'NON_PERSISTABLE_BLOB_VIDEO'
+    );
+  }
+
   const deletedIds = readDeletedIds();
   const reviewedDeck: CarouselData = {
     ...params.deck,
@@ -396,7 +459,8 @@ export async function saveValidPost(params: SaveValidPostParams): Promise<SavedP
   try {
     const res = await fetch('/api/posts', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         id: reviewedDeck.id,
         deck: reviewedDeck,
@@ -406,14 +470,19 @@ export async function saveValidPost(params: SaveValidPostParams): Promise<SavedP
       }),
     });
 
-    const payload = await res.json();
     if (!res.ok) {
-      const errMsg = payload?.error || 'Failed to validate and save post';
-      const details = Array.isArray(payload?.details) ? ` (${payload.details[0]})` : '';
-      throw new Error(`${errMsg}${details}`);
+      const { message, code } = await readApiErrorPayload(res, 'Failed to validate and save post');
+      if (isNonFallbackHttpStatus(res.status)) {
+        throw new VaultApiError(message, res.status, code);
+      }
+      throw new Error(message);
     }
 
-    const savedPost = payload.post as SavedPostRecord;
+    const payload = (await res.json()) as { post: SavedPostRecord };
+    const savedPost: SavedPostRecord = {
+      ...payload.post,
+      offlineDraft: false,
+    };
     if (deletedIds.has(savedPost.id)) {
       deletedIds.delete(savedPost.id);
       writeDeletedIds(deletedIds);
@@ -436,16 +505,18 @@ export async function saveValidPost(params: SaveValidPostParams): Promise<SavedP
 
     return savedPost;
   } catch (err) {
-    // If the error was an explicit 400 validation error from the backend, rethrow it
-    if (err instanceof Error && err.message.startsWith('Invalid carousel payload')) {
+    if (err instanceof VaultApiError) {
       throw err;
     }
 
-    // Fallback to durable Browser IndexedDB Vault if serverless endpoint is unreachable
+    // Network error or transient 5xx (500/502/504): honest offline local draft fallback
     const nowIso = new Date().toISOString();
     const id = reviewedDeck.id || `post_${Math.random().toString(36).slice(2, 10)}`;
     const sanitized = sanitizeFullCarousel({ ...reviewedDeck, id });
     const postStatus: SavedPostStatus = params.postStatus === 'posted' ? 'posted' : 'validated';
+    const qaReport = runQAChecks(sanitized);
+    const honestQaPassed =
+      sanitized.sourceMeta?.qualityPassed === false ? false : Boolean(qaReport.canExport);
     const localRecord: SavedPostRecord = {
       id,
       title: String(params.title || sanitized.slides[0]?.enTitle || 'Saved Post').slice(0, 160),
@@ -462,7 +533,9 @@ export async function saveValidPost(params: SaveValidPostParams): Promise<SavedP
           'MARROK'
       ).slice(0, 100),
       slideCount: sanitized.slides.length,
-      qaPassed: true,
+      qaPassed: honestQaPassed,
+      qualityPassed: honestQaPassed,
+      offlineDraft: true,
       storageEngine: 'browser-vault',
       deck: sanitized,
     };
@@ -492,28 +565,39 @@ export async function updateSavedPostStatus(
   try {
     const res = await fetch(`/api/posts/${encodeURIComponent(id)}/status`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ postStatus }),
     });
 
-    if (res.ok) {
-      const data = (await res.json()) as { post: SavedPostRecord };
-      const updatedList = [data.post, ...currentLocal.filter((p) => p.id !== id)];
-      await writeLocalVault(updatedList);
-      if (remoteOrigin) {
-        fetch(`${remoteOrigin}/api/posts`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            syncPosts: updatedList,
-            deletedIds: Array.from(readDeletedIds()),
-          }),
-        }).catch(() => {});
+    if (!res.ok) {
+      const { message, code } = await readApiErrorPayload(res, 'Failed to update post status');
+      if (isNonFallbackHttpStatus(res.status)) {
+        throw new VaultApiError(message, res.status, code);
       }
-      return data.post;
+      throw new Error(message);
     }
-  } catch {
-    // Fallback to local update if server cold-started
+
+    const data = (await res.json()) as { post: SavedPostRecord };
+    const updatedPost: SavedPostRecord = { ...data.post, offlineDraft: false };
+    const updatedList = [updatedPost, ...currentLocal.filter((p) => p.id !== id)];
+    await writeLocalVault(updatedList);
+    if (remoteOrigin) {
+      fetch(`${remoteOrigin}/api/posts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          syncPosts: updatedList,
+          deletedIds: Array.from(readDeletedIds()),
+        }),
+      }).catch(() => {});
+    }
+    return updatedPost;
+  } catch (err) {
+    if (err instanceof VaultApiError) {
+      throw err;
+    }
+    // Fallback to offline local update ONLY on network error or transient 5xx outage
   }
 
   if (!existing) {
@@ -524,6 +608,8 @@ export async function updateSavedPostStatus(
   const updatedRecord: SavedPostRecord = {
     ...existing,
     postStatus,
+    offlineDraft: true,
+    storageEngine: 'browser-vault',
     updatedAt: nowIso,
     postedAt: postStatus === 'posted' ? existing.postedAt || nowIso : undefined,
   };
@@ -532,9 +618,9 @@ export async function updateSavedPostStatus(
 
   const deletedIdsArray = Array.from(readDeletedIds());
 
-  // Sync updated record back to server
   fetch('/api/posts', {
     method: 'POST',
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ syncPosts: updatedList, deletedIds: deletedIdsArray }),
   }).catch(() => {});
@@ -552,27 +638,41 @@ export async function updateSavedPostStatus(
 
 /**
  * Deletes a saved post from both /api/posts and the Browser IndexedDB Vault.
+ * Surfaces 400/401/403/503 errors directly instead of removing locally while unauthorized.
  */
 export async function deleteSavedPost(id: string): Promise<SavedPostRecord[]> {
-  const deletedIds = readDeletedIds();
-  deletedIds.add(id);
-  writeDeletedIds(deletedIds);
   const remoteOrigin = getRemoteVaultOrigin();
 
   try {
-    await Promise.all([
-      fetch(`/api/posts/${encodeURIComponent(id)}`, {
+    const res = await fetch(`/api/posts/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: withClientAuthHeaders(),
+    });
+
+    if (!res.ok) {
+      const { message, code } = await readApiErrorPayload(res, 'Failed to delete saved post');
+      if (isNonFallbackHttpStatus(res.status)) {
+        throw new VaultApiError(message, res.status, code);
+      }
+      throw new Error(message);
+    }
+
+    if (remoteOrigin) {
+      void fetch(`${remoteOrigin}/api/posts/${encodeURIComponent(id)}`, {
         method: 'DELETE',
-      }),
-      remoteOrigin
-        ? fetch(`${remoteOrigin}/api/posts/${encodeURIComponent(id)}`, {
-            method: 'DELETE',
-          }).catch(() => null)
-        : Promise.resolve(null),
-    ]);
-  } catch {
-    // Continue removing from local vault even if network fails
+      }).catch(() => null);
+    }
+  } catch (err) {
+    if (err instanceof VaultApiError) {
+      throw err;
+    }
+    // Continue removing locally on transient network/5xx outage
   }
+
+  const deletedIds = readDeletedIds();
+  deletedIds.add(id);
+  writeDeletedIds(deletedIds);
 
   const currentLocal = await readLocalVault();
   const remaining = currentLocal.filter((p) => p.id !== id);
@@ -653,6 +753,7 @@ export async function importVaultJson(jsonText: string): Promise<SavedPostRecord
       `post_${Math.random().toString(36).slice(2, 10)}`;
     sanitized.id = id;
     sanitized.sourceMeta = { ...sanitized.sourceMeta, userReviewed: true };
+    const qaReport = runQAChecks(sanitized);
 
     validRecords.push({
       id,
@@ -664,7 +765,8 @@ export async function importVaultJson(jsonText: string): Promise<SavedPostRecord
       postedAt: typeof item.postedAt === 'string' ? item.postedAt : undefined,
       creatorHandle: String(item.creatorHandle || sanitized.brand || 'MARROK').slice(0, 100),
       slideCount: sanitized.slides.length,
-      qaPassed: item.qaPassed !== false,
+      qaPassed:
+        typeof item.qaPassed === 'boolean' ? item.qaPassed && qaReport.canExport : qaReport.canExport,
       deck: sanitized,
     });
   }
@@ -678,16 +780,26 @@ export async function importVaultJson(jsonText: string): Promise<SavedPostRecord
   await writeLocalVault(merged);
 
   try {
-    await fetch('/api/posts', {
+    const res = await fetch('/api/posts', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         syncPosts: merged,
         deletedIds: Array.from(readDeletedIds()),
       }),
     });
-  } catch {
-    // Non-fatal if offline
+    if (!res.ok) {
+      const { message, code } = await readApiErrorPayload(res, 'Failed to sync imported Vault posts');
+      if (isNonFallbackHttpStatus(res.status)) {
+        throw new VaultApiError(message, res.status, code);
+      }
+    }
+  } catch (err) {
+    if (err instanceof VaultApiError) {
+      throw err;
+    }
+    // Non-fatal if offline (network/5xx)
   }
 
   return merged;

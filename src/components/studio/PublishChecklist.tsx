@@ -56,6 +56,7 @@ export interface PublishBlockersResult {
   creditStatus: 'PASS' | 'WARN' | 'BLOCK';
   riskStatus: 'PASS' | 'WARN' | 'BLOCK';
   structureStatus: 'PASS' | 'WARN' | 'BLOCK';
+  contentQualityStatus: 'PASS' | 'WARN' | 'BLOCK';
   blockersCount: number;
   isReady: boolean;
 }
@@ -65,7 +66,8 @@ export function getPublishBlockers(
   isOfflineDraft: boolean,
   isReviewed: boolean,
   qaReport: QAReport,
-  riskReport?: RiskReport
+  riskReport?: RiskReport,
+  theme?: ThemePalette
 ): PublishBlockersResult {
   const creatorCredit = getAttributionCredit(carousel);
   const isThirdParty = isThirdPartySource(carousel);
@@ -83,6 +85,9 @@ export function getPublishBlockers(
   const qaFailures = qaReport.results.filter(
     (r) => r.severity === 'fail' && r.id !== 'fallback-draft-blocker'
   );
+  const contentQualityFailures = qaFailures.filter(
+    (r) => r.id.startsWith('content-quality-') || r.id.startsWith('boilerplate-')
+  );
   const riskBlocks = (riskReport?.items || []).filter((i) => i.status === 'BLOCK');
   const riskWarns = (riskReport?.items || []).filter((i) => i.status === 'WARN');
 
@@ -99,12 +104,28 @@ export function getPublishBlockers(
   const riskStatus: 'PASS' | 'WARN' | 'BLOCK' =
     riskBlocks.length > 0 ? 'BLOCK' : riskWarns.length > 0 ? 'WARN' : 'PASS';
   const structureStatus: 'PASS' | 'WARN' | 'BLOCK' = qaFailures.length > 0 ? 'BLOCK' : 'PASS';
+  const contentQualityStatus: 'PASS' | 'WARN' | 'BLOCK' =
+    contentQualityFailures.length > 0 ? 'BLOCK' : 'PASS';
+
+  const preExportChecks = runPreExportChecklist(carousel, theme);
+  const extraPreExportBlockers = preExportChecks.filter(
+    (c) =>
+      !c.passed &&
+      c.id !== 'contentQuality' &&
+      c.id !== 'overflow' &&
+      c.id !== 'minFontSize' &&
+      c.id !== 'safeZones' &&
+      c.id !== 'truncatedCopy' &&
+      c.id !== 'missingSource' &&
+      c.id !== 'unverifiedNumbers'
+  ).length;
 
   const blockersCount =
     (sourcesStatus === 'BLOCK' ? 1 : 0) +
     (creditStatus === 'BLOCK' ? 1 : 0) +
     (riskStatus === 'BLOCK' ? 1 : 0) +
-    (structureStatus === 'BLOCK' ? 1 : 0);
+    (structureStatus === 'BLOCK' ? 1 : 0) +
+    extraPreExportBlockers;
 
   return {
     engineType,
@@ -114,6 +135,7 @@ export function getPublishBlockers(
     creditStatus,
     riskStatus,
     structureStatus,
+    contentQualityStatus,
     blockersCount,
     isReady: blockersCount === 0,
   };
@@ -149,7 +171,6 @@ export const PublishChecklist: React.FC<PublishChecklistProps> = ({
   const isSinglePost = carousel.postFormat === 'single' || carousel.slides.length === 1;
   const activeDimensionSpec = getCanvasDimensionSpec(carousel.dimensionPreset);
   const preExportChecks = runPreExportChecklist(carousel, theme);
-  const failedPreExportCount = preExportChecks.filter((c) => !c.passed).length;
   const mentionedBrands = detectMentionedThirdPartyBrands(
     [
       carousel.category || '',
@@ -166,10 +187,15 @@ export const PublishChecklist: React.FC<PublishChecklistProps> = ({
     creditStatus,
     riskStatus,
     structureStatus,
-    blockersCount: baseBlockersCount,
-  } = getPublishBlockers(carousel, isOfflineDraft, isReviewed, qaReport, riskReport);
+    contentQualityStatus,
+    blockersCount: unifiedBlockersCount,
+  } = getPublishBlockers(carousel, isOfflineDraft, isReviewed, qaReport, riskReport, theme);
 
-  const blockersCount = baseBlockersCount + failedPreExportCount;
+  const blockersCount = unifiedBlockersCount;
+  const contentQualityCheck = preExportChecks.find((c) => c.id === 'contentQuality');
+  const hubNodeReasons = carousel.slides.flatMap((s, slideIdx) =>
+    (s.hubNodeReasons || []).map((reason) => ({ ...reason, slideIdx }))
+  );
   const needsHumanReview = (isOfflineDraft || engineType !== 'grounded') && !isReviewed;
   const qaFailures = qaReport.results.filter(
     (r) => r.severity === 'fail' && r.id !== 'fallback-draft-blocker'
@@ -584,14 +610,57 @@ ${facts.length > 0 ? `\nFACTS:\n${facts.map((f, i) => `${i + 1}. [${f.verified.t
             </div>
           </div>
         )}
+        {/* Hub Node Provenance (Every Hub node quoted from source + 1-line reason) */}
+        {hubNodeReasons.length > 0 && (
+          <div
+            data-testid="hub-node-provenance-panel"
+            className="pt-3 border-t border-white/10 space-y-2"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-mono uppercase tracking-wider font-bold text-emerald-300">
+                Hub Node Provenance (Source-Quoted Terms)
+              </span>
+              <span className="text-[10px] font-mono text-slate-400">
+                {hubNodeReasons.length} nodes grounded across {new Set(hubNodeReasons.map((r) => r.slideIdx)).size} hub slide(s)
+              </span>
+            </div>
+            <div className="grid grid-cols-1 gap-1.5">
+              {hubNodeReasons.map((item, idx) => (
+                <div
+                  key={`${item.slideIdx}-${item.label}-${idx}`}
+                  className="px-2.5 py-1.5 rounded-xl bg-black/40 border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px]"
+                >
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-[9px] font-mono text-slate-500">S{item.slideIdx + 1}</span>
+                    <span className="px-1.5 py-0.5 rounded bg-teal-500/15 border border-teal-500/30 font-mono font-bold text-teal-300 text-[10px]">
+                      {item.label}
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-500">
+                      "{item.quotedFrom}"
+                    </span>
+                  </div>
+                  <span className="text-slate-300 truncate">{item.reason}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Pre-Export Quality, Data Integrity & Safe-Zone Checks with One-Tap Fixes */}
         <div
           data-testid="pre-export-checklist-grid"
           className="pt-3 border-t border-white/10 space-y-2"
         >
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-mono uppercase tracking-wider font-bold text-cyan-300">
-              Pre-Export Gate (11 Automated Checks · One-Tap Fixes)
+            <span
+              className={`text-[11px] font-mono uppercase tracking-wider font-bold ${
+                contentQualityStatus === 'BLOCK' ? 'text-rose-400' : 'text-cyan-300'
+              }`}
+            >
+              Pre-Export Gate ({preExportChecks.length} Automated Checks · One-Tap Fixes)
+              {contentQualityStatus === 'BLOCK' && contentQualityCheck
+                ? ` — Content Quality Blocked`
+                : ''}
             </span>
             <span className="text-[10px] font-mono text-slate-400">
               {preExportChecks.filter((c) => c.passed).length} / {preExportChecks.length} Passed

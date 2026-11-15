@@ -34,11 +34,12 @@ STAGE 3: PLATFORM RISK & BRAND IP SAFETY (Spec §6)
 
 STAGE 4: HOOK ENGINE & DECK STORY STRUCTURE (Hook → Problem → Mechanism → Proof/Numbers → Takeaway → CTA)
 Organize carousel slides in a strict progression (Hook → Problem → Mechanism → Proof/Numbers → Takeaway → CTA) where each slide has ONE idea and max ~25 words per language:
-- Slide 1: THE HOOK ENGINE — Find the single most surprising fact or number in the source and make the WIN ("after" value) the focal point, NEVER the "before" value:
-  * If there is a before/after change (e.g., 125ms dropped to 15ms), set metricValue to the WIN ("15ms"), metricLabel to the real source term (e.g. "RESPONSE DELAY"), and metricDiff to a plain-language outcome badge (e.g. "8x FASTER • 88% DROP").
-  * Headline: one punchy line per language (max 12 words), NO jargon on Slide 1 (translate p99, throughput, sharding into plain business outcomes for startup & SME owners).
-  * Body text never appears on Slide 1 (keep enBody and arBody concise or empty on Slide 1; place detailed mechanisms on Slides 2+).
-  * When using "hub", populate 5 distinct, non-repeating satLabels from the content showing cause → effect flow.
+- Slide 1: THE HOOK ENGINE — Find the single most surprising fact, number, claim, or contrast in the source:
+  * If numeric (e.g., 125ms dropped to 15ms), set metricValue to the WIN ("15ms"), metricBeforeValue ("125ms"), metricLabel to the real source term (NEVER "TELEMETRY STAT"), and metricDiff to a plain-language outcome badge (e.g. "8x FASTER • 88% DROP").
+  * If NO number exists in the source, DO NOT invent numbers or charts. Set chartDirection="none" and populate hookClaimCard ({ mode: "quote" | "contrast", badge, statement, beforeLabel, afterLabel }) — or use "hub" with 5 real source-quoted concepts in satLabels + hubNodeReasons.
+  * Headline: ONE punchy line per language (max 12 words), NO jargon on Slide 1, and NEVER repeat the bare topic name without adding an outcome, contrast, or claim.
+  * Body text MUST be empty on multi-slide Slide 1 (set enBody: "" and arBody: "" on Slide 1).
+  * When using "hub", every satLabels entry (5 distinct labels) must be a real noun/term quoted from the source with a 1-line reason in hubNodeReasons (never echo the slide title or category like "TECH HUMOR").
 - Slide 2 (Problem): The Trigger / Core Bottleneck — What broke at scale, why the old way failed, or why the numbers are alarming.
   * Use "compare", "metric", "row", or "number" (never repeat Slide 1's exact archetype on Slide 2).
 - Slides 3–4 (Mechanism): Deep Architecture & Physical/System Scale — Reveal the counter-intuitive mechanism, algorithm, or financial engine and how it operates under load. Keep technical terms inside the deck.
@@ -85,8 +86,9 @@ STAGE 5: VIRAL HOOK PSYCHOLOGY, CURIOSITY GAPS & RTL LINT (Spec §8)
 - HOOK KICKERS (hookKicker):
   * Populate 'hookKicker' on every slide with a crisp 2-to-4 word uppercase editorial badge (max 32 chars) that frames the slide's tension (e.g. "BENCHMARK SHOCK", "THE BOTTLENECK", "PROTOCOL INTERNALS", "BEFORE VS AFTER", "PRODUCTION IMPACT", "THE HIDDEN CATCH").
 - ARABIC HEADLINES & BODY:
-  * Natural, authentic, high-impact Modern Standard Arabic (فصحى معاصرة دقيقة وجذابة).
-  * NEVER use repetitive or dry Arabic titles like "المقايضة الجوهرية", "المفاضلة الأساسية", "شارك في النقاش", "تعريف البروتوكول", or "تحليل معماري لمنظومة ...". State the specific Arabic insight, number, or contrast on every slide.
+  * Natural, authentic, idiomatic Modern Standard Arabic (فصحى معاصرة طبيعية غير مترجمة حرفياً).
+  * NEVER write literal template echoes of English boilerplate ("تحليل تقني لـ", "تحليل معماري لمنظومة", "تحليل هندسي معمق", "الآليات الأساسية", "الحدود التشغيلية", "المقايضة الجوهرية", "شارك في النقاش", "كيف تعمل منظومة ... تحت الضغط", أو كلمة "المعتمد").
+  * State the concrete Arabic claim, contrast, punchline, or mechanism naturally on every slide.
   * Proper nouns remain in Latin characters (e.g. OpenAI, Nvidia, S&P 500, Git, Anthropic, PostgreSQL).
   * NEVER reverse subject and object (e.g. write 'السبب وراء ابتعاد Anthropic عن Git', NOT 'السبب وراء ابتعاد Git عن Anthropic').
   * NEVER end an Arabic line with a Latin word plus punctuation (prevents BiDi punctuation flipping).
@@ -435,19 +437,52 @@ export const CAROUSEL_RESPONSE_SCHEMA = {
           },
           metricValue: {
             type: Type.STRING,
-            description: 'Hero metric number for metric slide (e.g. 200x, 0ms, 99.9%)',
+            description: 'Hero WIN metric number ONLY if present in source (e.g. 200x, 15ms, 99.9%). Leave empty if source has no numbers.',
+          },
+          metricBeforeValue: {
+            type: Type.STRING,
+            description: 'Old "before" metric value when comparing before/after (e.g. 125ms)',
           },
           metricLabel: {
             type: Type.STRING,
-            description: 'Micro-label for metric slide (e.g. THROUGHPUT MULTIPLIER)',
+            description: 'Real source metric label (never TELEMETRY STAT or EXPOSURE METRIC)',
           },
           metricDiff: {
             type: Type.STRING,
-            description: 'Improvement delta for metric slide (e.g. ▲ 12x vs baseline)',
+            description: 'Plain-language outcome delta (e.g. 8x FASTER • 88% DROP)',
           },
           metricIcon: {
             type: Type.STRING,
             description: 'Icon for metric slide badge',
+          },
+          chartDirection: {
+            type: Type.STRING,
+            enum: ['up', 'down', 'bar', 'none'],
+            description: 'Chart direction matching the message, or none if no real numeric data exists',
+          },
+          hookClaimCard: {
+            type: Type.OBJECT,
+            properties: {
+              mode: { type: Type.STRING, enum: ['quote', 'contrast'] },
+              badge: { type: Type.STRING },
+              statement: { type: Type.STRING },
+              beforeLabel: { type: Type.STRING },
+              afterLabel: { type: Type.STRING },
+            },
+            description: 'For non-numeric Slide 1 hooks: quote claim card or contrast card',
+          },
+          hubNodeReasons: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                label: { type: Type.STRING },
+                quotedFrom: { type: Type.STRING },
+                reason: { type: Type.STRING },
+              },
+              required: ['label', 'quotedFrom', 'reason'],
+            },
+            description: 'One-line provenance reason explaining the source term quoted for each Hub node',
           },
           codeSnippet: {
             type: Type.STRING,

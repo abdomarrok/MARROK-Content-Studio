@@ -13,6 +13,7 @@ import {
   HardDrive,
   Database,
   Sparkles,
+  AlertTriangle,
 } from 'lucide-react';
 import type {
   CarouselData,
@@ -102,10 +103,10 @@ export const SavedPostsDrawer: React.FC<SavedPostsDrawerProps> = ({
           icon: HardDrive,
         }
       : {
-          label: 'Browser Vault Synced',
-          desc: 'Persisted in durable Browser IndexedDB and synced with API across sessions',
-          color: 'text-teal-300',
-          icon: Cloud,
+          label: 'Offline Local Draft',
+          desc: 'Server unavailable — saved locally in Browser IndexedDB until cloud Vault reconnects',
+          color: 'text-amber-300',
+          icon: AlertTriangle,
         };
 
   const StorageIcon = storageBadge.icon;
@@ -357,6 +358,18 @@ export const SavedPostsDrawer: React.FC<SavedPostsDrawerProps> = ({
                         <>
                           <span aria-hidden="true">·</span>
                           <span className="font-bold text-amber-300">Active in Studio</span>
+                        </>
+                      )}
+                      {(record.offlineDraft || record.storageEngine === 'browser-vault') && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span
+                            title="Saved locally while offline — not yet synced to Postgres cloud Vault"
+                            className="inline-flex items-center gap-1 font-bold text-amber-300"
+                          >
+                            <AlertTriangle className="w-3 h-3" />
+                            Offline Local Draft
+                          </span>
                         </>
                       )}
                     </div>

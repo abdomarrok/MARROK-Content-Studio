@@ -109,10 +109,13 @@ export interface SlideData {
   layoutOverrides?: Partial<Record<GraphicalElementId, ElementLayoutOverride>>;
   // Story Arc Role, Dynamic Corner Tag, Before/After Metric & Chart Integrity, and Brand IP Safety
   storyRole?: 'hook' | 'problem' | 'mechanism' | 'proof' | 'takeaway' | 'cta';
+  category?: string;
   cornerTag?: string;
   metricBeforeValue?: string;
   chartDirection?: 'up' | 'down' | 'bar' | 'none';
   numbersVerified?: boolean;
+  hubNodeReasons?: HubNodeReason[];
+  hookClaimCard?: HookClaimCard;
   brandLogoConfig?: {
     company?: string;
     brandKey?: string;
@@ -126,6 +129,21 @@ export interface SlideData {
     isEdited?: boolean;
     isNonLibrarySource?: boolean;
   };
+}
+
+export interface HubNodeReason {
+  label: string;
+  quotedFrom: string;
+  reason: string;
+}
+
+export interface HookClaimCard {
+  mode: 'quote' | 'contrast';
+  badge: string;
+  statement: string;
+  attribution?: string;
+  beforeLabel?: string;
+  afterLabel?: string;
 }
 
 export type GraphicalElementId =
@@ -423,6 +441,7 @@ export interface SavedPostRecord {
   groundingVerified?: boolean;
   humanApproved?: boolean;
   publishFailed?: boolean;
+  offlineDraft?: boolean;
   storageEngine?: SavedPostStorageEngine;
   deck: CarouselData;
   // Publishing, Scheduling & Cloudinary Auto-Cleanup Metadata

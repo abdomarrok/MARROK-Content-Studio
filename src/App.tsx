@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 'react';
 import { Header } from './components/Header';
 import { AutonomousStudio } from './components/AutonomousStudio';
+import { AuthGateModal } from './components/AuthGateModal';
 
 const ThemeCustomizer = lazy(() =>
   import('./components/ThemeCustomizer').then((m) => ({ default: m.ThemeCustomizer }))
@@ -41,9 +42,14 @@ import {
   deleteSavedPost,
   exportVaultJson,
   importVaultJson,
+  VaultApiError,
 } from './lib/storage/postsVaultClient';
 import { fetchPublishStatus } from './lib/publish/publishClient';
 import { useStudioHistory } from './hooks/useStudioHistory.ts';
+import {
+  clearClientSessionToken,
+  withClientAuthHeaders,
+} from './lib/security/clientSessionToken.ts';
 
 const MAX_HISTORY_STEPS = 30;
 
@@ -97,7 +103,7 @@ export default function App() {
 
   // Saved & Posted Vault State
   const [savedPosts, setSavedPosts] = useState<SavedPostRecord[]>([]);
-  const [storageEngine, setStorageEngine] = useState<SavedPostStorageEngine>('vercel-tmp');
+  const [storageEngine, setStorageEngine] = useState<SavedPostStorageEngine>('local-disk');
   const [isSavedPostsDrawerOpen, setIsSavedPostsDrawerOpen] = useState(false);
   const [isSavingPost, setIsSavingPost] = useState(false);
 
@@ -145,6 +151,9 @@ export default function App() {
   const [isThemeCustomizerOpen, setIsThemeCustomizerOpen] = useState(false);
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
   const [isContactSheetOpen, setIsContactSheetOpen] = useState(false);
+  const [authStatus, setAuthStatus] = useState<'checking' | 'authenticated' | 'unauthenticated'>('checking');
+  const [authConfigured, setAuthConfigured] = useState(true);
+  const [authenticatedUser, setAuthenticatedUser] = useState<string | null>(null);
 
   const refreshVaultPosts = useCallback((isInitialMount = false) => {
     loadVaultPosts()
@@ -161,11 +170,68 @@ export default function App() {
       })
       .catch((err) => {
         console.warn('Failed to load saved posts vault:', err);
+        if (err instanceof VaultApiError) {
+          showToast(`⚠️ ${err.message}`);
+          if (err.status === 401) {
+            setAuthStatus('unauthenticated');
+          }
+        }
       });
-  }, [setCarousel]);
+  }, [setCarousel, showToast]);
 
-  // Load Saved & Posted Carousels on startup and re-sync when switching browser tabs
+  // Verify session cookie on mount before querying protected API routes
   useEffect(() => {
+    let active = true;
+    fetch('/api/auth/session', {
+      method: 'GET',
+      credentials: 'include',
+      headers: withClientAuthHeaders(),
+    })
+      .then(async (res) => {
+        const data = (await res.json().catch(() => ({}))) as {
+          authenticated?: boolean;
+          authConfigured?: boolean;
+          username?: string;
+        };
+        if (!active) return;
+        setAuthConfigured(data.authConfigured !== false && res.status !== 503);
+        if (res.ok && data.authenticated) {
+          setAuthStatus('authenticated');
+          setAuthenticatedUser(data.username || 'admin');
+        } else {
+          setAuthStatus('unauthenticated');
+          setAuthenticatedUser(null);
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+        setAuthStatus('unauthenticated');
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+        headers: withClientAuthHeaders(),
+      });
+    } catch {
+      // ignore
+    }
+    clearClientSessionToken();
+    setAuthStatus('unauthenticated');
+    setAuthenticatedUser(null);
+    setSavedPosts([]);
+    showToast('Signed out of MARROK Studio');
+  }, [showToast]);
+
+  // Load Saved & Posted Carousels once authenticated and re-sync when switching tabs
+  useEffect(() => {
+    if (authStatus !== 'authenticated') return;
     refreshVaultPosts(true);
     fetchPublishStatus()
       .then((status) => {
@@ -181,7 +247,7 @@ export default function App() {
     return () => {
       window.removeEventListener('focus', handleFocus);
     };
-  }, [refreshVaultPosts]);
+  }, [authStatus, refreshVaultPosts]);
 
   // History-aware Carousel State Updater
   const handleUpdateCarousel: React.Dispatch<React.SetStateAction<CarouselData>> = useCallback(
@@ -268,11 +334,15 @@ export default function App() {
           userReviewed: true,
         },
       }));
-      showToast(
-        status === 'posted'
-          ? '✓ Saved & marked as POSTED in Vault!'
-          : '✓ Saved as Valid Post in Vault!'
-      );
+      if (savedRecord.offlineDraft || savedRecord.storageEngine === 'browser-vault') {
+        showToast('⚠️ Saved as Offline Local Draft (not yet synced to cloud Vault)');
+      } else {
+        showToast(
+          status === 'posted'
+            ? '✓ Saved & marked as POSTED in Vault!'
+            : '✓ Saved as Valid Post in Vault!'
+        );
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to save valid post';
       showToast(`⚠️ ${msg}`);
@@ -318,8 +388,9 @@ export default function App() {
         setCarousel((prev) => ({ ...prev, id: undefined }));
       }
       showToast('Removed post from Saved Vault');
-    } catch {
-      showToast('Failed to delete saved post');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to delete saved post';
+      showToast(`⚠️ ${msg}`);
     }
   };
 
@@ -387,6 +458,8 @@ export default function App() {
         onPhaseChange={(phase) => {
           setActivePhase(phase);
         }}
+        authenticatedUser={authenticatedUser}
+        onLogout={handleLogout}
       />
 
       {/* Primary Viewport: Either Phase 1 (Creation Studio) or Phase 2 (Separated Full-Page Publishing Hub) */}
@@ -566,6 +639,19 @@ export default function App() {
           <span>{toastMessage}</span>
         </div>
       )}
+
+      {/* Single-User Session Auth Gate */}
+      <AuthGateModal
+        isOpen={authStatus === 'unauthenticated'}
+        authConfigured={authConfigured}
+        accentColor={currentPalette.accent}
+        onAuthenticated={(user) => {
+          setAuthConfigured(true);
+          setAuthenticatedUser(user);
+          setAuthStatus('authenticated');
+          showToast(`Signed in as ${user}`);
+        }}
+      />
     </div>
   );
 }

@@ -4,11 +4,13 @@ import { sanitizeLogText } from '../constants.ts';
 import { getServerConfig, resolveRequestGeminiKeys } from '../config.ts';
 import { decorateImagePrompt } from '../prompts/systemPrompt.ts';
 import { parseImageDataUrl } from '../../src/lib/validation/image.ts';
+import { createCombinedDeadlineSignal } from './generateController.ts';
 
 const VALID_ASPECT_RATIOS = new Set(['9:16', '16:9', '1:1', '4:3', '3:4']);
-const IMAGE_MODEL_TIMEOUT_MS = 22_000;
-const FREE_IMAGE_BACKUP_TIMEOUT_MS = 20_000;
-const MAX_EDIT_BASE64_CHARS = 3_800_000; // ~2.8 MB raw binary to stay safely under Vercel 4.5 MB limit
+const TOTAL_IMAGE_BUDGET_MS = 23_000;
+const IMAGE_MODEL_TIMEOUT_MS = 18_000;
+const FREE_IMAGE_BACKUP_TIMEOUT_MS = 12_000;
+const MAX_EDIT_BASE64_CHARS = 3_800_000; // ~2.8 MB raw binary to stay safely under 4.5 MB payload limit
 
 const ASPECT_RATIO_DIMENSIONS: Record<string, { width: number; height: number }> = {
   '9:16': { width: 1080, height: 1920 },
@@ -24,12 +26,16 @@ const ASPECT_RATIO_DIMENSIONS: Record<string, { width: number; height: number }>
  */
 async function generateImageWithPollinationsFreeBackup(
   decoratedPrompt: string,
-  aspectRatio: string
+  aspectRatio: string,
+  parentSignal?: AbortSignal,
+  remainingMs: number = FREE_IMAGE_BACKUP_TIMEOUT_MS
 ): Promise<{ dataUrl: string; model: string } | null> {
+  if (parentSignal?.aborted || remainingMs < 2000) return null;
   const dims = ASPECT_RATIO_DIMENSIONS[aspectRatio] || ASPECT_RATIO_DIMENSIONS['9:16'];
   const compactPrompt = decoratedPrompt.slice(0, 900);
   const seed = Math.floor(1000 + Math.random() * 900000);
   const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(compactPrompt)}?width=${dims.width}&height=${dims.height}&model=flux&nologo=true&seed=${seed}`;
+  const timeoutMs = Math.min(FREE_IMAGE_BACKUP_TIMEOUT_MS, Math.max(1500, remainingMs - 300));
 
   try {
     console.info(
@@ -37,7 +43,7 @@ async function generateImageWithPollinationsFreeBackup(
     );
     const res = await fetch(url, {
       method: 'GET',
-      signal: AbortSignal.timeout(FREE_IMAGE_BACKUP_TIMEOUT_MS),
+      signal: createCombinedDeadlineSignal(parentSignal, timeoutMs),
     });
 
     if (!res.ok) {
@@ -75,7 +81,7 @@ async function generateImageWithPollinationsFreeBackup(
 
 /**
  * AI Image Generation & Editing endpoint powered by multi-key Gemini image models
- * with automatic failover to zero-key 9:16 Pollinations Flux.
+ * with automatic failover to zero-key 9:16 Pollinations Flux within a 23s sync budget.
  */
 export async function handleGenerateImage(req: Request, res: Response) {
   const {
@@ -116,7 +122,7 @@ export async function handleGenerateImage(req: Request, res: Response) {
   if (typeof baseImageBase64 === 'string' && baseImageBase64.length > 0) {
     if (baseImageBase64.length > MAX_EDIT_BASE64_CHARS) {
       return res.status(413).json({
-        error: 'Image edit payload exceeds Vercel 4.5 MB function limit. Please use an image under 2.5 MB.',
+        error: 'Image edit payload exceeds serverless 4.5 MB function limit. Please use an image under 2.5 MB.',
       });
     }
     editImage = parseImageDataUrl(baseImageBase64);
@@ -145,107 +151,126 @@ export async function handleGenerateImage(req: Request, res: Response) {
   const candidateModels = serverConfig.imageModels;
   let lastError: unknown = null;
 
-  for (const { key, label } of candidateKeys) {
-    const activeAi = new GoogleGenAI({
-      apiKey: key,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
+  const deadlineAt = Date.now() + TOTAL_IMAGE_BUDGET_MS;
+  const remainingBudgetMs = () => deadlineAt - Date.now();
+  const overallAbort = new AbortController();
+  const overallTimer = setTimeout(
+    () => overallAbort.abort(new Error('Image generation budget exceeded')),
+    TOTAL_IMAGE_BUDGET_MS
+  );
 
-    for (const model of candidateModels) {
-      try {
-        console.log(
-          `Generating/editing image using model: ${model} (${label}, aspectRatio: ${safeAspectRatio})...`
-        );
+  try {
+    for (const { key, label } of candidateKeys) {
+      if (overallAbort.signal.aborted || remainingBudgetMs() < 2500) break;
 
-        const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [];
-
-        // If a data URL was provided, this is an image-to-image edit operation
-        if (editImage) {
-          parts.push({
-            inlineData: {
-              data: editImage.base64,
-              mimeType: editImage.mimeType,
-            },
-          });
-          parts.push({
-            text: `Edit instruction for the provided image: ${decoratedPrompt}. Maintain high visual quality and technical clarity.`,
-          });
-        } else {
-          parts.push({ text: decoratedPrompt });
-        }
-
-        const abortSignal = AbortSignal.timeout(IMAGE_MODEL_TIMEOUT_MS);
-        const response = await activeAi.models.generateContent({
-          model,
-          contents: { parts },
-          config: {
-            imageConfig: {
-              aspectRatio: safeAspectRatio,
-              imageSize: safeImageSize,
-            },
-            abortSignal,
+      const activeAi = new GoogleGenAI({
+        apiKey: key,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
           },
-        });
+        },
+      });
 
-        // Scan candidate parts for the generated image
-        const candidateParts = response.candidates?.[0]?.content?.parts || [];
-        for (const part of candidateParts) {
-          if (part.inlineData?.data) {
-            const parsedImage = parseImageDataUrl(
-              `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`
-            );
-            if (!parsedImage) {
-              console.warn(`Image model ${model} returned an invalid or oversized image payload.`);
-              continue;
-            }
-            return res.json({
-              imageUrl: parsedImage.dataUrl,
-              prompt: decoratedPrompt,
-              model,
-              aspectRatio: safeAspectRatio,
+      for (const model of candidateModels) {
+        if (overallAbort.signal.aborted || remainingBudgetMs() < 2000) break;
+        const stepTimeoutMs = Math.min(IMAGE_MODEL_TIMEOUT_MS, Math.max(1000, remainingBudgetMs() - 400));
+
+        try {
+          console.log(
+            `Generating/editing image using model: ${model} (${label}, aspectRatio: ${safeAspectRatio})...`
+          );
+
+          const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [];
+
+          // If a data URL was provided, this is an image-to-image edit operation
+          if (editImage) {
+            parts.push({
+              inlineData: {
+                data: editImage.base64,
+                mimeType: editImage.mimeType,
+              },
             });
+            parts.push({
+              text: `Edit instruction for the provided image: ${decoratedPrompt}. Maintain high visual quality and technical clarity.`,
+            });
+          } else {
+            parts.push({ text: decoratedPrompt });
           }
+
+          const abortSignal = createCombinedDeadlineSignal(overallAbort.signal, stepTimeoutMs);
+          const response = await activeAi.models.generateContent({
+            model,
+            contents: { parts },
+            config: {
+              imageConfig: {
+                aspectRatio: safeAspectRatio,
+                imageSize: safeImageSize,
+              },
+              abortSignal,
+            },
+          });
+
+          // Scan candidate parts for the generated image
+          const candidateParts = response.candidates?.[0]?.content?.parts || [];
+          for (const part of candidateParts) {
+            if (part.inlineData?.data) {
+              const parsedImage = parseImageDataUrl(
+                `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`
+              );
+              if (!parsedImage) {
+                console.warn(`Image model ${model} returned an invalid or oversized image payload.`);
+                continue;
+              }
+              return res.json({
+                imageUrl: parsedImage.dataUrl,
+                prompt: decoratedPrompt,
+                model,
+                aspectRatio: safeAspectRatio,
+              });
+            }
+          }
+        } catch (modelErr: unknown) {
+          lastError = modelErr;
+          const msg = modelErr instanceof Error ? modelErr.message : String(modelErr);
+          const cleanNotice = sanitizeLogText(msg, key).replace(/[{}"]/g, '').slice(0, 120);
+          console.info(`Image model ${model} (${label}) unavailable (${cleanNotice}); trying next fallback.`);
         }
-      } catch (modelErr: unknown) {
-        lastError = modelErr;
-        const msg = modelErr instanceof Error ? modelErr.message : String(modelErr);
-        const cleanNotice = sanitizeLogText(msg, key).replace(/[{}"]/g, '').slice(0, 120);
-        console.info(`Image model ${model} (${label}) unavailable (${cleanNotice}); trying next fallback.`);
       }
     }
-  }
 
-  // Tier 2: Zero-key 9:16 Pollinations Flux image backup (for text-to-image requests)
-  if (!editImage && serverConfig.freeBackupEnabled) {
-    const freeBackupImage = await generateImageWithPollinationsFreeBackup(
-      decoratedPrompt,
-      safeAspectRatio
-    );
-    if (freeBackupImage) {
-      return res.json({
-        imageUrl: freeBackupImage.dataUrl,
-        prompt: decoratedPrompt,
-        model: freeBackupImage.model,
-        aspectRatio: safeAspectRatio,
+    // Tier 2: Zero-key 9:16 Pollinations Flux image backup (for text-to-image requests)
+    if (!editImage && serverConfig.freeBackupEnabled && !overallAbort.signal.aborted && remainingBudgetMs() >= 2500) {
+      const freeBackupImage = await generateImageWithPollinationsFreeBackup(
+        decoratedPrompt,
+        safeAspectRatio,
+        overallAbort.signal,
+        remainingBudgetMs()
+      );
+      if (freeBackupImage) {
+        return res.json({
+          imageUrl: freeBackupImage.dataUrl,
+          prompt: decoratedPrompt,
+          model: freeBackupImage.model,
+          aspectRatio: safeAspectRatio,
+        });
+      }
+    }
+
+    if (lastError) {
+      const errMsg = lastError instanceof Error ? lastError.message : String(lastError);
+      const cleanDetails = sanitizeLogText(errMsg, customKey).replace(/[{}"]/g, '').slice(0, 200);
+      console.info('Image generation models unavailable:', cleanDetails);
+      return res.status(500).json({
+        error: 'Failed to generate image',
+        details: cleanDetails,
       });
     }
-  }
 
-  if (lastError) {
-    const errMsg = lastError instanceof Error ? lastError.message : String(lastError);
-    const cleanDetails = sanitizeLogText(errMsg, customKey).replace(/[{}"]/g, '').slice(0, 200);
-    console.info('Image generation models unavailable:', cleanDetails);
-    return res.status(500).json({
-      error: 'Failed to generate image',
-      details: cleanDetails,
-    });
+    return res.status(500).json({ error: 'No image data returned from generation models.' });
+  } finally {
+    clearTimeout(overallTimer);
   }
-
-  return res.status(500).json({ error: 'No image data returned from generation models.' });
 }
 
 

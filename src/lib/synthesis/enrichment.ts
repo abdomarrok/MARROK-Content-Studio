@@ -1,4 +1,5 @@
 import type { DiagramNode, DiagramVariant, SlideData } from '../../types.ts';
+import { extractSourceQuotedHubNodes } from './smartVisualDefaults.ts';
 
 /**
  * Dynamic diagram and satellite enrichment:
@@ -11,33 +12,40 @@ export function enrichCarouselDiagrams(
   category: string,
   _brand: string = 'MARROK'
 ): SlideData[] {
-  // Extract clean keywords for dynamic fallback labeling
-  const cleanTokens = `${topicOrText || ''} ${category || ''}`
-    .replace(/[^\w\s-]/g, ' ')
-    .split(/\s+/)
-    .filter((w) => w.length > 2 && !/^(the|and|for|with|from|this|that|your|into|about|over)$/i.test(w));
+  const combinedSource = `${topicOrText || ''} ${slides[0]?.enTitle || ''} ${slides[0]?.enBody || ''}`.trim();
 
   return slides.map((slide, idx) => {
     // 1. Hub Slide (Slide 1)
     if (idx === 0 || slide.type === 'hub') {
-      let satLabels = slide.satLabels;
-      // If already provided with satellites, preserve them!
-      if (!satLabels || satLabels.length < 2) {
-        const distinctTokens = cleanTokens.map((t) => t.toUpperCase());
-        const fallbackSet = [
-          distinctTokens[0] || 'ENGINE',
-          distinctTokens[1] || 'ARCHITECTURE',
-          distinctTokens[2] || 'CONCURRENCY',
-          distinctTokens[3] || 'RELIABILITY',
-          distinctTokens[4] || 'PIPELINE',
-          distinctTokens[5] || 'TELEMETRY',
-        ];
-        satLabels = fallbackSet;
+      const existingValid =
+        slide.satLabels &&
+        slide.satLabels.length >= 4 &&
+        !slide.satLabels.some((l) => /^(?:ENGINE|ARCHITECTURE|CONCURRENCY|RELIABILITY|PIPELINE|TELEMETRY|BOUNDARIES|VERIFICATION|OBSERVABILITY|TECH|TECH HUMOR)$/i.test(l.trim()));
+
+      if (existingValid && slide.hubNodeReasons && slide.hubNodeReasons.length >= 1) {
+        return {
+          ...slide,
+          type: 'hub',
+        };
       }
+
+      const quoted = extractSourceQuotedHubNodes(combinedSource, {
+        titleText: slide.enTitle,
+        category: slide.category || category,
+        targetCount: 5,
+      });
+
+      const satLabels = existingValid
+        ? slide.satLabels!.slice(0, 5)
+        : quoted.satLabels.length > 0
+        ? quoted.satLabels
+        : slide.satLabels;
+
       return {
         ...slide,
         type: 'hub',
         satLabels,
+        hubNodeReasons: slide.hubNodeReasons?.length ? slide.hubNodeReasons : quoted.hubNodeReasons,
       };
     }
 

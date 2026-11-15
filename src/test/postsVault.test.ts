@@ -30,28 +30,29 @@ describe('Gemini Model Deprecation Upgrade & Vercel Persistence Vault', () => {
     }
   });
 
-  it('upgrades deprecated gemini-2.5/2.0/1.5 models to gemini-3.8-flash and gemini-3.1-flash-lite', () => {
-    expect(normalizeGenerationModel('gemini-2.5-flash')).toBe('gemini-3.8-flash');
+  it('upgrades deprecated gemini-3.8/2.5/2.0/1.5 models to gemini-4-hydrogen and gemini-3.1-flash-lite', () => {
+    expect(normalizeGenerationModel('gemini-3.8-flash')).toBe('gemini-4-hydrogen');
+    expect(normalizeGenerationModel('gemini-2.5-flash')).toBe('gemini-4-hydrogen');
     expect(normalizeGenerationModel('gemini-2.5-flash-lite')).toBe('gemini-3.1-flash-lite');
 
     const cfg = getServerConfig({
-      GEMINI_GENERATION_MODELS: 'gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash',
+      GEMINI_GENERATION_MODELS: 'gemini-3.8-flash,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash',
     });
-    expect(cfg.generationModels).toEqual(['gemini-3.8-flash', 'gemini-3.1-flash-lite']);
+    expect(cfg.generationModels).toEqual(['gemini-4-hydrogen', 'gemini-3.1-flash-lite']);
   });
 
   it('deprioritizes models experiencing HTTP 503 high demand and formats fallback notices cleanly', () => {
-    const models = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+    const models = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'];
     const highDemandErr = new Error(
       '{"error":{"code":503,"message":"This model is currently experiencing high demand. Spikes in demand are usually temporary."}}'
     );
 
-    recordModelUnavailable('gemini-3.8-flash', highDemandErr);
+    recordModelUnavailable('gemini-4-hydrogen', highDemandErr);
 
-    const prioritized = getPrioritizedModels(models, new Set(['gemini-3.8-flash']));
+    const prioritized = getPrioritizedModels(models, new Set(['gemini-4-hydrogen']));
     expect(prioritized[0]).toBe('gemini-3.1-flash-lite');
-    expect(prioritized[1]).toBe('gemini-flash-latest');
-    expect(prioritized[2]).toBe('gemini-3.8-flash');
+    expect(prioritized[1]).toBe('gemini-3.5-flash-lite');
+    expect(prioritized[2]).toBe('gemini-4-hydrogen');
 
     const reason = formatModelFallbackReason(highDemandErr);
     expect(reason).toBe('HTTP 503/429 temporary high demand');
