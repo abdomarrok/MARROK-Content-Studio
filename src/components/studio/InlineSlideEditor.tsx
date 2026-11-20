@@ -17,6 +17,7 @@ import {
   ArrowLeftRight,
   Gauge,
   Hash,
+  Languages,
   Smile,
   X,
 } from 'lucide-react';
@@ -90,6 +91,8 @@ interface InlineSlideEditorProps {
   totalSlides?: number;
   onApplyCoverStyle?: (style: CoverStyle) => void;
   onOpenVisualTab?: () => void;
+  onSyncArabic?: () => void;
+  isSyncingArabic?: boolean;
 }
 
 const INLINE_DIAGRAM_VARIANTS: Array<{ id: DiagramVariant; label: string }> = [
@@ -134,6 +137,8 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
   totalSlides = 1,
   onApplyCoverStyle,
   onOpenVisualTab,
+  onSyncArabic,
+  isSyncingArabic = false,
 }) => {
   const inlineMemeFileInputRef = useRef<HTMLInputElement>(null);
   const inlineGraphicFileInputRef = useRef<HTMLInputElement>(null);
@@ -618,6 +623,8 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
           onApplyHookVariant={onApplyHookVariant}
           onOpenVisualTab={onOpenVisualTab || onToggleAdvancedCustomizer}
           onAutoFitSlide={handleAutoFitOnBlur}
+          onSyncArabic={onSyncArabic}
+          isSyncingArabic={isSyncingArabic}
         />
       )}
 
@@ -793,6 +800,23 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
               >
                 {arTitleLen} / {arTitleLimit}
               </span>
+              {onSyncArabic && (
+                <button
+                  type="button"
+                  data-testid="slide-sync-ar-btn"
+                  disabled={isSyncingArabic || (!(currentSlide.enTitle || '').trim() && !(currentSlide.enBody || '').trim())}
+                  onClick={onSyncArabic}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white/[0.06] hover:bg-white/[0.12] disabled:opacity-45 border border-white/[0.12] text-[10px] font-mono text-white cursor-pointer transition-colors whitespace-nowrap shrink-0"
+                  title="Translate this slide's English headline and body into natural Arabic using AI"
+                >
+                  {isSyncingArabic ? (
+                    <Loader2 className="w-2.5 h-2.5 animate-spin" style={{ color: theme.accent }} />
+                  ) : (
+                    <Languages className="w-2.5 h-2.5" style={{ color: theme.accent }} />
+                  )}
+                  <span>{isSyncingArabic ? 'Syncing' : 'Sync AR'}</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() =>

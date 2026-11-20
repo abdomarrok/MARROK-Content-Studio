@@ -3,7 +3,9 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Languages,
   Layers,
+  Loader2,
   Sparkles,
   ArrowRight,
   Eye,
@@ -42,6 +44,8 @@ export interface CoverComposerPanelProps {
   onApplyHookVariant?: (variant: HookVariant) => void;
   onOpenVisualTab: () => void;
   onAutoFitSlide?: () => void;
+  onSyncArabic?: () => void;
+  isSyncingArabic?: boolean;
 }
 
 export const CoverComposerPanel: React.FC<CoverComposerPanelProps> = ({
@@ -55,9 +59,10 @@ export const CoverComposerPanel: React.FC<CoverComposerPanelProps> = ({
   onApplyHookVariant,
   onOpenVisualTab,
   onAutoFitSlide,
+  onSyncArabic,
+  isSyncingArabic = false,
 }) => {
-  const activeCoverStyle: CoverStyle =
-    currentSlide.coverStyle || resolveSlide1CoverStyle(currentSlide);
+  const activeCoverStyle: CoverStyle = resolveSlide1CoverStyle(currentSlide);
 
   const [isHooksOpen, setIsHooksOpen] = useState(
     !(currentSlide.enTitle || '').trim()
@@ -325,6 +330,23 @@ export const CoverComposerPanel: React.FC<CoverComposerPanelProps> = ({
               >
                 {arTitleLen}/{arTitleLimit}
               </span>
+              {onSyncArabic && (
+                <button
+                  type="button"
+                  data-testid="cover-sync-ar-btn"
+                  disabled={isSyncingArabic || !(currentSlide.enTitle || '').trim()}
+                  onClick={onSyncArabic}
+                  title="Translate English headline and teaser into natural Arabic with AI"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white/[0.06] hover:bg-white/[0.12] disabled:opacity-45 border border-white/[0.12] text-[10px] font-mono text-white cursor-pointer transition-colors whitespace-nowrap shrink-0"
+                >
+                  {isSyncingArabic ? (
+                    <Loader2 className="w-2.5 h-2.5 animate-spin" style={{ color: theme.accent }} />
+                  ) : (
+                    <Languages className="w-2.5 h-2.5" style={{ color: theme.accent }} />
+                  )}
+                  <span>{isSyncingArabic ? 'Syncing' : 'Sync AR'}</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() =>
@@ -425,13 +447,32 @@ export const CoverComposerPanel: React.FC<CoverComposerPanelProps> = ({
 
         <div className="space-y-1.5">
           <div className="flex items-center justify-between gap-2">
-            <span
-              className={`text-xs font-mono tabular-nums ${
-                teaserArLen > teaserLimit ? 'text-amber-400 font-bold' : 'text-slate-400'
-              }`}
-            >
-              {teaserArLen}/{teaserLimit}
-            </span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span
+                className={`text-xs font-mono tabular-nums ${
+                  teaserArLen > teaserLimit ? 'text-amber-400 font-bold' : 'text-slate-400'
+                }`}
+              >
+                {teaserArLen}/{teaserLimit}
+              </span>
+              {onSyncArabic && (
+                <button
+                  type="button"
+                  data-testid="cover-teaser-sync-ar-btn"
+                  disabled={isSyncingArabic || (!(currentSlide.coverTeaserEn || '').trim() && !(currentSlide.enTitle || '').trim())}
+                  onClick={onSyncArabic}
+                  title="Sync Arabic teaser from English teaser"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white/[0.05] hover:bg-white/10 disabled:opacity-45 border border-white/[0.08] text-[10px] font-mono text-slate-300 hover:text-white cursor-pointer transition-colors whitespace-nowrap shrink-0"
+                >
+                  {isSyncingArabic ? (
+                    <Loader2 className="w-2.5 h-2.5 animate-spin" style={{ color: theme.accent }} />
+                  ) : (
+                    <Languages className="w-2.5 h-2.5" style={{ color: theme.accent }} />
+                  )}
+                  <span>Sync AR</span>
+                </button>
+              )}
+            </div>
             <label className="text-xs font-semibold text-slate-200 font-cairo">
               جملة التمهيد (العربية)
             </label>

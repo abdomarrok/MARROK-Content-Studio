@@ -942,10 +942,23 @@ function buildDeckFromUserPoints(
       combinedRaw
     );
 
+  const cveMatch = combinedRaw.match(/\bCVE-\d{4}-\d{4,7}\b/i);
+  const detectedCve = cveMatch ? cveMatch[0].toUpperCase() : '';
+  const isCybersecurityDomain =
+    !isFinancialOrMacro &&
+    (Boolean(detectedCve) ||
+      /\b(?:vulnerability|vulnerabilities|zero[- ]?day|exploit|remote\s+code\s+execution|\brce\b|sandbox\s+escape|cvss|privilege\s+escalation|arbitrary\s+code|deserialization|buffer\s+overflow|sql\s+injection|ssrf|xss|java4shell|log4shell|shellshock|heartbleed|security\s+advisory|malicious\s+payload|unpatched|threat\s+actor|attack\s+surface|critical\s+flaw)\b|ثغرة|اختراق|أمن\s+سيبراني|تنفيذ\s+شيفرة/i.test(
+        combinedRaw
+      ));
+
   const { cleanSubject, arSubject } = extractCleanSubject(subject);
   const enHook = enforceHeadlineSpecRule(subject, { isHook: true, fallbackSubject: cleanSubject });
   const arHook = isFinancialOrMacro
     ? `مخاطر التقييمات الضخمة و${arSubject}`
+    : isCybersecurityDomain
+    ? detectedCve
+      ? `كيف تعرض ثغرة ${detectedCve} خوادم ${arSubject} للاختراق؟`
+      : `كيف تهدد ثغرة ${arSubject} خوادم الإنتاج فعلياً؟`
     : `لماذا يتغير تصميم ${arSubject} فعلياً؟`;
 
   // Extract strictly source-quoted Hub node labels + 1-line provenance reasons
@@ -1222,6 +1235,91 @@ function buildDeckFromUserPoints(
       return;
     }
 
+    // 0.5 Cybersecurity & CVE Advisory Mapping (Prevents SQL "code" and Hot/Cold "buffer/write" hallucinations)
+    if (isCybersecurityDomain) {
+      const pointCve = point.match(/\bCVE-\d{4}-\d{4,7}\b/i)?.[0]?.toUpperCase() || detectedCve;
+      const secAnchor = pointCve || cleanSubject;
+      const cvssMatch = point.match(/\bCVSS(?:\s+v?[34](?:\.\d)?)?\s*[:=]?\s*(\d{1,2}(?:\.\d)?)\b/i);
+      const secMetricMatch =
+        cvssMatch ||
+        point.match(/\b(\d{1,2}\.\d)\s*\/\s*10\b/) ||
+        point.match(/\b(\d+(?:\.\d+)?\s*(?:%|x|ms|seconds?|hours?|million|billion|servers?|hosts?))\b/i);
+
+      if (secMetricMatch && idx <= 2) {
+        const rawSecVal = cvssMatch ? `CVSS ${cvssMatch[1]}` : secMetricMatch[1] || secMetricMatch[0];
+        slides.push({
+          type: 'metric',
+          metricValue: rawSecVal.trim(),
+          metricLabel: cvssMatch ? 'CVSS CRITICALITY RATING' : 'EXPOSURE & IMPACT SCALE',
+          metricDiff: pointCve ? `▲ ${pointCve} active security advisory` : '▲ Critical production exposure',
+          metricIcon: 'shieldAlert',
+          enTitle,
+          arTitle: cvssMatch
+            ? `خطورة ${rawSecVal.trim()} في ${arSubject} فعلياً`
+            : `نطاق تأثير ${secAnchor} على الأنظمة`,
+          enBody: autoFitTextToLimits(topicBody, 135),
+          arBody: hasArabicText
+            ? sanitizeArabicSlideText(topicBody.slice(0, 135))
+            : `تقييم الخطورة في ${secAnchor} يضع خوادم ${arSubject} غير المحدَّثة أمام خطر استغلال مباشر.`,
+        });
+        return;
+      }
+
+      if (/\b(?:patch|upgrade|mitigat|remediat|fix|fixed|hardened|unpatched|vulnerable\s+vs|before|after)\b/i.test(fullText)) {
+        slides.push({
+          type: 'compare',
+          compareLeftTitle: `UNPATCHED ${cleanSubject.toUpperCase().slice(0, 14)}`,
+          compareLeftBody: '• Exposed attack surface in runtime\n• Untrusted input reaches privileged path\n• Silent takeover risk in production',
+          compareRightTitle: 'PATCHED & ISOLATED',
+          compareRightBody: '• Security patch applied immediately\n• Strict input & sandbox enforcement\n• Blast radius verified and contained',
+          enTitle,
+          arTitle: `النسخة المعرضة مقابل المحدَّثة في ${arSubject}`,
+          enBody: autoFitTextToLimits(topicBody, 135),
+          arBody: hasArabicText
+            ? sanitizeArabicSlideText(topicBody.slice(0, 135))
+            : `الفرق بين تشغيل ${arSubject} قبل التحديث الأمني وبعد تطبيق العزل والترقيع الفوري.`,
+        });
+        return;
+      }
+
+      const isExploitFlow = /\b(?:rce|remote\s+code|exploit|payload|inject|deserializ|bypass|escape|trigger|execut|attack|craft)\b/i.test(
+        fullText
+      );
+      const secVariant: 'isolation' | 'stack' | 'topology' = isExploitFlow
+        ? 'isolation'
+        : idx % 2 === 0
+        ? 'stack'
+        : 'topology';
+      slides.push({
+        type: 'row',
+        diagramVariant: secVariant,
+        diagramNodes: isExploitFlow
+          ? [
+              { label: 'Crafted Input', sublabel: 'Untrusted External Payload', status: 'EXPOSED', icon: 'shieldAlert' },
+              { label: cleanSubject.slice(0, 18), sublabel: pointCve || 'Vulnerable Runtime Path', status: 'BREACHED', icon: 'cpu' },
+              { label: 'Host Execution', sublabel: 'Arbitrary Command Impact', status: 'CRITICAL', icon: 'lock' },
+            ]
+          : [
+              { label: 'Attack Surface', sublabel: pointCve || cleanSubject.slice(0, 18), status: 'EXPOSED', icon: 'shieldAlert' },
+              { label: 'Runtime Boundary', sublabel: 'Affected Version Check', status: 'AUDITED', icon: 'server' },
+              { label: 'Containment Gate', sublabel: 'Patch & Network Isolation', status: 'GUARDED', icon: 'lock' },
+            ],
+        diagramEdges: isExploitFlow ? ['TRIGGER', 'EXECUTE'] : ['AUDIT', 'ISOLATE'],
+        diagramFooter: `SECURITY ADVISORY: ${secAnchor.toUpperCase().slice(0, 26)} • CONTAINMENT`,
+        enTitle,
+        arTitle: isExploitFlow
+          ? `كيف يعمل مسار استغلال ${secAnchor} فعلياً`
+          : `تحليل سطح الهجوم في ${secAnchor} فعلياً`,
+        enBody: autoFitTextToLimits(topicBody, 135),
+        arBody: hasArabicText
+          ? sanitizeArabicSlideText(topicBody.slice(0, 135))
+          : isExploitFlow
+          ? `تجاوز طبقة التحقق في ${arSubject} يتيح تنفيذ أوامر غير مصرح بها على الخوادم المتأثرة.`
+          : `فحص الإصدارات المتأثرة بثغرة ${secAnchor} وعزل نقاط الدخول قبل توسع الاستغلال.`,
+      });
+      return;
+    }
+
     // 1. Compare Archetype (e.g. Standard DB vs Purpose-Built Vector DB)
     if (/choosing\s+a\s+database|standard\s+database|vs\b|versus|compared\s+to/i.test(fullText)) {
       if (/postgres|pgvector|elasticsearch/i.test(fullText)) {
@@ -1254,8 +1352,8 @@ function buildDeckFromUserPoints(
       return;
     }
 
-    // 2. Code Archetype (SQL query or script)
-    if (/sql|psql|<=>|query\s+planner|code|syntax/i.test(fullText)) {
+    // 2. Code Archetype (SQL query or script — strictly require real SQL/database query signals, never generic "code")
+    if (/\b(?:sql|psql|pgvector|query\s+planner|select\s+.+\s+from|explain\s+analyze)\b|<=>/i.test(fullText)) {
       const isVectorSql = /vector|embedding|<=>|pgvector/i.test(fullText);
       slides.push({
         type: 'code',
@@ -1265,15 +1363,22 @@ function buildDeckFromUserPoints(
           ? `-- Semantic cosine similarity with pgvector\nSELECT id, title, 1 - (embedding <=> $query) AS score\nFROM documents\nWHERE status = 'in_stock'\nORDER BY embedding <=> $query LIMIT 5;`
           : `$ psql -h localhost -U postgres\n> EXPLAIN ANALYZE SELECT * FROM vectors;\n+ Index Scan using hnsw_cosine_idx\n✔ Execution verified`,
         enTitle: enforceHeadlineSpecRule(effectiveTitle || 'pgvector distance query', { isHook: false }),
-        arTitle: 'الاستعلام عبر الشيفرة البرمجية',
+        arTitle: 'الاستعلام عبر SQL والفهارس فعلياً',
         enBody: autoFitTextToLimits(topicBody, 135),
-        arBody: 'طريقة تطبيق البحث الدلالي في قاعدة البيانات ودمج الشروط المسبقة بكفاءة.',
+        arBody: 'طريقة تطبيق الاستعلام في قاعدة البيانات ودمج الشروط المسبقة بكفاءة عالية.',
       });
       return;
     }
 
-    // 3. Split Visual Schematic (Hot/Cold Stores & Writes) — evaluated before HNSW to handle writes into graphs
-    if (/write|hot\s+and\s+cold|cold\s+store|hot\s+store|buffer|lsm|compaction|consistency|insert/i.test(fullText)) {
+    // 3. Split Visual Schematic (Hot/Cold Stores & Writes — strictly storage/index architecture)
+    if (
+      /\b(?:hot\s+and\s+cold|cold\s+store|hot\s+store|lsm[- ]?tree|compaction|memtable|sstable|write[- ]?ahead)\b/i.test(
+        fullText
+      ) ||
+      /\bhot\b[^.]{0,45}\bcold\b/i.test(fullText) ||
+      (/\b(?:write|writes|buffer|insert|inserting)\b/i.test(fullText) &&
+        /\b(?:database|index|vector|storage|disk|ram|table|wal|hnsw|graph|consistency)\b/i.test(fullText))
+    ) {
       slides.push({
         type: 'row',
         diagramVariant: 'split',
@@ -1540,6 +1645,24 @@ function buildDeckFromUserPoints(
             arTitle: 'من يتحمل الكلفة عند تعثر الرهانات الضخمة؟',
             enBody: 'Follow unit economics and power commitments closely before assuming headline valuations represent durable profit.',
             arBody: 'راقب عوائد التشغيل والتزامات الطاقة قبل افتراض أن التقييمات الضخمة تعكس أرباحاً مستدامة.',
+          }
+        : isCybersecurityDomain
+        ? {
+            type: 'row',
+            storyRole: 'takeaway',
+            diagramVariant: 'isolation',
+            icons: [{ icon: 'shieldAlert', label: 'Patch Now' }, { icon: 'lock', label: 'Isolate' }],
+            diagramNodes: [
+              { label: 'Inventory Audit', sublabel: 'Find exposed versions', status: 'SCAN', icon: 'search' },
+              { label: 'Emergency Patch', sublabel: detectedCve || 'Apply vendor fix', status: 'PATCH', icon: 'shieldAlert' },
+              { label: 'Runtime Isolation', sublabel: 'Limit blast radius', status: 'GUARDED', icon: 'lock' },
+            ],
+            diagramEdges: ['AUDIT', 'CONTAIN'],
+            diagramFooter: `SECURITY RESPONSE: ${(detectedCve || cleanSubject).toUpperCase().slice(0, 28)}`,
+            enTitle: `Patch ${detectedCve || cleanSubject.split(/\s+/).slice(0, 3).join(' ')} before exploit scans hit`,
+            arTitle: `أولوية التحديث وعزل ${detectedCve || arSubject} فوراً`,
+            enBody: `Audit every ${cleanSubject} runtime, apply vendor security updates, and restrict outbound egress until patched.`,
+            arBody: `افحص جميع خوادم ${arSubject} فوراً وطبّق التحديثات الأمنية مع تقييد الصلاحيات لتقليل نطاق الاختراق.`,
           }
         : {
             type: 'row',

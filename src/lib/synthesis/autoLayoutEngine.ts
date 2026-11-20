@@ -69,7 +69,22 @@ export function resolveSlide1CoverStyle(
   slide: SlideData,
   deckSlides: SlideData[] = []
 ): CoverStyle {
-  if (slide.coverStyle) return slide.coverStyle;
+  if (slide.coverStyle) {
+    const style = slide.coverStyle;
+    const isCompatible =
+      (style === 'versus-hook' && slide.type === 'compare') ||
+      (style === 'metric-split' &&
+        (slide.type === 'metric' || (slide.type === 'visual' && slide.visualSpec?.kind === 'callout'))) ||
+      (style === 'headline-hero' &&
+        (slide.type === 'visual' || slide.type === 'number' || slide.type === 'hub' || slide.type === 'cta')) ||
+      (style === 'visual-teaser' &&
+        (slide.type === 'row' ||
+          slide.type === 'subjectPair' ||
+          slide.type === 'code' ||
+          slide.type === 'image' ||
+          slide.type === 'visual'));
+    if (isCompatible) return style;
+  }
   const text = `${slide.enTitle || ''} ${slide.coverTeaserEn || ''} ${slide.enBody || ''}`.trim();
   if (
     slide.type === 'subjectPair' ||

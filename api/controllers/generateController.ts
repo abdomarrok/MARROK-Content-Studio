@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import type {
   CarouselData,
   CoverStyle,
@@ -26,7 +26,7 @@ import {
 } from '../../src/lib/synthesis/index.ts';
 import { isPlaceholderOrEmptyBrandValue } from '../../src/lib/bundledTechSvgs.ts';
 import { sanitizeSvgBlueprintMarkup } from '../../src/lib/canvas/svgBlueprint.ts';
-import { sanitizeCoverTeaserText, sanitizeFullCarousel } from '../../src/lib/textSanitizer.ts';
+import { sanitizeArabicSlideText, sanitizeCoverTeaserText, sanitizeFullCarousel } from '../../src/lib/textSanitizer.ts';
 import {
   ALLOWED_INPUT_MODES,
   ALLOWED_IMAGE_MIMES,
@@ -82,12 +82,12 @@ function createGoogleGenAIClient(apiKey: string): GoogleGenAIClientLike {
   });
 }
 
-const TOTAL_REQUEST_BUDGET_MS = 23_000;
-const REFINE_TOTAL_BUDGET_MS = 20_000;
-const GROUNDED_ATTEMPT_TIMEOUT_MS = 8_500;
-const DIRECT_TEXT_TIMEOUT_MS = 12_000;
-const DIRECT_IMAGE_TIMEOUT_MS = 15_000;
-const FREE_BACKUP_TIMEOUT_MS = 6_500;
+const TOTAL_REQUEST_BUDGET_MS = 38_000;
+const REFINE_TOTAL_BUDGET_MS = 22_000;
+const GROUNDED_ATTEMPT_TIMEOUT_MS = 10_000;
+const DIRECT_TEXT_TIMEOUT_MS = 14_000;
+const DIRECT_IMAGE_TIMEOUT_MS = 16_000;
+const FREE_BACKUP_TIMEOUT_MS = 8_000;
 
 const OVERLOAD_COOLDOWN_MS = 60_000;
 const NOT_FOUND_COOLDOWN_MS = 300_000;
@@ -199,6 +199,7 @@ export function buildGeminiContentConfig(
   options: {
     systemInstruction?: string;
     temperature?: number;
+    thinkingLevel?: ThinkingLevel;
     tools?: Array<{ googleSearch: Record<string, never> }>;
     responseMimeType?: string;
     responseSchema?: unknown;
@@ -209,6 +210,9 @@ export function buildGeminiContentConfig(
   if (options.systemInstruction !== undefined) cfg.systemInstruction = options.systemInstruction;
   if (!isGemini4Model(model) && options.temperature !== undefined) {
     cfg.temperature = options.temperature;
+  }
+  if (options.thinkingLevel !== undefined) {
+    cfg.thinkingConfig = { thinkingLevel: options.thinkingLevel };
   }
   if (options.tools !== undefined) cfg.tools = options.tools;
   if (options.responseMimeType !== undefined) cfg.responseMimeType = options.responseMimeType;
@@ -626,6 +630,11 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
     let jsonResult: CarouselData | null = null;
     let successfulModel = '';
     let wasGroundedWithSources = false;
+    const attemptedProviders: string[] = [];
+    let lastFailureReason =
+      candidateKeys.length === 0
+        ? 'No Gemini API key configured on server'
+        : 'Upstream AI providers did not return a valid carousel';
 
     const remainingBudgetMs = () => TOTAL_REQUEST_BUDGET_MS - (Date.now() - requestStartTime);
 
@@ -707,11 +716,13 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
           }
         } catch (groundingErr: unknown) {
           recordModelUnavailable(primaryModel, groundingErr);
+          attemptedProviders.push(`${primaryModel}:grounded`);
+          lastFailureReason = formatModelFallbackReason(groundingErr, key);
           if (classifyModelError(groundingErr) !== 'timeout') {
             failedModelsInAttempt.add(primaryModel);
           }
           console.info(
-            `[AI-Gateway] Grounded mode on ${primaryModel} (${label}) unavailable (${formatModelFallbackReason(groundingErr, key)}); cascading to direct schema mode.`
+            `[AI-Gateway] Grounded mode on ${primaryModel} (${label}) unavailable (${lastFailureReason}); cascading to direct schema mode.`
           );
         }
       }
@@ -759,8 +770,10 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
         } catch (directErr: unknown) {
           recordModelUnavailable(model, directErr);
           failedModelsInAttempt.add(model);
+          attemptedProviders.push(`${model}:schema`);
+          lastFailureReason = formatModelFallbackReason(directErr, key);
           console.info(
-            `[AI-Gateway] Direct mode on ${model} (${label}) unavailable (${formatModelFallbackReason(directErr, key)}); trying next fallback.`
+            `[AI-Gateway] Direct mode on ${model} (${label}) unavailable (${lastFailureReason}); trying next fallback.`
           );
         }
       }
@@ -803,25 +816,39 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
             }
           }
         } catch (liteErr: unknown) {
+          attemptedProviders.push(`${liteModel}:lite-json`);
+          lastFailureReason = formatModelFallbackReason(liteErr, key);
           console.info(
-            `[AI-Gateway] Lightweight JSON pass on ${liteModel} (${label}) unavailable (${formatModelFallbackReason(liteErr, key)}).`
+            `[AI-Gateway] Lightweight JSON pass on ${liteModel} (${label}) unavailable (${lastFailureReason}).`
           );
         }
       }
     }
 
-    // Tier 2: Zero-Key Free Pollinations AI Backup (before ever going offline)
+    // Tier 2: Zero-Key Free Pollinations AI Backup with bounded auto-retry (before ever going offline)
     if (!jsonResult && !hasImage && config.freeBackupEnabled && remainingBudgetMs() >= 3500) {
-      const freeBackup = await generateWithPollinationsFreeBackup({
-        userPromptText,
-        minSlidesRequired,
-        freeModels: config.freeTextBackupModels,
-        getRemainingMs: remainingBudgetMs,
-      });
-      if (freeBackup) {
-        jsonResult = freeBackup.data;
-        successfulModel = freeBackup.model;
-        wasGroundedWithSources = false;
+      for (let backupPass = 0; backupPass < 2 && !jsonResult && remainingBudgetMs() >= 3500; backupPass++) {
+        if (backupPass > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+        attemptedProviders.push(backupPass === 0 ? 'backup-ai' : 'backup-ai:retry');
+        const freeBackup = await generateWithPollinationsFreeBackup({
+          userPromptText,
+          minSlidesRequired,
+          freeModels: config.freeTextBackupModels,
+          getRemainingMs: remainingBudgetMs,
+        });
+        if (freeBackup) {
+          jsonResult = freeBackup.data;
+          successfulModel = freeBackup.model;
+          wasGroundedWithSources = false;
+        }
+      }
+      if (!jsonResult) {
+        lastFailureReason =
+          candidateKeys.length === 0
+            ? 'No Gemini API key configured and backup AI models were unavailable'
+            : `${lastFailureReason}; backup AI retry also unavailable`;
       }
     }
 
@@ -889,6 +916,8 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
     synthesizedData.sourceMeta = {
       ...synthesizedData.sourceMeta,
       isFallback: true,
+      fallbackReason: lastFailureReason,
+      attemptedProviders: Array.from(new Set(attemptedProviders)),
       isSearchGrounded: false,
       status: 'unverified_draft',
       userReviewed: false,
@@ -896,12 +925,14 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
     };
 
     res.setHeader('X-Marrok-Engine', 'offline');
+    res.setHeader('X-Marrok-Fallback-Reason', lastFailureReason.slice(0, 140));
     return res.json(synthesizedData);
   } catch (error: unknown) {
     finalizeInFlight(null);
+    const exceptionReason = formatModelFallbackReason(error, customKey);
     console.info(
       '[AI-Gateway] Fallback synthesizer activated due to unexpected controller exception:',
-      formatModelFallbackReason(error, customKey)
+      exceptionReason
     );
     const fallbackData = synthesizeCarousel({
       prompt: safePrompt,
@@ -915,50 +946,309 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
     fallbackData.sourceMeta = {
       ...fallbackData.sourceMeta,
       isFallback: true,
+      fallbackReason: exceptionReason,
       isSearchGrounded: false,
       status: 'unverified_draft',
       userReviewed: false,
       engine: 'offline',
     };
     res.setHeader('X-Marrok-Engine', 'offline');
+    res.setHeader('X-Marrok-Fallback-Reason', exceptionReason.slice(0, 140));
     return res.json(fallbackData);
   } finally {
     clearTimeout(overallTimer);
   }
 }
 
+const SYNC_AR_SINGLE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    arTitle: { type: Type.STRING },
+    coverTeaserAr: { type: Type.STRING },
+    arBody: { type: Type.STRING },
+    takeawaysAr: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+    },
+  },
+  required: ['arTitle'],
+};
+
+const SYNC_AR_DECK_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    slides: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          index: { type: Type.INTEGER },
+          arTitle: { type: Type.STRING },
+          coverTeaserAr: { type: Type.STRING },
+          arBody: { type: Type.STRING },
+        },
+        required: ['index', 'arTitle'],
+      },
+    },
+  },
+  required: ['slides'],
+};
+
+function sanitizeSyncedArabicField(text: unknown, isTitle: boolean, maxChars: number): string {
+  if (typeof text !== 'string' || !text.trim()) return '';
+  const cleaned = sanitizeArabicSlideText(text.trim(), { isTitle })
+    .replace(/[:：]+/g, isTitle ? ' ' : ':')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (cleaned.length <= maxChars) return cleaned;
+  const sliced = cleaned.slice(0, maxChars);
+  const lastSpace = sliced.lastIndexOf(' ');
+  return (lastSpace > Math.floor(maxChars * 0.55) ? sliced.slice(0, lastSpace) : sliced)
+    .replace(/[,،;:\-—–]+$/, '')
+    .trim();
+}
+
 /**
- * Per-Slide Bilingual AI Refinement Controller
+ * Per-Slide Bilingual AI Refinement & Live Sync AR Controller
+ * Supports single-slide refinement, strict EN -> AR live translation (`sync_ar` / `arabic_sync`),
+ * and batch deck-wide EN -> AR translation (`sync_ar_deck`).
  * Rotates across Gemini keys + models and zero-key Pollinations backup within a single bounded
  * overall AbortSignal deadline so requests never exceed synchronous serverless timeout limits.
  */
 export async function handleRefineSlide(req: Request, res: Response) {
   const config = getServerConfig();
-  const { slide, mode = 'punchy', category = 'SOFTWARE ARCHITECTURE' } = req.body || {};
-  if (!slide || typeof slide !== 'object') {
+  const {
+    slide,
+    slides: deckSlidesInput,
+    mode = 'punchy',
+    category = 'SOFTWARE ARCHITECTURE',
+    isCover = false,
+  } = req.body || {};
+
+  const normalizedMode = String(mode);
+  const isDeckSyncMode = normalizedMode === 'sync_ar_deck';
+  const isStrictSyncAr = normalizedMode === 'sync_ar' || normalizedMode === 'arabic_sync';
+
+  if (isDeckSyncMode) {
+    if (!Array.isArray(deckSlidesInput) || deckSlidesInput.length === 0) {
+      return res.status(400).json({ error: 'Slides array is required for sync_ar_deck mode' });
+    }
+  } else if (!slide || typeof slide !== 'object') {
     return res.status(400).json({ error: 'Slide object is required' });
   }
 
   const candidateKeys = resolveRequestGeminiKeys(req, config);
+  const safeCategory = String(category || 'SOFTWARE ARCHITECTURE').slice(0, 80);
 
-  const enTitle = String(slide.enTitle || '').slice(0, 200);
-  const arTitle = String(slide.arTitle || '').slice(0, 200);
-  const enBody = String(slide.enBody || '').slice(0, 500);
-  const arBody = String(slide.arBody || '').slice(0, 500);
+  const requestedBudgetMs = Number(req.body?.budgetMs);
+  const totalBudgetMs =
+    Number.isFinite(requestedBudgetMs) && requestedBudgetMs >= 500 && requestedBudgetMs <= REFINE_TOTAL_BUDGET_MS
+      ? requestedBudgetMs
+      : REFINE_TOTAL_BUDGET_MS;
+  const deadlineAt = Date.now() + totalBudgetMs;
+  const remainingBudgetMs = () => deadlineAt - Date.now();
+  const overallAbort = new AbortController();
+  const overallTimer = setTimeout(() => overallAbort.abort(new Error('Slide refine deadline exceeded')), totalBudgetMs);
 
-  const modeInstructions: Record<string, string> = {
-    punchy:
-      'Make the English and Arabic headlines sharper, contrarian, and high-impact (<= 42 chars). Tighten body copy to crisp engineering mechanisms (<= 135 chars).',
-    shorten:
-      'Compress English and Arabic titles and body copy for instant mobile glanceability while preserving exact technical numbers and mechanisms.',
-    arabic_sync:
-      'Keep the English headline and body accurate, and produce a natural Modern Standard Arabic sentence while keeping ALL technical terms (e.g. Sockets, Latency, Cache, Cluster, Raft, Postgres, Kafka, API, p99) and number+unit pairs (e.g. 15ms, 510 GB) in English Latin script.',
-    analogy:
-      'Reframe the body explanation using a concrete systems engineering mental model or architectural contrast while staying under 135 characters.',
-  };
+  try {
+    // ── BATCH DECK-WIDE LIVE SYNC AR ─────────────────────────────────────────
+    if (isDeckSyncMode) {
+      const normalizedSlides = (deckSlidesInput as Array<Record<string, unknown>>)
+        .slice(0, 12)
+        .map((s, idx) => ({
+          index: idx,
+          enTitle: String(s?.enTitle || '').slice(0, 200).trim(),
+          coverTeaserEn: String(s?.coverTeaserEn || '').slice(0, 140).trim(),
+          enBody: String(s?.enBody || '').slice(0, 500).trim(),
+          existingArTitle: String(s?.arTitle || '').slice(0, 200).trim(),
+          existingCoverTeaserAr: String(s?.coverTeaserAr || '').slice(0, 140).trim(),
+          existingArBody: String(s?.arBody || '').slice(0, 500).trim(),
+        }));
 
-  const directive = modeInstructions[String(mode)] || modeInstructions.punchy;
-  const refinePrompt = `Refine this single engineering carousel slide for topic "${String(category).slice(0, 80)}".
+      const deckPrompt = `Translate every slide's English copy for topic "${safeCategory}" into natural, idiomatic Modern Standard Arabic (فصحى معاصرة طبيعية).
+STRICT RULES:
+1. Faithfully convey the EXACT technical meaning, threat/impact, and open-loop hook of each English field.
+2. Keep ALL technical nouns, CVE IDs, product/brand names, protocols, and number+unit pairs in English Latin script (e.g., Java4Shell, CVE-2026-114938, OpenJDK, RCE, CVSS, API, Latency, Cache, Postgres, p99, 15ms, 93.3%).
+3. NEVER copy arTitle into coverTeaserAr — if coverTeaserEn is non-empty, coverTeaserAr MUST translate coverTeaserEn independently (<= 68 chars, zero colons, zero emojis).
+4. If enBody is empty "", return arBody as "".
+5. NEVER end an Arabic line with a Latin word followed by a period; finish with an Arabic word before punctuation.
+6. Return ONLY valid JSON matching { "slides": [{ "index": number, "arTitle": string, "coverTeaserAr": string, "arBody": string }] }.
+
+Slides to translate:
+${JSON.stringify(
+  normalizedSlides.map(({ index, enTitle, coverTeaserEn, enBody }) => ({
+    index,
+    enTitle,
+    coverTeaserEn,
+    enBody,
+  })),
+  null,
+  2
+)}`;
+
+      const parseDeckSyncPayload = (rawText: string) => {
+        const cleanText = rawText.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+        const parsed = JSON.parse(cleanText);
+        if (!parsed || !Array.isArray(parsed.slides) || parsed.slides.length === 0) return null;
+        return normalizedSlides.map((src) => {
+          const match = parsed.slides.find((item: any) => Number(item?.index) === src.index) || parsed.slides[src.index];
+          const isSlide1 = src.index === 0;
+          const arTitle = sanitizeSyncedArabicField(match?.arTitle, true, isSlide1 ? 68 : 48) || src.existingArTitle;
+          let coverTeaserAr = src.coverTeaserEn
+            ? sanitizeSyncedArabicField(match?.coverTeaserAr, true, 68) || src.existingCoverTeaserAr
+            : '';
+          if (coverTeaserAr && arTitle && coverTeaserAr === arTitle) {
+            coverTeaserAr = src.existingCoverTeaserAr && src.existingCoverTeaserAr !== arTitle ? src.existingCoverTeaserAr : coverTeaserAr;
+          }
+          const arBody = src.enBody
+            ? sanitizeSyncedArabicField(match?.arBody, false, 155) || src.existingArBody
+            : '';
+          return {
+            index: src.index,
+            enTitle: src.enTitle,
+            coverTeaserEn: src.coverTeaserEn,
+            enBody: src.enBody,
+            arTitle,
+            coverTeaserAr,
+            arBody,
+          };
+        });
+      };
+
+      for (const { key, label } of candidateKeys) {
+        if (overallAbort.signal.aborted || remainingBudgetMs() < 500) break;
+        const activeAi = createGoogleGenAIClient(key);
+        const refineModels = getPrioritizedModels(config.generationModels);
+        for (const model of refineModels) {
+          if (overallAbort.signal.aborted || remainingBudgetMs() < 400) break;
+          const stepTimeoutMs = Math.min(11_000, Math.max(400, remainingBudgetMs() - 100));
+          try {
+            const response = await activeAi.models.generateContent({
+              model,
+              contents: deckPrompt,
+              config: buildGeminiContentConfig(model, {
+                temperature: 0.2,
+                thinkingLevel: ThinkingLevel.LOW,
+                responseMimeType: 'application/json',
+                responseSchema: SYNC_AR_DECK_SCHEMA,
+                abortSignal: createCombinedDeadlineSignal(overallAbort.signal, stepTimeoutMs),
+              }),
+            });
+            const synced = response.text ? parseDeckSyncPayload(response.text) : null;
+            if (synced) {
+              modelCooldownUntil.delete(model);
+              res.setHeader('X-Marrok-Engine', 'ungrounded');
+              res.setHeader('X-Marrok-Model', model);
+              return res.json({ slides: synced, engine: 'ungrounded', model });
+            }
+          } catch (err: unknown) {
+            recordModelUnavailable(model, err);
+            console.info(
+              `[AI-Gateway] Deck Sync AR on ${model} (${label}) unavailable (${formatModelFallbackReason(err, key)}); trying next fallback.`
+            );
+          }
+        }
+      }
+
+      if (config.freeBackupEnabled && !overallAbort.signal.aborted && remainingBudgetMs() >= 1500) {
+        for (const freeModel of config.freeTextBackupModels) {
+          if (overallAbort.signal.aborted || remainingBudgetMs() < 1000) break;
+          const stepTimeoutMs = Math.min(7_000, Math.max(500, remainingBudgetMs() - 250));
+          try {
+            const freeRes = await fetch('https://text.pollinations.ai/openai', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              signal: createCombinedDeadlineSignal(overallAbort.signal, stepTimeoutMs),
+              body: JSON.stringify({
+                model: freeModel,
+                temperature: 0.2,
+                response_format: { type: 'json_object' },
+                messages: [
+                  {
+                    role: 'system',
+                    content:
+                      'You are an expert English-to-Arabic technical translator. Keep all Latin technical nouns, CVEs, brand names, and numeric units in English. Return ONLY valid JSON.',
+                  },
+                  { role: 'user', content: deckPrompt },
+                ],
+              }),
+            });
+            if (freeRes.ok) {
+              const payload = await freeRes.json();
+              const rawContent: string = payload?.choices?.[0]?.message?.content || '';
+              const synced = rawContent ? parseDeckSyncPayload(rawContent) : null;
+              if (synced) {
+                const modelTag = `pollinations/${freeModel}`;
+                res.setHeader('X-Marrok-Engine', 'ungrounded');
+                res.setHeader('X-Marrok-Model', modelTag);
+                return res.json({ slides: synced, engine: 'ungrounded', model: modelTag });
+              }
+            }
+          } catch {
+            // continue to next backup model
+          }
+        }
+      }
+
+      res.setHeader('X-Marrok-Engine', 'offline');
+      return res.json({
+        slides: normalizedSlides.map((s) => ({
+          index: s.index,
+          enTitle: s.enTitle,
+          coverTeaserEn: s.coverTeaserEn,
+          enBody: s.enBody,
+          arTitle: s.existingArTitle,
+          coverTeaserAr: s.existingCoverTeaserAr,
+          arBody: s.existingArBody,
+        })),
+        engine: 'offline',
+        error: 'Live AI translation is temporarily unavailable.',
+      });
+    }
+
+    // ── SINGLE SLIDE REFINE / LIVE SYNC AR ───────────────────────────────────
+    const enTitle = String(slide.enTitle || '').slice(0, 200);
+    const arTitle = String(slide.arTitle || '').slice(0, 200);
+    const enBody = String(slide.enBody || '').slice(0, 500);
+    const arBody = String(slide.arBody || '').slice(0, 500);
+    const coverTeaserEn = String(slide.coverTeaserEn || '').slice(0, 140);
+    const coverTeaserAr = String(slide.coverTeaserAr || '').slice(0, 140);
+    const rawTakeaways = Array.isArray(slide.takeaways) ? slide.takeaways.slice(0, 5) : [];
+    const takeawaysEn = rawTakeaways.map((t: any) => String(t?.en || '').slice(0, 120));
+
+    const modeInstructions: Record<string, string> = {
+      punchy:
+        'Make the English and Arabic headlines sharper, contrarian, and high-impact (<= 42 chars). Tighten body copy to crisp engineering mechanisms (<= 135 chars).',
+      shorten:
+        'Compress English and Arabic titles and body copy for instant mobile glanceability while preserving exact technical numbers and mechanisms.',
+      arabic_sync:
+        'Translate the English headline, cover teaser, body, and takeaways faithfully into natural Modern Standard Arabic while keeping ALL technical terms, CVE IDs, product names, and number+unit pairs in English Latin script.',
+      sync_ar:
+        'Translate the English headline, cover teaser, body, and takeaways faithfully into natural Modern Standard Arabic while keeping ALL technical terms, CVE IDs, product names, and number+unit pairs in English Latin script.',
+      analogy:
+        'Reframe the body explanation using a concrete systems engineering mental model or architectural contrast while staying under 135 characters.',
+    };
+
+    const directive = modeInstructions[normalizedMode] || modeInstructions.punchy;
+    const isCoverSlide = Boolean(isCover || coverTeaserEn);
+
+    const refinePrompt = isStrictSyncAr
+      ? `Translate the English slide copy below for topic "${safeCategory}" into accurate, idiomatic Modern Standard Arabic (فصحى معاصرة طبيعية).
+STRICT RULES:
+- DO NOT alter the meaning, add unrelated topics (never write SQL/database phrases unless the English is about SQL), or duplicate arTitle into coverTeaserAr.
+- Preserve ALL technical nouns, CVE codes, product/company names, protocols, and number+unit pairs in English Latin script (e.g., Java4Shell, CVE-2026-114938, OpenJDK, RCE, CVSS, Sockets, Latency, Cache, API, 15ms, 93.3%).
+- arTitle: Natural Arabic translation of enTitle (${isCoverSlide ? 'max 68 chars' : 'max 45 chars'}), zero colons, zero emojis.
+- coverTeaserAr: ${coverTeaserEn ? 'Natural Arabic translation of coverTeaserEn (max 68 chars, distinct from arTitle, zero colons, zero emojis).' : 'Return empty string "".'}
+- arBody: ${enBody ? 'Natural Arabic translation of enBody (max 150 chars), ending with an Arabic word before the period.' : 'Return empty string "".'}
+${takeawaysEn.length > 0 ? `- takeawaysAr: Array of ${takeawaysEn.length} concise Arabic translations matching takeawaysEn in order (max 80 chars each).` : ''}
+- Return ONLY valid JSON with keys: arTitle, coverTeaserAr, arBody${takeawaysEn.length > 0 ? ', takeawaysAr' : ''}.
+
+Source English Slide:
+enTitle: ${enTitle}
+coverTeaserEn: ${coverTeaserEn}
+enBody: ${enBody}
+${takeawaysEn.length > 0 ? `takeawaysEn: ${JSON.stringify(takeawaysEn)}` : ''}`
+      : `Refine this single engineering carousel slide for topic "${safeCategory}".
 Directive: ${directive}
 Rules:
 - enTitle: 2 to 6 words ending with a period (.) or question mark (?), max 45 characters.
@@ -973,22 +1263,53 @@ arTitle: ${arTitle}
 enBody: ${enBody}
 arBody: ${arBody}`;
 
-  const requestedBudgetMs = Number(req.body?.budgetMs);
-  const totalBudgetMs =
-    Number.isFinite(requestedBudgetMs) && requestedBudgetMs >= 500 && requestedBudgetMs <= REFINE_TOTAL_BUDGET_MS
-      ? requestedBudgetMs
-      : REFINE_TOTAL_BUDGET_MS;
-  const deadlineAt = Date.now() + totalBudgetMs;
-  const remainingBudgetMs = () => deadlineAt - Date.now();
-  const overallAbort = new AbortController();
-  const overallTimer = setTimeout(() => overallAbort.abort(new Error('Slide refine deadline exceeded')), totalBudgetMs);
+    const parseSingleResult = (rawText: string) => {
+      const cleanText = rawText.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+      const parsed = JSON.parse(cleanText);
+      if (!parsed || typeof parsed !== 'object') return null;
 
-  try {
+      if (isStrictSyncAr) {
+        if (typeof parsed.arTitle !== 'string' || !parsed.arTitle.trim()) return null;
+        const nextArTitle = sanitizeSyncedArabicField(parsed.arTitle, true, isCoverSlide ? 68 : 48) || arTitle;
+        const nextCoverTeaserAr = coverTeaserEn
+          ? sanitizeSyncedArabicField(parsed.coverTeaserAr, true, 68) || coverTeaserAr
+          : '';
+        const nextArBody = enBody ? sanitizeSyncedArabicField(parsed.arBody, false, 155) || arBody : '';
+        const nextTakeaways =
+          rawTakeaways.length > 0
+            ? rawTakeaways.map((t: any, idx: number) => ({
+                en: String(t?.en || ''),
+                ar:
+                  Array.isArray(parsed.takeawaysAr) && typeof parsed.takeawaysAr[idx] === 'string'
+                    ? sanitizeSyncedArabicField(parsed.takeawaysAr[idx], false, 84) || String(t?.ar || '')
+                    : String(t?.ar || ''),
+              }))
+            : undefined;
+        return {
+          enTitle,
+          arTitle: nextArTitle,
+          enBody,
+          arBody: nextArBody,
+          ...(coverTeaserEn || coverTeaserAr ? { coverTeaserEn, coverTeaserAr: nextCoverTeaserAr } : {}),
+          ...(nextTakeaways ? { takeaways: nextTakeaways } : {}),
+        };
+      }
+
+      if (typeof parsed.enTitle === 'string' && typeof parsed.enBody === 'string') {
+        return {
+          enTitle: parsed.enTitle.trim(),
+          arTitle: typeof parsed.arTitle === 'string' ? parsed.arTitle.trim() : arTitle,
+          enBody: parsed.enBody.trim(),
+          arBody: typeof parsed.arBody === 'string' ? parsed.arBody.trim() : arBody,
+        };
+      }
+      return null;
+    };
+
     for (const { key, label } of candidateKeys) {
       if (overallAbort.signal.aborted || remainingBudgetMs() < 350) break;
 
       const activeAi = createGoogleGenAIClient(key);
-
       const refineModels = getPrioritizedModels(config.generationModels);
       for (const model of refineModels) {
         if (overallAbort.signal.aborted || remainingBudgetMs() < 300) break;
@@ -999,7 +1320,8 @@ arBody: ${arBody}`;
             model,
             contents: refinePrompt,
             config: buildGeminiContentConfig(model, {
-              temperature: 0.3,
+              temperature: isStrictSyncAr ? 0.2 : 0.3,
+              ...(isStrictSyncAr ? { thinkingLevel: ThinkingLevel.LOW, responseSchema: SYNC_AR_SINGLE_SCHEMA } : {}),
               responseMimeType: 'application/json',
               abortSignal: createCombinedDeadlineSignal(overallAbort.signal, stepTimeoutMs),
             }),
@@ -1007,17 +1329,13 @@ arBody: ${arBody}`;
 
           const rawText = response.text;
           if (rawText) {
-            const cleanText = rawText.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-            const parsed = JSON.parse(cleanText);
-            if (parsed && typeof parsed.enTitle === 'string' && typeof parsed.enBody === 'string') {
+            const parsed = parseSingleResult(rawText);
+            if (parsed) {
               modelCooldownUntil.delete(model);
               res.setHeader('X-Marrok-Engine', 'ungrounded');
               res.setHeader('X-Marrok-Model', model);
               return res.json({
-                enTitle: parsed.enTitle.trim(),
-                arTitle: typeof parsed.arTitle === 'string' ? parsed.arTitle.trim() : arTitle,
-                enBody: parsed.enBody.trim(),
-                arBody: typeof parsed.arBody === 'string' ? parsed.arBody.trim() : arBody,
+                ...parsed,
                 engine: 'ungrounded',
                 model,
               });
@@ -1032,7 +1350,7 @@ arBody: ${arBody}`;
       }
     }
 
-    // Zero-Key Pollinations Free Backup for Slide Refine (within remaining deadline)
+    // Zero-Key Pollinations Free Backup for Slide Refine / Sync AR (within remaining deadline)
     if (config.freeBackupEnabled && !overallAbort.signal.aborted && remainingBudgetMs() >= 1500) {
       for (const freeModel of config.freeTextBackupModels) {
         if (overallAbort.signal.aborted || remainingBudgetMs() < 1000) break;
@@ -1045,12 +1363,14 @@ arBody: ${arBody}`;
             signal: createCombinedDeadlineSignal(overallAbort.signal, stepTimeoutMs),
             body: JSON.stringify({
               model: freeModel,
-              temperature: 0.3,
+              temperature: isStrictSyncAr ? 0.2 : 0.3,
               response_format: { type: 'json_object' },
               messages: [
                 {
                   role: 'system',
-                  content: 'You are a bilingual English and Modern Standard Arabic systems architecture editor. Return ONLY valid JSON with keys: enTitle, arTitle, enBody, arBody.',
+                  content: isStrictSyncAr
+                    ? 'You are a bilingual English-to-Arabic technical translator. Keep all English technical terms, CVEs, brand names, and numeric units in Latin script. Return ONLY valid JSON.'
+                    : 'You are a bilingual English and Modern Standard Arabic systems architecture editor. Return ONLY valid JSON with keys: enTitle, arTitle, enBody, arBody.',
                 },
                 {
                   role: 'user',
@@ -1064,17 +1384,13 @@ arBody: ${arBody}`;
             const payload = await freeRes.json();
             const rawContent: string = payload?.choices?.[0]?.message?.content || '';
             if (rawContent) {
-              const cleanText = rawContent.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-              const parsed = JSON.parse(cleanText);
-              if (parsed && typeof parsed.enTitle === 'string' && typeof parsed.enBody === 'string') {
+              const parsed = parseSingleResult(rawContent);
+              if (parsed) {
                 const modelTag = `pollinations/${freeModel}`;
                 res.setHeader('X-Marrok-Engine', 'ungrounded');
                 res.setHeader('X-Marrok-Model', modelTag);
                 return res.json({
-                  enTitle: parsed.enTitle.trim(),
-                  arTitle: typeof parsed.arTitle === 'string' ? parsed.arTitle.trim() : arTitle,
-                  enBody: parsed.enBody.trim(),
-                  arBody: typeof parsed.arBody === 'string' ? parsed.arBody.trim() : arBody,
+                  ...parsed,
                   engine: 'ungrounded',
                   model: modelTag,
                 });
@@ -1093,6 +1409,7 @@ arBody: ${arBody}`;
       arTitle,
       enBody,
       arBody,
+      ...(coverTeaserEn || coverTeaserAr ? { coverTeaserEn, coverTeaserAr } : {}),
       engine: 'offline',
     });
   } finally {

@@ -2157,6 +2157,75 @@ export function runPreExportChecklist(
   ];
 }
 
+export function checkBilingualTranslationFidelity(slide: SlideData, idx: number): QACheckResult[] {
+  if (slide.standaloneMeme || slide.imageFrameMode === 'full') return [];
+  const results: QACheckResult[] = [];
+
+  const enTitle = (slide.enTitle || '').trim();
+  const arTitle = (slide.arTitle || '').trim();
+  const enBody = (slide.enBody || '').trim();
+  const coverTeaserAr = (slide.coverTeaserAr || '').trim();
+
+  // 1. Detect duplicated Slide 1 AR headline and AR cover teaser
+  if (idx === 0 && arTitle && coverTeaserAr) {
+    const normTitle = arTitle.replace(/[.؟!،\s]+/g, ' ').trim();
+    const normTeaser = coverTeaserAr.replace(/[.؟!،\s]+/g, ' ').trim();
+    if (normTitle && normTitle === normTeaser) {
+      results.push({
+        id: `bilingual-ar-teaser-dup-${idx}`,
+        severity: 'warn',
+        slideIndex: idx,
+        field: 'coverTeaserAr',
+        message: 'Slide 1 Arabic teaser duplicates the Arabic headline. Click Sync AR to translate the teaser independently.',
+      });
+    }
+  }
+
+  // 2. Detect off-topic canned SQL Arabic fallback when slide is not SQL
+  const isSqlSlide = /\b(?:sql|psql|postgres|pgvector|query\s+planner|select\s+from)\b|<=>/i.test(
+    `${enTitle} ${enBody}`
+  );
+  if (!isSqlSlide && /الاستعلام عبر الشيفرة البرمجية/.test(`${arTitle} ${coverTeaserAr}`)) {
+    results.push({
+      id: `bilingual-offtopic-ar-${idx}`,
+      severity: 'warn',
+      slideIndex: idx,
+      field: 'arTitle',
+      message: 'Arabic copy contains an off-topic SQL template phrase. Click Sync AR to re-translate from English.',
+    });
+  }
+
+  // 3. Detect missing CVE identifier anchor in Arabic headline when present in English headline
+  const cveInEn = enTitle.match(/\bCVE-\d{4}-\d{4,7}\b/i)?.[0];
+  if (cveInEn && arTitle && !arTitle.toUpperCase().includes(cveInEn.toUpperCase())) {
+    results.push({
+      id: `bilingual-missing-cve-${idx}`,
+      severity: 'warn',
+      slideIndex: idx,
+      field: 'arTitle',
+      message: `Arabic headline is missing "${cveInEn.toUpperCase()}" from the English headline. Click Sync AR to preserve exact CVE IDs.`,
+    });
+  }
+
+  // 4. Detect broken passive-attribution glue in Slide 1 English hook
+  if (
+    idx === 0 &&
+    enTitle &&
+    (/\b(?:how|why|when|where)\s+(?:discovered|reported|disclosed|announced|published|found)\s+by\b/i.test(enTitle) ||
+      /^(?:discovered|reported|disclosed|announced)\s+by\b/i.test(enTitle))
+  ) {
+    results.push({
+      id: `hook-grammar-fragment-${idx}`,
+      severity: 'warn',
+      slideIndex: idx,
+      field: 'enTitle',
+      message: 'Slide 1 hook contains passive attribution or broken grammar. Reframe around stakes, threat, and an open loop.',
+    });
+  }
+
+  return results;
+}
+
 export interface QACheckOptions {
   exportFormat?: 'jpg' | 'jpeg' | 'png';
   width?: number;
@@ -2250,6 +2319,7 @@ export function runQAChecks(carousel: CarouselData, options: QACheckOptions = {}
     results.push(...checkCharLimits(slides[i], i, isHook, isSingleSlide));
     results.push(...checkArabicLineEndings(slides[i], i));
     results.push(...checkArabicTranslatedTechTerms(slides[i], i));
+    results.push(...checkBilingualTranslationFidelity(slides[i], i));
     results.push(...checkArabicSafeZone(slides[i], i, spec));
     results.push(...checkTikTokSafeZoneViolations(slides[i], i, spec));
     results.push(...checkTruncatedDescriptions(slides[i], i));

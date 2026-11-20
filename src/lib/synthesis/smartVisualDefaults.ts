@@ -963,21 +963,27 @@ export function inferBestSlideArchetype(
 export function inferBestDiagramVariant(slide: SlideData): DiagramVariant {
   const text = `${slide.enTitle || ''} ${slide.enBody || ''} ${slide.arTitle || ''} ${slide.arBody || ''}`.toLowerCase();
 
+  const isCybersecuritySlide =
+    /\b(?:cve-\d{4}-\d+|vulnerability|zero[- ]?day|exploit|remote\s+code\s+execution|\brce\b|cvss|sandbox|privilege\s+escalation|payload|malicious|java4shell|log4shell|shellshock|openjdk|patch\s+now|unpatched)\b|security|breach|hack|threat|isolation|isolate|blast\s+radius|firewall|boundary|guard|permission|scope\s+creep|zero[- ]?trust|auth|ثغرة|اختراق|أمن|عزل|صلاحيات|مخاطر/.test(
+      text
+    );
+
+  if (isCybersecuritySlide) {
+    return 'isolation';
+  }
   if (/hnsw|skip[- ]?list|graph|hierarchy|traversal|hops\b|mesh|routing|رسم بياني|شبكة/.test(text)) {
     return 'graph';
   }
   if (/ivf|cluster|k-means|centroid|partition|shard|quorum|region|bucket|تجميع|تقسيم/.test(text)) {
     return 'clusters';
   }
-  if (/write|hot\s*\/?\s*cold|hot\s+ram|cold\s+nvme|buffer|lsm|compaction|cache\s+vs|ram\s+vs|dual\s+store|sync|replication|ذاكرة|تخزين/.test(text)) {
-    return 'split';
-  }
   if (
-    /security|breach|hack|threat|isolation|isolate|blast\s+radius|firewall|sandbox|boundary|guard|permission|scope\s+creep|zero[- ]?trust|auth|اختراق|أمن|عزل|صلاحيات|مخاطر/.test(
+    /hot\s*\/?\s*cold|hot\s+ram|cold\s+nvme|lsm[- ]?tree|compaction|cache\s+vs|ram\s+vs|dual\s+store|write[- ]?ahead|memtable|sstable|تخزين\s+ساخن|ذاكرة\s+مؤقتة/.test(
       text
-    )
+    ) ||
+    (/\b(?:write|buffer|replication)\b/.test(text) && /\b(?:storage|disk|database|index|wal|cache)\b/.test(text))
   ) {
-    return 'isolation';
+    return 'split';
   }
   if (/vector|embedding|semantic|cosine|similarity|high-dim|nearest neighbor|ann\b|متجهات|تضمين/.test(text)) {
     return 'scatter';
@@ -1788,8 +1794,24 @@ export function applyHookEngineToSlide1(
   );
 
   const hasNumericWin = Boolean(smart.metricValue && /\d/.test(smart.metricValue));
+  const titleEchoSet = new Set(
+    `${slide.enTitle || ''} ${slide.centerTag || ''}`
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t.length >= 3)
+  );
+  const existingSatEchoesTitle = Boolean(
+    slide.satLabels?.some((lbl) => {
+      const toks = (lbl || '')
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((t) => t.length >= 3);
+      return toks.length === 1 && titleEchoSet.has(toks[0]);
+    })
+  );
+
   const quotedHub =
-    slide.hubNodeReasons && slide.hubNodeReasons.length >= 4
+    !existingSatEchoesTitle && slide.hubNodeReasons && slide.hubNodeReasons.length >= 4
       ? {
           satLabels: slide.satLabels || smart.satLabels,
           hubNodeReasons: slide.hubNodeReasons,

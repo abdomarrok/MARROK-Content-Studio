@@ -449,6 +449,8 @@ export interface PostSourceMeta {
   groundingSources?: GroundingSource[];
   isSearchGrounded?: boolean;
   isFallback?: boolean;
+  fallbackReason?: string;
+  attemptedProviders?: string[];
   engine?: 'grounded' | 'ungrounded' | 'offline' | 'gemini-ai' | 'offline-synthesizer';
   model?: string;
   status?: 'verified_live' | 'unverified_draft';

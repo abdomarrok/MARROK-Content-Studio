@@ -140,7 +140,7 @@ export function enrichAndPaceCarousel(
             ...s,
             storyRole: 'hook' as const,
             compositionPreset: s.manualLayoutLocked ? s.compositionPreset : ('headline-first' as const),
-            coverStyle: s.coverStyle || resolveSlide1CoverStyle(s, autoLaidOutSlides),
+            coverStyle: resolveSlide1CoverStyle(s, autoLaidOutSlides),
             coverTeaserEn: s.coverTeaserEn || teasers.coverTeaserEn,
             coverTeaserAr: s.coverTeaserAr || teasers.coverTeaserAr,
             showSwipeCue: s.showSwipeCue ?? true,
@@ -269,8 +269,12 @@ export async function runAutonomousPipeline(
             | 'gemini-ai'
             | 'offline-synthesizer'
             | null;
+          const headerFallbackReason = res.headers.get('x-marrok-fallback-reason');
           if (parsed.sourceMeta && headerEngine && !parsed.sourceMeta.engine) {
             parsed.sourceMeta.engine = headerEngine;
+          }
+          if (parsed.sourceMeta && headerFallbackReason && !parsed.sourceMeta.fallbackReason) {
+            parsed.sourceMeta.fallbackReason = headerFallbackReason;
           }
           rawCarousel = parsed;
           if (
@@ -280,7 +284,7 @@ export async function runAutonomousPipeline(
             headerEngine === 'offline' ||
             headerEngine === 'offline-synthesizer'
           ) {
-            onProgress?.('Offline NLP Engine Activated: Synthesizing custom slides from your pasted notes.');
+            onProgress?.('Live AI busy — built clean local fallback draft (you can Retry with AI).');
           }
         }
       }
@@ -296,7 +300,7 @@ export async function runAutonomousPipeline(
 
   // Fallback to local synthesizer if API fails or returns invalid structure
   if (!rawCarousel) {
-    onProgress?.('Offline NLP Engine Activated: Synthesizing custom slides from your pasted notes.');
+    onProgress?.('Live AI unavailable — built clean local fallback draft.');
     rawCarousel = synthesizeCarousel({
       prompt: rawInput,
       categoryHint,
@@ -307,6 +311,9 @@ export async function runAutonomousPipeline(
     });
     if (rawCarousel.sourceMeta) {
       rawCarousel.sourceMeta.userReviewed = false;
+      rawCarousel.sourceMeta.isFallback = true;
+      rawCarousel.sourceMeta.fallbackReason =
+        rawCarousel.sourceMeta.fallbackReason || 'Live AI gateway unreachable — local fallback engine used';
     }
   }
 

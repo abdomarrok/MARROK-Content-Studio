@@ -224,6 +224,8 @@ function fitHookToWordRange(
 interface Slide2AnchorSignals {
   subject: string;
   arSubject: string;
+  cveId: string;
+  isSecurityTopic: boolean;
   metric: string;
   slide2Title: string;
   slide2BodyClause: string;
@@ -240,21 +242,60 @@ interface Slide2AnchorSignals {
   paddingPool: string[];
 }
 
+const PASSIVE_ATTRIBUTION_RE =
+  /^(?:discovered|reported|disclosed|published|announced|found|identified|revealed|spotted|uncovered)\s+by\b|^(?:the\s+)?(?:security\s+)?research(?:ers?|\s+team)\s+(?:at|from)\b/i;
+
+export function isPassiveAttributionClause(text: string | undefined): boolean {
+  if (!text) return false;
+  return PASSIVE_ATTRIBUTION_RE.test(text.trim());
+}
+
+export function isGrammaticallyBrokenHook(text: string | undefined): boolean {
+  if (!text) return false;
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (isPassiveAttributionClause(trimmed)) return true;
+  if (
+    /\b(?:how|why|when|where)\s+(?:discovered|reported|disclosed|announced|published|found|released|created|built|designed|written|spotted|identified)\s+by\b/i.test(
+      trimmed
+    )
+  ) {
+    return true;
+  }
+  if (/\b(?:how|why)\s+(?:the\s+)?(?:a|an)\s*$/i.test(trimmed)) return true;
+  return false;
+}
+
 function cleanClause(text: string | undefined, maxWords: number = 14): string {
   if (!text) return '';
   const stripped = stripNegativeSlideConstraints(text, { stripColons: true, stripCliches: true });
   if (!stripped || containsGenericHookFiller(stripped)) return '';
-  const firstClause = stripped.split(/(?<!\d)(?<=[.!?])\s+|\n+/)[0] || stripped;
-  const cleaned = firstClause.replace(/[.?!،؟]+$/, '').replace(/\s+/g, ' ').trim();
-  const words = cleaned.split(/\s+/).filter(Boolean);
-  if (words.length <= maxWords) return cleaned;
-  return words.slice(0, maxWords).join(' ').replace(/[,;:\-—–]+$/, '').trim();
+  const clauses = stripped
+    .split(/(?<!\d)(?<=[.!?])\s+|\n+/)
+    .map((c) => c.replace(/[.?!،؟]+$/, '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  const chosen = clauses.find((c) => !isPassiveAttributionClause(c) && c.split(/\s+/).length >= 3) || '';
+  if (!chosen) return '';
+  const words = chosen.split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return chosen;
+  const trimmed = words.slice(0, maxWords);
+  while (
+    trimmed.length > 4 &&
+    (DANGLING_TRAILING_WORDS.has(trimmed[trimmed.length - 1].toLowerCase()) ||
+      /^(?:lets|let|makes|make|keeps|keep|gives|give|shows|show|needs|need|allows|allow|helps|help|runs|run|uses|use)$/i.test(
+        trimmed[trimmed.length - 1]
+      ))
+  ) {
+    trimmed.pop();
+  }
+  return trimmed.join(' ').replace(/[,;:\-—–]+$/, '').trim();
 }
 
-function cleanArabicClause(text: string | undefined): string {
+function cleanArabicClause(text: string | undefined, allowSqlFallback: boolean = false): string {
   if (!text) return '';
   const stripped = stripNegativeSlideConstraints(text, { stripColons: true, stripCliches: false });
   if (!stripped || containsGenericHookFiller(stripped)) return '';
+  if (!allowSqlFallback && /^الاستعلام عبر الشيفرة البرمجية\.?$/.test(stripped.trim())) return '';
   const firstClause = stripped.split(/(?<!\d)\.(?!\d)|[؟!،\n]+/)[0] || stripped;
   return firstClause.trim();
 }
@@ -364,9 +405,18 @@ function extractBodyContextSignals(slides: SlideData[], rawSourceText: string = 
       ? rawArSubject
       : subject;
 
-  const slide2ArTitle = cleanArabicClause(slide2?.arTitle);
-  const slide2ArClause = cleanArabicClause(slide2?.arBody);
-  const slide3ArTitle = cleanArabicClause(slide3?.arTitle);
+  const cveMatch = allBodyCombined.match(/\bCVE-\d{4}-\d{4,7}\b/i);
+  const cveId = cveMatch ? cveMatch[0].toUpperCase() : '';
+  const isSecurityTopic =
+    Boolean(cveId) ||
+    /\b(?:vulnerability|zero[- ]?day|exploit|remote\s+code\s+execution|\brce\b|sandbox\s+escape|cvss|privilege\s+escalation|java4shell|log4shell|shellshock|openjdk|security\s+advisory|malicious\s+payload|unpatched|attack\s+surface|critical\s+flaw)\b|ثغرة|اختراق|أمن\s+سيبراني/i.test(
+      allBodyCombined
+    );
+  const isSqlTopic = /\b(?:sql|psql|postgres|pgvector|query\s+planner)\b|<=>/i.test(allBodyCombined);
+
+  const slide2ArTitle = cleanArabicClause(slide2?.arTitle, isSqlTopic);
+  const slide2ArClause = cleanArabicClause(slide2?.arBody, isSqlTopic);
+  const slide3ArTitle = cleanArabicClause(slide3?.arTitle, isSqlTopic);
 
   const paddingPool = [
     slide2BodyClause,
@@ -375,12 +425,15 @@ function extractBodyContextSignals(slides: SlideData[], rawSourceText: string = 
     nodeLabels.join(' '),
     compareBefore,
     compareAfter,
+    cveId,
     subject,
   ].filter(Boolean);
 
   return {
     subject,
     arSubject,
+    cveId,
+    isSecurityTopic,
     metric,
     slide2Title,
     slide2BodyClause,
@@ -471,15 +524,15 @@ export function scoreHookVariant(
     score += 4;
   }
 
-  // 4. Scroll-stopping framework strength
+  // 4. Scroll-stopping high-stakes & open-loop strength
   if (
-    /\b(?:why|never|stop|wrong|mistake|cost|stall|exhaust|break|broke|fail|fails|secret|instead|vs|actually|when|without|avoid)\b/i.test(
+    /\b(?:why|how|never|stop|wrong|mistake|cost|stall|exhaust|break|broke|fail|fails|expose|exposes|exposed|hijack|takeover|breach|unpatched|silent|silently|risk|threat|exploit|secret|instead|vs|actually|when|without|avoid|before)\b/i.test(
       title
     ) ||
     title.endsWith('?')
   ) {
-    score += 10;
-    reasons.push('Strong scroll-stopping tension');
+    score += 12;
+    reasons.push('High-stakes open-loop tension');
   } else {
     score += 2;
   }
@@ -491,7 +544,12 @@ export function scoreHookVariant(
     score -= 6;
   }
 
-  // 6. Negative constraints & generic filler audit
+  // 6. Negative constraints, grammar integrity & generic filler audit
+  if (isGrammaticallyBrokenHook(title)) {
+    score -= 50;
+    hasNegativeViolation = true;
+    reasons.push('Broken grammar or passive attribution fragment');
+  }
   if (containsBannedHookCliche(title) || containsBannedHookCliche(sub)) {
     score -= 45;
     hasNegativeViolation = true;
@@ -541,6 +599,7 @@ function buildArabicHookFromSlide2(
   const arS3 = signals.slide3ArTitle;
   const metric = signals.metric;
   const topic = signals.arSubject;
+  const cveAnchor = signals.cveId || topic;
 
   const ensureArabicRtl = (raw: string): string => {
     const clean = stripNegativeSlideConstraints(raw, { stripColons: true, stripCliches: false })
@@ -555,15 +614,28 @@ function buildArabicHookFromSlide2(
     return clean;
   };
 
+  if (signals.isSecurityTopic) {
+    const secTemplates: Record<typeof angle, string> = {
+      contrarian: `ثغرة ${cveAnchor} تعرض خوادم ${topic} للاختراق الصامت`,
+      metric: metric
+        ? `خطورة ${cveAnchor} (${metric}) تهدد بيئة ${topic} فوراً`
+        : `كيف يتجاوز ${cveAnchor} عزل ${topic} في الإنتاج؟`,
+      mistake: `تأخير ترقيع ${cveAnchor} يترك خوادم ${topic} مكشوفة`,
+      'curiosity-why': `كيف تسمح ثغرة ${cveAnchor} بالسيطرة على ${topic}؟`,
+      'curiosity-how': `مسار استغلال ${cveAnchor} وخطوات الإغلاق الفوري`,
+    };
+    return ensureArabicRtl(secTemplates[angle]);
+  }
+
   if (angle === 'metric') {
     if (metric && arClause && arClause.includes(metric)) return ensureArabicRtl(arClause);
-    if (metric && arTitle) return ensureArabicRtl(`${arTitle} (${metric})`);
+    if (metric && arTitle) return ensureArabicRtl(`${arTitle} بمؤشر ${metric} فعلياً`);
     if (arClause) return ensureArabicRtl(arClause);
   }
 
   if (angle === 'mistake') {
     if (arClause && arClause !== arTitle) return ensureArabicRtl(arClause);
-    if (arTitle) return ensureArabicRtl(arTitle);
+    if (arTitle) return ensureArabicRtl(`الخطأ المكلف في ${topic} عند التشغيل الفعلي`);
   }
 
   if (angle === 'contrarian') {
@@ -629,6 +701,7 @@ export function inferCoverStyleForHook(
     effectiveType === 'subjectPair' ||
     effectiveType === 'visual' ||
     effectiveType === 'code' ||
+    effectiveType === 'row' ||
     Boolean(slide?.subjectPair) ||
     (Boolean(slide?.visualSpec) && slide?.visualSpec?.kind !== 'callout')
   ) {
@@ -649,41 +722,82 @@ export function inferCoverStyleForHook(
 
 function buildCoverTeaserPairFromSignals(
   signals: Slide2AnchorSignals,
-  angle: 'contrarian' | 'metric' | 'mistake' | 'curiosity-why' | 'curiosity-how' = 'metric'
+  angle: 'contrarian' | 'metric' | 'mistake' | 'curiosity-why' | 'curiosity-how' = 'metric',
+  excludeArTitle?: string
 ): { coverTeaserEn: string; coverTeaserAr: string } {
   const metricPart = signals.metric ? `${signals.metric} ` : '';
-  const enCandidates: Record<typeof angle, string> = {
-    contrarian: signals.compareBefore && signals.compareAfter
-      ? `${signals.compareBefore} vs ${signals.compareAfter} under load`
-      : signals.slide2BodyClause || `How ${signals.subject} behaves under real contention`,
-    metric: signals.metric && signals.slide2Title
-      ? `${metricPart}measured across ${signals.subject} execution paths`
-      : signals.slide2BodyClause || signals.slide2Title || `${signals.subject} runtime breakdown`,
-    mistake: signals.slide2Problem || signals.slide2BodyClause || `Where ${signals.subject} stalls first in production`,
-    'curiosity-why': signals.slide3Mechanism
-      ? `Inside ${signals.slide3Mechanism} and production constraints`
-      : signals.slide2BodyClause || `What triggers bottlenecks across ${signals.subject}`,
-    'curiosity-how': signals.nodeLabels.length >= 2
-      ? `${signals.nodeLabels.slice(0, 3).join(' -> ')} runtime flow`
-      : signals.slide2BodyClause || `Step-by-step trace of ${signals.subject}`,
-  };
+  const safeBodyClause =
+    signals.slide2BodyClause && !isPassiveAttributionClause(signals.slide2BodyClause)
+      ? signals.slide2BodyClause
+      : '';
+  const secAnchor = signals.cveId || signals.subject;
 
-  const arCandidates: Record<typeof angle, string> = {
-    contrarian: signals.slide2ArTitle || signals.slide2ArClause || `مقارنة الأداء الفعلي في ${signals.arSubject}`,
-    metric: signals.metric && signals.slide2ArTitle
-      ? `${signals.slide2ArTitle} بمؤشر ${signals.metric}`
-      : signals.slide2ArClause || signals.slide2ArTitle || `تفاصيل الأداء الهندسي في ${signals.arSubject}`,
-    mistake: signals.slide2ArClause || signals.slide2ArTitle || `أين يظهر الاختناق الأول في ${signals.arSubject}`,
-    'curiosity-why': signals.slide3ArTitle || signals.slide2ArTitle || `تفاصيل المسار الداخلي في ${signals.arSubject}`,
-    'curiosity-how': signals.slide2ArClause || signals.slide3ArTitle || `تتبع عملي لبنية ${signals.arSubject}`,
-  };
+  const enCandidates: Record<typeof angle, string> = signals.isSecurityTopic
+    ? {
+        contrarian: `How ${secAnchor} escapes runtime checks and what to patch first`,
+        metric: signals.metric
+          ? `${metricPart}exposure across ${signals.subject} and the patch window`
+          : `See the exact ${secAnchor} exploit chain and emergency fix`,
+        mistake: `Three steps to audit exposed ${signals.subject} nodes right now`,
+        'curiosity-why': `Inside the ${secAnchor} attack path from input to host`,
+        'curiosity-how': `Step-by-step ${secAnchor} breakdown and containment checklist`,
+      }
+    : {
+        contrarian:
+          signals.compareBefore && signals.compareAfter
+            ? `${signals.compareBefore} vs ${signals.compareAfter} under real load`
+            : safeBodyClause || `See why ${signals.subject} breaks under real contention`,
+        metric:
+          signals.metric && signals.slide2Title
+            ? `${metricPart}impact measured across ${signals.subject} paths`
+            : safeBodyClause || `The real numbers behind ${signals.subject} at scale`,
+        mistake:
+          (signals.slide2Problem && !isPassiveAttributionClause(signals.slide2Problem)
+            ? signals.slide2Problem
+            : safeBodyClause) || `Where ${signals.subject} silently fails first in production`,
+        'curiosity-why': signals.slide3Mechanism
+          ? `Inside ${signals.slide3Mechanism} and the hidden failure trigger`
+          : safeBodyClause || `What triggers the bottleneck across ${signals.subject}`,
+        'curiosity-how':
+          signals.nodeLabels.length >= 2
+            ? `${signals.nodeLabels.slice(0, 3).join(' -> ')} runtime trace inside`
+            : safeBodyClause || `Step-by-step trace of how ${signals.subject} behaves`,
+      };
 
-  const rawEn = containsGenericHookFiller(enCandidates[angle])
-    ? `${signals.subject} architecture and runtime limits`
-    : enCandidates[angle];
-  const rawAr = containsGenericHookFiller(arCandidates[angle])
-    ? `تتبع عملي لبنية ${signals.arSubject}`
+  const arCandidates: Record<typeof angle, string> = signals.isSecurityTopic
+    ? {
+        contrarian: `تفاصيل مسار الاستغلال وخطوات العزل الفوري لخوادم ${signals.arSubject}`,
+        metric: signals.metric
+          ? `تقييم الأثر الفعلي بمؤشر ${signals.metric} وخطة التحديث العاجل`
+          : `تتبع عملي لمسار الثغرة وكيفية تأمين ${signals.arSubject} فوراً`,
+        mistake: `ثلاث خطوات فورية لفحص الإصدارات المتأثرة وإغلاق الثغرة`,
+        'curiosity-why': `من الإدخال غير الموثوق إلى التنفيذ الفعلي داخل ${signals.arSubject}`,
+        'curiosity-how': `تفكيك عملي لسلسلة الهجوم وأولويات الحماية في الإنتاج`,
+      }
+    : {
+        contrarian: `الفارق الحقيقي في الأداء عند تشغيل ${signals.arSubject} تحت الضغط`,
+        metric: signals.metric
+          ? `قياس الأثر الفعلي بمؤشر ${signals.metric} داخل ${signals.arSubject}`
+          : `الأرقام والتفاصيل الهندسية التي تحسم أداء ${signals.arSubject}`,
+        mistake: `أين يبدأ التعطل الصامت في ${signals.arSubject} وكيف تتجنبه`,
+        'curiosity-why': `تفكيك المسار الداخلي والسبب الجذري وراء هذا الاختناق`,
+        'curiosity-how': `تتبع خطوة بخطوة لبنية ${signals.arSubject} في بيئة الإنتاج`,
+      };
+
+  const rawEn =
+    containsGenericHookFiller(enCandidates[angle]) || isPassiveAttributionClause(enCandidates[angle])
+      ? `See the exact failure chain and fix inside ${signals.subject}`
+      : enCandidates[angle];
+
+  let rawAr = containsGenericHookFiller(arCandidates[angle])
+    ? `تتبع عملي لبنية ${signals.arSubject} في بيئة الإنتاج`
     : arCandidates[angle];
+
+  if (excludeArTitle && rawAr.trim().replace(/[.؟!]+$/, '') === excludeArTitle.trim().replace(/[.؟!]+$/, '')) {
+    rawAr = signals.isSecurityTopic
+      ? `خطوات الفحص والعزل الفوري لتأمين خوادم ${signals.arSubject}`
+      : `تتبع خطوة بخطوة لما يحدث داخل ${signals.arSubject} فعلياً`;
+  }
 
   return {
     coverTeaserEn: clampCoverTeaser(rawEn, false, 68),
@@ -719,47 +833,73 @@ export function buildBodyFirstHookVariations(
   existingVariants: HookVariant[] = []
 ): HookVariant[] {
   const signals = extractBodyContextSignals(slides, rawSourceText);
-  const { subject, metric, slide2Title, slide2BodyClause, slide2Problem, slide3Mechanism, compareBefore, compareAfter, paddingPool } =
-    signals;
+  const {
+    subject,
+    cveId,
+    isSecurityTopic,
+    metric,
+    slide2Title,
+    slide2BodyClause,
+    slide2Problem,
+    slide3Mechanism,
+    compareBefore,
+    compareAfter,
+    paddingPool,
+  } = signals;
 
-  const probLead = stripLeadingHookStarter(slide2Problem || slide2Title || slide2BodyClause || subject);
+  const rawProbLead = stripLeadingHookStarter(slide2Problem || slide2Title || slide2BodyClause || subject);
+  const probLead = isPassiveAttributionClause(rawProbLead) ? `${subject} production failure` : rawProbLead;
   const s3Clean = stripLeadingHookStarter(slide3Mechanism);
   const s2TitleClean = stripLeadingHookStarter(slide2Title);
   const altClause =
-    slide2BodyClause && slide2BodyClause.toLowerCase() !== probLead.toLowerCase()
+    slide2BodyClause &&
+    !isPassiveAttributionClause(slide2BodyClause) &&
+    slide2BodyClause.toLowerCase() !== probLead.toLowerCase()
       ? slide2BodyClause
       : s3Clean || s2TitleClean;
 
-  const contrarianRaw =
-    compareBefore && compareAfter && compareBefore.toLowerCase() !== compareAfter.toLowerCase()
-      ? `Skipping ${compareBefore} stalls ${subject} before ${compareAfter} helps`
-      : s3Clean && s3Clean.toLowerCase() !== probLead.toLowerCase()
-        ? `Stop ignoring how ${lowerFirst(probLead)} overrides ${lowerFirst(s3Clean)}`
+  const secAnchor = cveId || subject;
+  const subjectHasCve = Boolean(cveId && subject.toUpperCase().includes(cveId));
+  const secTarget = subjectHasCve ? subject : cveId ? `${cveId} inside ${subject}` : subject;
+
+  const contrarianRaw = isSecurityTopic
+    ? `One unpatched ${subject} server lets ${secAnchor} compromise your stack`
+    : compareBefore && compareAfter && compareBefore.toLowerCase() !== compareAfter.toLowerCase()
+      ? `Skipping ${compareBefore} breaks ${subject} before ${compareAfter} helps`
+      : s3Clean && s3Clean.toLowerCase() !== probLead.toLowerCase() && !isPassiveAttributionClause(s3Clean)
+        ? `Why ${lowerFirst(probLead)} silently breaks ${subject} in production`
         : `Why ${lowerFirst(probLead)} breaks before teams notice ${subject}`;
 
-  const metricRaw = metric
-    ? altClause && altClause.toLowerCase().includes(metric.toLowerCase())
-      ? altClause
-      : probLead.toLowerCase().includes(metric.toLowerCase())
-        ? probLead
-        : `How ${lowerFirst(probLead)} triggers ${metric} overhead in ${subject}`
-    : slide2BodyClause && tokenizeWords(slide2BodyClause).length >= 6
-      ? slide2BodyClause
-      : `How ${lowerFirst(probLead)} changes ${lowerFirst(s3Clean || subject)}`;
+  const metricRaw = isSecurityTopic
+    ? metric
+      ? `How ${secAnchor} turns ${metric} exposure into full host takeover`
+      : `How ${secTarget} bypasses runtime isolation before teams patch`
+    : metric
+      ? altClause && altClause.toLowerCase().includes(metric.toLowerCase())
+        ? altClause
+        : probLead.toLowerCase().includes(metric.toLowerCase())
+          ? probLead
+          : `How ${lowerFirst(probLead)} triggers ${metric} overhead in ${subject}`
+      : `How ${lowerFirst(s2TitleClean || probLead)} changes ${lowerFirst(s3Clean || subject)} performance`;
 
-  const mistakeRaw =
-    tokenizeWords(slide2BodyClause).length >= 6 &&
-    /\b(?:stall|exhaust|consume|block|fail|drop|spike|leak|break|overhead|unpooled|manual)\w*\b/i.test(slide2BodyClause)
+  const mistakeRaw = isSecurityTopic
+    ? `Waiting to patch ${secAnchor} leaves ${subject} production exposed`
+    : tokenizeWords(slide2BodyClause).length >= 6 &&
+      !isPassiveAttributionClause(slide2BodyClause) &&
+      /\b(?:stall|exhaust|consume|block|fail|drop|spike|leak|break|overhead|unpooled|manual)\w*\b/i.test(slide2BodyClause)
       ? slide2BodyClause
-      : `The ${subject} mistake when ${lowerFirst(probLead)}`;
+      : `The costly ${subject} mistake hiding inside ${lowerFirst(probLead)}`;
 
-  const curiosityWhyRaw = `Why does ${lowerFirst(probLead)} hurt ${subject}?`;
+  const curiosityWhyRaw = isSecurityTopic
+    ? `How does ${secAnchor} hijack ${subject} without triggering alerts?`
+    : `Why does ${lowerFirst(probLead)} silently break ${subject} under load?`;
 
   const s3VerbSafe = s3Clean.replace(/\bconnects\b/gi, 'connect').replace(/\bbreaks\b/gi, 'break');
-  const curiosityHowRaw =
-    s3VerbSafe && s3VerbSafe.toLowerCase() !== s2TitleClean.toLowerCase()
-      ? `How does ${lowerFirst(s3VerbSafe)} fix ${lowerFirst(s2TitleClean || probLead)}?`
-      : `What breaks inside ${subject} when ${lowerFirst(probLead)}?`;
+  const curiosityHowRaw = isSecurityTopic
+    ? `What happens when ${secAnchor} hits an unpatched ${subject} node?`
+    : s3VerbSafe && s3VerbSafe.toLowerCase() !== s2TitleClean.toLowerCase() && !isPassiveAttributionClause(s3VerbSafe)
+      ? `How does ${lowerFirst(s3VerbSafe)} stop ${lowerFirst(s2TitleClean || probLead)}?`
+      : `What breaks inside ${subject} when ${lowerFirst(probLead)} hits?`;
 
   const templateAngles: Array<'contrarian' | 'metric' | 'mistake' | 'curiosity-why' | 'curiosity-how'> = [
     'contrarian',
@@ -769,72 +909,71 @@ export function buildBodyFirstHookVariations(
     'curiosity-how',
   ];
 
+  const makeTemplateVariant = (
+    idx: number,
+    config: Omit<HookVariant, 'arTitle' | 'enBody' | 'arBody' | 'coverTeaserEn' | 'coverTeaserAr'>
+  ): HookVariant => {
+    const angle = templateAngles[idx];
+    const arTitle = buildArabicHookFromSlide2(signals, angle);
+    return {
+      ...config,
+      arTitle,
+      enBody: '',
+      arBody: '',
+      ...buildCoverTeaserPairFromSignals(signals, angle, arTitle),
+    };
+  };
+
   const dynamicTemplates: HookVariant[] = [
-    {
+    makeTemplateVariant(0, {
       framework: 'Contrarian',
-      tag: 'Contrarian',
-      coverArchetype: 'compare',
-      coverStyle: 'versus-hook',
+      tag: isSecurityTopic ? 'Critical Threat' : 'Contrarian',
+      coverArchetype: isSecurityTopic ? 'row' : 'compare',
+      coverStyle: isSecurityTopic ? 'visual-teaser' : 'versus-hook',
       centerIcon: 'shieldAlert',
-      hookKicker: 'CONTRARIAN TAKE',
+      hookKicker: isSecurityTopic ? (cveId ? `CRITICAL CVE • ${cveId}` : 'CRITICAL THREAT') : 'CONTRARIAN TAKE',
       enTitle: fitHookToWordRange(contrarianRaw, paddingPool, false),
-      arTitle: buildArabicHookFromSlide2(signals, 'contrarian'),
-      enBody: '',
-      arBody: '',
-      ...buildCoverTeaserPairFromSignals(signals, templateAngles[0]),
-    },
-    {
+    }),
+    makeTemplateVariant(1, {
       framework: 'Specific Metric',
-      tag: 'Specific Metric',
-      coverArchetype: metric ? 'metric' : 'compare',
-      coverStyle: metric ? 'metric-split' : 'versus-hook',
-      centerIcon: 'gauge',
-      hookKicker: metric ? `MEASURED SHIFT ${metric.toUpperCase()}` : 'SLIDE 2 EVIDENCE',
+      tag: isSecurityTopic ? 'Exploit Impact' : 'Specific Metric',
+      coverArchetype: metric ? 'metric' : 'row',
+      coverStyle: metric ? 'metric-split' : 'visual-teaser',
+      centerIcon: isSecurityTopic ? 'shieldAlert' : 'gauge',
+      hookKicker: metric
+        ? `MEASURED SHIFT ${metric.toUpperCase()}`
+        : isSecurityTopic
+          ? 'SECURITY ADVISORY'
+          : 'SLIDE 2 EVIDENCE',
       enTitle: fitHookToWordRange(metricRaw, paddingPool, false),
-      arTitle: buildArabicHookFromSlide2(signals, 'metric'),
-      enBody: '',
-      arBody: '',
-      ...buildCoverTeaserPairFromSignals(signals, templateAngles[1]),
-    },
-    {
+    }),
+    makeTemplateVariant(2, {
       framework: 'Mistake Callout',
       tag: 'Mistake Callout',
       coverArchetype: 'row',
       coverStyle: 'visual-teaser',
       centerIcon: 'alertTriangle',
-      hookKicker: 'FAILURE MODE',
+      hookKicker: isSecurityTopic ? 'EXPOSURE RISK' : 'FAILURE MODE',
       enTitle: fitHookToWordRange(mistakeRaw, paddingPool, false),
-      arTitle: buildArabicHookFromSlide2(signals, 'mistake'),
-      enBody: '',
-      arBody: '',
-      ...buildCoverTeaserPairFromSignals(signals, templateAngles[2]),
-    },
-    {
+    }),
+    makeTemplateVariant(3, {
       framework: 'Curiosity Gap',
       tag: 'Curiosity Gap',
       coverArchetype: 'row',
       coverStyle: 'headline-hero',
       centerIcon: 'zap',
-      hookKicker: 'ROOT CAUSE',
+      hookKicker: isSecurityTopic ? 'EXPLOIT CHAIN' : 'ROOT CAUSE',
       enTitle: fitHookToWordRange(curiosityWhyRaw, paddingPool, true),
-      arTitle: buildArabicHookFromSlide2(signals, 'curiosity-why'),
-      enBody: '',
-      arBody: '',
-      ...buildCoverTeaserPairFromSignals(signals, templateAngles[3]),
-    },
-    {
+    }),
+    makeTemplateVariant(4, {
       framework: 'Curiosity Gap',
       tag: 'Curiosity Gap',
       coverArchetype: 'compare',
-      coverStyle: 'visual-teaser',
+      coverStyle: 'versus-hook',
       centerIcon: 'layers',
-      hookKicker: 'THE MECHANISM',
+      hookKicker: isSecurityTopic ? 'PATCH VS EXPOSED' : 'THE MECHANISM',
       enTitle: fitHookToWordRange(curiosityHowRaw, paddingPool, true),
-      arTitle: buildArabicHookFromSlide2(signals, 'curiosity-how'),
-      enBody: '',
-      arBody: '',
-      ...buildCoverTeaserPairFromSignals(signals, templateAngles[4]),
-    },
+    }),
   ];
 
   const defaultTeasers = buildCoverTeaserPairFromSignals(signals, 'metric');
@@ -1020,29 +1159,65 @@ export function applyViralHookTierSelection(
       : '';
 
   if (shouldPromoteWinner && !isSingle) {
+    const resolvedSlideType: SlideType =
+      winner.coverArchetype && currentSlide1.type === 'hub'
+        ? winner.coverArchetype
+        : currentSlide1.type;
+    const alignedCoverStyle: CoverStyle =
+      resolvedSlideType === 'compare'
+        ? 'versus-hook'
+        : resolvedSlideType === 'metric'
+          ? 'metric-split'
+          : resolvedSlideType === 'row' || resolvedSlideType === 'subjectPair' || resolvedSlideType === 'code'
+            ? 'visual-teaser'
+            : winner.coverStyle ||
+              currentSlide1.coverStyle ||
+              inferCoverStyleForHook(winner.framework, currentSlide1, resolvedSlideType);
+
+    const nextArTitle = winner.arTitle || currentSlide1.arTitle;
+    let nextCoverTeaserAr = winner.coverTeaserAr || preserveCoverTeaserAr || fallbackTeasers.coverTeaserAr;
+    if (
+      nextArTitle &&
+      nextCoverTeaserAr &&
+      nextCoverTeaserAr.trim().replace(/[.؟!]+$/, '') === nextArTitle.trim().replace(/[.؟!]+$/, '')
+    ) {
+      nextCoverTeaserAr = buildCoverTeaserPairFromSignals(signals, 'curiosity-how', nextArTitle).coverTeaserAr;
+    }
+
     cleanedSlides[0] = {
       ...currentSlide1,
+      type: resolvedSlideType,
       storyRole: 'hook',
       compositionPreset: currentSlide1.manualLayoutLocked
         ? currentSlide1.compositionPreset
         : 'headline-first',
       enTitle: fitHookToWordRange(winner.enTitle, signals.paddingPool),
-      arTitle: winner.arTitle || currentSlide1.arTitle,
+      arTitle: nextArTitle,
       enBody: '',
       arBody: '',
-      coverStyle:
-        winner.coverStyle ||
-        currentSlide1.coverStyle ||
-        inferCoverStyleForHook(winner.framework, currentSlide1, winner.coverArchetype),
+      coverStyle: alignedCoverStyle,
       coverTeaserEn: winner.coverTeaserEn || preserveCoverTeaserEn || fallbackTeasers.coverTeaserEn,
-      coverTeaserAr: winner.coverTeaserAr || preserveCoverTeaserAr || fallbackTeasers.coverTeaserAr,
+      coverTeaserAr: nextCoverTeaserAr,
       showSwipeCue: currentSlide1.showSwipeCue ?? true,
       hookKicker: winner.hookKicker || currentSlide1.hookKicker,
-      ...(winner.coverArchetype && currentSlide1.type === 'hub'
-        ? { type: winner.coverArchetype }
-        : {}),
     };
   } else if (!isSingle && currentSlide1 && !currentSlide1.standaloneMeme) {
+    const alignedExistingCoverStyle: CoverStyle =
+      currentSlide1.type === 'compare'
+        ? 'versus-hook'
+        : currentSlide1.type === 'row' || currentSlide1.type === 'subjectPair' || currentSlide1.type === 'code'
+          ? 'visual-teaser'
+          : currentSlide1.coverStyle ||
+            inferCoverStyleForHook(winner.framework, currentSlide1, currentSlide1.type);
+    const existingArTitle = currentSlide1.arTitle || '';
+    let nextCoverTeaserAr = preserveCoverTeaserAr || winner.coverTeaserAr || fallbackTeasers.coverTeaserAr;
+    if (
+      existingArTitle &&
+      nextCoverTeaserAr &&
+      nextCoverTeaserAr.trim().replace(/[.؟!]+$/, '') === existingArTitle.trim().replace(/[.؟!]+$/, '')
+    ) {
+      nextCoverTeaserAr = buildCoverTeaserPairFromSignals(signals, 'curiosity-how', existingArTitle).coverTeaserAr;
+    }
     cleanedSlides[0] = {
       ...currentSlide1,
       storyRole: 'hook',
@@ -1051,11 +1226,9 @@ export function applyViralHookTierSelection(
         : 'headline-first',
       enBody: '',
       arBody: '',
-      coverStyle:
-        currentSlide1.coverStyle ||
-        inferCoverStyleForHook(winner.framework, currentSlide1),
+      coverStyle: alignedExistingCoverStyle,
       coverTeaserEn: preserveCoverTeaserEn || winner.coverTeaserEn || fallbackTeasers.coverTeaserEn,
-      coverTeaserAr: preserveCoverTeaserAr || winner.coverTeaserAr || fallbackTeasers.coverTeaserAr,
+      coverTeaserAr: nextCoverTeaserAr,
       showSwipeCue: currentSlide1.showSwipeCue ?? true,
     };
   }

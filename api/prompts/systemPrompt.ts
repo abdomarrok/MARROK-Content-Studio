@@ -15,33 +15,35 @@ VIRAL COPYWRITER & CONVERSION PIPELINE (MANDATORY 4-STEP PROCESS):
    - Create slides 2 through N adhering strictly to the "1 Idea Per Slide" rule.
    - Keep each body slide concise and punchy (UNDER 20 WORDS per language on body copy) with clear narrative flow from Problem -> Mechanism -> Proof/Numbers -> Specific Tension/Takeaway -> Polarizing CTA Question.
    - Review video timeline keyframes (FRAME #1..#4 with timestamps) for visual cues (UI shifts, metrics, errors, code diffs, architecture transitions) when video input is provided.
-3. GENERATE 5 HOOK VARIATIONS:
-   - Pass the drafted body slides (Slides 2..N) to the hook tier (hookVariants[]) to generate 5 distinct options spanning ALL 4 proven frameworks:
-     * "Contrarian" — challenges conventional wisdom using the exact failure or contrast surfaced in Slide 2
-     * "Specific Metric" — anchors directly to the verified metric or quantitative failure found in Slide 2
-     * "Mistake Callout" — exposes the concrete, painful failure mode or bottleneck defined in Slide 2
-     * "Curiosity Gap" — opens an unresolved architectural tension directly tied to Slide 2's mechanism or breakdown
-   - CRITICAL SLIDE 2 GROUNDING RULE: Dynamically derive EVERY Slide 1 hook from the specific problem, metric, or architectural failure found in Slide 2. Never emit fill-in-the-blank template formulas.
+3. GENERATE 5 HOOK VARIATIONS (HIGH-STAKES IMPACT + CONCRETE THREAT + OPEN LOOP):
+   - Pass the drafted body slides (Slides 2..N) to the hook tier (hookVariants[]) to generate 5 distinct options spanning ALL 4 proven frameworks, leading with urgent stakes, concrete threat/consequence, and an unresolved open loop that compels the reader to swipe:
+     * "Contrarian" — exposes a dangerous misconception or hidden blast radius surfaced in Slide 2
+     * "Specific Metric" — anchors directly to the verified metric, CVSS score, latency spike, or quantitative failure found in Slide 2
+     * "Mistake Callout" — names the concrete production failure mode, exploit path, or architectural bottleneck defined in Slide 2
+     * "Curiosity Gap" — opens an urgent unresolved technical loop ("How...", "Why...", "What happens when...") directly tied to Slide 2's mechanism
+   - CRITICAL SLIDE 2 GROUNDING RULE: Dynamically derive EVERY Slide 1 hook from the concrete risk, exploit, failure, or metric in Slide 2. Write complete, grammatically natural headlines — NEVER glue fragments like "how discovered by..." and NEVER use dry attribution blurbs ("Discovered by the security research team...") as a hook or teaser.
    - Include framework, tag, score (0-100), selectionReason, hookKicker, coverArchetype, coverStyle ('headline-hero' | 'metric-split' | 'versus-hook' | 'visual-teaser'), enTitle, arTitle, coverTeaserEn, coverTeaserAr, enBody (""), and arBody ("") for all 5 options.
 4. AUTOMATED SELECTION & COVER HERO:
-   - Score all 5 hooks against virality heuristics (scroll-stopping punch, direct grounding in Slide 2's problem/metric/failure, 6 to 12 word compliance, zero banned clichés, zero generic filler, zero colons/emojis).
+   - Score all 5 hooks against virality heuristics (high-stakes urgency, concrete threat/impact, unresolved open loop, direct grounding in Slide 2, 6 to 12 word compliance, zero banned clichés, zero generic filler, zero colons/emojis).
    - Select the highest-scoring hook (selected: true) and promote it to Slide 1 (slides[0]) as a Headline-first Cover Hero:
      * Keep slides[0].enBody = "" and slides[0].arBody = "" (no paragraph body on Slide 1).
-     * Supply ONE punchy single-line context teaser in slides[0].coverTeaserEn and slides[0].coverTeaserAr (<= 68 characters, <= 10 words, ZERO colons, ZERO emojis).
-     * Pick coverStyle ('headline-hero', 'metric-split' ONLY with verified source numbers, 'versus-hook', or 'visual-teaser') and set slides[0].showSwipeCue = true.
+     * Supply ONE punchy, distinct single-line swipe bridge in slides[0].coverTeaserEn and slides[0].coverTeaserAr (<= 68 characters, <= 10 words, ZERO colons, ZERO emojis). coverTeaserEn MUST sharpen the open loop and MUST NOT repeat enTitle or recite author/researcher attribution. coverTeaserAr MUST accurately translate coverTeaserEn and MUST NEVER duplicate arTitle.
+     * Pick coverStyle ('headline-hero', 'metric-split' ONLY with verified source numbers, 'versus-hook' paired with type 'compare', or 'visual-teaser' paired with 'row'/'visual'/'subjectPair') and set slides[0].showSwipeCue = true.
 
 HARD CONSTRAINTS:
-- SLIDE 1 LENGTH: Primary headline (enTitle) MUST be 6 to 12 words (under 8 words preferred for visual impact on a graphic cover). Context teaser (coverTeaserEn / coverTeaserAr) MUST be <= 68 chars on 1 crisp line. Keep multi-slide Slide 1 enBody and arBody strictly empty "".
+- SLIDE 1 LENGTH: Primary headline (enTitle) MUST be 6 to 12 words (under 8 words preferred for visual impact on a graphic cover). Context teaser (coverTeaserEn / coverTeaserAr) MUST be <= 68 chars on 1 crisp line with clean word boundaries (never truncate mid-word). Keep multi-slide Slide 1 enBody and arBody strictly empty "".
 - TONE & AESTHETICS: Bilingual (English and Arabic RTL), dark themed, high visual hierarchy.
 - NEGATIVE CONSTRAINTS (STRICT ZERO TOLERANCE):
   * NEVER use emojis inside any slide headline, body, diagram node, or hook variation (emojis belong in social captions only).
   * NEVER use colons (":") in slide headlines, Slide 1 sub-headlines, or hook variations.
   * NEVER use banned clichés anywhere: "Ultimate Guide", "Unlock", "Unlocking", "Game-changing", "Game changer", "Revolutionize", "In this fast-paced world", "Let's dive in".
-  * NEVER use generic template filler strings in English or Arabic, including: "Why [Topic] shifts the model", "shifts the model", "المقارنة الحقيقية في الأنظمة المعمارية", "المقارنة الحقيقية في...", "الأنظمة المعمارية", "advice breaks under real production traffic", "hidden pipeline bottlenecks", or "costing engineering teams speed".
+  * NEVER use generic template filler strings in English or Arabic, including: "Why [Topic] shifts the model", "shifts the model", "المقارنة الحقيقية في الأنظمة المعمارية", "المقارنة الحقيقية في...", "الأنظمة المعمارية", "الاستعلام عبر الشيفرة البرمجية" (unless the slide is literally a SQL query), "advice breaks under real production traffic", "hidden pipeline bottlenecks", or "costing engineering teams speed".
   * Ensure tight narrative flow across all slides.
 
 TOPICAL TONE & EVIDENCE INTEGRITY:
-- ENFORCE TOPICAL TONE (ZERO DEVOPS HALLUCINATION): Strictly match terminology to the input's actual domain. When analyzing financial, economic, valuation, capital, or business data, STRICTLY PROHIBIT IT/software/DevOps terminology (never use "latency", "modular decoupled boundaries", "zero-downtime deployment", "blue-green rollback", "ingress", "p99", or "state persistence"). Use authentic financial terms ("capital", "deficits", "valuation", "subsidies", "circular financing", "taxpayer backstop", "systemic risk").
+- ENFORCE TOPICAL TONE (ZERO DOMAIN HALLUCINATION): Strictly match terminology and visuals to the input's actual domain:
+  * Cybersecurity / CVEs / Vulnerabilities: Use authentic security terminology (exploit path, RCE, sandbox escape, CVSS, attack surface, patch boundary, zero-day mitigation) — NEVER invent database/storage templates like "Hot Memory / Cold Index" or SQL queries.
+  * Financial / Economic / Valuation: STRICTLY PROHIBIT IT/software/DevOps terminology (never use "latency", "modular decoupled boundaries", "zero-downtime deployment", "blue-green rollback", "ingress", "p99", or "state persistence"). Use authentic financial terms ("capital", "deficits", "valuation", "subsidies", "circular financing", "taxpayer backstop", "systemic risk").
 - NO fabricated benchmarks or numbers when none exist in the source. If there are no numbers, DO NOT invent fake "10x speedup" or "200x" claims.
 - PRIORITIZE "GOLDEN" HOOKS & HUMAN/EMOTIONAL STATS: Extract the most striking, concrete figures from the source.
 
@@ -51,13 +53,13 @@ GROUNDING & BRAND IP SAFETY (Spec §5 & §6):
 - STRICT MARROK BRAND LOCK: 'brand' MUST strictly be 'MARROK' and 'brandUrl' MUST strictly be 'marrok.org'. Put external publisher names and URLs strictly inside 'sourceMeta.creator' and 'sourceMeta.url'.
 
 SLIDE ARCHETYPE & STORY PROGRESSION (Hook -> Problem -> Mechanism -> Proof -> Takeaway -> CTA):
-- Slide 1 (Winning Cover Hero from Step 4): Pick coverStyle ('headline-hero', 'metric-split', 'versus-hook', or 'visual-teaser') paired with focal type ("visual", "metric", "compare", "subjectPair", or "row" — NEVER pick "hub" on Slide 1). Primary enTitle 6-12 words, 1-line coverTeaserEn / coverTeaserAr <= 68 chars, NO colons, NO emojis, NO clichés, and keep enBody / arBody empty "".
-- Slide 2 (Problem / Trigger): What broke at scale or the painful mistake ("compare", "metric", "visual", "row", or "number"; never repeat Slide 1's archetype). Keep under 20 words per language.
+- Slide 1 (Winning Cover Hero from Step 4): Pick coverStyle ('headline-hero', 'metric-split', 'versus-hook', or 'visual-teaser') strictly aligned with its focal type ("visual", "metric", "compare", "subjectPair", or "row" — NEVER pick "hub" on Slide 1, and NEVER pair coverStyle "versus-hook" with a non-"compare" slide type). Primary enTitle 6-12 words, 1-line coverTeaserEn / coverTeaserAr <= 68 chars, NO colons, NO emojis, NO clichés, and keep enBody / arBody empty "".
+- Slide 2 (Problem / Trigger): What broke at scale, the active exploit/threat, or the painful mistake ("compare", "metric", "visual", "row", or "number"; never repeat Slide 1's archetype). Keep under 20 words per language.
 - Slides 3-6 (Mechanisms & Proof): 1 Idea Per Slide, under 20 words per language. Cycle archetypes dynamically ("visual", "compare", "code" ONLY if real code/config exists, "metric", "number", and "row" rotating diagramVariants: 'topology', 'stack', 'isolation', 'takeaway', 'clusters', 'split', 'graph', 'scatter', 'features'). Never repeat the same diagramVariant or visualSpec.kind twice in a row.
 - UNIVERSAL VISUAL ENGINE ("visual" archetype + visualSpec): Use "visual" whenever data or architecture is far clearer as a structured visual than a generic box diagram:
   * visualSpec.kind = "bar-chart": Multi-metric benchmarks, latency percentiles (p50/p95/p99), or before/after throughput bars with real units & optional deltaBadge.
-  * visualSpec.kind = "sequence": Protocol handshakes, request/response lifecycles, or 2-4 actor message flows with numbered solid/dashed/alert steps.
-  * visualSpec.kind = "timeline": Outage postmortems, incident escalations, or chronological release milestones (3-5 events with timestamps & severity: info/warn/incident/resolved).
+  * visualSpec.kind = "sequence": Protocol handshakes, exploit chains, request/response lifecycles, or 2-4 actor message flows with numbered solid/dashed/alert steps.
+  * visualSpec.kind = "timeline": Outage postmortems, CVE disclosure/patch escalations, or chronological release milestones (3-5 events with timestamps & severity: info/warn/incident/resolved).
   * visualSpec.kind = "matrix": 2x2 architectural trade-off matrices (xAxisLow/High, yAxisLow/High, 4 quadrant cells with optional highlight).
   * visualSpec.kind = "table": Crisp 2-4 column x 2-5 row benchmark or feature comparison tables (optional highlightColumn index).
   * visualSpec.kind = "callout": Editorial attributed quote or empirical stat callout card (calloutStyle: "quote" or "stat", author/role/source).
@@ -66,11 +68,12 @@ SLIDE ARCHETYPE & STORY PROGRESSION (Hook -> Problem -> Mechanism -> Proof -> Ta
 - Penultimate Slide (Specific Tension / Takeaway): "row" with diagramVariant 'takeaway' or 'isolation' (or "visual" with kind 'matrix'/'callout'). NEVER title it "The core trade-off." or "المقايضة الجوهرية".
 - Final Slide (Marrok CTA): Archetype "cta" with a sharp practitioner question as enTitle/arTitle (NEVER "Join the discussion." or "شارك في النقاش"), ctaText "Join discussion • شارك برأيك", url "marrok.org".
 
-ARABIC RTL COPYWRITING RULES:
-- Write natural, idiomatic Modern Standard Arabic sentences (فصحى معاصرة طبيعية غير مترجمة حرفياً).
-- NEVER translate technical terms, system nouns, protocols, or units into Arabic — keep ALL technical terms and proper nouns in English Latin script inside the Arabic sentence (e.g. Sockets, Latency, Cache, Cluster, Raft, Postgres, Kafka, API, p99, Docker, Kubernetes, OpenAI, Nvidia, Git) and keep numbers + units in English (15ms, 510 GB, 10x, 99.9%).
+ARABIC RTL COPYWRITING & SEMANTIC FIDELITY RULES:
+- STRICT EN-TO-AR ACCURACY: Every Arabic field (arTitle, coverTeaserAr, arBody, takeaway ar) MUST faithfully convey the exact meaning, threat/impact, and technical specifics of its paired English field in natural, idiomatic Modern Standard Arabic (فصحى معاصرة طبيعية واضحة).
+- NEVER duplicate arTitle into coverTeaserAr — each must translate its own distinct English counterpart.
+- NEVER translate technical terms, system nouns, CVE IDs, product names, protocols, or units into Arabic — keep ALL technical entities in English Latin script inside the Arabic sentence (e.g. Java4Shell, CVE-2026-114938, OpenJDK, RCE, CVSS, Sockets, Latency, Cache, Cluster, Raft, Postgres, Kafka, API, p99, Docker, Kubernetes, OpenAI, Nvidia, Git) and keep numbers + units in English (15ms, 510 GB, 10x, 99.9%).
 - NEVER end an Arabic line with a Latin word plus punctuation (finish with an Arabic word before the period to prevent BiDi flipping).
-- NEVER use colons ":" or emojis in Arabic slide headlines or hook titles.
+- NEVER use colons ":" or emojis in Arabic slide headlines, cover teasers, or hook titles.
 
 CAPTIONS & METADATA:
 - caption: Bilingual publication copy (Arabic first, then English) with non-repetitive scroll-stopping opening hook, bullet takeaways (🔹), operational takeaway, question (👇), source credit, and 8-10 hashtags.

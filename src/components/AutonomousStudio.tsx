@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, Suspense, lazy } from 'react';
 import {
+  AlertTriangle,
   Sparkles,
   CheckCircle2,
   RefreshCw,
@@ -9,11 +10,14 @@ import {
   Sliders,
   Type,
   Layers,
+  Languages,
+  Loader2,
   Film,
   Undo2,
   Redo2,
   Eye,
 } from 'lucide-react';
+import { withClientAuthHeaders } from '../lib/security/clientSessionToken.ts';
 import { type GatheredTopicItem } from '../lib/gather/gatherClient.ts';
 import {
   CarouselData,
@@ -1702,6 +1706,140 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
   const [overrideExportBlock, setOverrideExportBlock] = useState(false);
   const [confirmedRiskReason, setConfirmedRiskReason] = useState<string | null>(null);
+  const [isSyncingArabic, setIsSyncingArabic] = useState(false);
+  const [isSyncingAllArabic, setIsSyncingAllArabic] = useState(false);
+
+  const buildClientAiHeaders = (): Record<string, string> => {
+    const headers: Record<string, string> = withClientAuthHeaders({ 'Content-Type': 'application/json' });
+    if (typeof window !== 'undefined') {
+      const customKey = localStorage.getItem('marrok_custom_gemini_key');
+      const backupKey = localStorage.getItem('marrok_custom_gemini_backup_key');
+      if (customKey) headers['x-gemini-key'] = customKey;
+      if (backupKey) headers['x-gemini-backup-key'] = backupKey;
+    }
+    return headers;
+  };
+
+  const handleSyncCurrentSlideArabic = async () => {
+    const targetIndex = Math.min(currentSlideIndex, carousel.slides.length - 1);
+    const targetSlide = carousel.slides[targetIndex];
+    if (!targetSlide) return;
+    if (!(targetSlide.enTitle || '').trim() && !(targetSlide.enBody || '').trim() && !(targetSlide.coverTeaserEn || '').trim()) {
+      onShowToast('Add English copy first before syncing Arabic.');
+      return;
+    }
+    setIsSyncingArabic(true);
+    try {
+      const isCoverSlide = targetIndex === 0 && carousel.slides.length > 1 && activePostFormat === 'carousel';
+      const res = await fetch('/api/refine-slide', {
+        method: 'POST',
+        credentials: 'include',
+        headers: buildClientAiHeaders(),
+        body: JSON.stringify({
+          mode: 'sync_ar',
+          slide: targetSlide,
+          category: carousel.category || 'SOFTWARE ARCHITECTURE',
+          isCover: isCoverSlide,
+        }),
+      });
+      if (!res.ok) {
+        onShowToast('Live AI translation unavailable right now — please try again shortly.');
+        return;
+      }
+      const data = await res.json();
+      if (!data || data.engine === 'offline') {
+        onShowToast('Live AI translation temporarily unavailable — keeping current Arabic.');
+        return;
+      }
+      applyDeckUpdate((prev) => {
+        if (!prev.slides[targetIndex]) return prev;
+        const nextSlides = [...prev.slides];
+        const existing = nextSlides[targetIndex];
+        nextSlides[targetIndex] = {
+          ...existing,
+          arTitle: typeof data.arTitle === 'string' && data.arTitle.trim() ? data.arTitle.trim() : existing.arTitle,
+          ...(isCoverSlide || typeof data.coverTeaserAr === 'string'
+            ? {
+                coverTeaserAr:
+                  typeof data.coverTeaserAr === 'string' && data.coverTeaserAr.trim()
+                    ? data.coverTeaserAr.trim()
+                    : existing.coverTeaserAr,
+              }
+            : {}),
+          arBody:
+            isCoverSlide
+              ? ''
+              : typeof data.arBody === 'string'
+              ? data.arBody.trim()
+              : existing.arBody,
+          ...(Array.isArray(data.takeaways) ? { takeaways: data.takeaways } : {}),
+        };
+        return { ...prev, slides: nextSlides };
+      });
+      onShowToast(`Synced Arabic for Slide ${targetIndex + 1} from English.`);
+    } catch {
+      onShowToast('Could not reach AI translation service.');
+    } finally {
+      setIsSyncingArabic(false);
+    }
+  };
+
+  const handleSyncAllSlidesArabic = async () => {
+    if (!carousel.slides.length) return;
+    setIsSyncingAllArabic(true);
+    try {
+      const res = await fetch('/api/refine-slide', {
+        method: 'POST',
+        credentials: 'include',
+        headers: buildClientAiHeaders(),
+        body: JSON.stringify({
+          mode: 'sync_ar_deck',
+          slides: carousel.slides,
+          category: carousel.category || 'SOFTWARE ARCHITECTURE',
+        }),
+      });
+      if (!res.ok) {
+        onShowToast('Live AI translation unavailable right now — please try again shortly.');
+        return;
+      }
+      const data = await res.json();
+      if (!data || data.engine === 'offline' || !Array.isArray(data.slides)) {
+        onShowToast('Live AI translation temporarily unavailable — try again in a moment.');
+        return;
+      }
+      applyDeckUpdate((prev) => {
+        const isMultiCarousel = prev.slides.length > 1 && activePostFormat === 'carousel';
+        const nextSlides = prev.slides.map((slide, idx) => {
+          const synced = data.slides.find((item: any) => Number(item?.index) === idx) || data.slides[idx];
+          if (!synced) return slide;
+          const isSlide1Cover = idx === 0 && isMultiCarousel && !slide.standaloneMeme;
+          return {
+            ...slide,
+            arTitle: typeof synced.arTitle === 'string' && synced.arTitle.trim() ? synced.arTitle.trim() : slide.arTitle,
+            ...(isSlide1Cover || slide.coverTeaserEn
+              ? {
+                  coverTeaserAr:
+                    typeof synced.coverTeaserAr === 'string' && synced.coverTeaserAr.trim()
+                      ? synced.coverTeaserAr.trim()
+                      : slide.coverTeaserAr,
+                }
+              : {}),
+            arBody: isSlide1Cover
+              ? ''
+              : typeof synced.arBody === 'string'
+              ? synced.arBody.trim()
+              : slide.arBody,
+          };
+        });
+        return { ...prev, slides: nextSlides };
+      });
+      onShowToast(`Synced Arabic across all ${carousel.slides.length} slides.`);
+    } catch {
+      onShowToast('Could not reach AI translation service.');
+    } finally {
+      setIsSyncingAllArabic(false);
+    }
+  };
 
   const handleToggleOverrideBlock = (riskReason?: string) => {
     setOverrideExportBlock((prev) => {
@@ -2527,6 +2665,62 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         onShowToast={onShowToast}
       />
 
+      {/* 1.5 Honest Offline Fallback Warning Banner (Only when local fallback engine generated the deck) */}
+      {isOfflineDraft && activePostFormat !== 'reel' && (
+        <div
+          role="status"
+          data-testid="offline-fallback-banner"
+          className="flex flex-wrap items-center justify-between gap-2.5 px-3.5 py-2 rounded-xl bg-amber-500/[0.06] border border-amber-500/30 text-xs text-amber-100"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <div className="min-w-0">
+              <span className="font-semibold text-amber-200">Offline Draft Fallback</span>
+              <span aria-hidden="true" className="text-amber-500/60 mx-1.5">·</span>
+              <span className="text-amber-100/85">
+                Live AI &amp; backup models were unavailable ({carousel.sourceMeta?.fallbackReason || 'local synthesizer used'}).
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              data-testid="fallback-sync-all-ar-btn"
+              disabled={isSyncingAllArabic || isGenerating}
+              onClick={() => void handleSyncAllSlidesArabic()}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] disabled:opacity-45 border border-white/[0.12] text-[11px] font-medium text-white transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              {isSyncingAllArabic ? (
+                <Loader2 className="w-3 h-3 animate-spin" style={{ color: theme.accent }} />
+              ) : (
+                <Languages className="w-3 h-3" style={{ color: theme.accent }} />
+              )}
+              <span>{isSyncingAllArabic ? 'Syncing AR…' : 'Sync All AR'}</span>
+            </button>
+            <button
+              type="button"
+              data-testid="fallback-retry-ai-btn"
+              disabled={isGenerating}
+              onClick={() => {
+                const retryPrompt =
+                  promptInput.trim() ||
+                  carousel.sourceMeta?.title ||
+                  carousel.slides[0]?.enTitle ||
+                  '';
+                if (retryPrompt && !promptInput.trim()) {
+                  setPromptInput(retryPrompt);
+                }
+                void handleRunAutonomousPipeline(retryPrompt || undefined);
+              }}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 disabled:opacity-45 border border-amber-400/40 text-[11px] font-semibold text-amber-100 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <RefreshCw className={`w-3 h-3 ${isGenerating ? 'animate-spin' : ''}`} />
+              <span>Retry with AI</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 2. Fixed Studio Shell: Left Sticky 9:16 Stage | Right Categorized Inspector */}
       <div className="lg:flex-1 lg:min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-3 lg:gap-5 items-stretch">
         {/* Left Column: Sticky 9:16 Canvas + Slide Navigator + Single Persistent Under-Canvas Delivery Bar */}
@@ -2942,6 +3136,24 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
             {/* Quiet Contextual Right Utilities (No duplicate Undo/Redo) */}
             <div className="flex items-center gap-1.5 shrink-0">
+              {activePostFormat !== 'reel' && carousel.slides.length > 1 && (
+                <button
+                  type="button"
+                  data-testid="inspector-sync-all-ar-btn"
+                  disabled={isSyncingAllArabic}
+                  onClick={() => void handleSyncAllSlidesArabic()}
+                  className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-45 border border-white/[0.08] text-[11px] font-medium text-slate-300 hover:text-white transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                  title="Translate all slides from English to natural Arabic with AI"
+                >
+                  {isSyncingAllArabic ? (
+                    <Loader2 className="w-3 h-3 animate-spin" style={{ color: theme.accent }} />
+                  ) : (
+                    <Languages className="w-3 h-3" style={{ color: theme.accent }} />
+                  )}
+                  <span>{isSyncingAllArabic ? 'Syncing…' : 'Sync All AR'}</span>
+                </button>
+              )}
+
               {activePostFormat !== 'reel' && selectedElementId && (
                 <button
                   type="button"
@@ -3045,6 +3257,8 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 totalSlides={carousel.slides.length}
                 onApplyCoverStyle={handleApplyCoverStyle}
                 onOpenVisualTab={() => setInspectorTab('visual')}
+                onSyncArabic={() => void handleSyncCurrentSlideArabic()}
+                isSyncingArabic={isSyncingArabic}
               />
             )}
 
