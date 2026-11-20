@@ -37,12 +37,22 @@ describe('Netlify & Vercel API Routing + Strict CORS', () => {
   const prevAdminUser = process.env.ADMIN_USERNAME;
   const prevAdminHash = process.env.ADMIN_PASSWORD_HASH;
   const prevSessionSecret = process.env.SESSION_SECRET;
+  const prevGeminiKey = process.env.GEMINI_API_KEY;
+  const prevGeminiKeyBackup = process.env.GEMINI_API_KEY_BACKUP;
+  const prevGeminiKeys = process.env.GEMINI_API_KEYS;
+  const prevDatabaseUrl = process.env.DATABASE_URL;
+  const prevPostgresUrl = process.env.POSTGRES_URL;
 
   beforeAll(async () => {
     resetAuthStateForTest();
     process.env.ADMIN_USERNAME = 'marrok-tester';
     process.env.ADMIN_PASSWORD_HASH = hashPasswordScrypt('test-password-123!');
     process.env.SESSION_SECRET = 'super-secret-signing-key-for-routing-tests';
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.GEMINI_API_KEY_BACKUP;
+    delete process.env.GEMINI_API_KEYS;
+    delete process.env.DATABASE_URL;
+    delete process.env.POSTGRES_URL;
 
     await new Promise<void>((resolve) => {
       server = app.listen(0, () => {
@@ -73,6 +83,16 @@ describe('Netlify & Vercel API Routing + Strict CORS', () => {
     else process.env.ADMIN_PASSWORD_HASH = prevAdminHash;
     if (prevSessionSecret === undefined) delete process.env.SESSION_SECRET;
     else process.env.SESSION_SECRET = prevSessionSecret;
+    if (prevGeminiKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = prevGeminiKey;
+    if (prevGeminiKeyBackup === undefined) delete process.env.GEMINI_API_KEY_BACKUP;
+    else process.env.GEMINI_API_KEY_BACKUP = prevGeminiKeyBackup;
+    if (prevGeminiKeys === undefined) delete process.env.GEMINI_API_KEYS;
+    else process.env.GEMINI_API_KEYS = prevGeminiKeys;
+    if (prevDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = prevDatabaseUrl;
+    if (prevPostgresUrl === undefined) delete process.env.POSTGRES_URL;
+    else process.env.POSTGRES_URL = prevPostgresUrl;
 
     await new Promise<void>((resolve) => {
       server.close(() => resolve());

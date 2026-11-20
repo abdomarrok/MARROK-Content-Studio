@@ -1,4 +1,5 @@
 import pg from 'pg';
+import dns from 'node:dns';
 import type {
   SavedPostRecord,
   SavedPostStatus,
@@ -12,6 +13,24 @@ const { Pool } = pg;
 
 let poolInstance: pg.Pool | null = null;
 let schemaInitialized = false;
+
+// In-memory DNS cache to bypass Windows local DNS timeouts (e.g. 10.43.46.168) for Neon cloud hosts
+const NEON_DNS_CACHE = new Map<string, string>([
+  ['ep-still-queen-bdi9ylm8-pooler.c-8.us-east-2.aws.neon.tech', '3.14.138.241'],
+  ['ep-still-queen-bdi9ylm8.us-east-2.aws.neon.tech', '3.14.138.241'],
+]);
+
+function triggerBackgroundDnsRefresh(hostname: string) {
+  try {
+    dns.resolve4(hostname, (err, addresses) => {
+      if (!err && addresses && addresses.length > 0) {
+        NEON_DNS_CACHE.set(hostname, addresses[0]);
+      }
+    });
+  } catch {
+    // Ignore non-fatal background DNS refresh
+  }
+}
 
 export function resolvePostgresSslConfig(
   connectionString: string,
@@ -34,12 +53,16 @@ export function resolvePostgresSslConfig(
     readRuntimeEnv('PG_CA_CERT', env) || readRuntimeEnv('DATABASE_CA_CERT', env);
 
   return {
-    rejectUnauthorized: true,
+    rejectUnauthorized: env.PG_REJECT_UNAUTHORIZED === 'false' ? false : true,
     ...(caCert ? { ca: caCert.replace(/\\n/g, '\n') } : {}),
   };
 }
 
 export function getPostgresPool(connectionString?: string): pg.Pool | null {
+  if (poolInstance) return poolInstance;
+  if (process.env.VITEST === 'true' && process.env.ENABLE_TEST_DATABASE !== 'true' && !connectionString) {
+    return null;
+  }
   const url =
     connectionString ||
     readRuntimeEnv('DATABASE_URL') ||
@@ -50,12 +73,56 @@ export function getPostgresPool(connectionString?: string): pg.Pool | null {
 
   if (!poolInstance) {
     const cleanUrl = url.trim();
-    poolInstance = new Pool({
-      connectionString: cleanUrl,
-      ssl: resolvePostgresSslConfig(cleanUrl),
-      connectionTimeoutMillis: 5000,
-      max: 5,
-    });
+    let host: string | undefined;
+    let port = 5432;
+    let user: string | undefined;
+    let password: string | undefined;
+    let database: string | undefined;
+    let servername: string | undefined;
+
+    try {
+      const parsed = new URL(cleanUrl);
+      servername = parsed.hostname;
+      port = Number(parsed.port) || 5432;
+      user = decodeURIComponent(parsed.username);
+      password = decodeURIComponent(parsed.password);
+      database = parsed.pathname.replace(/^\//, '');
+
+      // Check if hostname is a Neon cloud host with a cached or known IP
+      if (NEON_DNS_CACHE.has(parsed.hostname)) {
+        host = NEON_DNS_CACHE.get(parsed.hostname);
+        triggerBackgroundDnsRefresh(parsed.hostname);
+      } else if (parsed.hostname.includes('neon.tech')) {
+        triggerBackgroundDnsRefresh(parsed.hostname);
+      }
+    } catch {
+      // Fall back to cleanUrl if parsing fails
+    }
+
+    const sslConfig = {
+      ...resolvePostgresSslConfig(cleanUrl),
+      ...(servername ? { servername } : {}),
+    };
+
+    if (host && user && database) {
+      poolInstance = new Pool({
+        host,
+        port,
+        user,
+        password,
+        database,
+        ssl: sslConfig,
+        connectionTimeoutMillis: 5000,
+        max: 5,
+      });
+    } else {
+      poolInstance = new Pool({
+        connectionString: cleanUrl,
+        ssl: sslConfig,
+        connectionTimeoutMillis: 5000,
+        max: 5,
+      });
+    }
 
     poolInstance.on('error', (err) => {
       console.warn('[NeonPostgres] Pool error:', err.message);
@@ -120,6 +187,12 @@ export async function initPostgresSchema(pool: pg.Pool): Promise<void> {
       reason VARCHAR(64),
       snooze_until TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_settings (
+      id VARCHAR(64) PRIMARY KEY,
+      settings JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
     ALTER TABLE saved_posts ADD COLUMN IF NOT EXISTS cloudinary_cleaned_at TIMESTAMPTZ;
@@ -601,5 +674,29 @@ export async function deletePostgresTriageDecision(pool: pg.Pool, id: string): P
   const result = await pool.query('DELETE FROM inbox_triage_decisions WHERE id = $1;', [id]);
   return (result.rowCount ?? 0) > 0;
 }
+
+export async function loadAiSettingsFromDb(pool: pg.Pool, id = 'global'): Promise<Record<string, unknown> | null> {
+  await initPostgresSchema(pool);
+  const result = await pool.query('SELECT settings FROM ai_settings WHERE id = $1 LIMIT 1;', [id]);
+  if (!result.rows || result.rows.length === 0) return null;
+  return result.rows[0].settings as Record<string, unknown>;
+}
+
+export async function saveAiSettingsToDb(
+  pool: pg.Pool,
+  settings: Record<string, unknown>,
+  id = 'global'
+): Promise<void> {
+  await initPostgresSchema(pool);
+  const sql = `
+    INSERT INTO ai_settings (id, settings, updated_at)
+    VALUES ($1, $2, NOW())
+    ON CONFLICT (id) DO UPDATE SET
+      settings = EXCLUDED.settings,
+      updated_at = NOW();
+  `;
+  await pool.query(sql, [id, JSON.stringify(settings)]);
+}
+
 
 

@@ -42,6 +42,8 @@ import {
 import { parseCarouselData } from '../../src/lib/validation/carousel.ts';
 import { parseImageDataUrl, parseRawBase64Image } from '../../src/lib/validation/image.ts';
 import { validateSourceSufficiency } from '../../src/lib/synthesis/inputSufficiency.ts';
+import { getDecryptedAiSettings } from './aiStudioController.ts';
+import type { AIProviderId } from '../../src/types.ts';
 
 type GeminiPart =
   | { text: string }
@@ -69,7 +71,7 @@ export function setGoogleGenAICtorForTesting(ctor: GoogleGenAICtor | null): void
   customGoogleGenAICtorForTesting = ctor;
 }
 
-function createGoogleGenAIClient(apiKey: string): GoogleGenAIClientLike {
+export function createGoogleGenAIClient(apiKey: string): GoogleGenAIClientLike {
   const Ctor: GoogleGenAICtor =
     customGoogleGenAICtorForTesting || (GoogleGenAI as unknown as GoogleGenAICtor);
   return new Ctor({
@@ -429,6 +431,96 @@ async function generateWithPollinationsFreeBackup(options: {
 }
 
 /**
+ * Calls an OpenAI-compatible endpoint (OpenAI, Groq, Ollama, OpenRouter, DeepSeek).
+ */
+async function generateWithOpenAiCompatibleEndpoint(options: {
+  endpoint: string;
+  apiKey?: string;
+  model: string;
+  prompt: string;
+  minSlidesRequired: number;
+  timeoutMs: number;
+}): Promise<CarouselData | null> {
+  const { endpoint, apiKey, model, prompt, minSlidesRequired, timeoutMs } = options;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  }
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers,
+    signal: AbortSignal.timeout(timeoutMs),
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: `${MARROK_SYSTEM_PROMPT}\n\n${JSON_SCHEMA_COMPACT_GUIDE}`,
+        },
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ],
+    }),
+  });
+
+  if (!res.ok) return null;
+  const payload = await res.json();
+  const rawContent = payload?.choices?.[0]?.message?.content;
+  if (!rawContent || typeof rawContent !== 'string') return null;
+  const cleaned = rawContent.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  return parseCarouselData(JSON.parse(cleaned), {
+    minSlides: minSlidesRequired,
+    requireSlideContent: true,
+  });
+}
+
+/**
+ * Calls Anthropic Claude Messages API.
+ */
+async function generateWithAnthropicEndpoint(options: {
+  apiKey: string;
+  model: string;
+  prompt: string;
+  minSlidesRequired: number;
+  timeoutMs: number;
+}): Promise<CarouselData | null> {
+  const { apiKey, model, prompt, minSlidesRequired, timeoutMs } = options;
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+    body: JSON.stringify({
+      model,
+      max_tokens: 4096,
+      temperature: 0.2,
+      system: `${MARROK_SYSTEM_PROMPT}\n\n${JSON_SCHEMA_COMPACT_GUIDE}`,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+
+  if (!res.ok) return null;
+  const payload = await res.json();
+  const rawContent = payload?.content?.[0]?.text;
+  if (!rawContent || typeof rawContent !== 'string') return null;
+  const cleaned = rawContent.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  return parseCarouselData(JSON.parse(cleaned), {
+    minSlides: minSlidesRequired,
+    requireSlideContent: true,
+  });
+}
+
+/**
  * Maps extracted facts to grounded web sources strictly using groundingSupports/groundingChunks.
  * Never cycles through webSources by index (webSources[i % n]).
  * Leaves sourceUrl empty if a fact is not backed by a grounded chunk.
@@ -649,7 +741,21 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
       imageName: safeImageName,
       postFormat,
     });
-    parts.push({ text: userPromptText });
+
+    const strategyObj =
+      req.body?.strategyContext && typeof req.body.strategyContext === 'object'
+        ? req.body.strategyContext
+        : null;
+
+    const rawStrategyContext =
+      typeof req.body?.strategyContext === 'string'
+        ? req.body.strategyContext.slice(0, 3000).trim()
+        : strategyObj?.strategyBrief || '';
+    const finalPromptText = rawStrategyContext
+      ? `${userPromptText}\n${rawStrategyContext}`
+      : userPromptText;
+
+    parts.push({ text: finalPromptText });
 
     const candidateKeys = resolveRequestGeminiKeys(req, config);
 
@@ -664,7 +770,60 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
 
     const remainingBudgetMs = () => TOTAL_REQUEST_BUDGET_MS - (Date.now() - requestStartTime);
 
-    keyLoop: for (const { key, label } of candidateKeys) {
+    // Multi-Provider Active Vault Dispatch (Anthropic, OpenAI, Groq, Ollama, Custom)
+    const aiVaultSettings = await getDecryptedAiSettings().catch(() => null);
+    const requestedProvider = (req.body?.aiProvider || aiVaultSettings?.activeProviderId || 'gemini') as AIProviderId;
+
+    if (requestedProvider !== 'gemini' && aiVaultSettings?.providers?.[requestedProvider]) {
+      const pConfig = aiVaultSettings.providers[requestedProvider];
+      if (pConfig.enabled || req.body?.aiProvider) {
+        const timeoutMs = Math.min(18000, remainingBudgetMs() - 2000);
+        try {
+          console.info(`[AI-Gateway] Dispatching to active provider: ${requestedProvider}...`);
+          if (requestedProvider === 'anthropic' && pConfig.apiKey) {
+            const antRes = await generateWithAnthropicEndpoint({
+              apiKey: pConfig.apiKey,
+              model: pConfig.selectedModel || 'claude-3-7-sonnet-20250219',
+              prompt: finalPromptText,
+              minSlidesRequired,
+              timeoutMs,
+            });
+            if (antRes) {
+              jsonResult = antRes;
+              successfulModel = pConfig.selectedModel || 'claude';
+              attemptedProviders.push(`anthropic:${successfulModel}`);
+            }
+          } else if (
+            requestedProvider === 'openai' ||
+            requestedProvider === 'groq' ||
+            requestedProvider === 'ollama' ||
+            requestedProvider === 'custom'
+          ) {
+            let endpoint = 'https://api.openai.com/v1/chat/completions';
+            if (requestedProvider === 'groq') endpoint = 'https://api.groq.com/openai/v1/chat/completions';
+            else if (pConfig.baseUrl) endpoint = `${pConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+
+            const openRes = await generateWithOpenAiCompatibleEndpoint({
+              endpoint,
+              apiKey: pConfig.apiKey,
+              model: pConfig.selectedModel || (requestedProvider === 'groq' ? 'llama-3.3-70b-versatile' : 'gpt-4o'),
+              prompt: finalPromptText,
+              minSlidesRequired,
+              timeoutMs,
+            });
+            if (openRes) {
+              jsonResult = openRes;
+              successfulModel = pConfig.selectedModel || requestedProvider;
+              attemptedProviders.push(`${requestedProvider}:${successfulModel}`);
+            }
+          }
+        } catch (provErr) {
+          console.info(`[AI-Gateway] Active provider ${requestedProvider} failed (${(provErr as Error).message}); cascading to Gemini.`);
+        }
+      }
+    }
+
+    keyLoop: for (const { key, label } of (jsonResult ? [] : candidateKeys)) {
       if (overallAbort.signal.aborted || remainingBudgetMs() < 3000) break;
 
       const activeAi = createGoogleGenAIClient(key);
@@ -931,6 +1090,17 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
         preserveValidSlide1: true,
       });
       jsonResult = sanitizeFullCarousel(jsonResult);
+
+      const targetPlatform = req.body?.targetPlatform || strategyObj?.targetPlatform;
+      const contentPillar = req.body?.contentPillar || strategyObj?.contentPillar;
+      const publicationObjective = req.body?.publicationObjective || strategyObj?.publicationObjective;
+
+      if (targetPlatform) jsonResult.targetPlatform = targetPlatform;
+      if (contentPillar) jsonResult.contentPillar = contentPillar;
+      if (publicationObjective) jsonResult.publicationObjective = publicationObjective;
+      if (rawStrategyContext || strategyObj) jsonResult.strategyBriefUsed = true;
+      if (successfulModel) jsonResult.aiModelUsed = successfulModel;
+      jsonResult.aiProviderUsed = requestedProvider;
 
       if (!bypassCache) {
         const stored = storeCachedGeneration(cacheKey, {

@@ -27,6 +27,9 @@ import {
   PostFormat,
   ThemePalette,
   DEFAULT_PALETTES,
+  TargetPlatform,
+  ContentPillarId,
+  PublicationObjective,
 } from '../../../types.ts';
 import { ACCEPTED_SINGLE_SLIDE_MEDIA_ACCEPT, isVideoFile } from '../../../lib/canvasExporter.ts';
 import type { ThemeCadenceAnalysis } from '../../../lib/theme/cadenceEngine.ts';
@@ -131,6 +134,12 @@ export interface StudioCommandBarProps {
   onOpenPublishScheduleModal?: (tab?: 'single' | 'bulk' | 'storage') => void;
   inputValidationError?: string | null;
   onShowToast: (msg: string) => void;
+  targetPlatform?: TargetPlatform;
+  onSetTargetPlatform?: (p: TargetPlatform) => void;
+  contentPillar?: ContentPillarId | 'auto';
+  onSetContentPillar?: (p: ContentPillarId | 'auto') => void;
+  publicationObjective?: PublicationObjective;
+  onSetPublicationObjective?: (o: PublicationObjective) => void;
 }
 
 export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
@@ -176,6 +185,12 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
   onOpenPublishScheduleModal,
   inputValidationError,
   onShowToast,
+  targetPlatform = 'all',
+  onSetTargetPlatform,
+  contentPillar = 'auto',
+  onSetContentPillar,
+  publicationObjective = 'discovery',
+  onSetPublicationObjective,
 }) => {
   return (
     <div
@@ -707,6 +722,98 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
                   <span>{topic.name}</span>
                 </button>
               ))}
+            </div>
+
+            {/* Content Strategy Engine Selector Bar */}
+            <div className="p-2.5 rounded-xl border border-white/10 bg-[#080e14]/90 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-[#37E2C0] font-bold">
+                    Platform:
+                  </span>
+                  {(['all', 'tiktok', 'instagram', 'linkedin', 'facebook'] as const).map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => onSetTargetPlatform?.(p)}
+                      className={`px-2 py-0.5 rounded-md text-[10px] font-mono transition-colors cursor-pointer ${
+                        targetPlatform === p
+                          ? 'bg-[#37E2C0]/20 text-[#37E2C0] font-bold border border-[#37E2C0]/40'
+                          : 'text-slate-400 hover:text-white bg-white/5'
+                      }`}
+                    >
+                      {p === 'all'
+                        ? 'Cross-Platform'
+                        : p === 'tiktok'
+                        ? 'TikTok'
+                        : p === 'instagram'
+                        ? 'Instagram'
+                        : p === 'linkedin'
+                        ? 'LinkedIn'
+                        : 'Facebook'}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-amber-400 font-bold">
+                    Objective:
+                  </span>
+                  {(['discovery', 'engagement', 'education', 'authority'] as const).map((obj) => (
+                    <button
+                      key={obj}
+                      type="button"
+                      onClick={() => onSetPublicationObjective?.(obj)}
+                      className={`px-2 py-0.5 rounded-md text-[10px] font-mono transition-colors capitalize cursor-pointer ${
+                        publicationObjective === obj
+                          ? 'bg-amber-400/20 text-amber-300 font-bold border border-amber-400/40'
+                          : 'text-slate-400 hover:text-white bg-white/5'
+                      }`}
+                    >
+                      {obj}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5 flex-wrap pt-1.5 border-t border-white/5">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-purple-400 font-bold">
+                  Pillar:
+                </span>
+                {(
+                  [
+                    'auto',
+                    'cybersecurity',
+                    'artificial-intelligence',
+                    'software-engineering',
+                    'developer-culture',
+                    'practical-tech',
+                  ] as const
+                ).map((pil) => (
+                  <button
+                    key={pil}
+                    type="button"
+                    onClick={() => onSetContentPillar?.(pil)}
+                    className={`px-2 py-0.5 rounded-md text-[10px] font-mono transition-colors cursor-pointer ${
+                      contentPillar === pil
+                        ? 'bg-purple-500/20 text-purple-300 font-bold border border-purple-500/40'
+                        : 'text-slate-400 hover:text-white bg-white/5'
+                    }`}
+                  >
+                    {pil === 'auto'
+                      ? 'Auto-Detect'
+                      : pil === 'cybersecurity'
+                      ? 'Cybersecurity'
+                      : pil === 'artificial-intelligence'
+                      ? 'AI Systems'
+                      : pil === 'software-engineering'
+                      ? 'Software Eng'
+                      : pil === 'developer-culture'
+                      ? 'Dev Culture'
+                      : 'Practical Tech'}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Smart Multi-Line Textarea */}

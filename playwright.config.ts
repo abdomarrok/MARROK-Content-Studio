@@ -33,6 +33,7 @@ export default defineConfig({
       name: 'Desktop Chrome',
       use: {
         viewport: { width: 1280, height: 800 },
+        channel: 'chrome',
       },
     },
   ],

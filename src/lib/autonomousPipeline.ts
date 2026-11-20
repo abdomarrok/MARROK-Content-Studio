@@ -1,4 +1,15 @@
-import { CarouselData, SlideData, ThemePalette } from '../types';
+import {
+  CarouselData,
+  SlideData,
+  ThemePalette,
+  TargetPlatform,
+  ContentPillarId,
+  PublicationObjective,
+} from '../types';
+import {
+  StrategyBrief,
+  buildStrategyPromptDecorator,
+} from './strategy/strategyPromptDecorator';
 import { sanitizeFullCarousel } from './text/sanitizer';
 import { autoFitTextToLimits, autoPolishHeadline } from './text/headlines';
 import { fixArabicPunctuation } from './text/arabicBiDi';
@@ -33,6 +44,11 @@ export interface AutonomousPipelineOptions {
   imageName?: string;
   categoryHint?: string;
   postFormat?: 'carousel' | 'single';
+  strategyBrief?: StrategyBrief | null;
+  targetPlatform?: TargetPlatform;
+  contentPillar?: ContentPillarId | string;
+  publicationObjective?: PublicationObjective | string;
+  aiProvider?: string;
   signal?: AbortSignal;
   /** Optional base URL used when running in Node (e.g. CLI/tests/cron) where relative /api/* paths fail URL parsing. */
   apiBaseUrl?: string;
@@ -183,6 +199,11 @@ export async function runAutonomousPipeline(
     imageName,
     categoryHint,
     postFormat = 'carousel',
+    strategyBrief,
+    targetPlatform,
+    contentPillar,
+    publicationObjective,
+    aiProvider,
     signal,
     apiBaseUrl,
     fetchFn,
@@ -220,6 +241,8 @@ export async function runAutonomousPipeline(
     requestHeaders['x-gemini-backup-key'] = backupKey;
   }
 
+  const strategyContext = strategyBrief ? buildStrategyPromptDecorator(strategyBrief) : undefined;
+
   const generationPayload: Record<string, unknown> = {
     prompt: rawInput,
     topic: rawInput,
@@ -230,6 +253,11 @@ export async function runAutonomousPipeline(
     imageName,
     categoryHint,
     postFormat,
+    strategyContext,
+    targetPlatform,
+    contentPillar,
+    publicationObjective,
+    aiProvider,
   };
 
   const generationDeadline = createRequestDeadline(signal, GENERATION_REQUEST_TIMEOUT_MS);
@@ -414,6 +442,12 @@ export async function runAutonomousPipeline(
   }
 
   throwIfAborted(signal);
+  if (targetPlatform) cleanCarousel.targetPlatform = targetPlatform;
+  if (contentPillar) cleanCarousel.contentPillar = String(contentPillar);
+  if (publicationObjective) cleanCarousel.publicationObjective = String(publicationObjective);
+  if (strategyBrief) cleanCarousel.strategyBriefUsed = true;
+  if (aiProvider) cleanCarousel.aiProviderUsed = aiProvider;
+
   onProgress?.('Ready!');
   return cleanCarousel;
 }
