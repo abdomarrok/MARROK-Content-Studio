@@ -162,9 +162,19 @@ function storeCachedGeneration(key: string, entry: Omit<CachedGenerationEntry, '
   return fullEntry;
 }
 
-function classifyModelError(err: unknown): 'overload' | 'not_found' | 'timeout' | 'other' {
+function classifyModelError(
+  err: unknown
+): 'overload' | 'not_found' | 'timeout' | 'schema_constraint' | 'other' {
   const raw = err instanceof Error ? err.message : String(err);
   const upper = raw.toUpperCase();
+  if (
+    upper.includes('TOO MANY STATES') ||
+    upper.includes('CONSTRAINT THAT HAS TOO MANY STATES') ||
+    upper.includes('NESTING DEPTH') ||
+    (upper.includes('SCHEMA') && upper.includes('400'))
+  ) {
+    return 'schema_constraint';
+  }
   if (
     upper.includes('503') ||
     upper.includes('429') ||
@@ -271,6 +281,7 @@ export function formatModelFallbackReason(err: unknown, key?: string): string {
   if (kind === 'overload') return 'HTTP 503/429 temporary high demand';
   if (kind === 'not_found') return 'HTTP 404 model unavailable';
   if (kind === 'timeout') return 'request timeout budget reached';
+  if (kind === 'schema_constraint') return 'HTTP 400 schema complexity limit';
   const raw = err instanceof Error ? err.message : String(err);
   const sanitized = sanitizeLogText(raw, key)
     .replace(/[{}"]/g, '')
@@ -281,44 +292,59 @@ export function formatModelFallbackReason(err: unknown, key?: string): string {
 
 const JSON_SCHEMA_COMPACT_GUIDE = `
 CRITICAL JSON OUTPUT FORMAT:
-Return ONLY a valid raw JSON object (no markdown fences, no commentary) with this exact structure:
+Return ONLY a valid raw JSON object (no markdown fences, no commentary) in this exact body-first field order:
 {
-  "brand": "MARROK",
-  "category": "SYSTEM ARCHITECTURE",
   "theme": "teal",
-  "caption": "Bilingual English + Arabic caption with hashtags",
-  "hookVariants": [
-    { "tag": "Contrarian", "framework": "Contrarian", "score": 92, "selected": true, "enTitle": "<6-to-12 word contrarian hook challenging Slide 2 failure without filler>", "arTitle": "<Natural Arabic RTL hook naming Slide 2 failure>", "enBody": "", "arBody": "" },
-    { "tag": "Specific Metric", "framework": "Specific Metric", "score": 88, "selected": false, "enTitle": "<6-to-12 word hook anchoring Slide 2 concrete metric without colons or emojis>", "arTitle": "<Arabic RTL metric hook grounded in Slide 2>", "enBody": "", "arBody": "" },
-    { "tag": "Mistake Callout", "framework": "Mistake Callout", "score": 85, "selected": false, "enTitle": "<6-to-12 word mistake callout exposing Slide 2 failure mode>", "arTitle": "<Arabic RTL hook calling out Slide 2 mistake>", "enBody": "", "arBody": "" },
-    { "tag": "Curiosity Gap", "framework": "Curiosity Gap", "score": 84, "selected": false, "enTitle": "<6-to-12 word curiosity question tied directly to Slide 2 mechanism?>", "arTitle": "<Arabic RTL question tied to Slide 2?>", "enBody": "", "arBody": "" },
-    { "tag": "Curiosity Gap", "framework": "Curiosity Gap", "score": 81, "selected": false, "enTitle": "<6-to-12 word secondary curiosity hook bridging Slide 2 to Slide 3>", "arTitle": "<Arabic RTL curiosity hook bridging Slide 2 to Slide 3>", "enBody": "", "arBody": "" }
-  ],
+  "category": "SYSTEM ARCHITECTURE",
+  "sourceMeta": { "title": "Source title", "creator": "Author or Publisher", "url": "" },
   "facts": [
-    { "text": "Key engineering fact", "verified": "unconfirmed" }
+    { "text": "Key engineering fact", "type": "claim", "verified": "unconfirmed" }
   ],
+  "coreInsight": "One concise sentence capturing the counter-intuitive insight or painful mistake.",
+  "slide2Draft": {
+    "enTitle": "Concrete problem or failure headline",
+    "arTitle": "عنوان عربي طبيعي يصف المشكلة",
+    "enBody": "Concise under-20-word explanation of what breaks.",
+    "arBody": "شرح عربي مختصر أقل من ٢٠ كلمة."
+  },
   "slides": [
     {
-      "type": "metric",
-      "enTitle": "Primary Slide 1 hook strictly six to twelve words long",
-      "arTitle": "عنوان عربي طبيعي مع إبقاء Latency و API بالإنجليزية",
-      "enBody": "",
-      "arBody": "",
-      "icon": "cpu",
-      "satellites": [
-        { "label": "Node A", "arLabel": "عقدة أ", "sub": "Subtext", "icon": "server" },
-        { "label": "Node B", "arLabel": "عقدة ب", "sub": "Subtext", "icon": "shield" },
-        { "label": "Node C", "arLabel": "عقدة ج", "sub": "Subtext", "icon": "zap" },
-        { "label": "Node D", "arLabel": "عقدة د", "sub": "Subtext", "icon": "lock" }
-      ],
+      "type": "row",
+      "enTitle": "Slide 2 problem headline",
+      "arTitle": "عنوان الشريحة الثانية",
+      "enBody": "Concise problem body under 20 words.",
+      "arBody": "نص عربي مختصر للشريحة الثانية.",
       "diagramVariant": "topology",
       "diagramNodes": [
-        { "id": "n1", "label": "Ingress", "sublabel": "mTLS", "icon": "globe" },
-        { "id": "n2", "label": "Runtime", "sublabel": "Isolate", "icon": "cpu" },
-        { "id": "n3", "label": "Storage", "sublabel": "WAL", "icon": "database" }
-      ]
+        { "label": "Ingress", "sublabel": "mTLS", "status": "ACTIVE", "icon": "globe" },
+        { "label": "Runtime", "sublabel": "Isolate", "status": "ACTIVE", "icon": "cpu" },
+        { "label": "Storage", "sublabel": "WAL", "status": "ACTIVE", "icon": "database" }
+      ],
+      "diagramEdges": ["REQ", "FLUSH"],
+      "diagramFooter": "FLOW: INGRESS -> ISOLATE -> WAL"
     }
-  ]
+  ],
+  "hookVariants": [
+    { "tag": "Contrarian", "framework": "Contrarian", "score": 92, "selected": true, "enTitle": "<6-to-12 word contrarian hook challenging Slide 2 failure without filler>", "arTitle": "<Natural Arabic RTL hook naming Slide 2 failure>", "enBody": "", "arBody": "", "coverStyle": "headline-hero", "coverTeaserEn": "<1-line <=68 char teaser>", "coverTeaserAr": "<جملة تمهيد عربية مختلفة عن العنوان>" },
+    { "tag": "Specific Metric", "framework": "Specific Metric", "score": 88, "selected": false, "enTitle": "<6-to-12 word hook anchoring Slide 2 concrete metric without colons or emojis>", "arTitle": "<Arabic RTL metric hook grounded in Slide 2>", "enBody": "", "arBody": "", "coverStyle": "metric-split", "coverTeaserEn": "<1-line <=68 char teaser>", "coverTeaserAr": "<جملة تمهيد عربية>" },
+    { "tag": "Mistake Callout", "framework": "Mistake Callout", "score": 85, "selected": false, "enTitle": "<6-to-12 word mistake callout exposing Slide 2 failure mode>", "arTitle": "<Arabic RTL hook calling out Slide 2 mistake>", "enBody": "", "arBody": "", "coverStyle": "visual-teaser", "coverTeaserEn": "<1-line <=68 char teaser>", "coverTeaserAr": "<جملة تمهيد عربية>" },
+    { "tag": "Curiosity Gap", "framework": "Curiosity Gap", "score": 84, "selected": false, "enTitle": "<6-to-12 word curiosity question tied directly to Slide 2 mechanism?>", "arTitle": "<Arabic RTL question tied to Slide 2?>", "enBody": "", "arBody": "", "coverStyle": "headline-hero", "coverTeaserEn": "<1-line <=68 char teaser>", "coverTeaserAr": "<جملة تمهيد عربية>" },
+    { "tag": "Curiosity Gap", "framework": "Curiosity Gap", "score": 81, "selected": false, "enTitle": "<6-to-12 word secondary curiosity hook bridging Slide 2 to Slide 3>", "arTitle": "<Arabic RTL curiosity hook bridging Slide 2 to Slide 3>", "enBody": "", "arBody": "", "coverStyle": "headline-hero", "coverTeaserEn": "<1-line <=68 char teaser>", "coverTeaserAr": "<جملة تمهيد عربية>" }
+  ],
+  "selectedHookIndex": 0,
+  "slide1": {
+    "type": "metric",
+    "coverStyle": "metric-split",
+    "enTitle": "Primary Slide 1 hook strictly six to twelve words long",
+    "arTitle": "عنوان عربي طبيعي مع إبقاء Latency و API بالإنجليزية",
+    "enBody": "",
+    "arBody": "",
+    "coverTeaserEn": "One-line swipe bridge under 68 chars",
+    "coverTeaserAr": "جملة تمهيد عربية قصيرة تدفع للسحب",
+    "showSwipeCue": true
+  },
+  "caption": "Bilingual English + Arabic caption with hashtags",
+  "brand": "MARROK"
 }`;
 
 /**
@@ -646,6 +672,7 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
       const failedModelsInAttempt = new Set<string>();
       const prioritizedForGrounded = getPrioritizedModels(config.generationModels);
       const primaryModel = prioritizedForGrounded[0] || 'gemini-4-hydrogen';
+      let schemaConstraintModel: string | null = null;
 
       // Attempt 1: Single Grounded Attempt (only for short text prompts without images)
       if (!isLongInput && !hasImage && !overallAbort.signal.aborted && remainingBudgetMs() >= 4500) {
@@ -715,20 +742,30 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
             }
           }
         } catch (groundingErr: unknown) {
+          const errKind = classifyModelError(groundingErr);
           recordModelUnavailable(primaryModel, groundingErr);
           attemptedProviders.push(`${primaryModel}:grounded`);
           lastFailureReason = formatModelFallbackReason(groundingErr, key);
-          if (classifyModelError(groundingErr) !== 'timeout') {
-            failedModelsInAttempt.add(primaryModel);
+          if (errKind === 'schema_constraint') {
+            schemaConstraintModel = primaryModel;
+            console.info(
+              `[AI-Gateway] Grounded schema on ${primaryModel} (${label}) hit schema complexity limit; switching immediately to fast JSON mode.`
+            );
+          } else {
+            if (errKind !== 'timeout') {
+              failedModelsInAttempt.add(primaryModel);
+            }
+            console.info(
+              `[AI-Gateway] Grounded mode on ${primaryModel} (${label}) unavailable (${lastFailureReason}); cascading to direct schema mode.`
+            );
           }
-          console.info(
-            `[AI-Gateway] Grounded mode on ${primaryModel} (${label}) unavailable (${lastFailureReason}); cascading to direct schema mode.`
-          );
         }
       }
 
       // Attempt 2: Ungrounded Direct Schema Attempt across prioritized fallback models
-      const directCandidates = getPrioritizedModels(config.generationModels, failedModelsInAttempt);
+      const directCandidates = schemaConstraintModel
+        ? []
+        : getPrioritizedModels(config.generationModels, failedModelsInAttempt);
       for (const model of directCandidates) {
         if (overallAbort.signal.aborted || remainingBudgetMs() < 3000) break;
         const baseTimeout = hasImage ? DIRECT_IMAGE_TIMEOUT_MS : DIRECT_TEXT_TIMEOUT_MS;
@@ -768,31 +805,43 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
             }
           }
         } catch (directErr: unknown) {
+          const errKind = classifyModelError(directErr);
           recordModelUnavailable(model, directErr);
-          failedModelsInAttempt.add(model);
           attemptedProviders.push(`${model}:schema`);
           lastFailureReason = formatModelFallbackReason(directErr, key);
+          if (errKind === 'schema_constraint') {
+            schemaConstraintModel = model;
+            console.info(
+              `[AI-Gateway] Direct schema on ${model} (${label}) hit schema complexity limit; switching immediately to fast JSON mode.`
+            );
+            break;
+          }
+          failedModelsInAttempt.add(model);
           console.info(
             `[AI-Gateway] Direct mode on ${model} (${label}) unavailable (${lastFailureReason}); trying next fallback.`
           );
         }
       }
 
-      // Attempt 3: Lightweight fast JSON-mode pass without strict responseSchema overhead on Lite/Flash
-      if (!jsonResult && !hasImage && !overallAbort.signal.aborted && remainingBudgetMs() >= 3000) {
-        const liteModel =
+      // Attempt 3: Lightweight fast JSON-mode pass without strict responseSchema overhead
+      if (!jsonResult && (!hasImage || schemaConstraintModel) && !overallAbort.signal.aborted && remainingBudgetMs() >= 3000) {
+        const jsonFallbackModel =
+          schemaConstraintModel ||
           config.generationModels.find((m) => m.includes('lite')) ||
           config.generationModels[config.generationModels.length - 1] ||
           'gemini-3.1-flash-lite';
-        const timeoutMs = Math.min(8_000, remainingBudgetMs() - 500);
+        const timeoutMs = Math.min(hasImage ? DIRECT_IMAGE_TIMEOUT_MS : 10_000, remainingBudgetMs() - 500);
         try {
           console.info(
-            `[AI-Gateway] Trying lightweight fast JSON pass on ${liteModel} (${label})...`
+            `[AI-Gateway] Trying lightweight fast JSON pass on ${jsonFallbackModel} (${label})...`
           );
+          const jsonModeContents = hasImage
+            ? { parts: [...parts.slice(0, -1), { text: `${userPromptText}\n\n${JSON_SCHEMA_COMPACT_GUIDE}` }] }
+            : `${userPromptText}\n\n${JSON_SCHEMA_COMPACT_GUIDE}`;
           const liteResponse = await activeAi.models.generateContent({
-            model: liteModel,
-            contents: `${userPromptText}\n\n${JSON_SCHEMA_COMPACT_GUIDE}`,
-            config: buildGeminiContentConfig(liteModel, {
+            model: jsonFallbackModel,
+            contents: jsonModeContents,
+            config: buildGeminiContentConfig(jsonFallbackModel, {
               systemInstruction: MARROK_SYSTEM_PROMPT,
               temperature: 0.2,
               responseMimeType: 'application/json',
@@ -809,17 +858,17 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
             if (parsed) {
               parsed.facts = mapFactsWithGroundingSupports(parsed.facts, [], []);
               jsonResult = parsed;
-              successfulModel = liteModel;
+              successfulModel = jsonFallbackModel;
               wasGroundedWithSources = false;
-              modelCooldownUntil.delete(liteModel);
+              modelCooldownUntil.delete(jsonFallbackModel);
               break keyLoop;
             }
           }
         } catch (liteErr: unknown) {
-          attemptedProviders.push(`${liteModel}:lite-json`);
+          attemptedProviders.push(`${jsonFallbackModel}:lite-json`);
           lastFailureReason = formatModelFallbackReason(liteErr, key);
           console.info(
-            `[AI-Gateway] Lightweight JSON pass on ${liteModel} (${label}) unavailable (${lastFailureReason}).`
+            `[AI-Gateway] Lightweight JSON pass on ${jsonFallbackModel} (${label}) unavailable (${lastFailureReason}).`
           );
         }
       }

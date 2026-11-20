@@ -17,6 +17,7 @@ import type {
   PostFormat,
   PostFormatDraftSnapshot,
   PostSourceMeta,
+  Slide2Draft,
   SlideCompositionPreset,
   SlideData,
   SlideTakeawayItem,
@@ -750,6 +751,21 @@ function parseFacts(value: unknown): ExtractedFact[] | undefined {
   return facts.length > 0 ? facts.slice(0, 30) : undefined;
 }
 
+function parseSlide2Draft(value: unknown): Slide2Draft | undefined {
+  if (!isRecord(value)) return undefined;
+  const enTitle = readString(value, 'enTitle', 500)?.trim();
+  const arTitle = readString(value, 'arTitle', 500)?.trim();
+  const enBody = readString(value, 'enBody', 1200)?.trim();
+  const arBody = readString(value, 'arBody', 1200)?.trim();
+  if (!enTitle && !enBody && !arTitle && !arBody) return undefined;
+  return {
+    enTitle: enTitle || '',
+    arTitle: arTitle || '',
+    enBody: enBody || '',
+    arBody: arBody || '',
+  };
+}
+
 function parseCaptionVariants(value: unknown): CaptionVariant[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const variants: CaptionVariant[] = [];
@@ -879,19 +895,45 @@ export function parseCarouselData(
   const minSlides = isSingleOrReelFormat ? 1 : Math.max(1, options.minSlides ?? 1);
   const maxSlides = Math.max(minSlides, options.maxSlides ?? DEFAULT_MAX_SLIDES);
 
-  if (value.slides.length < minSlides || value.slides.length > maxSlides) return null;
+  const rawSlide1 = isRecord(value.slide1) ? value.slide1 : null;
+  const hasSeparateSlide1 = Boolean(rawSlide1 && !isSingleOrReelFormat);
+  const rawSlides = value.slides;
 
-  const slides: SlideData[] = [];
-  for (let index = 0; index < value.slides.length; index += 1) {
+  const bodySlides: SlideData[] = [];
+  const totalExpected = rawSlides.length + (hasSeparateSlide1 ? 1 : 0);
+  for (let index = 0; index < rawSlides.length; index += 1) {
+    const logicalIndex = hasSeparateSlide1 ? index + 1 : index;
     const parsed = parseSlide(
-      value.slides[index],
-      index,
-      value.slides.length,
+      rawSlides[index],
+      logicalIndex,
+      totalExpected,
       options.requireSlideContent ?? false
     );
     if (!parsed) return null;
-    slides.push(parsed);
+    bodySlides.push(parsed);
   }
+
+  let slides: SlideData[] = bodySlides;
+  if (hasSeparateSlide1 && rawSlide1) {
+    const parsedSlide1 = parseSlide(
+      rawSlide1,
+      0,
+      totalExpected,
+      options.requireSlideContent ?? false
+    );
+    if (parsedSlide1) {
+      const firstBody = bodySlides[0];
+      const normTitle = (t?: string) => (t || '').trim().toLowerCase().replace(/[.?!]+$/, '');
+      const isDuplicateCover =
+        Boolean(firstBody) &&
+        ((normTitle(firstBody.enTitle) !== '' &&
+          normTitle(firstBody.enTitle) === normTitle(parsedSlide1.enTitle)) ||
+          firstBody.storyRole === 'hook');
+      slides = isDuplicateCover ? [parsedSlide1, ...bodySlides.slice(1)] : [parsedSlide1, ...bodySlides];
+    }
+  }
+
+  if (slides.length < minSlides || slides.length > maxSlides) return null;
 
   const carousel: CarouselData = {
     theme: readString(value, 'theme', 80) || 'teal',
@@ -915,6 +957,9 @@ export function parseCarouselData(
   const shortCaption = readString(value, 'shortCaption', 3000);
   const screenHook = readString(value, 'screenHook', 1000);
   const scheduleSlot = readString(value, 'scheduleSlot', 300);
+  const coreInsight = readString(value, 'coreInsight', 600);
+  const slide2Draft = parseSlide2Draft(value.slide2Draft);
+  const selectedHookIndex = readNumber(value, 'selectedHookIndex', 0, 9);
   const sourceMeta = parseSourceMeta(value.sourceMeta);
   const facts = parseFacts(value.facts);
   const notesForHuman = readStringArray(value.notesForHuman, 20, 1000);
@@ -933,6 +978,9 @@ export function parseCarouselData(
   if (shortCaption) carousel.shortCaption = shortCaption;
   if (screenHook) carousel.screenHook = screenHook;
   if (scheduleSlot) carousel.scheduleSlot = scheduleSlot;
+  if (coreInsight) carousel.coreInsight = coreInsight;
+  if (slide2Draft) carousel.slide2Draft = slide2Draft;
+  if (selectedHookIndex !== undefined) carousel.selectedHookIndex = Math.floor(selectedHookIndex);
   if (sourceMeta) carousel.sourceMeta = sourceMeta;
   if (facts) carousel.facts = facts;
   if (notesForHuman) carousel.notesForHuman = notesForHuman;

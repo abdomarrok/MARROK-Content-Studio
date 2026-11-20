@@ -336,6 +336,13 @@ export interface ExtractedFact {
   sourceTitle?: string;
 }
 
+export interface Slide2Draft {
+  enTitle: string;
+  arTitle: string;
+  enBody: string;
+  arBody: string;
+}
+
 export interface GroundingSource {
   title: string;
   url: string;
@@ -594,6 +601,9 @@ export interface CarouselData {
   screenHook?: string;   // Spec §8: 3-second on-screen hook
   sourceMeta?: PostSourceMeta; // Spec §4 & §11: Source metadata
   facts?: ExtractedFact[];     // Spec §4 & §11: Extracted and verified facts
+  coreInsight?: string;        // Phase 1: One-sentence counter-intuitive insight or mistake committed before hooks
+  slide2Draft?: Slide2Draft;   // Phase 1: Draft of Slide 2 problem slide committed before body slides & hooks
+  selectedHookIndex?: number;  // Phase 1: 0-based index of chosen hook in hookVariants
   notesForHuman?: string[];    // Spec §11 & §18: Human review notes and caveats
   scheduleSlot?: string;       // Spec §14 & §17: Recommended posting slot (e.g. "18:00 DZ")
   captionVariants?: CaptionVariant[];

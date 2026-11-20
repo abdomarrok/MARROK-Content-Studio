@@ -1096,16 +1096,26 @@ export function applyViralHookTierSelection(
     };
   });
 
+  const enrichedSourceContext = [
+    rawSourceText,
+    carousel.coreInsight || '',
+    carousel.slide2Draft
+      ? `${carousel.slide2Draft.enTitle} ${carousel.slide2Draft.enBody}`.trim()
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
   const fiveHooks = buildBodyFirstHookVariations(
     cleanedSlides,
-    rawSourceText,
+    enrichedSourceContext,
     carousel.hookVariants || []
   );
 
   const bodySlides = cleanedSlides.length > 1 ? cleanedSlides.slice(1) : cleanedSlides;
   const scoredHooks = fiveHooks
     .map((hook) => {
-      const breakdown = scoreHookVariant(hook, bodySlides, rawSourceText);
+      const breakdown = scoreHookVariant(hook, bodySlides, enrichedSourceContext);
       return {
         ...hook,
         score: breakdown.score,

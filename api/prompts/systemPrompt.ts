@@ -171,14 +171,14 @@ export function buildUserCarouselPrompt(options: {
 - Return valid JSON matching the exact schema.`;
   } else {
     userPromptText += `\nInstructions for the 4-Step High-Converting 8-Slide Carousel Pipeline:
-1. Extract Core Value: Identify ONE counter-intuitive insight or painful mistake. Discard generic summaries.
-2. Draft Body Slides First (Slides 2..8): Adhere strictly to "1 Idea Per Slide" and keep EVERY body slide under 20 words per language with strong narrative flow:
+1. Extract Core Value (coreInsight + slide2Draft): Commit ONE counter-intuitive insight or painful mistake in coreInsight and draft Slide 2 (the concrete problem/mistake) in slide2Draft before writing body slides or hooks. Discard generic summaries.
+2. Draft Body Slides First (slides = Slides 2..8): Adhere strictly to "1 Idea Per Slide" and keep EVERY body slide under 20 words per language with strong narrative flow:
    * Slide 2 (Problem / Mistake): What broke at scale or the costly mistake ("metric", "compare", "visual", or "row").
    * Slides 3-6 (Mechanism & Proof): Exact mechanisms, configurations, or numbers. Mix archetypes dynamically ("visual" with bar-chart/sequence/timeline/matrix/table/callout/svg when appropriate, "compare", "code", "metric", "number", "row" with varied diagramVariants).
    * Slide 7 (Specific Tension / Verdict): Concrete operational cost or tension ("row" with diagramVariant 'takeaway' or 'isolation', or "visual" matrix/callout). NEVER title it "The core trade-off." or "المقايضة الجوهرية".
    * Slide 8 ("cta" — Polarizing Question): Sharp practitioner question as headline ('enTitle' / 'arTitle'). NEVER title it "Join the discussion." or "شارك في النقاش".
-3. Generate 5 Hook Variations (hookVariants[]): Dynamically derive 5 distinct Slide 1 options directly from Slide 2's specific problem, metric, or architectural failure across ALL 4 frameworks ("Contrarian", "Specific Metric", "Mistake Callout", "Curiosity Gap") with framework, tag, score (0-100), selectionReason, coverArchetype, coverStyle ('headline-hero' | 'metric-split' | 'versus-hook' | 'visual-teaser'), hookKicker, coverTeaserEn, and coverTeaserAr. Zero generic template phrasing.
-4. Automated Selection -> Slide 1 Cover Hero: Score hooks on scroll-stopping strength, Slide 2 grounding, and zero clichés/generic filler; promote the highest-scoring option into Slide 1 (slides[0]) with coverStyle, <= 68 char single-line coverTeaserEn / coverTeaserAr, showSwipeCue: true, and empty enBody / arBody ("").
+3. Generate 5 Hook Variations (hookVariants[]): Dynamically derive 5 distinct Slide 1 options directly from coreInsight, slide2Draft, and the committed body slides across ALL 4 frameworks ("Contrarian", "Specific Metric", "Mistake Callout", "Curiosity Gap") with framework, tag, score (0-100), selectionReason, coverArchetype, coverStyle ('headline-hero' | 'metric-split' | 'versus-hook' | 'visual-teaser'), hookKicker, coverTeaserEn, and coverTeaserAr. Zero generic template phrasing.
+4. Automated Selection -> Slide 1 Cover Hero (selectedHookIndex + slide1): Score hooks on scroll-stopping strength, Slide 2 grounding, and zero clichés/generic filler; promote the highest-scoring option into slide1 (with selectedHookIndex) featuring coverStyle, <= 68 char single-line coverTeaserEn / coverTeaserAr, showSwipeCue: true, and empty enBody / arBody ("").
 - Hard Constraints:
   * Slide 1 primary enTitle MUST be 6 to 12 words. Context teaser (coverTeaserEn / coverTeaserAr) MUST be <= 68 chars on 1 line with empty Slide 1 enBody / arBody ("").
   * Bilingual (English and Arabic RTL), dark themed, high visual hierarchy.
@@ -189,6 +189,360 @@ export function buildUserCarouselPrompt(options: {
   return userPromptText;
 }
 
+const VISUAL_SPEC_FULL_SCHEMA = {
+  type: Type.OBJECT,
+  description: 'Universal Visual Engine spec when slide.type === "visual". Populate only fields matching visualSpec.kind.',
+  properties: {
+    kind: {
+      type: Type.STRING,
+      enum: ['bar-chart', 'sequence', 'timeline', 'matrix', 'table', 'callout', 'svg'],
+      description: 'Visual renderer mode: bar-chart, sequence, timeline, matrix, table, callout, or svg',
+    },
+    eyebrow: { type: Type.STRING, description: 'Short uppercase kicker label above the visual header' },
+    title: { type: Type.STRING, description: 'Concise visual chart/diagram title' },
+    footnote: { type: Type.STRING, description: 'Source note, methodology, or axis caveat' },
+    orientation: {
+      type: Type.STRING,
+      enum: ['horizontal', 'vertical'],
+      description: 'Bar chart orientation (default horizontal)',
+    },
+    unit: { type: Type.STRING, description: 'Explicit metric unit for bar-chart (e.g. ms, %, req/s, GB)' },
+    deltaBadge: { type: Type.STRING, description: 'Compact comparison delta badge (e.g. "-84% p99" or "4.2x faster")' },
+    bars: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          label: { type: Type.STRING },
+          value: { type: Type.NUMBER },
+          displayValue: { type: Type.STRING },
+          tone: { type: Type.STRING, enum: ['accent', 'muted', 'alert'] },
+          isWinner: { type: Type.BOOLEAN },
+        },
+        required: ['label', 'value'],
+      },
+      description: 'Up to 6 bars for kind="bar-chart"',
+    },
+    actors: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+      description: '2 to 4 vertical lifeline actor names for kind="sequence"',
+    },
+    steps: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          from: { type: Type.NUMBER, description: '0-based index into actors[]' },
+          to: { type: Type.NUMBER, description: '0-based index into actors[]' },
+          label: { type: Type.STRING },
+          tag: { type: Type.STRING },
+          style: { type: Type.STRING, enum: ['solid', 'dashed', 'alert'] },
+        },
+        required: ['from', 'to', 'label'],
+      },
+      description: 'Up to 6 directed message steps for kind="sequence"',
+    },
+    events: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          time: { type: Type.STRING, description: 'Timestamp or phase (e.g. 14:02 UTC or T+12m)' },
+          title: { type: Type.STRING },
+          detail: { type: Type.STRING },
+          severity: { type: Type.STRING, enum: ['info', 'warn', 'incident', 'resolved'] },
+        },
+        required: ['time', 'title'],
+      },
+      description: '3 to 5 chronological incident/milestone events for kind="timeline"',
+    },
+    xAxisLow: { type: Type.STRING },
+    xAxisHigh: { type: Type.STRING },
+    yAxisLow: { type: Type.STRING },
+    yAxisHigh: { type: Type.STRING },
+    quadrants: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          title: { type: Type.STRING },
+          detail: { type: Type.STRING },
+          highlight: { type: Type.BOOLEAN },
+        },
+        required: ['title'],
+      },
+      description: '4 cells [top-left, top-right, bottom-left, bottom-right] for kind="matrix"',
+    },
+    columns: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+      description: '2 to 4 column headers for kind="table"',
+    },
+    rows: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING },
+      },
+      description: '2 to 5 rows matching columns.length for kind="table"',
+    },
+    highlightColumn: { type: Type.NUMBER, description: '0-based winning column index for kind="table"' },
+    calloutStyle: {
+      type: Type.STRING,
+      enum: ['quote', 'stat'],
+      description: 'Editorial style for kind="callout"',
+    },
+    quote: { type: Type.STRING },
+    statValue: { type: Type.STRING },
+    statLabel: { type: Type.STRING },
+    author: { type: Type.STRING },
+    role: { type: Type.STRING },
+    source: { type: Type.STRING },
+    evidence: { type: Type.STRING },
+    svgCode: {
+      type: Type.STRING,
+      description: 'Sanitized SVG markup (viewBox 0 0 846 490) using MARROK tokens {{accent}}, {{alert}}, {{surface}}, {{surfaceBorder}}, {{textWhite}}, {{textMuted}}, {{baseBg}} for kind="svg"',
+    },
+    viewBox: { type: Type.STRING, description: 'Optional SVG viewBox (default "0 0 846 490")' },
+  },
+  required: ['kind'],
+};
+
+/**
+ * Compact visualSpec schema for primary carousel generation so Gemini Flash Lite's
+ * constrained-decoding FSM stays well below the maximum state ceiling.
+ */
+const VISUAL_SPEC_COMPACT_SCHEMA = {
+  type: Type.OBJECT,
+  description: 'Structured visual spec when slide.type === "visual" (populate only fields matching kind).',
+  properties: {
+    kind: {
+      type: Type.STRING,
+      description: 'One of: bar-chart, sequence, timeline, matrix, table, callout, svg',
+    },
+    title: { type: Type.STRING, description: 'Concise chart/diagram title' },
+    unit: { type: Type.STRING, description: 'Unit for bar-chart (ms, %, req/s, GB)' },
+    deltaBadge: { type: Type.STRING, description: 'Compact delta badge (e.g. -84% p99)' },
+    bars: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          label: { type: Type.STRING },
+          value: { type: Type.NUMBER },
+          displayValue: { type: Type.STRING },
+        },
+        required: ['label', 'value'],
+      },
+    },
+    actors: { type: Type.ARRAY, items: { type: Type.STRING } },
+    steps: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          from: { type: Type.NUMBER },
+          to: { type: Type.NUMBER },
+          label: { type: Type.STRING },
+        },
+        required: ['from', 'to', 'label'],
+      },
+    },
+    events: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          time: { type: Type.STRING },
+          title: { type: Type.STRING },
+          detail: { type: Type.STRING },
+        },
+        required: ['time', 'title'],
+      },
+    },
+    quadrants: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          title: { type: Type.STRING },
+          detail: { type: Type.STRING },
+        },
+        required: ['title'],
+      },
+    },
+    columns: { type: Type.ARRAY, items: { type: Type.STRING } },
+    rows: {
+      type: Type.ARRAY,
+      items: { type: Type.ARRAY, items: { type: Type.STRING } },
+    },
+    quote: { type: Type.STRING },
+    statValue: { type: Type.STRING },
+    statLabel: { type: Type.STRING },
+    author: { type: Type.STRING },
+    svgCode: { type: Type.STRING, description: 'Safe SVG markup (viewBox 0 0 846 490) using MARROK theme tokens' },
+  },
+  required: ['kind'],
+};
+
+const DIAGRAM_NODE_COMPACT_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    label: { type: Type.STRING, description: 'Component name e.g. "PgBouncer", "Primary DB", "JVM Sandbox"' },
+    sublabel: { type: Type.STRING, description: 'Protocol, port, or spec' },
+    status: { type: Type.STRING, description: 'Status pill text e.g. "POOLED", "ACTIVE", "ISOLATED"' },
+    icon: { type: Type.STRING, description: 'Lucide icon name e.g. database, server, cpu, lock' },
+  },
+  required: ['label'],
+};
+
+const SUBJECT_PAIR_COMPACT_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    beforeSystem: { type: Type.STRING, description: 'Baseline system name (e.g. Cassandra)' },
+    afterSystem: { type: Type.STRING, description: 'Target system name (e.g. ScyllaDB)' },
+    storyOwner: { type: Type.STRING, description: 'Company owning the migration story as text (e.g. Discord)' },
+    flowLabel: { type: Type.STRING, description: 'e.g. CHAT WORKLOAD → COMPACTED SHARDS' },
+  },
+  description: 'For migration or A vs B stories: 2 verified systems and story owner wordmark',
+};
+
+const BODY_SLIDE_ITEM_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    type: {
+      type: Type.STRING,
+      description: 'row, number, metric, code, compare, cta, poster, subjectPair, or visual',
+    },
+    enTitle: {
+      type: Type.STRING,
+      description: 'English headline: 2 to 8 words on body & CTA slides (<= 45 chars, zero colons/emojis/cliches/filler).',
+    },
+    arTitle: {
+      type: Type.STRING,
+      description: 'Concise natural Arabic headline keeping ALL technical nouns and units in English Latin script.',
+    },
+    enBody: {
+      type: Type.STRING,
+      description: 'English body copy under 20 words',
+    },
+    arBody: {
+      type: Type.STRING,
+      description: 'Natural Arabic body copy under 20 words keeping tech nouns/units in English; end with an Arabic word before punctuation.',
+    },
+    diagramVariant: {
+      type: Type.STRING,
+      description: 'For row slides: topology, stack, isolation, takeaway, scatter, graph, clusters, split, or features',
+    },
+    diagramNodes: {
+      type: Type.ARRAY,
+      items: DIAGRAM_NODE_COMPACT_SCHEMA,
+      description: 'Exactly 3 topic-specific component cards for row slides',
+    },
+    diagramEdges: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+      description: '2 short arrow labels between the 3 diagram nodes',
+    },
+    diagramFooter: {
+      type: Type.STRING,
+      description: 'Bottom spec bar line for row slides',
+    },
+    stepNumber: { type: Type.STRING, description: 'Step numeral e.g. 01, 02, 03 for number slides' },
+    stepLabel: { type: Type.STRING, description: 'Step badge e.g. STEP 01 for number slides' },
+    metricValue: {
+      type: Type.STRING,
+      description: 'Hero WIN metric number ONLY if present in source (leave empty if source has no numbers).',
+    },
+    metricBeforeValue: { type: Type.STRING, description: 'Old baseline value when comparing before/after' },
+    metricLabel: { type: Type.STRING, description: 'Real source metric label' },
+    metricDiff: { type: Type.STRING, description: 'Plain-language outcome delta' },
+    codeSnippet: { type: Type.STRING, description: 'Multi-line code snippet for code slide' },
+    codeFileName: { type: Type.STRING, description: 'File or tab name for code window' },
+    codeLanguage: { type: Type.STRING, description: 'Language for code slide (bash, rust, python, sql)' },
+    compareLeftTitle: { type: Type.STRING, description: 'Left card title for compare slide' },
+    compareLeftBody: { type: Type.STRING, description: 'Left card bullet points for compare slide' },
+    compareRightTitle: { type: Type.STRING, description: 'Right card title for compare slide' },
+    compareRightBody: { type: Type.STRING, description: 'Right card bullet points for compare slide' },
+    subjectPair: SUBJECT_PAIR_COMPACT_SCHEMA,
+    visualSpec: VISUAL_SPEC_COMPACT_SCHEMA,
+    takeaways: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          en: { type: Type.STRING },
+          ar: { type: Type.STRING },
+        },
+        required: ['en', 'ar'],
+      },
+      description: 'Up to 3 bilingual key takeaway bullets for single-slide poster slides',
+    },
+    ctaText: { type: Type.STRING, description: 'Pill button text for cta slide' },
+    url: { type: Type.STRING, description: 'Website URL for cta slide' },
+    enCredit: { type: Type.STRING, description: 'English source attribution footer for cta/poster slide' },
+    arCredit: { type: Type.STRING, description: 'Arabic source attribution footer for cta/poster slide' },
+  },
+  required: ['type', 'enTitle', 'arTitle', 'enBody', 'arBody'],
+};
+
+/**
+ * Slim Cover Hero schema for Slide 1 (generated AFTER body slides & hookVariants)
+ * to keep compiled grammar states well below Gemini Flash Lite's FSM ceiling.
+ */
+const SLIDE1_COVER_SCHEMA = {
+  type: Type.OBJECT,
+  description: 'Selected Slide 1 Cover Hero promoted AFTER hookVariants (multi-slide carousels only). Must set enBody="", arBody="", showSwipeCue=true, coverStyle, coverTeaserEn, and coverTeaserAr, and never use type "hub".',
+  properties: {
+    type: {
+      type: Type.STRING,
+      description: 'Cover focal archetype: metric, compare, row, subjectPair, or visual (NEVER hub)',
+    },
+    coverStyle: {
+      type: Type.STRING,
+      description: 'Cover Hero style: headline-hero, metric-split, versus-hook (only with type compare), or visual-teaser',
+    },
+    hookKicker: {
+      type: Type.STRING,
+      description: 'Short 2-4 word uppercase kicker badge (max 32 chars, no colons/emojis)',
+    },
+    enTitle: {
+      type: Type.STRING,
+      description: 'Winning Slide 1 English hook (6 to 12 words, <= 76 chars, zero colons/emojis/cliches)',
+    },
+    arTitle: {
+      type: Type.STRING,
+      description: 'Winning Slide 1 natural Arabic hook preserving English tech nouns/units',
+    },
+    enBody: { type: Type.STRING, description: 'MUST be empty string "" on multi-slide Slide 1' },
+    arBody: { type: Type.STRING, description: 'MUST be empty string "" on multi-slide Slide 1' },
+    coverTeaserEn: {
+      type: Type.STRING,
+      description: 'Distinct 1-line English swipe teaser (<= 68 chars, zero colons/emojis)',
+    },
+    coverTeaserAr: {
+      type: Type.STRING,
+      description: 'Distinct 1-line Arabic swipe teaser (<= 68 chars, must NOT duplicate arTitle)',
+    },
+    showSwipeCue: { type: Type.BOOLEAN, description: 'Set true on multi-slide Slide 1' },
+    metricValue: { type: Type.STRING, description: 'Verified source metric only when coverStyle is metric-split' },
+    metricBeforeValue: { type: Type.STRING },
+    metricLabel: { type: Type.STRING },
+    metricDiff: { type: Type.STRING },
+    compareLeftTitle: { type: Type.STRING },
+    compareLeftBody: { type: Type.STRING },
+    compareRightTitle: { type: Type.STRING },
+    compareRightBody: { type: Type.STRING },
+    diagramVariant: { type: Type.STRING },
+    diagramNodes: { type: Type.ARRAY, items: DIAGRAM_NODE_COMPACT_SCHEMA },
+    diagramEdges: { type: Type.ARRAY, items: { type: Type.STRING } },
+    diagramFooter: { type: Type.STRING },
+    subjectPair: SUBJECT_PAIR_COMPACT_SCHEMA,
+  },
+  required: ['type', 'coverStyle', 'enTitle', 'arTitle', 'enBody', 'arBody', 'coverTeaserEn', 'coverTeaserAr', 'showSwipeCue'],
+};
+
 export const CAROUSEL_RESPONSE_SCHEMA = {
   type: Type.OBJECT,
   properties: {
@@ -198,15 +552,7 @@ export const CAROUSEL_RESPONSE_SCHEMA = {
     },
     category: {
       type: Type.STRING,
-      description: 'Specific technical domain category extracted directly from input context (e.g. CYBERSECURITY & DEFENSE, VCS & MONOREPOS, DATABASES & CACHING, LINUX KERNEL)',
-    },
-    brand: {
-      type: Type.STRING,
-      description: 'Brand wordmark for slide watermark. MUST strictly be "MARROK" — never put the external source here.',
-    },
-    brandUrl: {
-      type: Type.STRING,
-      description: 'Studio website URL. MUST strictly be "marrok.org" — never put the external source URL here.',
+      description: 'Specific technical domain category extracted directly from input context',
     },
     sourceMeta: {
       type: Type.OBJECT,
@@ -216,26 +562,8 @@ export const CAROUSEL_RESPONSE_SCHEMA = {
         creator: { type: Type.STRING },
         url: { type: Type.STRING },
         published: { type: Type.STRING },
-        groundingQueries: {
-          type: Type.ARRAY,
-          items: { type: Type.STRING },
-          description: 'Search queries executed during grounding verification',
-        },
-        groundingSources: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING },
-              url: { type: Type.STRING },
-            },
-            required: ['title', 'url'],
-          },
-          description: 'Authoritative web links found during Google Search grounding',
-        },
-        isSearchGrounded: { type: Type.BOOLEAN },
       },
-      description: 'Spec §4: Source metadata extracted from input & search grounding',
+      description: 'Spec §4: Source metadata extracted from input',
     },
     facts: {
       type: Type.ARRAY,
@@ -245,38 +573,89 @@ export const CAROUSEL_RESPONSE_SCHEMA = {
           text: { type: Type.STRING },
           type: { type: Type.STRING },
           verified: { type: Type.STRING },
-          evidence: { type: Type.STRING },
           sourceUrl: { type: Type.STRING },
           sourceTitle: { type: Type.STRING },
         },
         required: ['text', 'type', 'verified'],
       },
-      description: 'Spec §4 & §5: Extracted and verified facts with source citations',
+      description: 'Spec §4 & §5: Extracted facts with citations',
     },
-    notesForHuman: {
-      type: Type.ARRAY,
-      items: { type: Type.STRING },
-      description: 'Spec §11: Caveats, sponsor segments dropped, and verification notes for human review',
-    },
-    scheduleSlot: {
+    coreInsight: {
       type: Type.STRING,
-      description: 'Spec §14: Recommended posting slot (e.g. 18:00 DZ)',
+      description: 'One concise sentence stating the single counter-intuitive insight or painful mistake extracted from the input. Committed before drafting slides and hooks.',
     },
+    slide2Draft: {
+      type: Type.OBJECT,
+      properties: {
+        enTitle: { type: Type.STRING, description: 'English headline of Slide 2 (the concrete problem, exploit, or failure)' },
+        arTitle: { type: Type.STRING, description: 'Natural Arabic headline of Slide 2 preserving English tech terms' },
+        enBody: { type: Type.STRING, description: 'English body copy of Slide 2 (under 20 words)' },
+        arBody: { type: Type.STRING, description: 'Natural Arabic body copy of Slide 2 (under 20 words)' },
+      },
+      required: ['enTitle', 'arTitle', 'enBody', 'arBody'],
+      description: 'Draft of Slide 2 (Problem / Trigger) committed before body slides and Slide 1 hooks.',
+    },
+    slides: {
+      type: Type.ARRAY,
+      items: BODY_SLIDE_ITEM_SCHEMA,
+      description: 'For multi-slide carousels: body slides 2 through N (Problem -> Mechanism -> Proof -> Takeaway -> CTA), drafted BEFORE hookVariants and slide1. For single-slide posts: the 1 standalone poster slide.',
+    },
+    hookVariants: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          tag: { type: Type.STRING },
+          framework: {
+            type: Type.STRING,
+            description: 'One of: "Contrarian", "Specific Metric", "Mistake Callout", "Curiosity Gap"',
+          },
+          score: { type: Type.NUMBER, description: 'Virality score 0-100' },
+          selected: { type: Type.BOOLEAN, description: 'True for the single option promoted to slide1' },
+          selectionReason: { type: Type.STRING },
+          enTitle: {
+            type: Type.STRING,
+            description: '6 to 12 words primary hook headline (zero emojis, zero colons, zero clichés)',
+          },
+          arTitle: { type: Type.STRING },
+          enBody: { type: Type.STRING, description: 'Empty string ""' },
+          arBody: { type: Type.STRING, description: 'Empty string ""' },
+          hookKicker: { type: Type.STRING },
+          coverArchetype: {
+            type: Type.STRING,
+            description: 'Recommended cover archetype: "metric", "compare", "row", "subjectPair", or "visual"',
+          },
+          coverStyle: {
+            type: Type.STRING,
+            description: 'One of: headline-hero, metric-split, versus-hook, visual-teaser',
+          },
+          coverTeaserEn: { type: Type.STRING, description: '1-line English teaser <= 68 chars' },
+          coverTeaserAr: { type: Type.STRING, description: '1-line Arabic teaser <= 68 chars (must differ from arTitle)' },
+        },
+        required: ['tag', 'enTitle', 'arTitle', 'enBody', 'arBody'],
+      },
+      description: '5 Slide 1 Hook variations generated AFTER coreInsight, slide2Draft, and body slides across Contrarian, Specific Metric, Mistake Callout, and Curiosity Gap, scored against virality heuristics with the highest-scoring option selected for Slide 1',
+    },
+    selectedHookIndex: {
+      type: Type.INTEGER,
+      description: '0-based index of the highest-scoring option in hookVariants promoted to slide1',
+    },
+    slide1: SLIDE1_COVER_SCHEMA,
     caption: {
       type: Type.STRING,
-      description: 'Primary bilingual English + Arabic TikTok description',
+      description: 'Primary bilingual English + Arabic social caption',
     },
     firstComment: {
       type: Type.STRING,
-      description: 'Pinned first comment with reference link per Spec §8 & §14',
+      description: 'Pinned first comment with reference link',
     },
     shortCaption: {
       type: Type.STRING,
-      description: '2-line short caption variant for quick scroll per Spec §8',
+      description: '2-line short caption variant',
     },
     screenHook: {
       type: Type.STRING,
-      description: '3-second on-screen hook text for Slide 1 per Spec §8',
+      description: '3-second on-screen hook text for Slide 1',
     },
     captionVariants: {
       type: Type.ARRAY,
@@ -290,416 +669,25 @@ export const CAROUSEL_RESPONSE_SCHEMA = {
       },
       description: '2 caption style variants (Bulletins vs. Narrative)',
     },
-    hookVariants: {
+    notesForHuman: {
       type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          tag: { type: Type.STRING },
-          framework: {
-            type: Type.STRING,
-            description: 'One of: "Contrarian", "Specific Metric", "Mistake Callout", "Curiosity Gap"',
-          },
-          score: {
-            type: Type.NUMBER,
-            description: 'Automated virality heuristic score from 0 to 100',
-          },
-          selected: {
-            type: Type.BOOLEAN,
-            description: 'True for the single highest-scoring option promoted to Slide 1',
-          },
-          selectionReason: {
-            type: Type.STRING,
-            description: 'Brief rationale explaining why this hook scored higher on virality heuristics',
-          },
-          enTitle: {
-            type: Type.STRING,
-            description: '6 to 12 words primary hook headline (zero emojis, zero colons, zero clichés)',
-          },
-          arTitle: { type: Type.STRING },
-          enBody: {
-            type: Type.STRING,
-            description: 'Optional sub-headline under 8 words (or empty string "")',
-          },
-          arBody: { type: Type.STRING },
-          centerIcon: { type: Type.STRING },
-          hookKicker: {
-            type: Type.STRING,
-            description: '2-to-4 word uppercase viral kicker badge (no colons, no emojis)',
-          },
-          coverArchetype: {
-            type: Type.STRING,
-            description: 'Recommended cover slide archetype for this hook: "metric", "compare", "row", or "visual"',
-          },
-          coverStyle: {
-            type: Type.STRING,
-            enum: ['headline-hero', 'metric-split', 'versus-hook', 'visual-teaser'],
-            description: 'Recommended Slide 1 Cover Hero style for this hook variation',
-          },
-          coverTeaserEn: {
-            type: Type.STRING,
-            description: 'Concise 1-line English cover context teaser under 68 chars (zero colons, zero emojis)',
-          },
-          coverTeaserAr: {
-            type: Type.STRING,
-            description: 'Concise 1-line Arabic cover context teaser under 68 chars preserving English tech terms',
-          },
-        },
-        required: ['tag', 'enTitle', 'arTitle', 'enBody', 'arBody'],
-      },
-      description: '5 Slide 1 Hook variations generated from body slides across Contrarian, Specific Metric, Mistake Callout, and Curiosity Gap, scored against virality heuristics with the highest-scoring option selected for Slide 1',
+      items: { type: Type.STRING },
+      description: 'Caveats and verification notes for human review',
     },
-    slides: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          type: {
-            type: Type.STRING,
-            description: 'hub, row, number, metric, code, compare, image, cta, poster, subjectPair, or visual',
-          },
-          hookKicker: {
-            type: Type.STRING,
-            description: 'Short 2-4 word uppercase viral hook kicker above the headline (max 32 chars, e.g. "BENCHMARK SHOCK • 93.3%", "PROTOCOL INTERNALS", "THE HIDDEN CATCH")',
-          },
-          coverStyle: {
-            type: Type.STRING,
-            enum: ['headline-hero', 'metric-split', 'versus-hook', 'visual-teaser'],
-            description: 'Slide 1 Cover Hero style (multi-slide Slide 1 only)',
-          },
-          coverTeaserEn: {
-            type: Type.STRING,
-            description: 'Slide 1 single-line English context teaser directly beneath the oversized hook (<= 68 chars, zero colons/emojis)',
-          },
-          coverTeaserAr: {
-            type: Type.STRING,
-            description: 'Slide 1 single-line Arabic context teaser directly beneath the Arabic hook (<= 68 chars, preserving English tech terms)',
-          },
-          showSwipeCue: {
-            type: Type.BOOLEAN,
-            description: 'Set true on multi-slide Slide 1 to render the bottom swipe prompt pill above footer',
-          },
-          takeaways: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                en: { type: Type.STRING, description: 'English key takeaway bullet (max 75 chars)' },
-                ar: { type: Type.STRING, description: 'Arabic key takeaway bullet (max 80 chars)' },
-                icon: { type: Type.STRING, description: 'Icon name e.g. zap, shield, checkCircle, database, layers' },
-              },
-              required: ['en', 'ar'],
-            },
-            description: 'Up to 3 high-signal bilingual key takeaway bullets for single-slide poster or summary slides',
-          },
-          stepNumber: {
-            type: Type.STRING,
-            description: 'Step numeral e.g. 01, 02, 03 for number archetype slides',
-          },
-          stepLabel: {
-            type: Type.STRING,
-            description: 'Step badge label e.g. STEP 01 for number archetype slides',
-          },
-          centerIcon: {
-            type: Type.STRING,
-            description: 'Icon name for hub center box',
-          },
-          satIcons: {
-            type: Type.ARRAY,
-            items: { type: Type.STRING },
-            description: 'Array of 6 icon names for hub satellites',
-          },
-          satLabels: {
-            type: Type.ARRAY,
-            items: { type: Type.STRING },
-            description: 'Array of 6 short technical component names for Slide 1 orbital satellites, directly relevant to the topic (e.g. for Postgres: ["Replica DB", "Connection Pool", "WAL Logs", "Buffer Cache", "Vacuum Worker", "Query Planner"])',
-          },
-          diagramVariant: {
-            type: Type.STRING,
-            description:
-              'Diagram layout style: "scatter" (vector scatter with query point & cosine distances), "graph" (layered/hierarchical skip-graph like HNSW), "clusters" (space partitioning & K-means centroids like IVF), "split" (dual hot/cold store or memory vs disk buffer), "features" (metadata filtered search with attribute constraints), "topology" (connected 3-node protocol flow), "stack" (vertical 3-layer architecture pipeline), "isolation" (blast radius / boundary quarantine grid), or "takeaway" (engineering decision card)',
-          },
-          diagramNodes: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                label: { type: Type.STRING, description: 'Component name e.g. "PgBouncer", "Primary DB", "Docker Daemon"' },
-                sublabel: { type: Type.STRING, description: 'Protocol, port, or spec e.g. "Port 5432", "Tx Mode"' },
-                status: { type: Type.STRING, description: 'Status pill text e.g. "POOLED", "ACTIVE", "ISOLATED"' },
-                icon: { type: Type.STRING, description: 'Lucide icon name e.g. database, server, cpu, lock' },
-              },
-              required: ['label'],
-            },
-            description: 'The 3 component cards, layers, or cells illustrating this specific slide concept. MUST be 100% relevant to the slide topic.',
-          },
-          diagramEdges: {
-            type: Type.ARRAY,
-            items: { type: Type.STRING },
-            description: 'Labels on the arrows/connectors between nodes (e.g. ["10k Conns", "64 Pooled"] or ["REST API", "OCI Shim"])',
-          },
-          diagramFooter: {
-            type: Type.STRING,
-            description: 'Bottom telemetry/summary spec bar line (e.g. "POOL MODE: TRANSACTION • LATENCY: 0.8ms P99 • MAX CLIENTS: 10,000")',
-          },
-          icons: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                icon: { type: Type.STRING },
-                label: { type: Type.STRING },
-              },
-              required: ['icon', 'label'],
-            },
-            description: 'Array of 1 to 5 icons with micro-labels for row slides',
-          },
-          metricValue: {
-            type: Type.STRING,
-            description: 'Hero WIN metric number ONLY if present in source (e.g. 200x, 15ms, 99.9%). Leave empty if source has no numbers.',
-          },
-          metricBeforeValue: {
-            type: Type.STRING,
-            description: 'Old "before" metric value when comparing before/after (e.g. 125ms)',
-          },
-          metricLabel: {
-            type: Type.STRING,
-            description: 'Real source metric label (never TELEMETRY STAT or EXPOSURE METRIC)',
-          },
-          metricDiff: {
-            type: Type.STRING,
-            description: 'Plain-language outcome delta (e.g. 8x FASTER • 88% DROP)',
-          },
-          metricIcon: {
-            type: Type.STRING,
-            description: 'Icon for metric slide badge',
-          },
-          chartDirection: {
-            type: Type.STRING,
-            enum: ['up', 'down', 'bar', 'none'],
-            description: 'Chart direction matching the message, or none if no real numeric data exists',
-          },
-          hookClaimCard: {
-            type: Type.OBJECT,
-            properties: {
-              mode: { type: Type.STRING, enum: ['quote', 'contrast'] },
-              badge: { type: Type.STRING },
-              statement: { type: Type.STRING },
-              beforeLabel: { type: Type.STRING },
-              afterLabel: { type: Type.STRING },
-            },
-            description: 'For non-numeric Slide 1 hooks: quote claim card or contrast card',
-          },
-          hubNodeReasons: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                label: { type: Type.STRING },
-                quotedFrom: { type: Type.STRING },
-                reason: { type: Type.STRING },
-              },
-              required: ['label', 'quotedFrom', 'reason'],
-            },
-            description: 'One-line provenance reason explaining the source term quoted for each Hub node',
-          },
-          codeSnippet: {
-            type: Type.STRING,
-            description: 'Multi-line code snippet for code slide',
-          },
-          codeFileName: {
-            type: Type.STRING,
-            description: 'File or tab name for code window (e.g. bench_run.sh)',
-          },
-          codeLanguage: {
-            type: Type.STRING,
-            description: 'Language for code slide (e.g. bash, rust, python, sql)',
-          },
-          compareLeftTitle: {
-            type: Type.STRING,
-            description: 'Left card title for compare slide (e.g. Legacy Monolith)',
-          },
-          compareLeftBody: {
-            type: Type.STRING,
-            description: 'Left card bullet points for compare slide',
-          },
-          compareRightTitle: {
-            type: Type.STRING,
-            description: 'Right card title for compare slide (e.g. Modern Engine)',
-          },
-          compareRightBody: {
-            type: Type.STRING,
-            description: 'Right card bullet points for compare slide',
-          },
-          subjectPair: {
-            type: Type.OBJECT,
-            properties: {
-              beforeSystem: { type: Type.STRING, description: 'Baseline system name (e.g. Cassandra)' },
-              afterSystem: { type: Type.STRING, description: 'Target system name (e.g. ScyllaDB)' },
-              storyOwner: { type: Type.STRING, description: 'Company owning the migration story as styled text (e.g. Discord)' },
-              beforeLabel: { type: Type.STRING, description: 'BEFORE' },
-              afterLabel: { type: Type.STRING, description: 'AFTER' },
-              flowLabel: { type: Type.STRING, description: 'e.g. CHAT WORKLOAD → COMPACTED SHARDS' },
-            },
-            description: 'For migration, A vs B, or before->after stories: 2 systems and story owner wordmark',
-          },
-          visualSpec: {
-            type: Type.OBJECT,
-            description: 'Universal Visual Engine spec when slide.type === "visual". Populate only fields matching visualSpec.kind.',
-            properties: {
-              kind: {
-                type: Type.STRING,
-                enum: ['bar-chart', 'sequence', 'timeline', 'matrix', 'table', 'callout', 'svg'],
-                description: 'Visual renderer mode: bar-chart, sequence, timeline, matrix, table, callout, or svg',
-              },
-              eyebrow: { type: Type.STRING, description: 'Short uppercase kicker label above the visual header' },
-              title: { type: Type.STRING, description: 'Concise visual chart/diagram title' },
-              footnote: { type: Type.STRING, description: 'Source note, methodology, or axis caveat' },
-              orientation: {
-                type: Type.STRING,
-                enum: ['horizontal', 'vertical'],
-                description: 'Bar chart orientation (default horizontal)',
-              },
-              unit: { type: Type.STRING, description: 'Explicit metric unit for bar-chart (e.g. ms, %, req/s, GB)' },
-              deltaBadge: { type: Type.STRING, description: 'Compact comparison delta badge (e.g. "-84% p99" or "4.2x faster")' },
-              bars: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    label: { type: Type.STRING },
-                    value: { type: Type.NUMBER },
-                    displayValue: { type: Type.STRING },
-                    tone: { type: Type.STRING, enum: ['accent', 'muted', 'alert'] },
-                    isWinner: { type: Type.BOOLEAN },
-                  },
-                  required: ['label', 'value'],
-                },
-                description: 'Up to 6 bars for kind="bar-chart"',
-              },
-              actors: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: '2 to 4 vertical lifeline actor names for kind="sequence"',
-              },
-              steps: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    from: { type: Type.NUMBER, description: '0-based index into actors[]' },
-                    to: { type: Type.NUMBER, description: '0-based index into actors[]' },
-                    label: { type: Type.STRING },
-                    tag: { type: Type.STRING },
-                    style: { type: Type.STRING, enum: ['solid', 'dashed', 'alert'] },
-                  },
-                  required: ['from', 'to', 'label'],
-                },
-                description: 'Up to 6 directed message steps for kind="sequence"',
-              },
-              events: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    time: { type: Type.STRING, description: 'Timestamp or phase (e.g. 14:02 UTC or T+12m)' },
-                    title: { type: Type.STRING },
-                    detail: { type: Type.STRING },
-                    severity: { type: Type.STRING, enum: ['info', 'warn', 'incident', 'resolved'] },
-                  },
-                  required: ['time', 'title'],
-                },
-                description: '3 to 5 chronological incident/milestone events for kind="timeline"',
-              },
-              xAxisLow: { type: Type.STRING },
-              xAxisHigh: { type: Type.STRING },
-              yAxisLow: { type: Type.STRING },
-              yAxisHigh: { type: Type.STRING },
-              quadrants: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    title: { type: Type.STRING },
-                    detail: { type: Type.STRING },
-                    highlight: { type: Type.BOOLEAN },
-                  },
-                  required: ['title'],
-                },
-                description: '4 cells [top-left, top-right, bottom-left, bottom-right] for kind="matrix"',
-              },
-              columns: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: '2 to 4 column headers for kind="table"',
-              },
-              rows: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING },
-                },
-                description: '2 to 5 rows matching columns.length for kind="table"',
-              },
-              highlightColumn: { type: Type.NUMBER, description: '0-based winning column index for kind="table"' },
-              calloutStyle: {
-                type: Type.STRING,
-                enum: ['quote', 'stat'],
-                description: 'Editorial style for kind="callout"',
-              },
-              quote: { type: Type.STRING },
-              statValue: { type: Type.STRING },
-              statLabel: { type: Type.STRING },
-              author: { type: Type.STRING },
-              role: { type: Type.STRING },
-              source: { type: Type.STRING },
-              evidence: { type: Type.STRING },
-              svgCode: {
-                type: Type.STRING,
-                description: 'Sanitized SVG markup (viewBox 0 0 846 490) using MARROK tokens {{accent}}, {{alert}}, {{surface}}, {{surfaceBorder}}, {{textWhite}}, {{textMuted}}, {{baseBg}} for kind="svg"',
-              },
-              viewBox: { type: Type.STRING, description: 'Optional SVG viewBox (default "0 0 846 490")' },
-            },
-            required: ['kind'],
-          },
-          enTitle: {
-            type: Type.STRING,
-            description: 'English headline: 6 to 12 words on Slide 1 hook derived from Slide 2 failure/metric (<= 76 chars, zero colons/emojis/cliches/filler); 2 to 8 words on body & CTA slides (<= 45 chars).',
-          },
-          arTitle: {
-            type: Type.STRING,
-            description: 'Concise natural Arabic headline. Keep ALL technical nouns and units in English (Sockets, Latency, Cache, Cluster, Raft, Postgres, Kafka, API, p99, 15ms, 510 GB).',
-          },
-          enBody: {
-            type: Type.STRING,
-            description: 'English body copy or hook subtitle',
-          },
-          arBody: {
-            type: Type.STRING,
-            description: 'Natural Arabic body copy. Keep technical nouns & number+unit pairs in English inside the Arabic sentence; end with an Arabic word before punctuation.',
-          },
-          ctaText: {
-            type: Type.STRING,
-            description: 'Pill button text for cta slide',
-          },
-          url: {
-            type: Type.STRING,
-            description: 'Website URL for cta slide',
-          },
-          enCredit: {
-            type: Type.STRING,
-            description: 'English source attribution footer for cta slide',
-          },
-          arCredit: {
-            type: Type.STRING,
-            description: 'Arabic source attribution footer for cta slide',
-          },
-        },
-        required: ['type', 'enTitle', 'arTitle', 'enBody', 'arBody'],
-      },
+    scheduleSlot: {
+      type: Type.STRING,
+      description: 'Recommended posting slot (e.g. 18:00 DZ)',
+    },
+    brand: {
+      type: Type.STRING,
+      description: 'MUST strictly be "MARROK"',
+    },
+    brandUrl: {
+      type: Type.STRING,
+      description: 'MUST strictly be "marrok.org"',
     },
   },
-  required: ['theme', 'category', 'caption', 'slides'],
+  required: ['theme', 'category', 'coreInsight', 'slide2Draft', 'slides', 'hookVariants', 'caption'],
 };
 
 export const DIRECT_VISUAL_RESPONSE_SCHEMA = {
@@ -789,7 +777,7 @@ export const DIRECT_VISUAL_RESPONSE_SCHEMA = {
       type: Type.STRING,
       description: 'Optional refined 1-line Arabic cover teaser (<= 68 chars) for Slide 1',
     },
-    visualSpec: CAROUSEL_RESPONSE_SCHEMA.properties.slides.items.properties.visualSpec,
+    visualSpec: VISUAL_SPEC_FULL_SCHEMA,
   },
   required: ['chosenLayoutId', 'rationale'],
 };

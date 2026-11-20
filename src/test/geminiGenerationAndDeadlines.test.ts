@@ -234,4 +234,128 @@ describe('Phase B3.1 — @google/genai@3.3.0, Verified Model IDs & Bounded Serve
     expect(elapsed).toBeGreaterThanOrEqual(450);
     expect(elapsed).toBeLessThan(1800);
   });
+
+  it('recovers immediately via same-model fast JSON mode on HTTP 400 schema-constraint errors without cooling down the model', async () => {
+    process.env.GEMINI_API_KEY = 'AIzaTestSchemaRecovery123';
+    process.env.FREE_BACKUP_AI_ENABLED = 'false';
+
+    const bodyFirstSample = {
+      theme: 'cyber',
+      category: 'CYBERSECURITY',
+      sourceMeta: { title: 'Java4Shell Advisory', creator: 'Security Research' },
+      facts: [{ text: 'CVSS 9.8 critical RCE in OpenJDK', type: 'number', verified: 'unconfirmed' }],
+      coreInsight: 'Unpatched OpenJDK classloader paths expose production servers to silent RCE.',
+      slide2Draft: {
+        enTitle: 'Unpatched JVMs execute untrusted payloads',
+        arTitle: 'الإصدارات غير المحدثة تنفذ شيفرات خبيثة',
+        enBody: 'Deserializing untrusted streams bypasses sandbox isolation.',
+        arBody: 'تمرير البيانات غير الموثوقة يتجاوز العزل.',
+      },
+      slides: [
+        {
+          type: 'row',
+          enTitle: 'Unpatched JVMs execute untrusted payloads',
+          arTitle: 'الإصدارات غير المحدثة تنفذ شيفرات خبيثة',
+          enBody: 'Deserializing untrusted streams bypasses sandbox isolation.',
+          arBody: 'تمرير البيانات غير الموثوقة يتجاوز العزل.',
+        },
+        {
+          type: 'cta',
+          enTitle: 'Patch every OpenJDK runtime today',
+          arTitle: 'حدث كل خوادم OpenJDK اليوم',
+          enBody: 'Audit running containers and upgrade immediately.',
+          arBody: 'افحص الحاويات العاملة وحدثها فورا.',
+          ctaText: 'Save this security checklist',
+          url: 'https://marrok.org',
+        },
+      ],
+      hookVariants: [
+        {
+          tag: 'Contrarian',
+          framework: 'Contrarian',
+          score: 94,
+          selected: true,
+          enTitle: 'One unpatched OpenJDK node exposes your entire cluster',
+          arTitle: 'خادم OpenJDK واحد يكشف كل بيئة الإنتاج',
+          enBody: '',
+          arBody: '',
+          coverStyle: 'headline-hero',
+          coverTeaserEn: 'Inside the exploit chain and emergency patch steps',
+          coverTeaserAr: 'تفاصيل مسار الاستغلال وخطوات الإغلاق الفوري',
+        },
+      ],
+      selectedHookIndex: 0,
+      slide1: {
+        type: 'row',
+        coverStyle: 'headline-hero',
+        enTitle: 'One unpatched OpenJDK node exposes your entire cluster',
+        arTitle: 'خادم OpenJDK واحد يكشف كل بيئة الإنتاج',
+        enBody: '',
+        arBody: '',
+        coverTeaserEn: 'Inside the exploit chain and emergency patch steps',
+        coverTeaserAr: 'تفاصيل مسار الاستغلال وخطوات الإغلاق الفوري',
+        showSwipeCue: true,
+      },
+      caption: 'Bilingual security alert',
+    };
+
+    const schemaTooManyStatesErr = new Error(
+      '{"error":{"code":400,"message":"The specified schema produces a constraint that has too many states","status":"INVALID_ARGUMENT"}}'
+    );
+
+    // Call 1 (direct schema on gemini-4-hydrogen): fails with 400 schema constraint
+    // Call 2 (fast JSON mode on same model without responseSchema): succeeds
+    // Call 3 (second request verifying model was NOT put on cooldown): succeeds immediately on same model
+    mockedGenerateContent
+      .mockRejectedValueOnce(schemaTooManyStatesErr)
+      .mockResolvedValueOnce({ text: JSON.stringify(bodyFirstSample) })
+      .mockResolvedValueOnce({ text: JSON.stringify(bodyFirstSample) });
+
+    const longPrompt =
+      'Java4Shell CVE-2026-114938 is a critical vulnerability in OpenJDK allowing remote code execution across unpatched production clusters when processing untrusted serialized input streams without strict classloader isolation and immediate security patching.';
+
+    const mockRes1 = createMockResponse();
+    await handleGenerateCarousel(
+      {
+        headers: {},
+        body: {
+          prompt: longPrompt,
+          inputMode: 'text',
+        },
+      } as any,
+      mockRes1.res
+    );
+
+    expect(mockRes1.statusCode).toBe(200);
+    expect(mockRes1.headers['x-marrok-model']).toBe('gemini-4-hydrogen');
+    expect(mockRes1.headers['x-marrok-engine']).toBe('ungrounded');
+    expect(mockRes1.body?.slides).toHaveLength(3);
+    expect(mockedGenerateContent).toHaveBeenCalledTimes(2);
+
+    const firstCall = mockedGenerateContent.mock.calls[0][0];
+    const secondCall = mockedGenerateContent.mock.calls[1][0];
+    expect(firstCall.model).toBe('gemini-4-hydrogen');
+    expect(firstCall.config.responseSchema).toBeDefined();
+    expect(secondCall.model).toBe('gemini-4-hydrogen');
+    expect(secondCall.config.responseMimeType).toBe('application/json');
+    expect(secondCall.config.responseSchema).toBeUndefined();
+
+    // Verify gemini-4-hydrogen was NOT cooled down by the 400 schema error
+    const mockRes2 = createMockResponse();
+    await handleGenerateCarousel(
+      {
+        headers: {},
+        body: {
+          prompt: longPrompt,
+          inputMode: 'text',
+        },
+      } as any,
+      mockRes2.res
+    );
+    expect(mockRes2.statusCode).toBe(200);
+    expect(mockRes2.headers['x-marrok-model']).toBe('gemini-4-hydrogen');
+    expect(mockedGenerateContent.mock.calls[2][0].model).toBe('gemini-4-hydrogen');
+
+    delete process.env.FREE_BACKUP_AI_ENABLED;
+  });
 });

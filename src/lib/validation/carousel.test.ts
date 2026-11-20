@@ -208,4 +208,124 @@ describe('parseCarouselData', () => {
       opacity: 0.95,
     });
   });
+
+  it('orders CAROUSEL_RESPONSE_SCHEMA body-first before hookVariants and slide1 selection (Phase 1)', async () => {
+    const { CAROUSEL_RESPONSE_SCHEMA } = await import('../../../api/prompts/systemPrompt.ts');
+    const keys = Object.keys(CAROUSEL_RESPONSE_SCHEMA.properties);
+    expect(keys.slice(0, 10)).toEqual([
+      'theme',
+      'category',
+      'sourceMeta',
+      'facts',
+      'coreInsight',
+      'slide2Draft',
+      'slides',
+      'hookVariants',
+      'selectedHookIndex',
+      'slide1',
+    ]);
+  });
+
+  it('parses coreInsight, slide2Draft, selectedHookIndex and prepends separate slide1 onto body slides (Phase 1)', () => {
+    const bodyFirstPayload = {
+      theme: 'cyber',
+      category: 'CYBERSECURITY',
+      sourceMeta: { title: 'OpenJDK Advisory', creator: 'Security Team' },
+      facts: [{ text: 'CVSS 9.8 critical RCE', type: 'number', verified: 'unconfirmed' }],
+      coreInsight: 'Unpatched OpenJDK classloader paths allow silent RCE without authentication.',
+      slide2Draft: {
+        enTitle: 'Unpatched JVMs execute remote payloads',
+        arTitle: 'الإصدارات غير المحدثة تنفذ شيفرات خبيثة',
+        enBody: 'Deserializing untrusted streams bypasses sandbox checks.',
+        arBody: 'تمرير البيانات غير الموثوقة يتجاوز العزل.',
+      },
+      slides: [
+        { type: 'row', enTitle: 'Slide 2 Problem', arTitle: 'المشكلة', enBody: 'Body 2', arBody: 'نص 2' },
+        { type: 'cta', enTitle: 'Are your nodes patched?', arTitle: 'هل حدثت خوادمك؟', enBody: '', arBody: '' },
+      ],
+      hookVariants: [
+        {
+          tag: 'Contrarian',
+          framework: 'Contrarian',
+          enTitle: 'One unpatched OpenJDK node exposes your entire cluster',
+          arTitle: 'خادم OpenJDK واحد يكشف كل بيئة الإنتاج',
+          enBody: '',
+          arBody: '',
+        },
+      ],
+      selectedHookIndex: 0,
+      slide1: {
+        type: 'metric',
+        coverStyle: 'metric-split',
+        enTitle: 'One unpatched OpenJDK node exposes your entire cluster',
+        arTitle: 'خادم OpenJDK واحد يكشف كل بيئة الإنتاج',
+        enBody: '',
+        arBody: '',
+        coverTeaserEn: 'Inside the exploit path and emergency patch steps',
+        coverTeaserAr: 'تفاصيل مسار الاستغلال وخطوات الإغلاق الفوري',
+        showSwipeCue: true,
+      },
+      caption: 'Bilingual security alert',
+    };
+
+    const parsed = parseCarouselData(bodyFirstPayload, { minSlides: 3, requireSlideContent: true });
+    expect(parsed).not.toBeNull();
+    expect(parsed?.coreInsight).toContain('Unpatched OpenJDK');
+    expect(parsed?.slide2Draft?.enTitle).toBe('Unpatched JVMs execute remote payloads');
+    expect(parsed?.selectedHookIndex).toBe(0);
+    expect(parsed?.slides).toHaveLength(3);
+    expect(parsed?.slides[0].enTitle).toBe('One unpatched OpenJDK node exposes your entire cluster');
+    expect(parsed?.slides[0].coverStyle).toBe('metric-split');
+    expect(parsed?.slides[1].enTitle).toBe('Slide 2 Problem');
+    expect(parsed?.slides[2].type).toBe('cta');
+  });
+
+  it('keeps CAROUSEL_RESPONSE_SCHEMA within Gemini Flash Lite FSM complexity limits while keeping DIRECT_VISUAL_RESPONSE_SCHEMA rich', async () => {
+    const { CAROUSEL_RESPONSE_SCHEMA, DIRECT_VISUAL_RESPONSE_SCHEMA } = await import(
+      '../../../api/prompts/systemPrompt.ts'
+    );
+
+    let enumCount = 0;
+    let totalProperties = 0;
+    let maxObjectDepth = 0;
+
+    const walk = (node: unknown, depth: number) => {
+      if (!node || typeof node !== 'object') return;
+      const obj = node as Record<string, unknown>;
+      if (Array.isArray(obj.enum)) {
+        enumCount += 1;
+      }
+      if (obj.properties && typeof obj.properties === 'object') {
+        const nextDepth = depth + 1;
+        if (nextDepth > maxObjectDepth) maxObjectDepth = nextDepth;
+        for (const child of Object.values(obj.properties as Record<string, unknown>)) {
+          totalProperties += 1;
+          walk(child, nextDepth);
+        }
+      }
+      if (obj.items && typeof obj.items === 'object') {
+        walk(obj.items, depth);
+      }
+    };
+
+    walk(CAROUSEL_RESPONSE_SCHEMA, 0);
+
+    expect(enumCount).toBe(0);
+    expect(totalProperties).toBeLessThanOrEqual(155);
+    expect(maxObjectDepth).toBeLessThanOrEqual(4);
+
+    // Slide 1 Cover Hero schema stays compact without duplicating body-only visualSpec/code fields
+    const slide1Props = Object.keys(CAROUSEL_RESPONSE_SCHEMA.properties.slide1.properties);
+    expect(slide1Props).not.toContain('visualSpec');
+    expect(slide1Props).not.toContain('codeSnippet');
+    expect(slide1Props).toContain('coverStyle');
+    expect(slide1Props).toContain('coverTeaserEn');
+    expect(slide1Props).toContain('coverTeaserAr');
+
+    // Direct visual endpoint still retains the full visualSpec schema
+    const directVisualProps = Object.keys(DIRECT_VISUAL_RESPONSE_SCHEMA.properties.visualSpec.properties);
+    expect(directVisualProps).toContain('orientation');
+    expect(directVisualProps).toContain('calloutStyle');
+    expect(directVisualProps).toContain('svgCode');
+  });
 });
