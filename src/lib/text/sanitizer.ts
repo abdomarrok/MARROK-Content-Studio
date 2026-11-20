@@ -13,7 +13,7 @@ export function sanitizeEnglishSlideText(
 ): string {
   if (!text) return '';
 
-  let clean = stripMarkdown(text);
+  let clean = stripMarkdown(text).replace(/[\p{Extended_Pictographic}\uFE0F]/gu, '');
   clean = normalizePunctuation(clean);
   clean = repairTruncatedTextEllipsis(clean);
 
@@ -28,6 +28,27 @@ export function sanitizeEnglishSlideText(
     clean = clean.replace(/[:.]\s*:\s*/g, ': ');
   }
 
+  return clean;
+}
+
+/**
+ * Sanitizes a single-line Slide 1 context teaser (no markdown, colons, emojis, or line breaks).
+ */
+export function sanitizeCoverTeaserText(
+  text: string | undefined,
+  isArabic: boolean = false
+): string {
+  if (!text) return '';
+  let clean = isArabic
+    ? sanitizeArabicSlideText(text, { isTitle: false })
+    : sanitizeEnglishSlideText(text, { isTitle: false });
+  clean = clean
+    .replace(/[\p{Extended_Pictographic}\uFE0F]/gu, '')
+    .replace(/:/g, ' ')
+    .replace(/\r?\n+/g, ' ')
+    .replace(/\.{2,}$/, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
   return clean;
 }
 
@@ -135,6 +156,23 @@ export function sanitizeSlide(
     arBody: slide.arBody
       ? sanitizeArabicSlideText(slide.arBody, { isTitle: false })
       : slide.arBody,
+    coverTeaserEn:
+      slide.coverTeaserEn !== undefined
+        ? sanitizeCoverTeaserText(slide.coverTeaserEn, false)
+        : undefined,
+    coverTeaserAr:
+      slide.coverTeaserAr !== undefined
+        ? sanitizeCoverTeaserText(slide.coverTeaserAr, true)
+        : undefined,
+    swipeCueText:
+      slide.swipeCueText !== undefined
+        ? stripMarkdown(slide.swipeCueText)
+            .replace(/[\p{Extended_Pictographic}\uFE0F]/gu, '')
+            .replace(/:/g, ' ')
+            .replace(/\s{2,}/g, ' ')
+            .trim()
+            .slice(0, 42)
+        : undefined,
     metricValue: slide.metricValue
       ? normalizePunctuation(stripMarkdown(slide.metricValue))
       : slide.metricValue,
@@ -449,16 +487,26 @@ export function sanitizeFullCarousel(carousel: CarouselData): CarouselData {
     shortCaption: carousel.shortCaption ? sanitizeCaption(carousel.shortCaption) : undefined,
     firstComment: carousel.firstComment ? sanitizeCaption(carousel.firstComment) : undefined,
     screenHook: carousel.screenHook
-      ? sanitizeEnglishSlideText(carousel.screenHook, { isTitle: true }).replace(/[.?!]$/, '')
+      ? sanitizeEnglishSlideText(carousel.screenHook, { isTitle: true })
+          .replace(/:/g, ' ')
+          .replace(/\s+/g, ' ')
+          .replace(/[.?!]$/, '')
+          .trim()
       : undefined,
     slides: deRepeatedSlides,
     hookVariants: (carousel.hookVariants || []).map((h) => ({
       ...h,
-      enTitle: sanitizeEnglishSlideText(h.enTitle, { isTitle: true }),
-      arTitle: sanitizeArabicSlideText(h.arTitle, { isTitle: true }),
-      enBody: sanitizeEnglishSlideText(h.enBody, { isTitle: false }),
-      arBody: sanitizeArabicSlideText(h.arBody, { isTitle: false }),
-      ...(h.hookKicker ? { hookKicker: stripMarkdown(h.hookKicker).toUpperCase().slice(0, 34) } : {}),
+      enTitle: sanitizeEnglishSlideText(h.enTitle, { isTitle: true }).replace(/:/g, ' ').replace(/\s+/g, ' ').trim(),
+      arTitle: sanitizeArabicSlideText(h.arTitle, { isTitle: true }).replace(/:/g, ' ').replace(/\s+/g, ' ').trim(),
+      enBody: sanitizeEnglishSlideText(h.enBody, { isTitle: false }).replace(/:/g, ' ').replace(/\s+/g, ' ').trim(),
+      arBody: sanitizeArabicSlideText(h.arBody, { isTitle: false }).replace(/:/g, ' ').replace(/\s+/g, ' ').trim(),
+      ...(h.hookKicker ? { hookKicker: stripMarkdown(h.hookKicker).replace(/:/g, ' ').toUpperCase().slice(0, 34) } : {}),
+      ...(h.coverTeaserEn !== undefined
+        ? { coverTeaserEn: sanitizeCoverTeaserText(h.coverTeaserEn, false) }
+        : {}),
+      ...(h.coverTeaserAr !== undefined
+        ? { coverTeaserAr: sanitizeCoverTeaserText(h.coverTeaserAr, true) }
+        : {}),
     })),
   };
 }

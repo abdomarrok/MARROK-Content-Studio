@@ -26,11 +26,11 @@ import {
   SavedPostRecord,
   SavedPostStatus,
   SavedPostStorageEngine,
-  SlideData,
   ThemePalette,
 } from './types';
 import { DEFAULT_STARTER_DECK } from './lib/presets';
-import { sanitizeFullCarousel, sanitizeSlide } from './lib/textSanitizer';
+import { sanitizeFullCarousel } from './lib/textSanitizer';
+import { filterRelevantHookVariants } from './lib/studio/formatWorkspace';
 import { parseCarouselData } from './lib/validation/carousel';
 import { runQAChecks } from './lib/qaChecks';
 import { runPlatformRiskChecks } from './lib/riskChecks';
@@ -47,6 +47,7 @@ import {
 import { fetchPublishStatus } from './lib/publish/publishClient';
 import { useStudioHistory } from './hooks/useStudioHistory.ts';
 import {
+  checkClientAuthSession,
   clearClientSessionToken,
   withClientAuthHeaders,
 } from './lib/security/clientSessionToken.ts';
@@ -181,36 +182,47 @@ export default function App() {
       });
   }, [setCarousel, showToast]);
 
+  const verifyAuthSession = useCallback(async () => {
+    const result = await checkClientAuthSession();
+    setAuthConfigured(result.authConfigured);
+    if (result.authenticated) {
+      setAuthStatus('authenticated');
+      setAuthenticatedUser(result.username || 'admin');
+    } else {
+      setAuthStatus('unauthenticated');
+      setAuthenticatedUser(null);
+    }
+    return result;
+  }, []);
+
   // Verify session cookie on mount before querying protected API routes
   useEffect(() => {
     let active = true;
-    fetch('/api/auth/session', {
-      method: 'GET',
-      credentials: 'include',
-      headers: withClientAuthHeaders(),
-    })
-      .then(async (res) => {
-        const data = (await res.json().catch(() => ({}))) as {
-          authenticated?: boolean;
-          authConfigured?: boolean;
-          username?: string;
-        };
-        if (!active) return;
-        setAuthConfigured(data.authConfigured !== false && res.status !== 503);
-        if (res.ok && data.authenticated) {
-          setAuthStatus('authenticated');
-          setAuthenticatedUser(data.username || 'admin');
-        } else {
-          setAuthStatus('unauthenticated');
-          setAuthenticatedUser(null);
-        }
-      })
-      .catch(() => {
-        if (!active) return;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    let attempt = 0;
+
+    const runCheck = async () => {
+      const result = await checkClientAuthSession();
+      if (!active) return;
+      if (result.warmingUp && attempt < 5) {
+        attempt += 1;
+        timerId = setTimeout(runCheck, 1500);
+        return;
+      }
+      setAuthConfigured(result.authConfigured);
+      if (result.authenticated) {
+        setAuthStatus('authenticated');
+        setAuthenticatedUser(result.username || 'admin');
+      } else {
         setAuthStatus('unauthenticated');
-      });
+        setAuthenticatedUser(null);
+      }
+    };
+
+    runCheck();
     return () => {
       active = false;
+      if (timerId) clearTimeout(timerId);
     };
   }, []);
 
@@ -298,7 +310,15 @@ export default function App() {
   const handleResetDraft = () => {
     if (savedPosts.length > 0) {
       const latestSaved = savedPosts[0].deck;
-      handleUpdateCarousel(sanitizeFullCarousel(latestSaved));
+      const sanitizedLatest = sanitizeFullCarousel(latestSaved);
+      handleUpdateCarousel({
+        ...sanitizedLatest,
+        hookVariants: filterRelevantHookVariants(
+          sanitizedLatest.hookVariants,
+          sanitizedLatest.slides,
+          sanitizedLatest.category
+        ),
+      });
       if (latestSaved.theme && DEFAULT_PALETTES[latestSaved.theme]) {
         setCurrentPalette(DEFAULT_PALETTES[latestSaved.theme]);
       }
@@ -358,9 +378,17 @@ export default function App() {
       ...record.deck,
       id: record.id,
     });
-    handleUpdateCarousel(cleanDeck);
-    if (cleanDeck.theme && DEFAULT_PALETTES[cleanDeck.theme]) {
-      setCurrentPalette(DEFAULT_PALETTES[cleanDeck.theme]);
+    const scopedDeck = {
+      ...cleanDeck,
+      hookVariants: filterRelevantHookVariants(
+        cleanDeck.hookVariants,
+        cleanDeck.slides,
+        cleanDeck.category
+      ),
+    };
+    handleUpdateCarousel(scopedDeck);
+    if (scopedDeck.theme && DEFAULT_PALETTES[scopedDeck.theme]) {
+      setCurrentPalette(DEFAULT_PALETTES[scopedDeck.theme]);
     }
     setActiveSlideIndex(0);
     showToast(`Loaded saved post: ${record.title.slice(0, 36)}`);
@@ -647,6 +675,13 @@ export default function App() {
         isOpen={authStatus === 'unauthenticated'}
         authConfigured={authConfigured}
         accentColor={currentPalette.accent}
+        onAuthConfiguredChange={setAuthConfigured}
+        onRetryConfigCheck={async () => {
+          const result = await verifyAuthSession();
+          if (result.authConfigured && !result.warmingUp) {
+            showToast('Server authentication is configured. Please sign in.');
+          }
+        }}
         onAuthenticated={(user) => {
           setAuthConfigured(true);
           setAuthenticatedUser(user);

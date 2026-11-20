@@ -21,7 +21,6 @@ import {
 import { stripLeadingDuplicateTikTokTitle } from '../../src/lib/publish/tiktokTitle.ts';
 
 const LOCAL_MEDIA_CACHE = new Map<string, { buffer: Buffer; createdAt: number }>();
-const MAX_LOCAL_CACHE_ITEMS = 60;
 
 /**
  * Default channel definitions matching the user's connected Buffer Free (3/3) and Metricool Free accounts.
@@ -1330,7 +1329,33 @@ async function dispatchToBufferGraphQl(params: {
  * Keeps staged Cloudinary URLs live for 1 hour after publication so Buffer/Zernio async media downloaders
  * and Metricool CSV imports never encounter a 404.
  */
+const activeDispatchLocks = new Set<string>();
+
+export function computeDispatchFingerprint(input: {
+  postId?: string;
+  title?: string;
+  mode: string;
+  dueAt?: string;
+  targets: string[];
+  text: string;
+  imageUrls: string[];
+  tiktokImageUrls: string[];
+}): string {
+  const normalizedTargets = [...input.targets].map((t) => String(t).toLowerCase()).sort();
+  const payload = JSON.stringify({
+    postId: String(input.postId || input.title || '').trim(),
+    mode: String(input.mode || 'addToQueue'),
+    dueAt: String(input.dueAt || '').trim(),
+    targets: normalizedTargets,
+    text: String(input.text || '').trim(),
+    imageUrls: (input.imageUrls || []).map((u) => String(u).trim()),
+    tiktokImageUrls: (input.tiktokImageUrls || []).map((u) => String(u).trim()),
+  });
+  return crypto.createHash('sha256').update(payload).digest('hex').slice(0, 32);
+}
+
 export async function handleDispatchPublish(req: Request, res: Response) {
+  let activeLockKey: string | null = null;
   try {
     const config = getServerConfig();
     const body = req.body || {};
@@ -1380,6 +1405,83 @@ export async function handleDispatchPublish(req: Request, res: Response) {
       });
     }
 
+    const effectiveTikTokUrls: string[] =
+      Array.isArray(tiktokImageUrls) && tiktokImageUrls.length > 0
+        ? tiktokImageUrls
+        : Array.isArray(imageUrls)
+        ? imageUrls
+        : [];
+    const postText = String(caption || deck?.caption || '');
+    const dispatchFingerprint = computeDispatchFingerprint({
+      postId: postId || existingRecord?.id || deck?.id,
+      title: title || existingRecord?.title || deck?.slides?.[0]?.enTitle,
+      mode: String(mode),
+      dueAt: typeof dueAt === 'string' ? dueAt : undefined,
+      targets: validTargets,
+      text: postText,
+      imageUrls: Array.isArray(imageUrls) ? imageUrls : [],
+      tiktokImageUrls: effectiveTikTokUrls,
+    });
+
+    // Idempotent Replay Gate: if an identical dispatch payload already succeeded for this post
+    // and the caller did not request cancelExistingBeforeDispatch, return the stored result without double-posting.
+    const storedFingerprint =
+      existingRecord?.lastDispatchFingerprint ||
+      existingRecord?.deck?.sourceMeta?.lastDispatchFingerprint;
+    const hasCompletedPriorDispatch =
+      !existingRecord?.publishFailed &&
+      ((existingRecord?.bufferPostIds?.length || 0) > 0 ||
+        (existingRecord?.zernioPostIds?.length || 0) > 0 ||
+        existingRecord?.postStatus === 'posted' ||
+        Boolean(existingRecord?.scheduledFor));
+
+    if (
+      !cancelExistingBeforeDispatch &&
+      existingRecord &&
+      storedFingerprint === dispatchFingerprint &&
+      hasCompletedPriorDispatch
+    ) {
+      const quotaStats = computeFreePlanQuotaStats(existingPosts);
+      return res.json({
+        ok: true,
+        idempotentReplay: true,
+        dispatchFingerprint,
+        mode,
+        scheduledFor: existingRecord.scheduledFor || null,
+        cloudinaryCleaned: Boolean(existingRecord.cloudinaryCleanedAt),
+        cleanedPublicIds: [],
+        post: existingRecord,
+        bufferDispatchedCount:
+          (existingRecord.bufferPostIds?.length || 0) +
+          (existingRecord.zernioPostIds?.length || 0),
+        bufferFailedCount: 0,
+        channelResults: validTargets.map((service) => ({
+          service,
+          provider:
+            service === 'tiktok'
+              ? (existingRecord.zernioPostIds?.length ? 'zernio' : 'metricool-csv')
+              : (existingRecord.bufferPostIds?.length
+                  ? 'buffer'
+                  : existingRecord.zernioPostIds?.length
+                  ? 'zernio'
+                  : 'metricool-csv'),
+          ok: true,
+          message: 'Idempotent replay — already dispatched with identical payload',
+        })),
+        warnings: [],
+        quotaStats,
+      });
+    }
+
+    if (activeDispatchLocks.has(dispatchFingerprint)) {
+      return res.status(409).json({
+        error: 'An identical publish dispatch is already in progress for this post.',
+        code: 'DISPATCH_IN_FLIGHT',
+      });
+    }
+    activeDispatchLocks.add(dispatchFingerprint);
+    activeLockKey = dispatchFingerprint;
+
     const isImmediate = mode === 'shareNow';
     const warnings: string[] = [];
 
@@ -1428,13 +1530,6 @@ export async function handleDispatchPublish(req: Request, res: Response) {
       message?: string;
     }> = [];
 
-    const effectiveTikTokUrls: string[] =
-      Array.isArray(tiktokImageUrls) && tiktokImageUrls.length > 0
-        ? tiktokImageUrls
-        : Array.isArray(imageUrls)
-        ? imageUrls
-        : [];
-
     const hasLocalOnlyUrls =
       Array.isArray(imageUrls) &&
       imageUrls.some((u: unknown) => typeof u === 'string' && /localhost|127\.0\.0\.1/.test(u));
@@ -1451,8 +1546,6 @@ export async function handleDispatchPublish(req: Request, res: Response) {
     const bufferMap = config.bufferApiKey
       ? await resolveBufferChannelMap(config.bufferApiKey)
       : new Map<PublishTargetPlatform, string>();
-
-    const postText = String(caption || deck?.caption || '');
 
     // 1. Dispatch Instagram, Facebook, LinkedIn (Buffer primary -> Zernio failover -> Metricool CSV fallback)
     const metaLinkedInTargets = validTargets.filter((t) => t !== 'tiktok');
@@ -1729,11 +1822,23 @@ export async function handleDispatchPublish(req: Request, res: Response) {
           (!mergedZernioPostIds || mergedZernioPostIds.length === 0)
             ? currentMonthKey
             : targetRecord.countedInMetricoolMonth,
+        lastDispatchFingerprint: allAttemptedApiChannelsFailed
+          ? targetRecord.lastDispatchFingerprint
+          : dispatchFingerprint,
+        lastDispatchedAt: allAttemptedApiChannelsFailed
+          ? targetRecord.lastDispatchedAt
+          : nowIso,
         deck: {
           ...targetRecord.deck,
           sourceMeta: {
             ...targetRecord.deck?.sourceMeta,
             publishFailed: hasPublishFailure,
+            lastDispatchFingerprint: allAttemptedApiChannelsFailed
+              ? targetRecord.deck?.sourceMeta?.lastDispatchFingerprint
+              : dispatchFingerprint,
+            lastDispatchedAt: allAttemptedApiChannelsFailed
+              ? targetRecord.deck?.sourceMeta?.lastDispatchedAt
+              : nowIso,
           },
         },
       };
@@ -1749,6 +1854,8 @@ export async function handleDispatchPublish(req: Request, res: Response) {
 
     return res.json({
       ok: true,
+      idempotentReplay: false,
+      dispatchFingerprint,
       mode,
       scheduledFor: savedRecord?.scheduledFor || null,
       cloudinaryCleaned: false,
@@ -1764,6 +1871,10 @@ export async function handleDispatchPublish(req: Request, res: Response) {
     const msg = err instanceof Error ? err.message : 'Failed to dispatch post';
     console.error('[PublishController] Dispatch error:', msg);
     return res.status(500).json({ error: msg });
+  } finally {
+    if (activeLockKey) {
+      activeDispatchLocks.delete(activeLockKey);
+    }
   }
 }
 

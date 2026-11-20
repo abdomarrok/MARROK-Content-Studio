@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, Grid, Download, Eye, Sparkles, Check } from 'lucide-react';
+import { X, Grid, Download, Eye } from 'lucide-react';
 import { CarouselData, ThemePalette } from '../types';
 import { renderSlideToCanvas, downloadContactSheetJpg } from '../lib/canvasExporter';
 

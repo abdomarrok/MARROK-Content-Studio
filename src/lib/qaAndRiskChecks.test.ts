@@ -207,4 +207,29 @@ describe('QA Gate & Platform Risk Checks (Phase 4 & 5)', () => {
     // Non-blocking warning must not set canExport false by itself
     expect(warnReport.canExport).toBe(true);
   });
+
+  it('validates per-platform caption length limits (2,200 Instagram/TikTok, 3,000 LinkedIn)', () => {
+    const deck = cloneStarterDeck();
+    deck.sourceMeta = {
+      ...deck.sourceMeta,
+      status: 'verified_live',
+      userReviewed: true,
+    };
+
+    deck.caption = 'Short bilingual caption.';
+    const passReport = runQAChecks(deck);
+    expect(passReport.results.find((r) => r.id === 'caption-platform-limit')?.severity).toBe('pass');
+
+    deck.caption = 'A'.repeat(2350);
+    const igWarnReport = runQAChecks(deck);
+    const igCheck = igWarnReport.results.find((r) => r.id === 'caption-platform-limit');
+    expect(igCheck?.severity).toBe('warn');
+    expect(igCheck?.message).toContain('Instagram & TikTok limit (2200');
+
+    deck.caption = 'B'.repeat(3100);
+    const liWarnReport = runQAChecks(deck);
+    const liCheck = liWarnReport.results.find((r) => r.id === 'caption-platform-limit');
+    expect(liCheck?.severity).toBe('warn');
+    expect(liCheck?.message).toContain('LinkedIn (3000)');
+  });
 });

@@ -4,6 +4,7 @@ import { isolateEmbeddedLatinInArabic } from '../text/arabicBiDi.ts';
 import { getCanvasDimensionSpec, getArchetypeGraphicTransform, isFullMemeSlide } from './constants.ts';
 import { computeSlideLayoutAwareness } from './layoutAwareness.ts';
 import {
+  drawRoundRect,
   drawBaseBackground,
   drawRadialGlow,
   drawEngineeringGrid,
@@ -22,6 +23,7 @@ import {
   drawCtaSlide,
   drawPosterSlide,
   drawSubjectPairSlide,
+  drawVisualSlide,
   drawTakeawaysBlock,
 } from './archetypes/index.ts';
 
@@ -90,7 +92,7 @@ export async function renderSlideToCanvas(
   }
 
   // Pre-compute layout awareness once for the slide
-  const layout = computeSlideLayoutAwareness(slide, carousel);
+  const layout = computeSlideLayoutAwareness(slide, carousel, slideIndex);
 
   // 4. Header: Top-Left Authentic MARROK Vector Badge + Brand Wordmark + Slide-Type Corner Tag
   if (!layout.headerBadge.hidden) {
@@ -168,6 +170,8 @@ export async function renderSlideToCanvas(
       rawGraphicEnd = await drawPosterSlide(ctx, slide, theme, options, carousel.brand || 'MARROK', videoElement, spec);
     } else if (slide.type === 'subjectPair') {
       rawGraphicEnd = await drawSubjectPairSlide(ctx, slide, theme, options, spec);
+    } else if (slide.type === 'visual') {
+      rawGraphicEnd = await drawVisualSlide(ctx, slide, theme, options, slideIndex);
     }
     yGraphicEnd = Math.round(rawGraphicEnd * graphicTransform.scale + graphicTransform.translateY);
     ctx.restore();
@@ -177,11 +181,16 @@ export async function renderSlideToCanvas(
   if (slide.type !== 'cta') {
     const graphicBottom =
       layout.graphicCard && !layout.graphicCard.hidden ? layout.graphicCard.effectiveBottom : yGraphicEnd;
-    const ceilingY = spec.safeFooterCeilingY;
+    const ceilingY =
+      layout.swipeCueBox && !layout.swipeCueBox.hidden
+        ? Math.min(spec.safeFooterCeilingY, layout.swipeCueBox.y - 10)
+        : spec.safeFooterCeilingY;
 
     const minTextTop = Math.min(
       layout.titleBlock && !layout.titleBlock.hidden ? layout.titleBlock.top : ceilingY,
       layout.arabicTitleBlock && !layout.arabicTitleBlock.hidden ? layout.arabicTitleBlock.top : ceilingY,
+      layout.coverTeaserBlock && !layout.coverTeaserBlock.hidden ? layout.coverTeaserBlock.top : ceilingY,
+      layout.arabicCoverTeaserBlock && !layout.arabicCoverTeaserBlock.hidden ? layout.arabicCoverTeaserBlock.top : ceilingY,
       layout.bodyBlock && !layout.bodyBlock.hidden ? layout.bodyBlock.top : ceilingY,
       layout.arabicBodyBlock && !layout.arabicBodyBlock.hidden ? layout.arabicBodyBlock.top : ceilingY,
       graphicBottom
@@ -213,9 +222,12 @@ export async function renderSlideToCanvas(
       const kickerPillH = spec.height < 1920 ? 32 : 38;
       const kickerBottomY = tb.top - (spec.height < 1920 ? 8 : 10);
       const kickerTopY = kickerBottomY - kickerPillH;
+      const headerClearFloor = layout.headerBadge.hidden
+        ? spec.headerY
+        : layout.headerBadge.y + layout.headerBadge.height + 4;
       const minAllowedKickerTop =
         layout.compositionPreset === 'headline-first'
-          ? spec.headerY + 48
+          ? headerClearFloor
           : graphicBottom + 4;
 
       if (kickerTopY >= minAllowedKickerTop) {
@@ -297,6 +309,49 @@ export async function renderSlideToCanvas(
       ctx.restore();
     }
 
+    // 6d-bis. Render Slide 1 Cover One-Line Context Teasers (English + Arabic)
+    if (layout.coverTeaserBlock && !layout.coverTeaserBlock.hidden && layout.coverTeaserBlock.lines.length > 0) {
+      const etb = layout.coverTeaserBlock;
+      const { x, textAlign } = resolveAlignX(etb.align, etb.dx);
+      ctx.save();
+      if (etb.opacity !== undefined && etb.opacity < 1) {
+        ctx.globalAlpha *= Math.max(0.1, Math.min(1, etb.opacity));
+      }
+      ctx.font = `500 ${etb.fontSize}px "Plus Jakarta Sans", sans-serif`;
+      ctx.fillStyle = theme.textEnBody;
+      ctx.textAlign = textAlign;
+      ctx.direction = 'ltr';
+      ctx.textBaseline = 'alphabetic';
+      let lineY = etb.firstBaselineY;
+      for (const line of etb.lines) {
+        if (lineY + etb.lineHeight * 0.25 > ceilingY) break;
+        ctx.fillText(line, x, lineY);
+        lineY += etb.lineHeight;
+      }
+      ctx.restore();
+    }
+
+    if (layout.arabicCoverTeaserBlock && !layout.arabicCoverTeaserBlock.hidden && layout.arabicCoverTeaserBlock.lines.length > 0) {
+      const atb = layout.arabicCoverTeaserBlock;
+      const { x, textAlign } = resolveAlignX(atb.align, atb.dx);
+      ctx.save();
+      if (atb.opacity !== undefined && atb.opacity < 1) {
+        ctx.globalAlpha *= Math.max(0.1, Math.min(1, atb.opacity));
+      }
+      ctx.font = `500 ${atb.fontSize}px "Cairo", sans-serif`;
+      ctx.fillStyle = theme.textArBody;
+      ctx.textAlign = textAlign;
+      ctx.direction = 'rtl';
+      ctx.textBaseline = 'alphabetic';
+      let lineY = atb.firstBaselineY;
+      for (const line of atb.lines) {
+        if (lineY + atb.lineHeight * 0.25 > ceilingY) break;
+        ctx.fillText(isolateEmbeddedLatinInArabic(line), x, lineY);
+        lineY += atb.lineHeight;
+      }
+      ctx.restore();
+    }
+
     // 6e. Render English Body Copy (equal weight 500 to Arabic body)
     if (layout.bodyBlock && !layout.bodyBlock.hidden && layout.bodyBlock.lines.length > 0) {
       const bb = layout.bodyBlock;
@@ -355,6 +410,35 @@ export async function renderSlideToCanvas(
         ctx.globalAlpha *= Math.max(0.1, Math.min(1, layout.takeawaysBlock.opacity));
       }
       await drawTakeawaysBlock(ctx, slide.takeaways, theme, layout.takeawaysBlock, options);
+      ctx.restore();
+    }
+
+    // 6h. Render Slide 1 Bottom Swipe Prompt Pill cleanly above safe footer
+    if (layout.swipeCueBox && !layout.swipeCueBox.hidden) {
+      const box = layout.swipeCueBox;
+      const hasArabic = /[\u0600-\u06FF]/.test(box.text);
+      const pillLabel = hasArabic ? `← ${box.text}` : `${box.text} →`;
+      const fontFamily = hasArabic ? '"Cairo", sans-serif' : '"Plus Jakarta Sans", sans-serif';
+      ctx.save();
+      ctx.font = `700 ${box.fontSize}px ${fontFamily}`;
+      const measuredTextW = typeof ctx.measureText === 'function' ? ctx.measureText(pillLabel).width : 0;
+      const pillW = Math.min(spec.safeContentWidth, Math.max(box.width, Math.round(measuredTextW + 56)));
+      const pillX = Math.round(spec.safeTextCenterX - pillW / 2);
+      drawRoundRect(
+        ctx,
+        pillX,
+        box.y,
+        pillW,
+        box.height,
+        Math.round(box.height / 2),
+        `${theme.accent}1A`,
+        `${theme.accent}80`,
+        1.5
+      );
+      ctx.fillStyle = theme.textWhite;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(pillLabel, spec.safeTextCenterX, box.y + box.height / 2 + 1);
       ctx.restore();
     }
   }

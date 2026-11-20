@@ -25,11 +25,12 @@ export interface ElementBounds {
  */
 export function computeSlideElementBounds(
   slide: SlideData,
-  carousel?: CarouselData
+  carousel?: CarouselData,
+  slideIndex?: number
 ): Record<GraphicalElementId, ElementBounds> {
   const bounds: Partial<Record<GraphicalElementId, ElementBounds>> = {};
   const spec = getCanvasDimensionSpec(carousel?.dimensionPreset);
-  const layout = computeSlideLayoutAwareness(slide, carousel);
+  const layout = computeSlideLayoutAwareness(slide, carousel, slideIndex);
 
   const toPct = (val: number, total: number) => `${((val / total) * 100).toFixed(2)}%`;
 

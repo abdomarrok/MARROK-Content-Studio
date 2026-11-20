@@ -17,12 +17,15 @@ export interface StudioContextValue {
 
 const StudioContext = createContext<StudioContextValue | null>(null);
 
-export const StudioProvider: React.FC<{
+export function StudioProvider({
+  value,
+  children,
+}: {
   value: StudioContextValue;
   children: React.ReactNode;
-}> = ({ value, children }) => {
+}) {
   return <StudioContext.Provider value={value}>{children}</StudioContext.Provider>;
-};
+}
 
 export function useStudioContext(): StudioContextValue {
   const ctx = useContext(StudioContext);
@@ -30,8 +33,4 @@ export function useStudioContext(): StudioContextValue {
     throw new Error('useStudioContext must be used within a <StudioProvider>');
   }
   return ctx;
-}
-
-export function useOptionalStudioContext(): StudioContextValue | null {
-  return useContext(StudioContext);
 }

@@ -13,6 +13,12 @@ export interface ExtractedVideoStoryboard {
   height: number;
   fileName: string;
   sizeKb: number;
+  timelineCues?: {
+    frameCount: number;
+    frameTimestampsSec: number[];
+    sampleRatios: number[];
+    timelineSummary: string;
+  };
 }
 
 export interface AnalyzeVideoOptions {
@@ -70,6 +76,8 @@ export async function extractVideoStoryboardDataUrl(
     /jsdom|HappyDOM/i.test(navigator.userAgent || '');
 
   if (isJsdom || typeof document === 'undefined') {
+    const sampleRatios = [0.12, 0.38, 0.64, 0.88];
+    const frameTimestampsSec = sampleRatios.map((r) => Number((6.0 * r).toFixed(1)));
     return {
       base64DataUrl: SYNTHETIC_STORYBOARD_DATA_URL,
       dataUrl: SYNTHETIC_STORYBOARD_DATA_URL,
@@ -80,6 +88,12 @@ export async function extractVideoStoryboardDataUrl(
       height: 720,
       fileName,
       sizeKb: 4,
+      timelineCues: {
+        frameCount: 4,
+        frameTimestampsSec,
+        sampleRatios,
+        timelineSummary: `FRAME #1 (${frameTimestampsSec[0]}s) -> FRAME #2 (${frameTimestampsSec[1]}s) -> FRAME #3 (${frameTimestampsSec[2]}s) -> FRAME #4 (${frameTimestampsSec[3]}s)`,
+      },
     };
   }
 
@@ -238,6 +252,10 @@ export async function extractVideoStoryboardDataUrl(
         : SYNTHETIC_STORYBOARD_DATA_URL;
     const sizeKb = Math.max(1, Math.round((validDataUrl.length * 0.75) / 1024));
 
+    const frameTimestampsSec = sampleRatios.map((r) =>
+      Number(Math.max(0, Math.min(durationSec - 0.05, durationSec * r)).toFixed(1))
+    );
+
     return {
       base64DataUrl: validDataUrl,
       dataUrl: validDataUrl,
@@ -248,6 +266,14 @@ export async function extractVideoStoryboardDataUrl(
       height: vidH,
       fileName,
       sizeKb,
+      timelineCues: {
+        frameCount: sampleRatios.length,
+        frameTimestampsSec,
+        sampleRatios,
+        timelineSummary: frameTimestampsSec
+          .map((t, idx) => `FRAME #${idx + 1} (${t}s)`)
+          .join(' -> '),
+      },
     };
   } finally {
     if (revokeUrl) {
@@ -296,13 +322,15 @@ export async function analyzeVideoForSlideAndCaption(
     .filter(Boolean)
     .join(' — ');
 
+  const timelineSummary =
+    storyboard.timelineCues?.timelineSummary ||
+    `FRAME #1..#4 across ${storyboard.durationSec.toFixed(1)}s`;
+
   const effectivePrompt =
     existingContext ||
-    `Analyze the attached 4-frame video storyboard from "${inferredTopic}" (${storyboard.durationSec.toFixed(
-      1
-    )}s video). Synthesize a sharp bilingual English + Modern Standard Arabic headline, technical explanation body, 3 key takeaways, and a high-engagement bilingual social media caption with hashtags that accurately describe the video.`;
+    `Review the chronological video timeline (${timelineSummary}) in the attached 4-frame storyboard for "${inferredTopic}" to extract concrete visual cues (UI state changes, metrics, errors, code diffs, and before/after transitions). Draft body slides first (< 20 words each, 1 idea per slide), generate 5 hook options across Contrarian, Specific Metric, Mistake Callout, and Curiosity Gap, and select the highest-scoring 6-12 word bilingual Slide 1 hook with zero emojis, colons, or banned clichés.`;
 
-  onProgress?.('Synthesizing bilingual slide text & social caption from video...');
+  onProgress?.('Reviewing video timeline cues & scoring 5 hook variations...');
   const generatedCarousel = await runAutonomousPipeline(effectivePrompt, {
     theme,
     generateDiagram: false,
@@ -467,6 +495,11 @@ export function buildCleanMemeCarouselDeck(
     arTitle: '',
     enBody: '',
     arBody: '',
+    coverStyle: undefined,
+    coverTeaserEn: '',
+    coverTeaserAr: '',
+    showSwipeCue: false,
+    swipeCueText: '',
     takeaways: [],
     enCredit: '',
     arCredit: '',

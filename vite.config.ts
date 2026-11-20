@@ -37,9 +37,7 @@ export default defineConfig(() => {
             if (/[\\/]src[\\/]lib[\\/]synthesis[\\/]/.test(id)) {
               return 'engine-synthesis';
             }
-            if (/[\\/]src[\\/]lib[\\/]storage[\\/]bundledSavedPosts/.test(id)) {
-              return 'seed-vault';
-            }
+            return undefined;
           },
         },
       },

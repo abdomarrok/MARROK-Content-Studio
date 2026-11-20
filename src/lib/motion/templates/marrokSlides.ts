@@ -143,8 +143,6 @@ function drawAnimatedSlideArchetypeContent(
   t: number
 ): void {
   const accent = brand.accentColor || '#6EA0FF';
-  const k = scene.springK || 220;
-  const d = scene.springD || 22;
 
   const cardX = SAFE_LEFT;
   const cardY = DIAGRAM_CARD_Y;

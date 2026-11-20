@@ -32,7 +32,6 @@ export const FONT_TITLE_EN = '"Plus Jakarta Sans", sans-serif';
 export const FONT_TITLE_AR = '"Cairo", sans-serif';
 export const FONT_BODY_EN = '"Plus Jakarta Sans", sans-serif';
 export const FONT_BODY_AR = '"Cairo", sans-serif';
-export const FONT_MONO = '"JetBrains Mono", monospace';
 
 export const MIN_TITLE_FONT_SIZE = 24;
 export const MIN_BODY_FONT_SIZE = 24;
@@ -248,12 +247,6 @@ export function getCanvasDimensionSpec(preset?: CanvasDimensionPreset): CanvasDi
 export const ACCEPTED_SINGLE_SLIDE_MEDIA_ACCEPT =
   'image/*,video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov';
 
-export const SUPPORTED_VIDEO_MIME_TYPES = [
-  'video/mp4',
-  'video/webm',
-  'video/quicktime',
-] as const;
-
 export function isVideoMimeType(mime?: string | null): boolean {
   if (!mime) return false;
   const clean = mime.toLowerCase().trim();
@@ -334,7 +327,6 @@ export interface WhiteCardMediaGeometry {
  * Computes exact pixel and percentage coordinates for the central white rounded card
  * and its inner padded media container across any active dimension preset (e.g. 1080x1440 IG_GRID).
  */
-export const FULL_MEME_CARD_X = 36;
 export const FULL_MEME_CARD_W = 1008;
 
 /**
@@ -538,8 +530,8 @@ export function getArchetypeGraphicTransform(
     baseCardH = 820;
     nativeCenterX = SAFE_CONTENT_CENTER_X;
   } else if (slideType === 'poster') {
-    baseCardY = 200;
-    baseCardH = 430;
+    baseCardY = 240;
+    baseCardH = 490;
     nativeCenterX = SAFE_CONTENT_CENTER_X;
   } else if (slideType === 'subjectPair') {
     baseCardY = 240;

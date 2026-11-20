@@ -1,5 +1,5 @@
-import React from 'react';
-import { ArrowRight, ArrowLeftRight, ShieldCheck, Type, Sparkles } from 'lucide-react';
+import { useMemo } from 'react';
+import { ArrowLeftRight, ShieldCheck, Type } from 'lucide-react';
 import { SlideData, SubjectPairConfig } from '../../../types.ts';
 import { listBundledTechIcons } from '../../../lib/bundledTechSvgs.ts';
 
@@ -8,15 +8,15 @@ export interface SubjectPairArchetypeEditorProps {
   smart?: {
     subjectPair?: SubjectPairConfig;
   };
-  onUpdateField: (field: keyof SlideData, value: any) => void;
+  onUpdateField: <K extends keyof SlideData>(field: K, value: SlideData[K]) => void;
 }
 
-export const SubjectPairArchetypeEditor: React.FC<SubjectPairArchetypeEditorProps> = ({
+export function SubjectPairArchetypeEditor({
   currentSlide,
   smart,
   onUpdateField,
-}) => {
-  const bundledIcons = React.useMemo(() => listBundledTechIcons(), []);
+}: SubjectPairArchetypeEditorProps) {
+  const bundledIcons = useMemo(() => listBundledTechIcons(), []);
 
   const pair: SubjectPairConfig = currentSlide.subjectPair || smart?.subjectPair || {
     beforeSystem: '',

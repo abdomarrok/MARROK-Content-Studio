@@ -20,6 +20,7 @@ import {
   getCanvasDimensionSpec,
 } from './canvas/constants.ts';
 import { computeSlideLayoutAwareness } from './canvas/layoutAwareness.ts';
+import { sanitizeSvgBlueprintMarkup } from './canvas/svgBlueprint.ts';
 import { isPlaceholderOrEmptyBrandValue } from './bundledTechSvgs.ts';
 
 // ─── Character Limits (Spec §8) ────────────────────────────────────
@@ -29,7 +30,8 @@ export const CHAR_LIMITS = {
   enBody: 140,
   arBody: 150,
   iconLabel: 16,
-  hookTitle: 60,  // Hook titles allowed slightly longer (2-line @ 96px)
+  hookTitle: 78,    // 6-12 word viral Slide 1 hook headline (2-line @ 96px)
+  hookArTitle: 68,  // 6-12 word Arabic Slide 1 hook headline matching EN span without mid-clause truncation
 } as const;
 
 export const SINGLE_SLIDE_CHAR_LIMITS = {
@@ -40,7 +42,14 @@ export const SINGLE_SLIDE_CHAR_LIMITS = {
   takeawayEn: 75,
   takeawayAr: 80,
   iconLabel: 16,
-  hookTitle: 65,
+  hookTitle: 78,
+  hookArTitle: 68,
+} as const;
+
+export const PLATFORM_CAPTION_CHAR_LIMITS = {
+  instagram: 2200,
+  tiktok: 2200,
+  linkedin: 3000,
 } as const;
 
 // ─── QA Result Types ────────────────────────────────────────────────
@@ -90,11 +99,49 @@ function checkSlideCount(slides: SlideData[], isSingleSlide: boolean = false): Q
   return { id: 'slide-count', severity: 'pass', message: `${count} slides — within range.`, value: count };
 }
 
+/**
+ * Checks deck caption length against social platform limits:
+ * - Instagram & TikTok: 2,200 characters
+ * - LinkedIn: 3,000 characters
+ */
+export function checkPlatformCaptionLimits(carousel: CarouselData): QACheckResult {
+  const len = (carousel.caption || '').trim().length;
+  if (len > PLATFORM_CAPTION_CHAR_LIMITS.linkedin) {
+    return {
+      id: 'caption-platform-limit',
+      severity: 'warn',
+      field: 'caption',
+      message: `Caption is ${len} chars — exceeds Instagram/TikTok (${PLATFORM_CAPTION_CHAR_LIMITS.instagram}) and LinkedIn (${PLATFORM_CAPTION_CHAR_LIMITS.linkedin}) limits.`,
+      value: len,
+      limit: PLATFORM_CAPTION_CHAR_LIMITS.instagram,
+    };
+  }
+  if (len > PLATFORM_CAPTION_CHAR_LIMITS.instagram) {
+    return {
+      id: 'caption-platform-limit',
+      severity: 'warn',
+      field: 'caption',
+      message: `Caption is ${len} chars — exceeds Instagram & TikTok limit (${PLATFORM_CAPTION_CHAR_LIMITS.instagram} chars; fits LinkedIn ${PLATFORM_CAPTION_CHAR_LIMITS.linkedin}).`,
+      value: len,
+      limit: PLATFORM_CAPTION_CHAR_LIMITS.instagram,
+    };
+  }
+  return {
+    id: 'caption-platform-limit',
+    severity: 'pass',
+    field: 'caption',
+    message: `Caption length (${len} chars) fits Instagram, TikTok (≤2,200) & LinkedIn (≤3,000).`,
+    value: len,
+    limit: PLATFORM_CAPTION_CHAR_LIMITS.instagram,
+  };
+}
+
 /** Check character limits on a single slide's text fields */
 function checkCharLimits(slide: SlideData, idx: number, isHook: boolean, isSingleSlide: boolean = false): QACheckResult[] {
   const results: QACheckResult[] = [];
   const limits = isSingleSlide ? SINGLE_SLIDE_CHAR_LIMITS : CHAR_LIMITS;
   const enTitleLimit = isHook ? limits.hookTitle : limits.enTitle;
+  const arTitleLimit = isHook ? limits.hookArTitle : limits.arTitle;
 
   if (slide.enTitle && slide.enTitle.length > enTitleLimit) {
     results.push({
@@ -108,15 +155,15 @@ function checkCharLimits(slide: SlideData, idx: number, isHook: boolean, isSingl
     });
   }
 
-  if (slide.arTitle && slide.arTitle.length > limits.arTitle) {
+  if (slide.arTitle && slide.arTitle.length > arTitleLimit) {
     results.push({
       id: `char-ar-title-${idx}`,
       severity: 'warn',
       slideIndex: idx,
       field: 'arTitle',
-      message: `AR title is ${slide.arTitle.length} chars (limit: ${limits.arTitle}).`,
+      message: `AR title is ${slide.arTitle.length} chars (limit: ${arTitleLimit}).`,
       value: slide.arTitle.length,
-      limit: limits.arTitle,
+      limit: arTitleLimit,
     });
   }
 
@@ -451,15 +498,26 @@ function checkHeadlineSpecRule(slide: SlideData, idx: number, totalSlides: numbe
       });
     }
 
-    if (words.length < 2 || words.length > 8) {
+    const minWords = totalSlides === 1 ? 2 : 6;
+    if (words.length < minWords || words.length > 12) {
       results.push({
         id: `headline-length-${idx}`,
         severity: 'fail',
         slideIndex: idx,
         field: 'enTitle',
-        message: `Slide 1 hook has ${words.length} words (rule is 2 to 8 words, max 50 chars). Adjust length to 2–8 words.`,
+        message: `Slide 1 hook has ${words.length} words (rule is 6 to 12 words). Adjust length to 6–12 words.`,
         value: words.length,
-        limit: '2–8 words',
+        limit: '6–12 words',
+      });
+    } else if (totalSlides === 1 && words.length < 6) {
+      results.push({
+        id: `headline-length-${idx}`,
+        severity: 'warn',
+        slideIndex: idx,
+        field: 'enTitle',
+        message: `Slide 1 hook has ${words.length} words (recommended 6 to 12 words).`,
+        value: words.length,
+        limit: '6–12 words',
       });
     }
   } else if (isCta) {
@@ -597,7 +655,7 @@ const KNOWN_BOILERPLATE_PATTERNS: { pattern: RegExp; description: string }[] = [
   },
 ];
 
-const CONTENT_QUALITY_FILLER_LABELS = new Set([
+export const CONTENT_QUALITY_FILLER_LABELS = new Set([
   'TECH',
   'TECH HUMOR',
   'HUMOR',
@@ -679,6 +737,41 @@ export function checkContentQuality(carousel: CarouselData): QACheckResult[] {
           field: 'enTitle',
           message: `Slide 1 Hook has ${wordCount} words (max 12 words for scannability).`,
         });
+      }
+      if (s.type !== 'poster') {
+        const teaserEnLen = (s.coverTeaserEn || '').trim().length;
+        const teaserArLen = (s.coverTeaserAr || '').trim().length;
+        if (teaserEnLen > 68) {
+          results.push({
+            id: 'content-quality-slide1-teaser-en-len',
+            severity: 'warn',
+            slideIndex: 0,
+            field: 'coverTeaserEn',
+            message: `Slide 1 English cover teaser is ${teaserEnLen} chars (keep <= 68 chars for clean 1-line cover framing).`,
+          });
+        }
+        if (teaserArLen > 68) {
+          results.push({
+            id: 'content-quality-slide1-teaser-ar-len',
+            severity: 'warn',
+            slideIndex: 0,
+            field: 'coverTeaserAr',
+            message: `Slide 1 Arabic cover teaser is ${teaserArLen} chars (keep <= 68 chars for clean 1-line cover framing).`,
+          });
+        }
+        if (
+          s.coverStyle === 'metric-split' &&
+          !/\d/.test(`${s.metricValue || ''} ${s.enTitle || ''} ${s.coverTeaserEn || ''}`)
+        ) {
+          results.push({
+            id: 'content-quality-slide1-metric-split-digits',
+            severity: 'warn',
+            slideIndex: 0,
+            field: 'coverStyle',
+            message:
+              'Slide 1 uses "Metric Split" cover style without a verified numeric figure — consider "Headline Hero" or add a grounded stat.',
+          });
+        }
       }
     }
 
@@ -1030,13 +1123,14 @@ function checkFirstFrame(slides: SlideData[], isSingleSlide: boolean = false): Q
     'number',
     'poster',
     'image',
+    'visual',
   ];
   if (!isSingleSlide && !validCoverTypes.includes(first.type)) {
     results.push({
       id: 'first-frame-type',
       severity: 'warn',
       slideIndex: 0,
-      message: `Slide 1 type is "${first.type}" — use a visual cover archetype (hub, metric, compare, subjectPair, or row) for best thumbnail impact.`,
+      message: `Slide 1 type is "${first.type}" — use a visual cover archetype (hub, metric, compare, subjectPair, visual, or row) for best thumbnail impact.`,
     });
   }
 
@@ -1291,6 +1385,96 @@ function checkArchetypeFields(slide: SlideData, idx: number): QACheckResult[] {
         });
       }
     }
+  } else if (slide.type === 'visual') {
+    const spec = slide.visualSpec;
+    if (!spec || !spec.kind) {
+      results.push({
+        id: `archetype-visual-missing-spec-${idx}`,
+        severity: 'fail',
+        slideIndex: idx,
+        field: 'visualSpec',
+        message: `Slide ${idx + 1} (visual archetype) is missing a visualSpec configuration.`,
+      });
+    } else if (spec.kind === 'bar-chart') {
+      if (!spec.bars || spec.bars.length === 0) {
+        results.push({
+          id: `archetype-visual-bars-empty-${idx}`,
+          severity: 'fail',
+          slideIndex: idx,
+          field: 'visualSpec',
+          message: `Slide ${idx + 1} (bar-chart visual) needs at least 1 data bar.`,
+        });
+      }
+    } else if (spec.kind === 'sequence') {
+      if (!spec.actors || spec.actors.length < 2 || !spec.steps || spec.steps.length === 0) {
+        results.push({
+          id: `archetype-visual-sequence-incomplete-${idx}`,
+          severity: 'fail',
+          slideIndex: idx,
+          field: 'visualSpec',
+          message: `Slide ${idx + 1} (sequence visual) requires at least 2 actors and 1 step.`,
+        });
+      }
+    } else if (spec.kind === 'timeline') {
+      if (!spec.events || spec.events.length < 2) {
+        results.push({
+          id: `archetype-visual-timeline-incomplete-${idx}`,
+          severity: 'fail',
+          slideIndex: idx,
+          field: 'visualSpec',
+          message: `Slide ${idx + 1} (timeline visual) requires at least 2 chronological events.`,
+        });
+      }
+    } else if (spec.kind === 'matrix') {
+      if (!spec.quadrants || spec.quadrants.length < 2) {
+        results.push({
+          id: `archetype-visual-matrix-incomplete-${idx}`,
+          severity: 'fail',
+          slideIndex: idx,
+          field: 'visualSpec',
+          message: `Slide ${idx + 1} (matrix visual) requires at least 2 populated quadrants.`,
+        });
+      }
+    } else if (spec.kind === 'table') {
+      if (!spec.columns || spec.columns.length < 2 || !spec.rows || spec.rows.length === 0) {
+        results.push({
+          id: `archetype-visual-table-incomplete-${idx}`,
+          severity: 'fail',
+          slideIndex: idx,
+          field: 'visualSpec',
+          message: `Slide ${idx + 1} (table visual) requires at least 2 columns and 1 data row.`,
+        });
+      }
+    } else if (spec.kind === 'callout') {
+      if (!spec.quote?.trim() && !spec.statValue?.trim()) {
+        results.push({
+          id: `archetype-visual-callout-empty-${idx}`,
+          severity: 'fail',
+          slideIndex: idx,
+          field: 'visualSpec',
+          message: `Slide ${idx + 1} (callout visual) needs a quote statement or hero stat value.`,
+        });
+      }
+    } else if (spec.kind === 'svg') {
+      const sanitized = sanitizeSvgBlueprintMarkup(spec.svgCode || '', spec.viewBox);
+      if (!sanitized.isValid) {
+        results.push({
+          id: `archetype-visual-svg-invalid-${idx}`,
+          severity: 'fail',
+          slideIndex: idx,
+          field: 'visualSpec',
+          message: `Slide ${idx + 1} (custom SVG visual) has empty or invalid SVG markup.`,
+        });
+      } else if (sanitized.warnings.length > 0) {
+        results.push({
+          id: `archetype-visual-svg-sanitized-${idx}`,
+          severity: 'warn',
+          slideIndex: idx,
+          field: 'visualSpec',
+          message: `Slide ${idx + 1} custom SVG had unsafe elements/attributes stripped during sanitization: ${sanitized.warnings[0]}`,
+        });
+      }
+    }
   }
 
   return results;
@@ -1503,7 +1687,7 @@ function checkMinFontSizeViolation(
 
   // Verify resolved layout awareness typography sizes strictly meet the >=24px floor on this aspect ratio
   if (!(slide.standaloneMeme || slide.imageFrameMode === 'full')) {
-    const layout = computeSlideLayoutAwareness(slide, carousel);
+    const layout = computeSlideLayoutAwareness(slide, carousel, idx);
     const textBlocks: Array<{
       key: string;
       minPx: number;
@@ -1511,6 +1695,8 @@ function checkMinFontSizeViolation(
     }> = [
       { key: 'titleBlock', minPx: MIN_TITLE_FONT_SIZE, block: layout.titleBlock },
       { key: 'arabicTitleBlock', minPx: MIN_TITLE_FONT_SIZE, block: layout.arabicTitleBlock },
+      { key: 'coverTeaserBlock', minPx: MIN_BODY_FONT_SIZE, block: layout.coverTeaserBlock },
+      { key: 'arabicCoverTeaserBlock', minPx: MIN_BODY_FONT_SIZE, block: layout.arabicCoverTeaserBlock },
       { key: 'bodyBlock', minPx: MIN_BODY_FONT_SIZE, block: layout.bodyBlock },
       { key: 'arabicBodyBlock', minPx: MIN_BODY_FONT_SIZE, block: layout.arabicBodyBlock },
     ];
@@ -2013,6 +2199,7 @@ export function runQAChecks(carousel: CarouselData, options: QACheckOptions = {}
 
   // Deck-level checks
   results.push(checkSlideCount(slides, isSingleSlide));
+  results.push(checkPlatformCaptionLimits(carousel));
   results.push(checkLastSlideCta(slides, isSingleSlide));
   results.push(...checkCreditPresence(slides));
   results.push(...checkFirstFrame(slides, isSingleSlide));
@@ -2083,19 +2270,6 @@ export function runQAChecks(carousel: CarouselData, options: QACheckOptions = {}
     failCount,
     canExport: failCount === 0,
   };
-}
-
-/**
- * Quick summary string for toast display
- */
-export function qaReportSummary(report: QAReport): string {
-  if (report.failCount > 0) {
-    return `QA: ${report.failCount} issue(s) must be fixed before export.`;
-  }
-  if (report.warnCount > 0) {
-    return `QA passed with ${report.warnCount} warning(s).`;
-  }
-  return `QA: All ${report.passCount} checks passed.`;
 }
 
 // ─── Gatherer Quality Gate & Originality Detector ───────────────────

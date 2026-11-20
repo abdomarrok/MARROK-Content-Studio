@@ -1,5 +1,11 @@
 import pg from 'pg';
-import type { SavedPostRecord, SavedPostStatus } from '../../src/types.ts';
+import type {
+  SavedPostRecord,
+  SavedPostStatus,
+  TriageAction,
+  TriageDecisionRecord,
+  TriageSkipReason,
+} from '../../src/types.ts';
 import { readRuntimeEnv } from '../../src/lib/security/env.ts';
 
 const { Pool } = pg;
@@ -104,12 +110,26 @@ export async function initPostgresSchema(pool: pg.Pool): Promise<void> {
       deleted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS inbox_triage_decisions (
+      id VARCHAR(64) PRIMARY KEY,
+      topic_id VARCHAR(128) NOT NULL,
+      topic_signature VARCHAR(255),
+      source_domain VARCHAR(255) NOT NULL,
+      domain_category VARCHAR(120) NOT NULL,
+      action VARCHAR(32) NOT NULL,
+      reason VARCHAR(64),
+      snooze_until TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     ALTER TABLE saved_posts ADD COLUMN IF NOT EXISTS cloudinary_cleaned_at TIMESTAMPTZ;
 
     CREATE INDEX IF NOT EXISTS idx_saved_posts_status ON saved_posts(post_status);
     CREATE INDEX IF NOT EXISTS idx_saved_posts_scheduled_for ON saved_posts(scheduled_for);
     CREATE INDEX IF NOT EXISTS idx_saved_posts_updated_at ON saved_posts(updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_saved_posts_signature ON saved_posts(title_signature);
+    CREATE INDEX IF NOT EXISTS idx_inbox_triage_created_at ON inbox_triage_decisions(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_inbox_triage_topic_id ON inbox_triage_decisions(topic_id);
   `;
 
   await pool.query(createTableSql);
@@ -140,6 +160,14 @@ function rowToSavedPostRecord(row: Record<string, unknown>): SavedPostRecord {
       : undefined;
   const publishFailed =
     sourceMeta?.publishFailed !== undefined ? Boolean(sourceMeta.publishFailed) : undefined;
+  const lastDispatchFingerprint =
+    typeof sourceMeta?.lastDispatchFingerprint === 'string'
+      ? sourceMeta.lastDispatchFingerprint
+      : undefined;
+  const lastDispatchedAt =
+    typeof sourceMeta?.lastDispatchedAt === 'string'
+      ? sourceMeta.lastDispatchedAt
+      : undefined;
 
   return {
     id: String(row.id),
@@ -161,6 +189,8 @@ function rowToSavedPostRecord(row: Record<string, unknown>): SavedPostRecord {
     ...(humanApproved !== undefined ? { humanApproved } : {}),
     ...(verifiedNumbers !== undefined ? { verifiedNumbers } : {}),
     ...(publishFailed !== undefined ? { publishFailed } : {}),
+    ...(lastDispatchFingerprint ? { lastDispatchFingerprint } : {}),
+    ...(lastDispatchedAt ? { lastDispatchedAt } : {}),
     scheduledFor: row.scheduled_for
       ? row.scheduled_for instanceof Date
         ? row.scheduled_for.toISOString()
@@ -209,18 +239,14 @@ export async function queryPostgresDeletedIds(pool: pg.Pool): Promise<string[]> 
   }
 }
 
-export async function countPostgresPosts(pool: pg.Pool): Promise<number> {
-  await initPostgresSchema(pool);
-  const result = await pool.query('SELECT COUNT(*) AS count FROM saved_posts;');
-  return parseInt(String(result.rows[0]?.count || '0'), 10);
-}
-
 function preparePostRowParams(post: SavedPostRecord, titleSignature?: string) {
   const deckToPersist =
     post.qualityPassed !== undefined ||
     post.groundingVerified !== undefined ||
     post.humanApproved !== undefined ||
-    post.publishFailed !== undefined
+    post.publishFailed !== undefined ||
+    post.lastDispatchFingerprint !== undefined ||
+    post.lastDispatchedAt !== undefined
       ? {
           ...post.deck,
           sourceMeta: {
@@ -236,6 +262,12 @@ function preparePostRowParams(post: SavedPostRecord, titleSignature?: string) {
                 }
               : {}),
             ...(post.publishFailed !== undefined ? { publishFailed: post.publishFailed } : {}),
+            ...(post.lastDispatchFingerprint !== undefined
+              ? { lastDispatchFingerprint: post.lastDispatchFingerprint }
+              : {}),
+            ...(post.lastDispatchedAt !== undefined
+              ? { lastDispatchedAt: post.lastDispatchedAt }
+              : {}),
           },
         }
       : post.deck;
@@ -499,4 +531,75 @@ export async function clearPostgresDeletedTombstone(pool: pg.Pool, id: string): 
     // Non-fatal
   }
 }
+
+function rowToTriageDecision(row: Record<string, unknown>): TriageDecisionRecord {
+  return {
+    id: String(row.id),
+    topicId: String(row.topic_id || ''),
+    topicSignature: row.topic_signature ? String(row.topic_signature) : undefined,
+    sourceDomain: String(row.source_domain || ''),
+    domainCategory: String(row.domain_category || 'DISTRIBUTED SYSTEMS'),
+    action: (row.action as TriageAction) || 'skip',
+    reason: row.reason ? (String(row.reason) as TriageSkipReason) : undefined,
+    snoozeUntil: row.snooze_until
+      ? row.snooze_until instanceof Date
+        ? row.snooze_until.toISOString()
+        : String(row.snooze_until)
+      : null,
+    createdAt:
+      row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at || new Date().toISOString()),
+  };
+}
+
+export async function queryPostgresTriageDecisions(
+  pool: pg.Pool,
+  limit = 250
+): Promise<TriageDecisionRecord[]> {
+  await initPostgresSchema(pool);
+  const safeLimit = Math.max(1, Math.min(500, Number(limit) || 250));
+  const result = await pool.query(
+    `SELECT * FROM inbox_triage_decisions ORDER BY created_at DESC LIMIT $1;`,
+    [safeLimit]
+  );
+  return (result.rows || []).map(rowToTriageDecision);
+}
+
+export async function insertPostgresTriageDecision(
+  pool: pg.Pool,
+  decision: TriageDecisionRecord
+): Promise<TriageDecisionRecord> {
+  await initPostgresSchema(pool);
+  const sql = `
+    INSERT INTO inbox_triage_decisions (
+      id, topic_id, topic_signature, source_domain, domain_category,
+      action, reason, snooze_until, created_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    ON CONFLICT (id) DO UPDATE SET
+      action = EXCLUDED.action,
+      reason = EXCLUDED.reason,
+      snooze_until = EXCLUDED.snooze_until,
+      created_at = EXCLUDED.created_at
+    RETURNING *;
+  `;
+  const values = [
+    decision.id,
+    decision.topicId,
+    decision.topicSignature || null,
+    decision.sourceDomain,
+    decision.domainCategory,
+    decision.action,
+    decision.reason || null,
+    decision.snoozeUntil ? new Date(decision.snoozeUntil) : null,
+    decision.createdAt ? new Date(decision.createdAt) : new Date(),
+  ];
+  const result = await pool.query(sql, values);
+  return rowToTriageDecision(result.rows[0]);
+}
+
+export async function deletePostgresTriageDecision(pool: pg.Pool, id: string): Promise<boolean> {
+  await initPostgresSchema(pool);
+  const result = await pool.query('DELETE FROM inbox_triage_decisions WHERE id = $1;', [id]);
+  return (result.rowCount ?? 0) > 0;
+}
+
 

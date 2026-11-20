@@ -5,10 +5,8 @@ import {
   isNonSemanticFileName,
   normalizePunctuation,
   sanitizeFullCarousel,
-  sanitizeMetricForArabic,
   stripMarkdown,
 } from '../text/index.ts';
-import { enforceHeadlineSpecRule } from '../text/headlines.ts';
 import type { DomainRule, SynthesisInput } from './domains.ts';
 import {
   DEFAULT_RULE,
@@ -22,6 +20,7 @@ import { enrichCarouselDiagrams } from './enrichment.ts';
 import { balanceCarouselVisualPacing } from './pacing.ts';
 import { synthesizeUniversalCarousel } from './universalExtractor.ts';
 import { seedSingleSlideTakeaways } from './singleSlideCondenser.ts';
+import { applyViralHookTierSelection, buildBodyFirstHookVariations } from './hookTier.ts';
 import { InsufficientSourceError, validateSourceSufficiency } from './inputSufficiency.ts';
 export { InsufficientSourceError } from './inputSufficiency.ts';
 
@@ -103,12 +102,11 @@ export function synthesizeCarousel(input: SynthesisInput): CarouselData {
   const { brand, brandUrl } = detectBrandAndUrl(lowerText);
 
   // 3. Extract Clean Title and User Points
-  const { headline, cleanTitle, cleanSubject, arSubject } = extractCleanHeadline(rawText, domainCategory);
+  const { headline, cleanSubject, arSubject } = extractCleanHeadline(rawText, domainCategory);
   const { lines, metrics } = extractUserInsights(rawText);
 
   const rawMetric1 = metrics[0] || '';
   const metric1 = rawMetric1 ? normalizePunctuation(stripMarkdown(rawMetric1)).replace(/[.?!]+$/, '') : '';
-  const arMetric1 = metric1 ? sanitizeMetricForArabic(metric1) : '';
 
   // 4. Target Slide Count (Spec §7: 8 slides standard for carousel, 1 slide for Single-Slide Post)
   const isSinglePost = input.postFormat === 'single' || input.targetSlideCount === 1;
@@ -177,64 +175,26 @@ export function synthesizeCarousel(input: SynthesisInput): CarouselData {
     slides = balanceCarouselVisualPacing(slides);
     if (slides.length > 1) {
       slides = slides.map((s, idx) =>
-        idx === 0 ? { ...s, storyRole: 'hook' as const, enBody: '', arBody: '' } : s
+        idx === 0
+          ? {
+              ...s,
+              storyRole: 'hook' as const,
+              compositionPreset: s.compositionPreset || 'headline-first',
+              showSwipeCue: s.showSwipeCue ?? true,
+              enBody: '',
+              arBody: '',
+            }
+          : s
       );
     }
   }
 
   // Derive meaningful bullet takeaways for captions directly from synthesized deck
-  const userPoint1 = lines[0] || slides[1]?.enBody || slides[2]?.enBody || `What breaks first in ${cleanSubject} is rarely what teams monitor.`;
-  const userPoint2 = lines[1] || slides[slides.length - 2]?.enBody || `Every choice in ${cleanSubject} trades short-term speed against long-term control.`;
+  const userPoint1 = lines[0] || slides[1]?.enBody || slides[1]?.enTitle || slides[2]?.enBody || cleanSubject;
+  const userPoint2 = lines[1] || slides[slides.length - 2]?.enBody || slides[2]?.enBody || slides[1]?.enBody || cleanSubject;
 
-  // 6. Universal Hook Variants (A/B testing) adhering strictly to Spec §8 with dynamic cover archetypes
-  const hasRealMetric = Boolean(metric1);
-  const hookVariants: HookVariant[] = [
-    {
-      tag: 'Curiosity & Shift',
-      enTitle: slides[0]?.enTitle || headline,
-      arTitle: slides[0]?.arTitle || `ما الذي يتغير فعلاً في ${arSubject}؟`,
-      enBody: '',
-      arBody: '',
-      centerIcon: slides[0]?.centerIcon || centerIcon,
-      coverArchetype: slides[0]?.type || 'hub',
-      hookKicker: slides[0]?.hookKicker || `${cleanSubject.toUpperCase().slice(0, 18)}`,
-    },
-    ...(hasRealMetric
-      ? [
-          {
-            tag: 'Hard Metrics & Scale',
-            enTitle: enforceHeadlineSpecRule(`How ${cleanSubject} hits ${metric1}`, { isHook: true }),
-            arTitle: `الأرقام الفعلية خلف ${arSubject} (${arMetric1})`,
-            enBody: '',
-            arBody: '',
-            centerIcon: 'gauge',
-            coverArchetype: 'metric' as const,
-            hookKicker: `MEASURED WIN • ${metric1.toUpperCase().slice(0, 14)}`,
-          },
-        ]
-      : [
-          {
-            tag: 'Core Claim',
-            enTitle: enforceHeadlineSpecRule(slides[1]?.enTitle || headline, { isHook: true }),
-            arTitle: slides[1]?.arTitle || `الفكرة الأهم حول ${arSubject}`,
-            enBody: '',
-            arBody: '',
-            centerIcon: 'quote',
-            coverArchetype: 'metric' as const,
-            hookKicker: 'KEY CLAIM',
-          },
-        ]),
-    {
-      tag: 'Contrasting Reality',
-      enTitle: enforceHeadlineSpecRule(`Why ${cleanSubject} shifts the model`, { isHook: true }),
-      arTitle: `المقارنة الحقيقية في ${arSubject}`,
-      enBody: '',
-      arBody: '',
-      centerIcon: 'shieldAlert',
-      coverArchetype: 'compare',
-      hookKicker: `OLD VS NEW • ${cleanSubject.toUpperCase().slice(0, 14)}`,
-    },
-  ];
+  // 6. Universal Hook Variants derived directly from Slide 2's problem, metric, or architectural failure
+  const hookVariants: HookVariant[] = buildBodyFirstHookVariations(slides, rawText);
 
   // 7. Generate Dual Captions with Extracted Specifics & Grounding Citations
   const domainTag = domainCategory.replace(/[^a-zA-Z0-9]/g, '');
@@ -291,20 +251,20 @@ export function synthesizeCarousel(input: SynthesisInput): CarouselData {
   const metricFragment = metric1 ? ` (${metric1})` : '';
   const openerVariants = [
     {
-      arLead: `${slide2ArMechanism || slide1ArHeader} — ما الذي يحدث فعلياً وراء هذا الفارق؟`,
-      enLead: `Inside ${cleanSubject}: why ${slide2Mechanism.toLowerCase()} shifts real-world outcomes${metricFragment}.`,
+      arLead: `${slide2ArMechanism || slide1ArHeader} — ما الذي يحدث فعلياً عند التنفيذ؟`,
+      enLead: `${cleanSubject} in practice: ${slide2Mechanism.toLowerCase()}${metricFragment}.`,
     },
     {
-      arLead: `الأهم في ${arSubject}${metric1 ? ` (${metric1})` : ''}: النقطة التي يغفلها معظم الناس.`,
-      enLead: `When looking closely at ${cleanSubject}, ${slide2Mechanism.toLowerCase()} becomes the deciding factor.`,
+      arLead: `في ${arSubject}${metric1 ? ` (${metric1})` : ''}: النقطة الأساسية التي يظهر فيها الفارق.`,
+      enLead: `Looking closely at ${cleanSubject}: ${slide2Mechanism.toLowerCase()}${metricFragment}.`,
     },
     {
-      arLead: `بعيداً عن الشعارات — كيف يتغير المشهد مع ${arSubject}؟`,
-      enLead: `Looking past the hype around ${cleanSubject} to examine ${slide2Mechanism.toLowerCase()}.`,
+      arLead: `${slide2ArMechanism || arSubject} — كيف تتعامل ${arSubject} مع هذا التحدي؟`,
+      enLead: `${slide1EnHeader}${metricFragment} — starting with ${slide2Mechanism.toLowerCase()}.`,
     },
     {
-      arLead: `من الوعود النظرية إلى الواقع: ماذا تكشف تجربة ${arSubject}${metric1 ? ` عند ${metric1}` : ''}؟`,
-      enLead: `From theory to reality: what ${cleanSubject} actually looks like when ${slide2Mechanism.toLowerCase()}.`,
+      arLead: `تحت الضغط الفعلي في ${arSubject}${metric1 ? ` عند ${metric1}` : ''}: ${slide2ArMechanism || slide1ArHeader}.`,
+      enLead: `Inside ${cleanSubject}: what happens when ${slide2Mechanism.toLowerCase()}${metricFragment}.`,
     },
   ];
   const chosenOpener = openerVariants[topicSeed % openerVariants.length];
@@ -378,22 +338,27 @@ ${hashtags}`,
 
   const scheduleSlot = '18:00–21:00 ME / 16:00–19:00 UTC (Peak developer engagement)';
 
-  return sanitizeFullCarousel({
-    postFormat: isSinglePost ? 'single' : 'carousel',
-    theme: recommendedTheme,
-    category: domainCategory,
-    brand,
-    brandUrl,
-    caption: captionVariants[0].caption,
-    firstComment,
-    shortCaption,
-    screenHook,
-    sourceMeta,
-    facts: extractedFacts,
-    notesForHuman,
-    scheduleSlot,
-    captionVariants,
-    hookVariants,
-    slides,
-  });
+  return sanitizeFullCarousel(
+    applyViralHookTierSelection(
+      {
+        postFormat: isSinglePost ? 'single' : 'carousel',
+        theme: recommendedTheme,
+        category: domainCategory,
+        brand,
+        brandUrl,
+        caption: captionVariants[0].caption,
+        firstComment,
+        shortCaption,
+        screenHook,
+        sourceMeta,
+        facts: extractedFacts,
+        notesForHuman,
+        scheduleSlot,
+        captionVariants,
+        hookVariants,
+        slides,
+      },
+      rawText
+    )
+  );
 }

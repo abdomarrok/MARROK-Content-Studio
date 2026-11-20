@@ -3,6 +3,7 @@ import {
   extractSourceQuotedHubNodes,
   inferDynamicCoverArchetype,
 } from './smartVisualDefaults.ts';
+import { extractSlideText } from '../text/slideText.ts';
 
 /**
  * Dynamic diagram and satellite enrichment:
@@ -90,7 +91,7 @@ export function enrichCarouselDiagrams(
     }
 
     // Determine or honor diagramVariant
-    const slideText = `${slide.enTitle || ''} ${slide.enBody || ''} ${slide.arTitle || ''}`.toLowerCase();
+    const slideText = extractSlideText(slide, { lower: true });
     let variant: DiagramVariant = slide.diagramVariant || 'topology';
 
     if (!slide.diagramVariant) {

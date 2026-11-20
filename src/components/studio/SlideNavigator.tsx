@@ -1,5 +1,14 @@
-import React from 'react';
-import { Plus, Copy, Trash2, ArrowLeft, ArrowRight, LayoutGrid, Wand2 } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  Plus,
+  Copy,
+  Trash2,
+  ArrowLeft,
+  ArrowRight,
+  Eye,
+  ChevronDown,
+  Check,
+} from 'lucide-react';
 import {
   CanvasDimensionPreset,
   CarouselData,
@@ -42,9 +51,28 @@ export const SlideNavigator: React.FC<SlideNavigatorProps> = ({
   onDuplicateSlide,
   onDeleteSlide,
   onMoveSlide,
-  onOpenContactSheet,
-  onDiversifyDeckVisuals,
 }) => {
+  const [isGuidesOpen, setIsGuidesOpen] = useState(false);
+  const guidesRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isGuidesOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (guidesRef.current && !guidesRef.current.contains(e.target as Node)) {
+        setIsGuidesOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsGuidesOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isGuidesOpen]);
+
   const isSinglePost = carousel.postFormat === 'single' || carousel.slides.length === 1;
   const activeSlide = carousel.slides[currentSlideIndex] || carousel.slides[0];
   const overlayMode: StageOverlayMode = stageOverlayMode || (showSafeZones ? 'safe' : 'clean');
@@ -57,98 +85,103 @@ export const SlideNavigator: React.FC<SlideNavigatorProps> = ({
     } else if (onToggleSafeZones) {
       onToggleSafeZones();
     }
+    setIsGuidesOpen(false);
   };
 
-  const renderStageToggle = () => (
-    <div
-      data-testid="stage-overlay-mode-bar"
-      className="flex items-center gap-0.5 bg-black/70 border border-white/10 rounded-lg p-0.5 text-[10px] sm:text-[11px] font-sans shrink-0"
-    >
+  const activeGuideLabel =
+    overlayMode === 'safe'
+      ? 'Safe Zones'
+      : overlayMode === 'tiktok'
+      ? isInstagram
+        ? 'IG UI'
+        : 'TikTok UI'
+      : 'Guides';
+
+  const renderGuidesPopover = () => (
+    <div className="relative shrink-0" ref={guidesRef} data-testid="stage-overlay-mode-bar">
       <button
         type="button"
-        data-testid="stage-mode-clean-btn"
-        onClick={() => handleSelectMode('clean')}
-        className={`px-1.5 py-0.5 rounded cursor-pointer transition-colors whitespace-nowrap ${
-          overlayMode === 'clean' ? 'bg-white/20 text-white font-bold' : 'text-slate-400 hover:text-white'
+        data-testid="stage-guides-menu-btn"
+        onClick={() => setIsGuidesOpen((prev) => !prev)}
+        className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-medium transition-colors cursor-pointer whitespace-nowrap ${
+          overlayMode !== 'clean'
+            ? 'bg-cyan-500/15 border-cyan-400/40 text-cyan-200'
+            : 'bg-white/[0.03] hover:bg-white/[0.07] border-white/[0.08] text-slate-300 hover:text-white'
         }`}
-        title="Clean preview without overlay"
+        aria-expanded={isGuidesOpen}
+        title="Canvas preview overlay (Clean, Safe Zones, Platform UI)"
       >
-        Clean
+        <Eye className="w-3 h-3 shrink-0" />
+        <span>{activeGuideLabel}</span>
+        <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
       </button>
-      <button
-        type="button"
-        data-testid="toggle-tiktok-safe-zones-btn"
-        onClick={() => handleSelectMode(overlayMode === 'safe' ? 'clean' : 'safe')}
-        className={`px-1.5 py-0.5 rounded cursor-pointer transition-colors whitespace-nowrap ${
-          overlayMode === 'safe'
-            ? 'bg-rose-500/25 text-rose-300 font-bold border border-rose-500/40'
-            : 'text-slate-400 hover:text-white'
-        }`}
-        title={`Highlight ${isInstagram ? 'Instagram' : 'TikTok'} safe zone margins (Top ~150px, Bottom ~420px, Right ~120px)`}
-      >
-        Safe zones
-      </button>
-      <button
-        type="button"
-        data-testid="stage-mode-tiktok-btn"
-        onClick={() => handleSelectMode(overlayMode === 'tiktok' ? 'clean' : 'tiktok')}
-        className={`px-1.5 py-0.5 rounded cursor-pointer transition-colors whitespace-nowrap ${
-          overlayMode === 'tiktok'
-            ? 'bg-cyan-500/25 text-cyan-200 font-bold border border-cyan-500/40'
-            : 'text-slate-400 hover:text-white'
-        }`}
-        title={`Simulate realistic ${isInstagram ? 'Instagram' : 'TikTok'} feed icons and chrome`}
-      >
-        {isInstagram ? 'IG UI' : 'TikTok UI'}
-      </button>
+
+      {isGuidesOpen && (
+        <div className="absolute right-0 bottom-full mb-1.5 w-44 rounded-xl bg-[#0c1218] border border-white/12 shadow-2xl p-1 z-50 space-y-0.5 text-xs">
+          <button
+            type="button"
+            data-testid="stage-mode-clean-btn"
+            onClick={() => handleSelectMode('clean')}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-white/[0.08] text-slate-200 transition-colors cursor-pointer text-left"
+          >
+            <span>Clean Preview</span>
+            {overlayMode === 'clean' && <Check className="w-3.5 h-3.5 text-cyan-300" />}
+          </button>
+          <button
+            type="button"
+            data-testid="toggle-tiktok-safe-zones-btn"
+            onClick={() => handleSelectMode(overlayMode === 'safe' ? 'clean' : 'safe')}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-white/[0.08] text-slate-200 transition-colors cursor-pointer text-left"
+          >
+            <span>Safe Zones</span>
+            {overlayMode === 'safe' && <Check className="w-3.5 h-3.5 text-rose-300" />}
+          </button>
+          <button
+            type="button"
+            data-testid="stage-mode-tiktok-btn"
+            onClick={() => handleSelectMode(overlayMode === 'tiktok' ? 'clean' : 'tiktok')}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-white/[0.08] text-slate-200 transition-colors cursor-pointer text-left"
+          >
+            <span>{isInstagram ? 'Instagram UI' : 'TikTok UI'}</span>
+            {overlayMode === 'tiktok' && <Check className="w-3.5 h-3.5 text-cyan-300" />}
+          </button>
+        </div>
+      )}
     </div>
   );
 
   if (isSinglePost) {
     return (
-      <div className="w-full space-y-1.5">
-        <div className="w-full flex flex-wrap items-center justify-between gap-1.5 text-xs text-slate-300">
-          <div className="flex items-center gap-2 font-mono text-xs shrink-0">
-            <span className="text-white font-bold">Single Slide</span>
-            <span className="text-slate-500">·</span>
-            <span className="uppercase text-emerald-300 font-sans font-semibold">
-              {activeSlide?.type || 'poster'}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-1.5 shrink-0">
-            {onOpenContactSheet && (
-              <button
-                type="button"
-                onClick={onOpenContactSheet}
-                className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white/[0.04] hover:bg-white/10 border border-white/10 text-[11px] font-sans font-semibold text-slate-300 hover:text-white transition-colors cursor-pointer whitespace-nowrap"
-                title="View in All Slides Grid"
-              >
-                <LayoutGrid className="w-3 h-3 text-cyan-400" />
-                <span>Grid</span>
-              </button>
-            )}
-            {renderStageToggle()}
-          </div>
+      <div className="w-full flex items-center justify-between gap-2 text-xs text-slate-400">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="text-slate-200 font-medium">
+            {carousel.postFormat === 'meme' ? 'Meme Post' : 'Single Slide'}
+          </span>
+          <span aria-hidden="true" className="text-slate-600">·</span>
+          <span className="capitalize text-slate-400 truncate">
+            {activeSlide?.type || 'poster'}
+          </span>
         </div>
+        {renderGuidesPopover()}
       </div>
     );
   }
 
   return (
     <div className="w-full space-y-1.5">
-      {/* Top Bar: Non-overlapping Slide Counter, Compact Actions & Stage Mode Switcher */}
-      <div className="flex flex-wrap items-center justify-between gap-1.5 text-xs text-slate-400">
-        <div className="flex items-center gap-1 font-mono tabular-nums shrink-0">
-          <span className="text-[11px] whitespace-nowrap shrink-0">
-            <span className="hidden sm:inline">Slide </span>
-            <span className="text-white font-bold">{currentSlideIndex + 1}</span>/{carousel.slides.length}
+      {/* Compact Slide Controls + Guides Dropdown */}
+      <div className="flex items-center justify-between gap-2 text-xs text-slate-400">
+        <div className="flex items-center gap-1.5 font-mono tabular-nums shrink-0">
+          <span className="text-[11px] whitespace-nowrap">
+            <span className="text-white font-semibold">{currentSlideIndex + 1}</span>
+            <span className="text-slate-500">/{carousel.slides.length}</span>
           </span>
-          <div className="flex items-center gap-0.5 bg-white/[0.03] border border-white/10 rounded-lg p-0.5 shrink-0">
+
+          <div className="flex items-center gap-0.5 bg-white/[0.03] border border-white/[0.08] rounded-lg p-0.5 shrink-0">
             <button
               type="button"
               onClick={onAddSlide}
-              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] sm:text-[11px] font-sans font-semibold text-slate-200 hover:bg-white/10 transition-colors cursor-pointer whitespace-nowrap"
+              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] font-sans font-medium text-slate-200 hover:bg-white/10 transition-colors cursor-pointer whitespace-nowrap"
               title="Add new slide after this one"
             >
               <Plus className="w-3 h-3 text-emerald-400" />
@@ -157,12 +190,11 @@ export const SlideNavigator: React.FC<SlideNavigatorProps> = ({
             <button
               type="button"
               onClick={onDuplicateSlide}
-              className="flex items-center gap-0.5 p-1 sm:px-1.5 sm:py-0.5 rounded text-[11px] font-sans font-semibold text-slate-200 hover:bg-white/10 transition-colors cursor-pointer whitespace-nowrap"
+              className="p-1 rounded text-slate-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
               title="Duplicate this slide"
               aria-label="Duplicate current slide"
             >
-              <Copy className="w-3 h-3 text-cyan-400" />
-              <span className="hidden sm:inline">Duplicate</span>
+              <Copy className="w-3 h-3" />
             </button>
             <button
               type="button"
@@ -195,55 +227,28 @@ export const SlideNavigator: React.FC<SlideNavigatorProps> = ({
             >
               <ArrowRight className="w-3 h-3" />
             </button>
-            {onOpenContactSheet && (
-              <>
-                <span className="w-px h-3 bg-white/10 mx-0.5" />
-                <button
-                  type="button"
-                  onClick={onOpenContactSheet}
-                  className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] sm:text-[11px] font-sans font-semibold text-slate-300 hover:bg-white/10 hover:text-white transition-colors cursor-pointer whitespace-nowrap"
-                  title="View all slides in Contact Sheet grid"
-                >
-                  <LayoutGrid className="w-3 h-3 text-cyan-400" />
-                  <span>Grid</span>
-                </button>
-              </>
-            )}
           </div>
         </div>
 
-        <div className="flex items-center gap-1 shrink-0 ml-auto">
-          {onDiversifyDeckVisuals && (
-            <button
-              type="button"
-              onClick={onDiversifyDeckVisuals}
-              className="hidden sm:flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white/[0.04] hover:bg-white/10 border border-white/10 text-[11px] font-sans font-semibold text-amber-200 hover:text-white transition-colors cursor-pointer whitespace-nowrap"
-              title="Auto-diversify Slides 2–7 across Compare, Code, Metric, and varied Diagram schematics matched to each slide's copy"
-            >
-              <Wand2 className="w-3 h-3 text-amber-400" />
-              <span>Diversify 2–7</span>
-            </button>
-          )}
-          {renderStageToggle()}
-        </div>
+        {renderGuidesPopover()}
       </div>
 
       {/* Storyboard Strip */}
-      <div className="flex items-center gap-1 overflow-x-auto py-0.5">
+      <div className="flex items-center gap-1 overflow-x-auto py-0.5 no-scrollbar">
         {carousel.slides.map((slide, idx) => (
           <button
             key={idx}
             type="button"
             onClick={() => onSelectSlide(idx)}
-            className={`h-7 px-2.5 rounded-lg text-[11px] font-mono tabular-nums font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
+            className={`h-7 px-2.5 rounded-lg text-[11px] font-mono tabular-nums font-semibold transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
               idx === currentSlideIndex
-                ? 'bg-emerald-500/20 text-white border border-emerald-400/50 shadow-xs'
-                : 'bg-white/[0.03] text-slate-400 hover:text-white border border-white/[0.06] hover:border-white/15'
+                ? 'bg-white/15 text-white border border-white/25'
+                : 'bg-white/[0.02] text-slate-400 hover:text-white border border-white/[0.06] hover:border-white/15'
             }`}
             title={slide.enTitle || `Slide ${idx + 1}`}
           >
-            <span>#{idx + 1}</span>
-            <span className={`text-[10px] uppercase font-sans ${idx === currentSlideIndex ? 'text-emerald-300' : 'text-slate-500'}`}>
+            <span>{idx + 1}</span>
+            <span className={`text-[10px] capitalize font-sans ${idx === currentSlideIndex ? 'text-slate-200' : 'text-slate-500'}`}>
               {slide.type}
             </span>
           </button>
@@ -252,4 +257,3 @@ export const SlideNavigator: React.FC<SlideNavigatorProps> = ({
     </div>
   );
 };
-

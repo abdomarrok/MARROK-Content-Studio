@@ -1,9 +1,32 @@
 import type { Request, Response } from 'express';
 import { GoogleGenAI } from '@google/genai';
-import type { CarouselData, ExtractedFact, GroundingSource } from '../../src/types.ts';
+import type {
+  CarouselData,
+  CoverStyle,
+  DiagramNode,
+  ExtractedFact,
+  GroundingSource,
+  PostFormat,
+  SlideData,
+  SlideVisualSpec,
+} from '../../src/types.ts';
 import { synthesizeCarousel } from '../../src/lib/synthesizer.ts';
-import { condenseCarouselToSingleSlide, seedSingleSlideTakeaways } from '../../src/lib/synthesis/index.ts';
-import { sanitizeFullCarousel } from '../../src/lib/textSanitizer.ts';
+import {
+  applyViralHookTierSelection,
+  clampCoverTeaser,
+  condenseCarouselToSingleSlide,
+  deriveCoverTeaserForSlide,
+  findCatalogDescriptor,
+  getSlideCatalogId,
+  isGenericPlaceholderValue,
+  materializeLayoutForSlide,
+  rankSlideLayoutsForDeck,
+  resolveSlide1CoverStyle,
+  seedSingleSlideTakeaways,
+} from '../../src/lib/synthesis/index.ts';
+import { isPlaceholderOrEmptyBrandValue } from '../../src/lib/bundledTechSvgs.ts';
+import { sanitizeSvgBlueprintMarkup } from '../../src/lib/canvas/svgBlueprint.ts';
+import { sanitizeCoverTeaserText, sanitizeFullCarousel } from '../../src/lib/textSanitizer.ts';
 import {
   ALLOWED_INPUT_MODES,
   ALLOWED_IMAGE_MIMES,
@@ -14,6 +37,7 @@ import {
   MARROK_SYSTEM_PROMPT,
   buildUserCarouselPrompt,
   CAROUSEL_RESPONSE_SCHEMA,
+  DIRECT_VISUAL_RESPONSE_SCHEMA,
 } from '../prompts/systemPrompt.ts';
 import { parseCarouselData } from '../../src/lib/validation/carousel.ts';
 import { parseImageDataUrl, parseRawBase64Image } from '../../src/lib/validation/image.ts';
@@ -115,13 +139,13 @@ function getCachedGeneration(key: string): CachedGenerationEntry | null {
   }
   return {
     ...existing,
-    data: JSON.parse(JSON.stringify(existing.data)) as CarouselData,
+    data: structuredClone(existing.data),
   };
 }
 
 function storeCachedGeneration(key: string, entry: Omit<CachedGenerationEntry, 'expiresAt'>): CachedGenerationEntry {
   const fullEntry: CachedGenerationEntry = {
-    data: JSON.parse(JSON.stringify(entry.data)) as CarouselData,
+    data: structuredClone(entry.data),
     engine: entry.engine,
     model: entry.model,
     expiresAt: Date.now() + GENERATION_CACHE_TTL_MS,
@@ -260,18 +284,22 @@ Return ONLY a valid raw JSON object (no markdown fences, no commentary) with thi
   "theme": "teal",
   "caption": "Bilingual English + Arabic caption with hashtags",
   "hookVariants": [
-    { "tag": "CONTRARIAN", "enTitle": "Short title.", "arTitle": "عنوان قصير." }
+    { "tag": "Contrarian", "framework": "Contrarian", "score": 92, "selected": true, "enTitle": "<6-to-12 word contrarian hook challenging Slide 2 failure without filler>", "arTitle": "<Natural Arabic RTL hook naming Slide 2 failure>", "enBody": "", "arBody": "" },
+    { "tag": "Specific Metric", "framework": "Specific Metric", "score": 88, "selected": false, "enTitle": "<6-to-12 word hook anchoring Slide 2 concrete metric without colons or emojis>", "arTitle": "<Arabic RTL metric hook grounded in Slide 2>", "enBody": "", "arBody": "" },
+    { "tag": "Mistake Callout", "framework": "Mistake Callout", "score": 85, "selected": false, "enTitle": "<6-to-12 word mistake callout exposing Slide 2 failure mode>", "arTitle": "<Arabic RTL hook calling out Slide 2 mistake>", "enBody": "", "arBody": "" },
+    { "tag": "Curiosity Gap", "framework": "Curiosity Gap", "score": 84, "selected": false, "enTitle": "<6-to-12 word curiosity question tied directly to Slide 2 mechanism?>", "arTitle": "<Arabic RTL question tied to Slide 2?>", "enBody": "", "arBody": "" },
+    { "tag": "Curiosity Gap", "framework": "Curiosity Gap", "score": 81, "selected": false, "enTitle": "<6-to-12 word secondary curiosity hook bridging Slide 2 to Slide 3>", "arTitle": "<Arabic RTL curiosity hook bridging Slide 2 to Slide 3>", "enBody": "", "arBody": "" }
   ],
   "facts": [
     { "text": "Key engineering fact", "verified": "unconfirmed" }
   ],
   "slides": [
     {
-      "type": "hub",
-      "enTitle": "Headline under 45 chars.",
+      "type": "metric",
+      "enTitle": "Primary Slide 1 hook strictly six to twelve words long",
       "arTitle": "عنوان عربي طبيعي مع إبقاء Latency و API بالإنجليزية",
-      "enBody": "Concise mechanism explanation under 140 chars.",
-      "arBody": "شرح عربي طبيعي للآلية مع إبقاء Cache و 15ms بالإنجليزية دون ترجمة المصطلحات التقنية.",
+      "enBody": "",
+      "arBody": "",
       "icon": "cpu",
       "satellites": [
         { "label": "Node A", "arLabel": "عقدة أ", "sub": "Subtext", "icon": "server" },
@@ -545,7 +573,7 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
           res.setHeader('X-Marrok-Engine', coalesced.engine);
           if (coalesced.model) res.setHeader('X-Marrok-Model', coalesced.model);
           res.setHeader('X-Marrok-Cache', 'COALESCED');
-          return res.json(JSON.parse(JSON.stringify(coalesced.data)));
+          return res.json(structuredClone(coalesced.data));
         }
       } catch {
         // Fall through to normal execution if in-flight promise rejected
@@ -823,6 +851,9 @@ export async function handleGenerateCarousel(req: Request, res: Response) {
         model: successfulModel,
       };
 
+      jsonResult = applyViralHookTierSelection(jsonResult, safePrompt, {
+        preserveValidSlide1: true,
+      });
       jsonResult = sanitizeFullCarousel(jsonResult);
 
       if (!bypassCache) {
@@ -1068,3 +1099,583 @@ arBody: ${arBody}`;
     clearTimeout(overallTimer);
   }
 }
+
+function buildSiblingAwareDeckStub(
+  slide: SlideData,
+  slideIndex: number,
+  totalSlides: number,
+  siblingLayouts: string[]
+): SlideData[] {
+  const safeTotal = Math.max(1, Math.min(20, Math.max(totalSlides, slideIndex + 1)));
+  const stub: SlideData[] = [];
+  const siblingEntries: Array<{ idx: number; layoutId: string }> = siblingLayouts.map((raw, i) => {
+    const colonIdx = raw.indexOf(':');
+    if (colonIdx > 0 && /^s?\d+$/i.test(raw.slice(0, colonIdx).trim())) {
+      const parsedIdx = Number(raw.slice(0, colonIdx).replace(/\D/g, '')) - 1;
+      const layoutId = raw.slice(colonIdx + 1).trim();
+      return {
+        idx: Number.isFinite(parsedIdx) && parsedIdx >= 0 ? parsedIdx : i,
+        layoutId,
+      };
+    }
+    return { idx: i >= slideIndex ? i + 1 : i, layoutId: raw.trim() };
+  });
+
+  for (let i = 0; i < safeTotal; i++) {
+    if (i === slideIndex) {
+      stub.push(slide);
+      continue;
+    }
+    const sib = siblingEntries.find((s) => s.idx === i);
+    const desc = sib ? findCatalogDescriptor(sib.layoutId) : undefined;
+    if (desc) {
+      stub.push({
+        type: desc.slideType,
+        ...(desc.diagramVariant ? { diagramVariant: desc.diagramVariant } : {}),
+        ...(desc.visualKind ? { visualSpec: { kind: desc.visualKind } } : {}),
+        enTitle: `Sibling Slide ${i + 1}`,
+      });
+    } else {
+      stub.push({ type: i === safeTotal - 1 ? 'cta' : 'row', enTitle: `Slide ${i + 1}` });
+    }
+  }
+  return stub;
+}
+
+function sanitizeDirectedSlideResponse(
+  rawParsed: Record<string, unknown>,
+  originalSlide: SlideData,
+  slideIndex: number,
+  totalSlides: number,
+  excludeSet: Set<string>
+): {
+  slideUpdates: Partial<SlideData>;
+  chosenLayoutId: string;
+  rationale: string;
+} | null {
+  const rawChoice = typeof rawParsed.chosenLayoutId === 'string' ? rawParsed.chosenLayoutId.trim() : '';
+  const desc = findCatalogDescriptor(rawChoice);
+  if (!desc) return null;
+
+  if (desc.slideType === 'image' || desc.slideType === 'cta') return null;
+  if (totalSlides > 1 && slideIndex === 0 && desc.slideType === 'hub') {
+    return null;
+  }
+  if (excludeSet.has(desc.id)) return null;
+
+  const baseMaterialized = materializeLayoutForSlide(
+    originalSlide,
+    { ...desc, score: 100, rationale: desc.label },
+    slideIndex,
+    totalSlides,
+    {
+      rationalePrefix: 'AI Visual Director',
+      lockLayout: false,
+      forceRefreshVisuals: true,
+    }
+  );
+
+  const cleanRationale =
+    typeof rawParsed.rationale === 'string' && rawParsed.rationale.trim().length > 4
+      ? rawParsed.rationale.trim().slice(0, 140)
+      : baseMaterialized.layoutRationale || `AI picked ${desc.label}`;
+
+  const isMultiCover =
+    totalSlides > 1 &&
+    slideIndex === 0 &&
+    !originalSlide.standaloneMeme &&
+    originalSlide.imageFrameMode !== 'full';
+
+  const validCoverStyle = (v: unknown): v is CoverStyle =>
+    v === 'headline-hero' || v === 'metric-split' || v === 'versus-hook' || v === 'visual-teaser';
+
+  const nextSlide: SlideData = {
+    ...baseMaterialized,
+    manualLayoutLocked: false,
+    layoutRationale: cleanRationale,
+  };
+
+  if (isMultiCover) {
+    const inferredCoverStyle: CoverStyle = validCoverStyle(rawParsed.coverStyle)
+      ? rawParsed.coverStyle
+      : desc.slideType === 'metric'
+      ? 'metric-split'
+      : desc.slideType === 'compare'
+      ? 'versus-hook'
+      : desc.slideType === 'subjectPair' || desc.slideType === 'row' || desc.slideType === 'code' || (desc.slideType === 'visual' && desc.visualKind !== 'callout')
+      ? 'visual-teaser'
+      : 'headline-hero';
+    const rawEnTeaser =
+      typeof rawParsed.coverTeaserEn === 'string' && rawParsed.coverTeaserEn.trim()
+        ? sanitizeCoverTeaserText(rawParsed.coverTeaserEn, false)
+        : '';
+    const rawArTeaser =
+      typeof rawParsed.coverTeaserAr === 'string' && rawParsed.coverTeaserAr.trim()
+        ? sanitizeCoverTeaserText(rawParsed.coverTeaserAr, true)
+        : '';
+    const derived = deriveCoverTeaserForSlide({ ...originalSlide, ...nextSlide });
+    nextSlide.coverStyle = inferredCoverStyle;
+    nextSlide.storyRole = 'hook';
+    nextSlide.compositionPreset = 'headline-first';
+    nextSlide.showSwipeCue = originalSlide.showSwipeCue ?? true;
+    nextSlide.coverTeaserEn = clampCoverTeaser(rawEnTeaser || derived.coverTeaserEn, false, 68);
+    nextSlide.coverTeaserAr = clampCoverTeaser(rawArTeaser || derived.coverTeaserAr, true, 68);
+    nextSlide.enBody = '';
+    nextSlide.arBody = '';
+  }
+
+  if (desc.slideType === 'visual' && desc.visualKind) {
+    const rawSpec =
+      rawParsed.visualSpec && typeof rawParsed.visualSpec === 'object'
+        ? (rawParsed.visualSpec as Record<string, unknown>)
+        : null;
+    if (rawSpec) {
+      const nextSpec: SlideVisualSpec = {
+        ...(baseMaterialized.visualSpec || { kind: desc.visualKind }),
+        ...(typeof rawSpec.eyebrow === 'string' && rawSpec.eyebrow.trim() ? { eyebrow: rawSpec.eyebrow.trim().slice(0, 36) } : {}),
+        ...(typeof rawSpec.title === 'string' && rawSpec.title.trim() ? { title: rawSpec.title.trim().slice(0, 64) } : {}),
+        ...(typeof rawSpec.footnote === 'string' && rawSpec.footnote.trim() ? { footnote: rawSpec.footnote.trim().slice(0, 96) } : {}),
+        kind: desc.visualKind,
+      };
+
+      if (desc.visualKind === 'bar-chart') {
+        const rawBars = Array.isArray(rawSpec.bars) ? rawSpec.bars : [];
+        const validBars = rawBars
+          .filter((b): b is Record<string, unknown> => Boolean(b && typeof b === 'object'))
+          .map((b) => ({
+            label: String(b.label || '').trim().slice(0, 26),
+            value: Number(b.value),
+            displayValue: typeof b.displayValue === 'string' ? b.displayValue.trim().slice(0, 18) : undefined,
+            tone: (b.tone === 'accent' || b.tone === 'muted' || b.tone === 'alert' ? b.tone : 'muted') as
+              | 'accent'
+              | 'alert'
+              | 'muted',
+            isWinner: Boolean(b.isWinner),
+          }))
+          .filter(
+            (b) =>
+              b.label.length >= 2 &&
+              !isGenericPlaceholderValue(b.label) &&
+              !isPlaceholderOrEmptyBrandValue(b.label) &&
+              Number.isFinite(b.value) &&
+              b.value > 0
+          )
+          .slice(0, 6);
+
+        if (validBars.length < 2) {
+          return null;
+        }
+        nextSpec.bars = validBars;
+        if (typeof rawSpec.unit === 'string') nextSpec.unit = rawSpec.unit.trim().slice(0, 16);
+        if (typeof rawSpec.deltaBadge === 'string') nextSpec.deltaBadge = rawSpec.deltaBadge.trim().slice(0, 30);
+        if (rawSpec.orientation === 'horizontal' || rawSpec.orientation === 'vertical') {
+          nextSpec.orientation = rawSpec.orientation;
+        }
+      } else if (desc.visualKind === 'sequence') {
+        const actors = Array.isArray(rawSpec.actors)
+          ? rawSpec.actors
+              .map((a) => String(a || '').trim().slice(0, 24))
+              .filter((a) => a.length >= 2 && !isGenericPlaceholderValue(a))
+              .slice(0, 4)
+          : [];
+        const steps = Array.isArray(rawSpec.steps)
+          ? rawSpec.steps
+              .filter((s): s is Record<string, unknown> => Boolean(s && typeof s === 'object'))
+              .map((s) => ({
+                from: Number(s.from),
+                to: Number(s.to),
+                label: String(s.label || '').trim().slice(0, 40),
+                tag: typeof s.tag === 'string' ? s.tag.trim().slice(0, 14) : undefined,
+                style:
+                  s.style === 'solid' || s.style === 'dashed' || s.style === 'alert'
+                    ? (s.style as 'solid' | 'dashed' | 'alert')
+                    : ('solid' as const),
+              }))
+              .filter(
+                (s) =>
+                  actors.length >= 2 &&
+                  Number.isInteger(s.from) &&
+                  Number.isInteger(s.to) &&
+                  s.from >= 0 &&
+                  s.from < actors.length &&
+                  s.to >= 0 &&
+                  s.to < actors.length &&
+                  s.label.length >= 2
+              )
+              .slice(0, 6)
+          : [];
+        if (actors.length >= 2 && steps.length >= 2) {
+          nextSpec.actors = actors;
+          nextSpec.steps = steps;
+        }
+      } else if (desc.visualKind === 'timeline') {
+        const events = Array.isArray(rawSpec.events)
+          ? rawSpec.events
+              .filter((ev): ev is Record<string, unknown> => Boolean(ev && typeof ev === 'object'))
+              .map((ev) => ({
+                time: String(ev.time || '').trim().slice(0, 18),
+                title: String(ev.title || '').trim().slice(0, 44),
+                detail: typeof ev.detail === 'string' ? ev.detail.trim().slice(0, 72) : undefined,
+                severity:
+                  ev.severity === 'info' ||
+                  ev.severity === 'warn' ||
+                  ev.severity === 'incident' ||
+                  ev.severity === 'resolved'
+                    ? (ev.severity as 'info' | 'warn' | 'incident' | 'resolved')
+                    : ('info' as const),
+              }))
+              .filter((ev) => ev.time.length >= 1 && ev.title.length >= 2)
+              .slice(0, 5)
+          : [];
+        if (events.length >= 2) {
+          nextSpec.events = events;
+        }
+      } else if (desc.visualKind === 'matrix') {
+        const quadrants = Array.isArray(rawSpec.quadrants)
+          ? rawSpec.quadrants
+              .filter((q): q is Record<string, unknown> => Boolean(q && typeof q === 'object'))
+              .map((q) => ({
+                title: String(q.title || '').trim().slice(0, 32),
+                detail: typeof q.detail === 'string' ? q.detail.trim().slice(0, 56) : undefined,
+                highlight: Boolean(q.highlight),
+              }))
+              .filter((q) => q.title.length >= 2)
+              .slice(0, 4)
+          : [];
+        if (quadrants.length === 4) {
+          nextSpec.quadrants = quadrants;
+          if (typeof rawSpec.xAxisLow === 'string') nextSpec.xAxisLow = rawSpec.xAxisLow.trim().slice(0, 24);
+          if (typeof rawSpec.xAxisHigh === 'string') nextSpec.xAxisHigh = rawSpec.xAxisHigh.trim().slice(0, 24);
+          if (typeof rawSpec.yAxisLow === 'string') nextSpec.yAxisLow = rawSpec.yAxisLow.trim().slice(0, 24);
+          if (typeof rawSpec.yAxisHigh === 'string') nextSpec.yAxisHigh = rawSpec.yAxisHigh.trim().slice(0, 24);
+        }
+      } else if (desc.visualKind === 'table') {
+        const columns = Array.isArray(rawSpec.columns)
+          ? rawSpec.columns.map((c) => String(c || '').trim().slice(0, 20)).filter(Boolean).slice(0, 4)
+          : [];
+        const rows = Array.isArray(rawSpec.rows)
+          ? rawSpec.rows
+              .filter((r): r is unknown[] => Array.isArray(r))
+              .map((r) => r.map((cell) => String(cell ?? '').trim().slice(0, 28)).slice(0, columns.length))
+              .filter((r) => r.length === columns.length && r.some(Boolean))
+              .slice(0, 5)
+          : [];
+        if (columns.length >= 2 && rows.length >= 2) {
+          nextSpec.columns = columns;
+          nextSpec.rows = rows;
+          if (typeof rawSpec.highlightColumn === 'number' && rawSpec.highlightColumn >= 0 && rawSpec.highlightColumn < columns.length) {
+            nextSpec.highlightColumn = rawSpec.highlightColumn;
+          }
+        }
+      } else if (desc.visualKind === 'callout') {
+        if (typeof rawSpec.quote === 'string' && rawSpec.quote.trim().length >= 8) {
+          nextSpec.quote = rawSpec.quote.trim().slice(0, 180);
+        }
+        if (rawSpec.calloutStyle === 'quote' || rawSpec.calloutStyle === 'stat') {
+          nextSpec.calloutStyle = rawSpec.calloutStyle;
+        }
+        if (typeof rawSpec.statValue === 'string') nextSpec.statValue = rawSpec.statValue.trim().slice(0, 20);
+        if (typeof rawSpec.statLabel === 'string') nextSpec.statLabel = rawSpec.statLabel.trim().slice(0, 52);
+        if (typeof rawSpec.author === 'string') nextSpec.author = rawSpec.author.trim().slice(0, 44);
+        if (typeof rawSpec.role === 'string') nextSpec.role = rawSpec.role.trim().slice(0, 44);
+        if (typeof rawSpec.source === 'string') nextSpec.source = rawSpec.source.trim().slice(0, 64);
+        if (typeof rawSpec.evidence === 'string') nextSpec.evidence = rawSpec.evidence.trim().slice(0, 96);
+      } else if (desc.visualKind === 'svg') {
+        const rawSvg = typeof rawSpec.svgCode === 'string' ? rawSpec.svgCode : '';
+        const viewBox = typeof rawSpec.viewBox === 'string' ? rawSpec.viewBox : undefined;
+        const sanitized = sanitizeSvgBlueprintMarkup(rawSvg, viewBox);
+        if (!sanitized.isValid) {
+          return null;
+        }
+        nextSpec.svgCode = sanitized.svg;
+        nextSpec.viewBox = viewBox || '0 0 846 490';
+      }
+
+      nextSlide.visualSpec = nextSpec;
+    }
+  } else if (desc.slideType === 'row' || desc.slideType === 'poster') {
+    if (Array.isArray(rawParsed.diagramNodes) && rawParsed.diagramNodes.length >= 3) {
+      const cleanNodes: DiagramNode[] = rawParsed.diagramNodes
+        .filter((n): n is Record<string, unknown> => Boolean(n && typeof n === 'object'))
+        .slice(0, 3)
+        .map((n) => ({
+          label: String(n.label || '').trim().slice(0, 28),
+          sublabel: typeof n.sublabel === 'string' ? n.sublabel.trim().slice(0, 36) : undefined,
+          status: typeof n.status === 'string' ? n.status.trim().toUpperCase().slice(0, 14) : undefined,
+          icon: typeof n.icon === 'string' ? n.icon.trim().slice(0, 24) : undefined,
+        }))
+        .filter(
+          (n) =>
+            n.label.length >= 2 &&
+            !isGenericPlaceholderValue(n.label) &&
+            !isPlaceholderOrEmptyBrandValue(n.label)
+        );
+      if (cleanNodes.length === 3) {
+        nextSlide.diagramNodes = cleanNodes;
+      }
+    }
+    if (Array.isArray(rawParsed.diagramEdges) && rawParsed.diagramEdges.length >= 2) {
+      const cleanEdges = rawParsed.diagramEdges
+        .slice(0, 2)
+        .map((e) => String(e || '').trim().slice(0, 24))
+        .filter((e) => e.length >= 2 && !isGenericPlaceholderValue(e));
+      if (cleanEdges.length === 2) {
+        nextSlide.diagramEdges = cleanEdges;
+      }
+    }
+    if (typeof rawParsed.diagramFooter === 'string' && rawParsed.diagramFooter.trim().length >= 3) {
+      nextSlide.diagramFooter = rawParsed.diagramFooter.trim().slice(0, 64);
+    }
+  } else if (desc.slideType === 'compare') {
+    const leftT = typeof rawParsed.compareLeftTitle === 'string' ? rawParsed.compareLeftTitle.trim() : '';
+    const rightT = typeof rawParsed.compareRightTitle === 'string' ? rawParsed.compareRightTitle.trim() : '';
+    if (
+      leftT.length >= 2 &&
+      rightT.length >= 2 &&
+      !isPlaceholderOrEmptyBrandValue(leftT) &&
+      !isPlaceholderOrEmptyBrandValue(rightT)
+    ) {
+      nextSlide.compareLeftTitle = leftT.slice(0, 32);
+      nextSlide.compareRightTitle = rightT.slice(0, 32);
+    }
+    if (typeof rawParsed.compareLeftBody === 'string' && rawParsed.compareLeftBody.trim()) {
+      nextSlide.compareLeftBody = rawParsed.compareLeftBody.trim().slice(0, 140);
+    }
+    if (typeof rawParsed.compareRightBody === 'string' && rawParsed.compareRightBody.trim()) {
+      nextSlide.compareRightBody = rawParsed.compareRightBody.trim().slice(0, 140);
+    }
+  } else if (desc.slideType === 'code') {
+    if (typeof rawParsed.codeFileName === 'string' && rawParsed.codeFileName.trim() && !isGenericPlaceholderValue(rawParsed.codeFileName)) {
+      nextSlide.codeFileName = rawParsed.codeFileName.trim().slice(0, 36);
+    }
+    if (typeof rawParsed.codeLanguage === 'string' && rawParsed.codeLanguage.trim()) {
+      nextSlide.codeLanguage = rawParsed.codeLanguage.trim().slice(0, 18);
+    }
+    if (typeof rawParsed.codeSnippet === 'string' && rawParsed.codeSnippet.trim().length >= 10) {
+      nextSlide.codeSnippet = rawParsed.codeSnippet.trim().slice(0, 380);
+    }
+  } else if (desc.slideType === 'metric') {
+    const mv = typeof rawParsed.metricValue === 'string' ? rawParsed.metricValue.trim() : '';
+    const ml = typeof rawParsed.metricLabel === 'string' ? rawParsed.metricLabel.trim() : '';
+    if (mv && !isGenericPlaceholderValue(mv)) {
+      nextSlide.metricValue = mv.slice(0, 20);
+    }
+    if (ml && !isGenericPlaceholderValue(ml) && !isPlaceholderOrEmptyBrandValue(ml)) {
+      nextSlide.metricLabel = ml.toUpperCase().slice(0, 36);
+    }
+    if (typeof rawParsed.metricBeforeValue === 'string' && rawParsed.metricBeforeValue.trim()) {
+      nextSlide.metricBeforeValue = rawParsed.metricBeforeValue.trim().slice(0, 20);
+    }
+    if (typeof rawParsed.metricDiff === 'string' && rawParsed.metricDiff.trim()) {
+      nextSlide.metricDiff = rawParsed.metricDiff.trim().slice(0, 36);
+    }
+  } else if (desc.slideType === 'number') {
+    if (typeof rawParsed.stepNumber === 'string' && rawParsed.stepNumber.trim()) {
+      nextSlide.stepNumber = rawParsed.stepNumber.trim().slice(0, 6);
+    }
+    if (typeof rawParsed.stepLabel === 'string' && rawParsed.stepLabel.trim()) {
+      nextSlide.stepLabel = rawParsed.stepLabel.trim().toUpperCase().slice(0, 32);
+    }
+  } else if (desc.slideType === 'hub') {
+    if (typeof rawParsed.centerTag === 'string' && rawParsed.centerTag.trim()) {
+      nextSlide.centerTag = rawParsed.centerTag.trim().toUpperCase().slice(0, 24);
+    }
+    if (Array.isArray(rawParsed.satLabels)) {
+      const cleanSats = rawParsed.satLabels
+        .map((s) => String(s || '').trim().slice(0, 22))
+        .filter((s) => s.length >= 2 && !isGenericPlaceholderValue(s) && !isPlaceholderOrEmptyBrandValue(s))
+        .slice(0, 5);
+      if (cleanSats.length >= 3) {
+        nextSlide.satLabels = cleanSats;
+      }
+    }
+  }
+
+  return {
+    slideUpdates: nextSlide,
+    chosenLayoutId: getSlideCatalogId(nextSlide, desc.diagramVariant),
+    rationale: cleanRationale,
+  };
+}
+
+/**
+ * On-Demand AI Visual Director Endpoint (`POST /api/direct-visual`).
+ * Invoked when the user clicks "Re-imagine" on a slide in the Visual tab.
+ */
+export async function handleDirectVisual(req: Request, res: Response) {
+  const config = getServerConfig();
+  const body = (req.body || {}) as Record<string, unknown>;
+  const rawSlide = body.slide as SlideData | undefined;
+  if (!rawSlide || typeof rawSlide !== 'object') {
+    return res.status(400).json({ error: 'Slide object is required' });
+  }
+
+  const slideIndex = Number.isFinite(Number(body.slideIndex)) ? Math.max(0, Number(body.slideIndex)) : 0;
+  const totalSlides = Number.isFinite(Number(body.totalSlides)) ? Math.max(1, Number(body.totalSlides)) : 8;
+  const category = typeof body.category === 'string' ? body.category.slice(0, 80) : 'SOFTWARE ARCHITECTURE';
+  const postFormat: PostFormat =
+    body.postFormat === 'single' || body.postFormat === 'meme' || body.postFormat === 'reel'
+      ? body.postFormat
+      : 'carousel';
+
+  const siblingLayouts = Array.isArray(body.siblingLayouts)
+    ? body.siblingLayouts.map((s) => String(s || '').slice(0, 48)).filter(Boolean).slice(0, 12)
+    : [];
+  const excludeLayouts = Array.isArray(body.excludeLayouts)
+    ? body.excludeLayouts.map((s) => String(s || '').slice(0, 48)).filter(Boolean).slice(0, 16)
+    : [];
+  const excludeSet = new Set(excludeLayouts);
+
+  const deckStub = buildSiblingAwareDeckStub(rawSlide, slideIndex, totalSlides, siblingLayouts);
+  const candidateKeys = resolveRequestGeminiKeys(req, config);
+
+  const enTitle = String(rawSlide.enTitle || '').slice(0, 200);
+  const arTitle = String(rawSlide.arTitle || '').slice(0, 200);
+  const coverTeaserEn = String(rawSlide.coverTeaserEn || '').slice(0, 160);
+  const coverTeaserAr = String(rawSlide.coverTeaserAr || '').slice(0, 180);
+  const enBody = String(rawSlide.enBody || '').slice(0, 500);
+  const arBody = String(rawSlide.arBody || '').slice(0, 500);
+  const isMultiCoverRequest =
+    totalSlides > 1 &&
+    slideIndex === 0 &&
+    postFormat === 'carousel' &&
+    !rawSlide.standaloneMeme &&
+    rawSlide.imageFrameMode !== 'full';
+
+  const directorPrompt = `You are the MARROK AI Visual Director. Analyze this single slide and design its clearest, highest-impact technical visual layout WITHOUT repeating sibling layouts or previously tried layouts.
+
+Context:
+- Topic Category: ${category}
+- Post Format: ${postFormat}
+- Slide Position: Slide ${slideIndex + 1} of ${totalSlides}
+- Current Slide Layout: ${getSlideCatalogId(rawSlide)}
+- Sibling Slide Layouts in Deck (avoid repeating neighbors): ${siblingLayouts.join(', ') || 'None'}
+- Layouts ALREADY tried for this slide (MUST pick a DIFFERENT layout ID unless none remain): ${excludeLayouts.join(', ') || 'None'}
+
+Slide Copy:
+- enTitle: ${enTitle}
+- arTitle: ${arTitle}
+${coverTeaserEn ? `- coverTeaserEn: ${coverTeaserEn}\n` : ''}${coverTeaserAr ? `- coverTeaserAr: ${coverTeaserAr}\n` : ''}- enBody: ${enBody}
+- arBody: ${arBody}
+
+Strict Visual Rules:
+1. Choose ONE layout ID for chosenLayoutId from the allowed catalog enum.
+   - ${isMultiCoverRequest ? 'Slide 1 Cover Hero Rule: NEVER choose "hub". Also select coverStyle ("headline-hero", "metric-split" ONLY with real numbers, "versus-hook", or "visual-teaser") and refine single-line coverTeaserEn / coverTeaserAr (<= 68 chars, zero colons/emojis).' : 'Pick a visual pattern genuinely complementary to sibling slides.'}
+   - NEVER invent fake numbers! Do NOT pick "visual:bar-chart" or numeric "metric" unless real numbers exist in the slide copy.
+   - NEVER emit placeholder strings ("System A", "System B", "Client Ingress", "Execution Core", "Metric 1", "Current Path").
+   - When copy describes protocols/handshakes, prefer "visual:sequence"; outage/postmortem timestamps -> "visual:timeline"; 2x2 axes -> "visual:matrix"; multi-row benchmark comparison -> "visual:table"; attributed report/quote -> "visual:callout"; state machine/ring/hierarchy -> "visual:svg" (valid SVG viewBox="0 0 846 490" with safe tags and {{accent}}/{{alert}}/{{surface}}/{{surfaceBorder}}/{{textWhite}}/{{textMuted}}/{{baseBg}} tokens).
+2. Populate ONLY the payload fields matching chosenLayoutId cleanly, plus a 1-sentence "rationale" (< 100 chars).`;
+
+  const requestedBudgetMs = Number(body.budgetMs);
+  const totalBudgetMs =
+    Number.isFinite(requestedBudgetMs) && requestedBudgetMs >= 400 && requestedBudgetMs <= REFINE_TOTAL_BUDGET_MS
+      ? requestedBudgetMs
+      : 16_000;
+  const deadlineAt = Date.now() + totalBudgetMs;
+  const remainingBudgetMs = () => deadlineAt - Date.now();
+  const overallAbort = new AbortController();
+  const overallTimer = setTimeout(
+    () => overallAbort.abort(new Error('Visual director deadline exceeded')),
+    totalBudgetMs
+  );
+
+  try {
+    for (const { key, label } of candidateKeys) {
+      if (overallAbort.signal.aborted || remainingBudgetMs() < 350) break;
+      const activeAi = createGoogleGenAIClient(key);
+      const directModels = getPrioritizedModels(config.generationModels);
+
+      for (const model of directModels) {
+        if (overallAbort.signal.aborted || remainingBudgetMs() < 300) break;
+        const stepTimeoutMs = Math.min(10_000, Math.max(300, remainingBudgetMs() - 100));
+
+        try {
+          const response = await activeAi.models.generateContent({
+            model,
+            contents: directorPrompt,
+            config: buildGeminiContentConfig(model, {
+              temperature: 0.25,
+              responseMimeType: 'application/json',
+              responseSchema: DIRECT_VISUAL_RESPONSE_SCHEMA,
+              abortSignal: createCombinedDeadlineSignal(overallAbort.signal, stepTimeoutMs),
+            }),
+          });
+
+          const rawText = response.text;
+          if (!rawText) continue;
+          const cleanText = rawText.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+          const parsed = JSON.parse(cleanText) as Record<string, unknown>;
+          const sanitized = sanitizeDirectedSlideResponse(
+            parsed,
+            rawSlide,
+            slideIndex,
+            totalSlides,
+            excludeSet
+          );
+          if (sanitized) {
+            modelCooldownUntil.delete(model);
+            res.setHeader('X-Marrok-Engine', 'ungrounded');
+            res.setHeader('X-Marrok-Model', model);
+            return res.json({
+              ...sanitized,
+              engine: 'ungrounded',
+              model,
+            });
+          }
+        } catch (err: unknown) {
+          recordModelUnavailable(model, err);
+          console.info(
+            `[AI-Gateway] Direct visual on ${model} (${label}) unavailable (${formatModelFallbackReason(err, key)}); trying fallback.`
+          );
+        }
+      }
+    }
+
+    // Graceful deterministic deck-aware fallback (respects excludeLayouts & sibling diversity)
+    const ranked = rankSlideLayoutsForDeck(rawSlide, deckStub, slideIndex, {
+      postFormat,
+      excludeIds: excludeLayouts,
+    });
+    const fallbackCandidate =
+      ranked.find((c) => !excludeSet.has(c.id) && c.slideType !== 'image' && c.slideType !== 'cta') ||
+      ranked.find((c) => c.slideType !== 'image' && c.slideType !== 'cta') ||
+      ranked[0];
+
+    const fallbackSlide = materializeLayoutForSlide(
+      rawSlide,
+      fallbackCandidate,
+      slideIndex,
+      totalSlides,
+      {
+        rationalePrefix: 'Re-imagined',
+        lockLayout: false,
+        forceRefreshVisuals: true,
+      }
+    );
+
+    if (isMultiCoverRequest) {
+      const derived = deriveCoverTeaserForSlide(fallbackSlide, deckStub);
+      fallbackSlide.coverStyle = fallbackSlide.coverStyle || resolveSlide1CoverStyle(fallbackSlide, deckStub);
+      fallbackSlide.storyRole = 'hook';
+      fallbackSlide.compositionPreset = 'headline-first';
+      fallbackSlide.showSwipeCue = rawSlide.showSwipeCue ?? true;
+      fallbackSlide.coverTeaserEn = clampCoverTeaser(fallbackSlide.coverTeaserEn || derived.coverTeaserEn, false, 68);
+      fallbackSlide.coverTeaserAr = clampCoverTeaser(fallbackSlide.coverTeaserAr || derived.coverTeaserAr, true, 68);
+      fallbackSlide.enBody = '';
+      fallbackSlide.arBody = '';
+    }
+
+    res.setHeader('X-Marrok-Engine', 'offline');
+    res.setHeader('X-Marrok-Model', 'deck-aware-engine');
+    return res.json({
+      slideUpdates: fallbackSlide,
+      chosenLayoutId: fallbackCandidate.id,
+      rationale: fallbackSlide.layoutRationale || `Re-imagined ${fallbackCandidate.label}`,
+      engine: 'offline',
+      model: 'deck-aware-engine',
+    });
+  } finally {
+    clearTimeout(overallTimer);
+  }
+}
+

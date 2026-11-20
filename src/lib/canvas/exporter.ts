@@ -169,45 +169,6 @@ export async function copySlideToClipboard(
 }
 
 /**
- * Web Share API: Share slide image directly on mobile (TikTok, Instagram, WhatsApp, etc.)
- */
-export async function shareSlide(
-  carousel: CarouselData,
-  slideIndex: number,
-  customPalette?: ThemePalette,
-  visualOptions?: VisualSystemOptions
-): Promise<boolean> {
-  const canvas = await renderSlideToCanvas(carousel, slideIndex, undefined, customPalette, visualOptions);
-  const topicSlug = buildTopicSlugForExport(carousel);
-  const paddedIndex = String(slideIndex + 1).padStart(2, '0');
-
-  return new Promise((resolve) => {
-    canvas.toBlob(async (blob) => {
-      if (!blob) {
-        resolve(false);
-        return;
-      }
-      try {
-        const file = new File([blob], `marrok_${topicSlug}_${paddedIndex}.jpg`, { type: 'image/jpeg' });
-        if (navigator.canShare && navigator.canShare({ files: [file] })) {
-          await navigator.share({
-            files: [file],
-            title: `MARROK Slide ${slideIndex + 1}`,
-            text: carousel.caption.substring(0, 100),
-          });
-          resolve(true);
-        } else {
-          resolve(false);
-        }
-      } catch (err) {
-        console.warn('Web Share failed:', err);
-        resolve(false);
-      }
-    }, 'image/jpeg', DEFAULT_EXPORT_JPEG_QUALITY);
-  });
-}
-
-/**
  * Trigger immediate download of single slide as JPG (quality 92) at active or overridden dimension preset
  */
 export async function downloadSingleSlidePng(

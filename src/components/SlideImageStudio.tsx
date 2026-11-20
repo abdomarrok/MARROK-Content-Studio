@@ -9,11 +9,9 @@ import {
   Shield,
   Terminal,
   Network,
-  Maximize2,
   Download,
   AlertCircle,
   X,
-  Layers,
   Sliders,
   Zap,
 } from 'lucide-react';

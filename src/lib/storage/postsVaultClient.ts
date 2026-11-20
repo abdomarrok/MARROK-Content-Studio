@@ -51,20 +51,6 @@ async function readApiErrorPayload(
   }
 }
 
-let cachedBundledPosts: SavedPostRecord[] | null = null;
-
-async function loadBundledClientSeedPostsLazy(): Promise<SavedPostRecord[]> {
-  if (cachedBundledPosts !== null) return cachedBundledPosts;
-  try {
-    const mod = await import('./bundledSavedPosts.ts');
-    cachedBundledPosts = Array.isArray(mod.BUNDLED_SAVED_POSTS) ? mod.BUNDLED_SAVED_POSTS : [];
-    return cachedBundledPosts;
-  } catch {
-    cachedBundledPosts = [];
-    return [];
-  }
-}
-
 export function readDeletedIds(): Set<string> {
   if (typeof window === 'undefined' || !window.localStorage) return new Set();
   try {
@@ -123,7 +109,7 @@ function openVaultDb(): Promise<IDBDatabase | null> {
   });
 }
 
-async function readLocalVault(options?: { includeOfflineSeed?: boolean }): Promise<SavedPostRecord[]> {
+async function readLocalVault(): Promise<SavedPostRecord[]> {
   const deletedIds = readDeletedIds();
   const db = await openVaultDb();
   let storedItems: SavedPostRecord[] = [];
@@ -154,11 +140,6 @@ async function readLocalVault(options?: { includeOfflineSeed?: boolean }): Promi
     } catch {
       storedItems = [];
     }
-  }
-
-  if (storedItems.length === 0 && options?.includeOfflineSeed) {
-    const bundled = (await loadBundledClientSeedPostsLazy()).filter((p) => !deletedIds.has(p.id));
-    return mergeRecords(storedItems, bundled).filter((p) => !deletedIds.has(p.id));
   }
 
   return storedItems;
@@ -407,8 +388,7 @@ export async function loadVaultPosts(): Promise<VaultLoadResult> {
     console.warn('[PostsVaultClient] Backend unreachable (network/5xx), serving offline IndexedDB Vault:', err);
   }
 
-  const rawOfflinePosts =
-    localPosts.length > 0 ? localPosts : await readLocalVault({ includeOfflineSeed: true });
+  const rawOfflinePosts = localPosts.length > 0 ? localPosts : await readLocalVault();
   const offlinePosts = rawOfflinePosts.map((p) => ({
     ...p,
     offlineDraft: p.offlineDraft ?? true,

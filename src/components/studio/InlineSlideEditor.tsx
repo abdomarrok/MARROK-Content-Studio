@@ -21,8 +21,10 @@ import {
   X,
 } from 'lucide-react';
 import { SubjectPairArchetypeEditor } from './archetypes/SubjectPairArchetypeEditor.tsx';
+import { CoverComposerPanel } from './CoverComposerPanel.tsx';
 import {
   CarouselData,
+  CoverStyle,
   SlideData,
   SlideType,
   DiagramVariant,
@@ -61,7 +63,7 @@ interface InlineSlideEditorProps {
   onSmartMatchVisuals?: () => void;
   onDiversifyDeckVisuals?: () => void;
   selectedElementId?: GraphicalElementId | null;
-  onSelectElement?: (id: GraphicalElementId) => void;
+  onSelectElement?: (id: GraphicalElementId | null) => void;
   hookVariants?: HookVariant[];
   onApplyHookVariant?: (variant: HookVariant) => void;
   onAutoFitSlide?: () => void;
@@ -85,6 +87,9 @@ interface InlineSlideEditorProps {
   } | null;
   onApplyPhotoCopySuggestion?: () => void;
   onDismissPhotoCopySuggestion?: () => void;
+  totalSlides?: number;
+  onApplyCoverStyle?: (style: CoverStyle) => void;
+  onOpenVisualTab?: () => void;
 }
 
 const INLINE_DIAGRAM_VARIANTS: Array<{ id: DiagramVariant; label: string }> = [
@@ -126,6 +131,9 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
   photoCopySuggestion = null,
   onApplyPhotoCopySuggestion,
   onDismissPhotoCopySuggestion,
+  totalSlides = 1,
+  onApplyCoverStyle,
+  onOpenVisualTab,
 }) => {
   const inlineMemeFileInputRef = useRef<HTMLInputElement>(null);
   const inlineGraphicFileInputRef = useRef<HTMLInputElement>(null);
@@ -134,6 +142,7 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
   const limits = isSingle ? SINGLE_SLIDE_CHAR_LIMITS : CHAR_LIMITS;
   const isHook = currentSlideIndex === 0 && currentSlide.type === 'hub';
   const enTitleLimit = isHook ? limits.hookTitle : limits.enTitle;
+  const arTitleLimit = isHook ? limits.hookArTitle : limits.arTitle;
 
   const enTitleLen = (currentSlide.enTitle || '').trim().length;
   const arTitleLen = (currentSlide.arTitle || '').trim().length;
@@ -150,9 +159,18 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
     (isMemeMode && currentSlide.imageFrameMode !== 'hero' && currentSlide.imageFrameMode !== 'standard');
   const hideSlideCopyForMemeStudio =
     isMemeMode && !hasVideo && currentSlide.imageFrameMode !== 'hero' && currentSlide.imageFrameMode !== 'standard';
+  const isMultiSlideCoverComposer =
+    !isSingle &&
+    !isMemeMode &&
+    !hideSlideCopyForMemeStudio &&
+    currentSlideIndex === 0 &&
+    totalSlides > 1 &&
+    Boolean(onApplyCoverStyle);
 
   // Progressive disclosure states for secondary sections
-  const [isHooksOpen, setIsHooksOpen] = useState(currentSlideIndex === 0);
+  const [isHooksOpen, setIsHooksOpen] = useState(
+    currentSlideIndex === 0 && !(currentSlide.enTitle || '').trim()
+  );
   const [isTakeawaysOpen, setIsTakeawaysOpen] = useState(
     selectedElementId === 'takeawaysBlock'
   );
@@ -234,6 +252,7 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
         onUpdateField(key, seeded[key]);
       }
     });
+    onUpdateField('manualLayoutLocked', true);
   };
 
   return (
@@ -244,29 +263,29 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
           {isMemeMode ? (
             <>
               <Smile className="w-4 h-4 text-emerald-400" />
-              <span className="font-mono font-bold text-white uppercase">
-                Dedicated Meme Post Studio
-              </span>
+              <span className="font-semibold text-white">Meme Studio</span>
               <span aria-hidden="true" className="text-slate-600">·</span>
-              <span className="text-[11px] font-mono text-emerald-300/90">
-                Clean Full Card · Auto AI Caption
+              <span className="text-[11px] text-slate-400">
+                Full Card · AI Caption
               </span>
             </>
           ) : (
             <>
-              <span className="font-mono tabular-nums font-bold text-white">
+              <span className="font-mono tabular-nums font-semibold text-white">
                 Slide {currentSlideIndex + 1}
               </span>
               <span aria-hidden="true" className="text-slate-600">·</span>
-              <span className="uppercase font-mono text-slate-400">
+              <span className="capitalize text-slate-400">
                 {currentSlide.type}
               </span>
+              <span aria-hidden="true" className="text-slate-600">·</span>
               <span
                 data-testid="inline-auto-sync-badge"
-                className="text-[10px] font-mono text-emerald-300/90 flex items-center gap-1 ml-1"
+                className={`text-[11px] ${
+                  currentSlide.manualLayoutLocked ? 'text-amber-300/90' : 'text-emerald-300/90'
+                }`}
               >
-                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                <span>Auto-syncs graphic & fits limits</span>
+                {currentSlide.manualLayoutLocked ? 'Manual layout' : 'Auto layout'}
               </span>
               {(enTitleLen > enTitleLimit ||
                 arTitleLen > limits.arTitle ||
@@ -586,8 +605,24 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
         </div>
       )}
 
-      {/* Slide 1 Viral Hook Presets (Hidden in Full Meme Card mode) */}
-      {!hideSlideCopyForMemeStudio && currentSlideIndex === 0 && hookVariants && hookVariants.length > 0 && onApplyHookVariant && (
+      {/* Slide 1 Dedicated Cover Composer (Multi-Slide Carousels Only) */}
+      {isMultiSlideCoverComposer && onApplyCoverStyle && (
+        <CoverComposerPanel
+          currentSlide={currentSlide}
+          theme={theme}
+          hookVariants={hookVariants}
+          selectedElementId={selectedElementId}
+          onSelectElement={onSelectElement}
+          onUpdateField={onUpdateField}
+          onApplyCoverStyle={onApplyCoverStyle}
+          onApplyHookVariant={onApplyHookVariant}
+          onOpenVisualTab={onOpenVisualTab || onToggleAdvancedCustomizer}
+          onAutoFitSlide={handleAutoFitOnBlur}
+        />
+      )}
+
+      {/* Slide 1 Viral Hook Presets (Hidden in Full Meme Card mode or when Cover Composer handles Slide 1) */}
+      {!isMultiSlideCoverComposer && !hideSlideCopyForMemeStudio && currentSlideIndex === 0 && hookVariants && hookVariants.length > 0 && onApplyHookVariant && (
         <div className="p-3 rounded-xl bg-white/[0.02] border border-white/10 space-y-2">
           <button
             type="button"
@@ -621,13 +656,25 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
                 >
                   <div className="flex items-center justify-between gap-1.5">
                     <span className="text-[10px] font-mono font-bold uppercase truncate" style={{ color: theme.accent }}>
-                      {v.tag}
+                      {v.framework || v.tag}
                     </span>
-                    {v.coverArchetype && (
-                      <span className="px-1.5 py-0.5 rounded bg-white/10 text-[9px] font-mono uppercase text-slate-300 shrink-0">
-                        {v.coverArchetype}
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1 shrink-0">
+                      {typeof v.score === 'number' && (
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-[9px] font-mono font-bold text-emerald-300">
+                          {v.score}/100
+                        </span>
+                      )}
+                      {v.selected && (
+                        <span className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/35 text-[9px] font-mono font-bold uppercase text-amber-300">
+                          TOP
+                        </span>
+                      )}
+                      {v.coverArchetype && (
+                        <span className="px-1.5 py-0.5 rounded bg-white/10 text-[9px] font-mono uppercase text-slate-300">
+                          {v.coverArchetype}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   {v.hookKicker && (
                     <div className="text-[10px] font-mono text-slate-400 truncate mt-0.5">
@@ -645,7 +692,7 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
       )}
 
       {/* Viral Hook Kicker Badge (Rendered above English Headline on Canvas) */}
-      {!hideSlideCopyForMemeStudio && !isCtaSlide && (
+      {!isMultiSlideCoverComposer && !hideSlideCopyForMemeStudio && !isCtaSlide && (
         <div className="flex flex-col sm:flex-row sm:items-center gap-2 p-2.5 rounded-xl bg-white/[0.02] border border-white/10">
           <label className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-300 shrink-0 flex items-center gap-1.5">
             <span style={{ color: theme.accent }}>◆</span>
@@ -662,8 +709,8 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
         </div>
       )}
 
-      {/* English & Arabic Titles (Hidden in Full Meme Card mode so Meme Studio stays 100% clean) */}
-      {!hideSlideCopyForMemeStudio && (
+      {/* English & Arabic Titles (Hidden in Full Meme Card mode or when Cover Composer handles Slide 1) */}
+      {!isMultiSlideCoverComposer && !hideSlideCopyForMemeStudio && (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
         <div
           className={`space-y-1.5 rounded-xl transition-colors ${
@@ -741,10 +788,10 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
             <div className="flex items-center gap-1.5">
               <span
                 className={`text-xs font-mono tabular-nums ${
-                  arTitleLen > limits.arTitle ? 'text-amber-400 font-bold' : 'text-slate-400'
+                  arTitleLen > arTitleLimit ? 'text-amber-400 font-bold' : 'text-slate-400'
                 }`}
               >
-                {arTitleLen} / {limits.arTitle}
+                {arTitleLen} / {arTitleLimit}
               </span>
               <button
                 type="button"
@@ -759,13 +806,13 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
               >
                 Fix BiDi
               </button>
-              {arTitleLen > limits.arTitle && (
+              {arTitleLen > arTitleLimit && (
                 <button
                   type="button"
                   onClick={() =>
                     handleEditTextWithReveal(
                       'arTitle',
-                      autoFitTextToLimits(currentSlide.arTitle || '', limits.arTitle).replace(/[.?!]$/, '')
+                      autoFitTextToLimits(currentSlide.arTitle || '', arTitleLimit).replace(/[.?!]$/, '')
                     )
                   }
                   className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-[10px] font-mono text-amber-200 cursor-pointer transition-colors"
@@ -834,8 +881,8 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
         </div>
       )}
 
-      {/* English & Arabic Body Copy (Hidden in Full Meme Card mode) */}
-      {!hideSlideCopyForMemeStudio && (
+      {/* English & Arabic Body Copy (Hidden in Full Meme Card mode or when Cover Composer handles Slide 1) */}
+      {!isMultiSlideCoverComposer && !hideSlideCopyForMemeStudio && (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 pt-2.5 border-t border-white/[0.06]">
         <div
           className={`space-y-1.5 rounded-xl transition-colors ${
@@ -995,7 +1042,7 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
       )}
 
       {/* Dynamic Graphic & Schematic Editor (Inline inside Content Tab so users can switch & edit visuals without tab-hopping) */}
-      {!isCtaSlide && !isSingle && !isTextHiddenByFullFrame && (
+      {!isMultiSlideCoverComposer && !isCtaSlide && !isSingle && !isTextHiddenByFullFrame && (
         <div
           data-testid="inline-graphic-transformer"
           className="p-3 rounded-xl bg-white/[0.02] border border-white/10 space-y-2.5"
@@ -1065,7 +1112,10 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
                       key={v.id}
                       type="button"
                       data-testid={`inline-variant-${v.id}`}
-                      onClick={() => onUpdateField('diagramVariant', v.id)}
+                      onClick={() => {
+                        onUpdateField('diagramVariant', v.id);
+                        onUpdateField('manualLayoutLocked', true);
+                      }}
                       className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold transition-all cursor-pointer border ${
                         active
                           ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400/50'
@@ -1257,10 +1307,30 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
           {isTakeawaysOpen && (
             <div className="space-y-2.5 pt-3 animate-fade-in">
               <div className="flex items-center justify-end gap-2">
+                {currentSlide.takeaways && currentSlide.takeaways.length > 0 && (
+                  <button
+                    type="button"
+                    data-testid="remove-all-takeaways-btn"
+                    onClick={() => {
+                      onUpdateField('takeaways', []);
+                      onSelectElement?.(null);
+                      setIsTakeawaysOpen(false);
+                    }}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/35 text-xs font-mono font-medium text-rose-300 hover:text-rose-200 transition-colors cursor-pointer"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>Remove Card</span>
+                  </button>
+                )}
                 {(!currentSlide.takeaways || currentSlide.takeaways.length === 0) && (
                   <button
                     type="button"
-                    onClick={() => onUpdateField('takeaways', seedSingleSlideTakeaways(currentSlide))}
+                    onClick={() =>
+                      onUpdateField(
+                        'takeaways',
+                        seedSingleSlideTakeaways({ ...currentSlide, takeaways: [] }, carouselCategory)
+                      )
+                    }
                     className="px-2 py-1 rounded bg-white/[0.05] hover:bg-white/[0.1] text-xs font-mono font-medium text-slate-300 hover:text-white transition-colors cursor-pointer"
                   >
                     Seed 3 Points
@@ -1271,14 +1341,15 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
                     type="button"
                     onClick={() => {
                       const current = currentSlide.takeaways || [];
-                      onUpdateField('takeaways', [
-                        ...current,
-                        {
-                          en: 'High-throughput architectural component.',
-                          ar: 'ركيزة معمارية أساسية للنظام.',
-                          icon: 'checkCircle',
-                        },
-                      ]);
+                      const suggestions = seedSingleSlideTakeaways(
+                        { ...currentSlide, takeaways: [] },
+                        carouselCategory
+                      );
+                      const existingEn = new Set(current.map((item) => (item.en || '').trim().toLowerCase()));
+                      const nextSuggestion =
+                        suggestions.find((s) => !existingEn.has(s.en.trim().toLowerCase())) ||
+                        suggestions[current.length % suggestions.length];
+                      onUpdateField('takeaways', [...current, nextSuggestion]);
                     }}
                     className="flex items-center gap-1 px-2 py-1 rounded bg-white/[0.05] hover:bg-white/[0.1] text-xs font-mono font-medium text-cyan-400 hover:text-cyan-300 transition-colors cursor-pointer"
                   >
@@ -1303,14 +1374,17 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
                       <span className="text-xs font-mono font-bold" style={{ color: theme.accent }}>
                         TAKEAWAY #{tIdx + 1}
                       </span>
-                      {(currentSlide.takeaways?.length || 0) > 1 && (
+                      {(currentSlide.takeaways?.length || 0) > 0 && (
                         <button
                           type="button"
                           onClick={() => {
                             const updated = (currentSlide.takeaways || []).filter((_, i) => i !== tIdx);
                             onUpdateField('takeaways', updated);
+                            if (updated.length === 0) {
+                              onSelectElement?.(null);
+                            }
                           }}
-                          className="text-slate-500 hover:text-rose-400 p-0.5 rounded transition-colors cursor-pointer"
+                          className="text-slate-400 hover:text-rose-400 p-1 rounded transition-colors cursor-pointer"
                           title="Delete Takeaway"
                         >
                           <Trash2 className="w-3.5 h-3.5" />

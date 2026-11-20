@@ -7,3 +7,5 @@ export * from './CompareArchetypeEditor.tsx';
 export * from './ImageArchetypeEditor.tsx';
 export * from './CtaArchetypeEditor.tsx';
 export * from './SubjectPairArchetypeEditor.tsx';
+export * from './VisualSpecArchetypeEditor.tsx';
+

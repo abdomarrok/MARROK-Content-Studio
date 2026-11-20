@@ -2,7 +2,6 @@ import React, { useState, useRef } from 'react';
 import {
   X,
   BookmarkCheck,
-  CheckCircle2,
   Send,
   Trash2,
   FolderOpen,

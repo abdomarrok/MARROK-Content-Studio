@@ -7,9 +7,16 @@ import {
   handleExtractUrlContent,
   handleAutopilotGatherAndSynthesize,
   handleTelegramWebhook,
+  handleListTriageDecisions,
+  handleRecordTriageDecision,
+  handleDeleteTriageDecision,
 } from './controllers/mediaController.ts';
 import { handleGenerateImage } from './controllers/imageController.ts';
-import { handleGenerateCarousel, handleRefineSlide } from './controllers/generateController.ts';
+import {
+  handleGenerateCarousel,
+  handleRefineSlide,
+  handleDirectVisual,
+} from './controllers/generateController.ts';
 import {
   handleListPosts,
   handleGetPost,
@@ -53,6 +60,10 @@ dotenv.config();
 const serverConfig = getServerConfig();
 const app = express();
 const generationLimiter = createRateLimiter({ windowMs: 60_000, maxRequests: serverConfig.rateLimitRpm });
+const radarScanLimiter = createRateLimiter({
+  windowMs: 60_000,
+  maxRequests: Math.max(10, Number(process.env.RADAR_RATE_LIMIT_RPM || 30)),
+});
 
 app.use(securityHeadersMiddleware);
 
@@ -104,7 +115,7 @@ app.use((req, res, next) => {
     req.url = targetPath;
   }
 
-  next();
+  return next();
 });
 
 app.use(express.json({ limit: serverConfig.jsonBodyLimit }));
@@ -265,7 +276,8 @@ app.use(async (req, res, next) => {
     pathOnly.startsWith('/proxy-image') ||
     pathOnly.startsWith('/search-media') ||
     pathOnly.startsWith('/generate') ||
-    pathOnly.startsWith('/refine-slide');
+    pathOnly.startsWith('/refine-slide') ||
+    pathOnly.startsWith('/direct-visual');
 
   if (!isApiRoute) {
     return next();
@@ -324,10 +336,14 @@ app.get(['/api/search-media', '/search-media'], handleSearchMedia);
 app.post(['/api/generate-image', '/generate-image'], generationLimiter, handleGenerateImage);
 app.post(['/api/generate', '/generate'], generationLimiter, handleGenerateCarousel);
 app.post(['/api/refine-slide', '/refine-slide'], generationLimiter, handleRefineSlide);
+app.post(['/api/direct-visual', '/direct-visual'], generationLimiter, handleDirectVisual);
 
-// Automated Post Gathering, Quality-Gated Autopilot & Telegram Webhook Endpoints
-app.get(['/api/gather/radar', '/gather/radar'], handleGetTopicRadar);
+// Automated Post Gathering, Quality-Gated Autopilot, Triage Learning & Telegram Webhook Endpoints
+app.get(['/api/gather/radar', '/gather/radar'], radarScanLimiter, handleGetTopicRadar);
 app.post(['/api/gather/extract-url', '/gather/extract-url'], generationLimiter, handleExtractUrlContent);
+app.get(['/api/gather/triage', '/gather/triage'], handleListTriageDecisions);
+app.post(['/api/gather/triage', '/gather/triage'], handleRecordTriageDecision);
+app.delete(['/api/gather/triage/:id', '/gather/triage/:id'], handleDeleteTriageDecision);
 app.post(['/api/gather/autopilot', '/gather/autopilot'], generationLimiter, handleAutopilotGatherAndSynthesize);
 app.post(['/api/gather/telegram-webhook', '/gather/telegram-webhook'], generationLimiter, handleTelegramWebhook);
 

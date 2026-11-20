@@ -4,7 +4,7 @@ import {
   MotionTemplateConfig,
 } from '../../types.ts';
 import { MARROK_LOGO_PATHS, drawMarrokVectorBadge } from '../icons.ts';
-import { DEFAULT_BRAND, MOTION_W, MOTION_H, clamp, spring } from './base.ts';
+import { DEFAULT_BRAND, MOTION_W, MOTION_H, clamp } from './base.ts';
 import { isolateEmbeddedLatinInArabic } from '../text/arabicBiDi.ts';
 
 export const SAFE_LEFT = 82;

@@ -28,6 +28,8 @@ import {
   generateMetricoolBulkCsv,
   getLocalTodayDateStr,
   OFFICIAL_METRICOOL_CSV_HEADERS,
+  parseApiResponseJson,
+  uploadDeckSlidesForPublishing,
 } from '../lib/publish/publishClient.ts';
 import { CANVAS_DIMENSION_PRESETS, getArchetypeGraphicTransform } from '../lib/canvas/constants.ts';
 import { DEFAULT_STARTER_DECK } from '../lib/presets.ts';
@@ -44,6 +46,7 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
     delete process.env.POSTS_STORAGE_FILE;
     delete process.env.BUFFER_API_KEY;
@@ -748,7 +751,133 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
     expect(afterProd.posts.find((p) => p.id === 'post_cron_due_1')?.postStatus).toBe('posted');
     expect(afterProd.posts.find((p) => p.id === 'post_cron_unapproved')?.postStatus).toBe('validated');
   });
+
+  it('prevents duplicate Buffer/Zernio posts on repeated dispatch requests via idempotent replay fingerprint', async () => {
+    const dueIso = new Date(Date.now() + 3600_000).toISOString();
+    const reviewedDeck = {
+      ...DEFAULT_STARTER_DECK,
+      id: 'post_idempotent_1',
+      sourceMeta: {
+        ...DEFAULT_STARTER_DECK.sourceMeta,
+        userReviewed: true,
+        humanApproved: true,
+        verifiedNumbers: true,
+      },
+    };
+
+    const requestBody = {
+      postId: 'post_idempotent_1',
+      deck: reviewedDeck,
+      title: 'Idempotent Dispatch Test',
+      caption: 'Testing idempotent replay protection.',
+      mode: 'customScheduled',
+      dueAt: dueIso,
+      targets: ['instagram', 'tiktok'],
+      imageUrls: ['https://res.cloudinary.com/demo/image/upload/slide1.jpg'],
+      tiktokImageUrls: ['https://res.cloudinary.com/demo/image/upload/slide1_9x16.jpg'],
+      cloudinaryPublicIds: ['marrok_staging/slide1'],
+    };
+
+    let firstResponse: any = null;
+    await handleDispatchPublish(
+      { body: requestBody } as any,
+      {
+        status() {
+          return this;
+        },
+        json(payload: unknown) {
+          firstResponse = payload;
+          return this;
+        },
+      } as any
+    );
+
+    expect(firstResponse?.ok).toBe(true);
+    expect(firstResponse?.idempotentReplay).toBe(false);
+    expect(typeof firstResponse?.dispatchFingerprint).toBe('string');
+    expect(firstResponse?.post?.lastDispatchFingerprint).toBe(firstResponse?.dispatchFingerprint);
+
+    // Second identical dispatch must short-circuit with idempotentReplay: true
+    let secondResponse: any = null;
+    await handleDispatchPublish(
+      { body: requestBody } as any,
+      {
+        status() {
+          return this;
+        },
+        json(payload: unknown) {
+          secondResponse = payload;
+          return this;
+        },
+      } as any
+    );
+
+    expect(secondResponse?.ok).toBe(true);
+    expect(secondResponse?.idempotentReplay).toBe(true);
+    expect(secondResponse?.dispatchFingerprint).toBe(firstResponse?.dispatchFingerprint);
+  });
+
+  it('safely parses JSON and detects HTML error / warmup pages without throwing unhandled SyntaxError', async () => {
+    // 1. Normal JSON success
+    const successRes = new Response(JSON.stringify({ ok: true, count: 5 }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const parsed = await parseApiResponseJson<{ ok: boolean; count: number }>(successRes, 'Test Endpoint');
+    expect(parsed).toEqual({ ok: true, count: 5 });
+
+    // 2. HTTP 500 error with JSON body
+    const errRes = new Response(JSON.stringify({ error: 'Database connection failed' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+    await expect(parseApiResponseJson(errRes, 'DB Query')).rejects.toThrow('Database connection failed');
+
+    // 3. HTML warmup page intercepted by Nginx (status 200, text/html)
+    const warmupHtml = '<!doctype html><html lang="en"><head><title>App Starting</title></head><body>Warming up</body></html>';
+    const warmupRes = new Response(warmupHtml, {
+      status: 200,
+      headers: { 'Content-Type': 'text/html' },
+    });
+    await expect(parseApiResponseJson(warmupRes, 'Media upload for slide 1')).rejects.toThrow(
+      /Cloudinary media staging is not configured or server proxy returned an HTML page/i
+    );
+
+    // 4. General HTML response on another endpoint
+    const generalHtmlRes = new Response('<html><body>502 Bad Gateway</body></html>', {
+      status: 502,
+      headers: { 'Content-Type': 'text/html' },
+    });
+    await expect(parseApiResponseJson(generalHtmlRes, 'Fetch publish status')).rejects.toThrow(
+      /Fetch publish status received an HTML response from the server proxy \(HTTP 502\)/i
+    );
+  });
+
+  it('rejects uploadDeckSlidesForPublishing with actionable Cloudinary error when proxy returns HTML warmup page', async () => {
+    const warmupHtml = '<!doctype html><html lang="en"><head><title>Warmup</title></head><body>Loading...</body></html>';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(warmupHtml, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        })
+      )
+    );
+
+    const testDeck = {
+      ...DEFAULT_STARTER_DECK,
+      slides: [DEFAULT_STARTER_DECK.slides[0]],
+    };
+
+    await expect(
+      uploadDeckSlidesForPublishing(testDeck, 'tiktok-9:16')
+    ).rejects.toThrow(
+      /Cloudinary media staging is not configured or server proxy returned an HTML page/i
+    );
+  });
 });
+
 
 
 

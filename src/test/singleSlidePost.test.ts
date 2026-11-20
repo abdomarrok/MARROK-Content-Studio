@@ -1,9 +1,16 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { CarouselData, SlideData } from '../types.ts';
 import { condenseCarouselToSingleSlide, seedSingleSlideTakeaways } from '../lib/synthesis/singleSlideCondenser.ts';
-import { runQAChecks, CHAR_LIMITS, SINGLE_SLIDE_CHAR_LIMITS } from '../lib/qaChecks.ts';
-import { computeSlideLayoutAwareness } from '../lib/canvas/layoutAwareness.ts';
+import { runQAChecks, SINGLE_SLIDE_CHAR_LIMITS } from '../lib/qaChecks.ts';
+import { computeSlideLayoutAwareness, clampElementDrag } from '../lib/canvas/layoutAwareness.ts';
 import { computeSlideElementBounds, findSlideElementAtPoint } from '../lib/canvas/layoutBounds.ts';
+import { seedSlideArchetypeData } from '../lib/synthesis/archetypes.ts';
+import {
+  cleanCarouselContentQuality,
+  deriveSlideCornerTag,
+  extractSourceQuotedHubNodes,
+  resolveSmartSlideVisuals,
+} from '../lib/synthesis/smartVisualDefaults.ts';
 
 describe('Single-Slide Post & Infographic Poster System', () => {
   const sample8SlideCarousel: CarouselData = {
@@ -337,6 +344,106 @@ describe('Single-Slide Post & Infographic Poster System', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it('respects deleted takeaways (empty array) without re-seeding on render and clears takeaways when switching away from poster', () => {
+    const posterWithoutTakeaways: SlideData = {
+      type: 'poster',
+      enTitle: 'Why AI Agents Are Replacing Human Developers.',
+      arTitle: 'لماذا تحل وكلاء الذكاء الاصطناعي محل المطورين البشر؟',
+      enBody: 'Automated diffs ship faster than manual review.',
+      arBody: 'التعديلات الآلية أسرع من المراجعة اليدوية.',
+      takeaways: [],
+    };
+
+    // Simulates renderSlideToCanvas calling seedSlideArchetypeData(rawSlide, rawSlide.type)
+    const renderedState = seedSlideArchetypeData(posterWithoutTakeaways, 'poster', 0, false);
+    expect(renderedState.takeaways).toEqual([]);
+
+    // Switching away from poster to hub clears stale poster takeaways & overrides
+    const posterWithTakeaways: SlideData = {
+      ...posterWithoutTakeaways,
+      takeaways: seedSingleSlideTakeaways(posterWithoutTakeaways, 'AI AGENTS'),
+      layoutOverrides: { takeawaysBlock: { dx: 0, dy: -20 } },
+    };
+    const switchedToHub = seedSlideArchetypeData(posterWithTakeaways, 'hub', 0, false);
+    expect(switchedToHub.type).toBe('hub');
+    expect(switchedToHub.takeaways).toEqual([]);
+    expect(switchedToHub.layoutOverrides?.takeawaysBlock).toBeUndefined();
+  });
+
+  it('prevents takeawaysBlock from overlapping arabicTitleBlock and clamps upward drag', () => {
+    const crowdedHubWithTakeaways: SlideData = {
+      type: 'hub',
+      storyRole: 'hook',
+      hookKicker: 'AGENT NATIVE PARADIGM',
+      enTitle: 'Why AI Agents Are Replacing Human Developers.',
+      arTitle: 'لماذا تحل وكلاء الذكاء الاصطناعي محل المطورين البشر؟',
+      takeaways: [
+        { en: 'Autonomous loops ship verified diffs rapidly.', ar: 'حلقات الوكلاء تنجز التعديلات بسرعة.', icon: 'robot' },
+        { en: 'Sandboxed tests gate production deploys.', ar: 'الاختبارات المعزولة تحمي بيئة الإنتاج.', icon: 'shieldCheck' },
+        { en: 'Engineers focus on architecture constraints.', ar: 'يركز المهندس على القيود المعمارية.', icon: 'cpu' },
+      ],
+    };
+
+    const layout = computeSlideLayoutAwareness(crowdedHubWithTakeaways);
+    expect(layout.arabicTitleBlock).toBeDefined();
+    expect(layout.takeawaysBlock).toBeDefined();
+    expect(layout.takeawaysBlock!.top).toBeGreaterThanOrEqual(layout.arabicTitleBlock!.bottom + 14);
+    expect(layout.takeawaysBlock!.bottom).toBeLessThanOrEqual(1428 + 1);
+
+    // Dragging takeawaysBlock strongly upward must be clamped below arabicTitleBlock
+    const clampedDrag = clampElementDrag('takeawaysBlock', 0, -240, crowdedHubWithTakeaways);
+    expect(layout.takeawaysBlock!.top + clampedDrag.dy).toBeGreaterThanOrEqual(layout.arabicTitleBlock!.bottom + 14);
+  });
+
+  it('keeps Hub satellite nodes English-only, avoids false BENCHMARK tags, expands Arabic Slide 1 hook limits, and removes DevOps clichés', () => {
+    const fallbackTakeaways = seedSingleSlideTakeaways({}, 'SYSTEMS');
+    const joined = fallbackTakeaways.map((t) => t.en).join(' ');
+    expect(joined).not.toMatch(/Modular decoupled boundaries|Predictable sub-second latency|Zero-downtime deployment/i);
+
+    const slide: SlideData = {
+      type: 'hub',
+      storyRole: 'hook',
+      enTitle: 'Why AI Agents Are Replacing Human Developers.',
+      arTitle: 'لماذا تحل وكلاء الذكاء الاصطناعي محل المطورين البشر؟',
+    };
+
+    const smart = resolveSmartSlideVisuals(slide, 0, true);
+    expect(deriveSlideCornerTag(slide, 0, 6)).toBe('ARCHITECTURE');
+    expect(smart.satLabels).toHaveLength(5);
+    for (const lbl of smart.satLabels) {
+      expect(lbl).not.toMatch(/[\u0600-\u06FF]/);
+      expect(lbl).not.toMatch(/\.\.\.$/);
+    }
+
+    const { satLabels } = extractSourceQuotedHubNodes(
+      `${slide.enTitle} ${slide.arTitle}`,
+      { titleText: slide.enTitle, category: 'AI AGENTS', targetCount: 5 }
+    );
+    for (const lbl of satLabels) {
+      expect(lbl).not.toMatch(/[\u0600-\u06FF]/);
+    }
+
+    // Arabic Slide 1 hook of 50 chars passes QA without warning (hookArTitle = 68)
+    const cleanDeck: CarouselData = {
+      theme: 'dark',
+      category: 'AI AGENTS',
+      brand: 'MARROK',
+      brandUrl: 'marrok.org',
+      channel: 'Engineering Technical Report',
+      caption: 'AI Agents workflow breakdown',
+      slides: [
+        slide,
+        { type: 'row', enTitle: 'Diff review slows pipelines.', arTitle: 'مراجعة الشفرة تبطئ النشر.' },
+        { type: 'cta', enTitle: 'Where do human devs fit?', arTitle: 'أين يقع دور المطور البشري؟', ctaText: 'Join Discussion' },
+      ],
+    };
+    const cleaned = cleanCarouselContentQuality(cleanDeck);
+    expect(cleaned.channel).not.toBe('Engineering Technical Report');
+    const qa = runQAChecks(cleaned);
+    const arHookWarns = qa.results.filter((r) => r.id === 'char-ar-title-0' && r.severity === 'warn');
+    expect(arHookWarns).toHaveLength(0);
   });
 });
 

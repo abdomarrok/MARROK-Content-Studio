@@ -4,6 +4,7 @@ import {
   inferDynamicCoverArchetype,
   resolveSmartSlideVisuals,
 } from './smartVisualDefaults.ts';
+import { extractSlideText } from '../text/slideText.ts';
 
 /**
  * Visual Pacing & Anti-Repetition Balancer
@@ -160,7 +161,7 @@ export function balanceCarouselVisualPacing(slides: SlideData[]): SlideData[] {
     }
 
     // Mechanism (Row) Slides: Enforce Anti-Repetition & Variety
-    const slideText = `${slide.enTitle || ''} ${slide.enBody || ''} ${slide.arTitle || ''}`.toLowerCase();
+    const slideText = extractSlideText(slide, { lower: true });
 
     // Determine semantic affinity
     let preferredVariant: DiagramVariant = slide.diagramVariant || 'topology';

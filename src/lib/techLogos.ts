@@ -72,23 +72,6 @@ export const KNOWN_TECH_LOGOS: Record<string, string> = (() => {
 })();
 
 /**
- * Lookup map from tech brand name or alias to its full TechIconItem metadata.
- */
-export const TECH_ICON_META_BY_KEY: Record<string, TechIconItem> = (() => {
-  const map: Record<string, TechIconItem> = {};
-  for (const item of TECH_ICONS_LIST) {
-    map[item.name.toLowerCase()] = item;
-    map[item.title.toLowerCase()] = item;
-    if (item.aliases) {
-      for (const alias of item.aliases) {
-        map[alias.toLowerCase()] = item;
-      }
-    }
-  }
-  return map;
-})();
-
-/**
  * Detects third-party companies/brands named in text (excluding generic programming languages like go/rust/python/c++ unless explicitly a company).
  */
 export const THIRD_PARTY_COMPANY_NAMES = new Set([

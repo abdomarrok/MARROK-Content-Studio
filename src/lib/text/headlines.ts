@@ -28,16 +28,47 @@ export function autoPolishHeadline(title: string): string {
 export function autoFitTextToLimits(text: string, limit: number): string {
   if (!text || text.length <= limit) return text;
   const words = text.trim().split(/\s+/);
-  let res = '';
+  const kept: string[] = [];
   for (const w of words) {
-    if ((res + ' ' + w).trim().length > limit - 1) break;
-    res = (res + ' ' + w).trim();
+    const next = [...kept, w].join(' ');
+    if (next.length > limit - 1) break;
+    kept.push(w);
   }
-  if (!/[.?!]$/.test(res)) {
-    const isDirectQuestion =
-      /^(?:is|are|can|could|does|did|should|will|would|do)\b/i.test(res) ||
-      /^(?:why|how|what)\s+(?:do|does|did|is|are|can|could|should|will|would)\b/i.test(res);
-    res += isDirectQuestion ? '?' : '.';
+  const hasArabic = /[\u0600-\u06FF]/.test(text);
+  while (
+    hasArabic &&
+    kept.length > 3 &&
+    /^(?:في|من|على|عن|إلى|مع|محل|بدل|بين|بسبب|نحو|و|أو|ثم|ان|أن|لأن)$/.test(
+      kept[kept.length - 1].replace(/[.,،؟?!:]/g, '')
+    )
+  ) {
+    kept.pop();
+  }
+  while (
+    !hasArabic &&
+    kept.length > 3 &&
+    /^(?:from|to|with|of|for|in|on|by|at|and|or|the|a|an|that|as|into|than|via)$/i.test(
+      kept[kept.length - 1].replace(/[^a-zA-Z]/g, '')
+    )
+  ) {
+    kept.pop();
+  }
+
+  let res = kept.join(' ').replace(/[,:;—–-]+$/, '').trim();
+  if (!res) res = text.slice(0, Math.max(1, limit - 1)).trim();
+
+  if (!/[.?!؟]$/.test(res)) {
+    const isArabicQuestion =
+      hasArabic &&
+      (/؟/.test(text) || /^(?:لماذا|كيف|هل|ما|متى|أين|أي)\b/.test(res));
+    if (isArabicQuestion) {
+      res += '؟';
+    } else if (!hasArabic) {
+      const isDirectQuestion =
+        /^(?:is|are|can|could|does|did|should|will|would|do)\b/i.test(res) ||
+        /^(?:why|how|what)\s+(?:do|does|did|is|are|can|could|should|will|would)\b/i.test(res);
+      res += isDirectQuestion ? '?' : '.';
+    }
   }
   return res;
 }
@@ -133,7 +164,7 @@ export function extractTopicFromFileName(fileName?: string): string | null {
 
 /**
  * Enforces Spec §8 rule on English headlines:
- * - Slide 1 Hook: Punchy 2 to 8 words (<= 50 chars), ending in '.', '?', or '!'. Zero colons.
+ * - Slide 1 Hook: 6 to 12 words (<= 76 chars), ending in '.', '?', or '!'. Zero colons.
  * - CTA Slide: Up to 8 words, ending in '?', '!', or '.'. Allows question hooks.
  * - Content Slides: Up to 8 words (<= 45 chars), clean punctuation.
  */
@@ -158,10 +189,26 @@ export function enforceHeadlineSpecRule(
   let endingPunc = isDirectQuestion ? '?' : '.';
   if (trimmed.endsWith('!')) endingPunc = '!';
 
-  // Clean markdown and symbols; preserve mid-headline colons on content slides while removing colons on hook/CTA slides
+  // Clean markdown and symbols; preserve numeric decimals (99.99%, 0.4ms, v2.4) and dotted tech names (Node.js, Next.js)
   const baseClean = stripMarkdown(rawHeadline)
     .replace(/;+/g, ' ')
-    .replace(/[.?!،؟…]+/g, '');
+    .replace(/[?!،؟…]+/g, '')
+    .replace(/\./g, (_dot, offset: number, str: string) => {
+      const prevChar = offset > 0 ? str[offset - 1] : '';
+      const nextChar = offset + 1 < str.length ? str[offset + 1] : '';
+      if (/\d/.test(prevChar) && /\d/.test(nextChar)) {
+        return '.';
+      }
+      const before = str.slice(Math.max(0, offset - 10), offset);
+      const after = str.slice(offset + 1, offset + 6);
+      if (
+        /(?:node|next|nuxt|vue|react|svelte|solid|bun|deno|three|d3|p5|socket|chart|express|nest|hono|astro|asp)$/i.test(before) &&
+        /^(?:js|ts|net|io)\b/i.test(after)
+      ) {
+        return '.';
+      }
+      return '';
+    });
   const clean = (
     isHook || isCta
       ? baseClean.replace(/:+/g, ' ')
@@ -185,8 +232,8 @@ export function enforceHeadlineSpecRule(
     return isCta ? `${singleWord} at scale?` : `${singleWord}, explained${endingPunc}`;
   }
 
-  const maxWords = isHook ? 8 : isCta ? 8 : 8;
-  const maxChars = isHook ? 48 : isCta ? 50 : 45;
+  const maxWords = isHook ? 12 : isCta ? 8 : 8;
+  const maxChars = isHook ? 76 : isCta ? 50 : 45;
 
   let picked = words.slice(0, maxWords);
   while (picked.length > 2 && picked.join(' ').length > maxChars) {
@@ -228,6 +275,14 @@ export function extractCleanSubject(rawText: string): { cleanSubject: string; ar
   }
   if (/\b(?:postgres|postgresql)\b/i.test(lower)) {
     return { cleanSubject: 'PostgreSQL', arSubject: 'قواعد PostgreSQL' };
+  }
+  if (/\b(?:sqlite)\b/i.test(lower)) {
+    return { cleanSubject: 'SQLite Storage', arSubject: 'SQLite' };
+  }
+  if (/\b(?:cassandra|scylladb)\b/i.test(lower)) {
+    const ownerMatch = rawText.match(/\b(Discord|Slack|Netflix|Apple|Twitter|Uber|Stripe)\b/);
+    const prefix = ownerMatch ? `${ownerMatch[1]} ` : '';
+    return { cleanSubject: `${prefix}ScyllaDB Migration`.trim(), arSubject: `${prefix}ScyllaDB`.trim() };
   }
   if (/\b(?:ebpf|xdp)\b/i.test(lower)) {
     return { cleanSubject: 'eBPF Systems', arSubject: 'تقنية eBPF' };
@@ -278,7 +333,7 @@ export function extractCleanSubject(rawText: string): { cleanSubject: string; ar
       /^(?:this\s+(?:video|article|post|guide|talk|paper)?\s+(?:explains|covers|discusses|breaks\s+down|dives\s+into)\s+(?:the\s+role\s+and\s+architecture\s+of|the\s+architecture\s+of|the\s+internals\s+of|how\s+to\s+build|how)?\s*)/i,
       ''
     )
-    .replace(/^(?:why\s+did|why\s+does|why\s+is|how\s+did|how\s+does|how\s+to|what\s+is|what\s+are|moving\s+beyond|understanding|demystifying|a\s+look\s+at)\s+/i, '')
+    .replace(/^(?:why\s+did|why\s+does|why\s+is|how\s+did|how\s+does|how\s+to|how|why|what\s+is|what\s+are|moving\s+beyond|understanding|demystifying|a\s+look\s+at)\s+/i, '')
     .replace(/[:;]+/g, ' ')
     .replace(/[.?!،؟…]+/g, '')
     .replace(/\s+/g, ' ')
@@ -293,8 +348,13 @@ export function extractCleanSubject(rawText: string): { cleanSubject: string; ar
     return { cleanSubject: 'System Architecture', arSubject: 'الأنظمة المعمارية' };
   }
 
-  const subject = words.slice(0, 3).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-  return { cleanSubject: subject, arSubject: 'الأنظمة المعمارية' };
+  const subject = words
+    .slice(0, 3)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
+    .replace(/\s+(?:Runs|Inside|Moved|From|To|In|On|At|For|With|The|And)$/i, '')
+    .trim() || words[0];
+  return { cleanSubject: subject, arSubject: subject };
 }
 
 /**

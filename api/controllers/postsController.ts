@@ -16,7 +16,6 @@ import { parseCarouselData } from '../../src/lib/validation/carousel.ts';
 import { sanitizeFullCarousel } from '../../src/lib/textSanitizer.ts';
 import { runQAChecks } from '../../src/lib/qaChecks.ts';
 import { runPlatformRiskChecks } from '../../src/lib/riskChecks.ts';
-import { BUNDLED_SAVED_POSTS } from '../../src/lib/storage/bundledSavedPosts.ts';
 import {
   getPostgresPool,
   queryPostgresPosts,
@@ -188,14 +187,12 @@ async function pushPostsToRemoteVault(
 }
 
 export function getBundledSeedPosts(): SavedPostRecord[] {
-  if (!Array.isArray(BUNDLED_SAVED_POSTS)) return [];
-  return BUNDLED_SAVED_POSTS;
+  return [];
 }
 
 /**
- * Resolves a writable file path for file-based storage.
- * On Vercel Serverless Functions (/var/task is read-only), always uses os.tmpdir()
- * so file operations never throw EROFS: read-only file system.
+ * Resolves a writable file path for ephemeral test/serverless fallback storage.
+ * Primary persistence uses Neon PostgreSQL + Browser IndexedDB without local repo JSON seed files.
  */
 export function resolveStorageFilePath(env: NodeJS.ProcessEnv = process.env): {
   filePath: string;
@@ -207,16 +204,9 @@ export function resolveStorageFilePath(env: NodeJS.ProcessEnv = process.env): {
       engine: env.VERCEL || env.VERCEL_ENV ? 'vercel-tmp' : 'local-disk',
     };
   }
-  const isVercel = Boolean(env.VERCEL || env.VERCEL_ENV);
-  if (isVercel) {
-    return {
-      filePath: path.join(os.tmpdir(), 'marrok-saved-posts.json'),
-      engine: 'vercel-tmp',
-    };
-  }
   return {
-    filePath: path.join(process.cwd(), 'data', 'saved-posts.json'),
-    engine: 'local-disk',
+    filePath: path.join(os.tmpdir(), 'marrok-saved-posts.json'),
+    engine: 'vercel-tmp',
   };
 }
 
@@ -272,40 +262,7 @@ async function readFromFileStore(env: NodeJS.ProcessEnv = process.env): Promise<
       return { posts: parsed, engine };
     }
   } catch {
-    // Try os.tmpdir() fallback if local ./data was not readable
-    const tmpFallback = path.join(os.tmpdir(), 'marrok-saved-posts.json');
-    if (tmpFallback !== filePath) {
-      try {
-        const rawTmp = await fs.readFile(tmpFallback, 'utf-8');
-        const parsedTmp = JSON.parse(rawTmp);
-        if (Array.isArray(parsedTmp)) {
-          return { posts: parsedTmp, engine: 'vercel-tmp' };
-        }
-      } catch {
-        // Ignore if file does not exist yet
-      }
-    }
-
-    // On Vercel cold start (/tmp empty) when no custom test file override is set,
-    // hydrate initial posts from the repository's bundled seed posts.
-    if (!env.POSTS_STORAGE_FILE) {
-      const repoSeedPath = path.join(process.cwd(), 'data', 'saved-posts.json');
-      if (repoSeedPath !== filePath) {
-        try {
-          const rawSeed = await fs.readFile(repoSeedPath, 'utf-8');
-          const parsedSeed = JSON.parse(rawSeed);
-          if (Array.isArray(parsedSeed) && parsedSeed.length > 0) {
-            return { posts: parsedSeed, engine };
-          }
-        } catch {
-          // Fall through to statically bundled module import
-        }
-      }
-      const bundled = getBundledSeedPosts();
-      if (bundled.length > 0) {
-        return { posts: bundled, engine };
-      }
-    }
+    // Return empty list when ephemeral store has not been written yet
   }
   return { posts: [], engine };
 }
@@ -315,39 +272,13 @@ async function writeToFileStore(
   env: NodeJS.ProcessEnv = process.env
 ): Promise<SavedPostStorageEngine> {
   const resolved = resolveStorageFilePath(env);
-  const isVitestDefaultRepoFile =
-    Boolean(env.VITEST || process.env.VITEST) &&
-    !env.POSTS_STORAGE_FILE &&
-    resolved.filePath === path.join(process.cwd(), 'data', 'saved-posts.json');
-  const filePath = isVitestDefaultRepoFile
-    ? path.join(os.tmpdir(), 'marrok-vitest-saved-posts.json')
-    : resolved.filePath;
+  const filePath = resolved.filePath;
   const engine = resolved.engine;
   try {
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, JSON.stringify(posts, null, 2), 'utf-8');
-
-    // Only rewrite a custom dev seed target when explicitly requested via SYNC_BUNDLED_SEED=true
-    // and BUNDLED_SEED_TARGET (never reference .ts source paths with path.join in serverless functions
-    // because @vercel/nft / @netlify/zip-it-and-ship-it traces them as function entry overrides).
-    const explicitSeedTarget = readRuntimeEnv('BUNDLED_SEED_TARGET', env);
-    if (
-      engine === 'local-disk' &&
-      !env.POSTS_STORAGE_FILE &&
-      env.SYNC_BUNDLED_SEED === 'true' &&
-      explicitSeedTarget
-    ) {
-      try {
-        const tsContent = `import type { SavedPostRecord } from '../../types.ts';\n\n/**\n * Bundled repository seed posts for the Saved & Posted Vault.\n */\nexport const BUNDLED_SAVED_POSTS: SavedPostRecord[] = ${JSON.stringify(posts, null, 2)};\n`;
-        await fs.writeFile(path.resolve(process.cwd(), explicitSeedTarget), tsContent, 'utf-8');
-      } catch {
-        // Non-fatal if source tree is read-only
-      }
-    }
-
     return engine;
   } catch {
-    // Fallback to os.tmpdir() if the directory is read-only (e.g. custom serverless container)
     const tmpFallback = path.join(os.tmpdir(), 'marrok-saved-posts.json');
     await fs.mkdir(path.dirname(tmpFallback), { recursive: true });
     await fs.writeFile(tmpFallback, JSON.stringify(posts, null, 2), 'utf-8');
@@ -374,29 +305,15 @@ export async function loadStoredPosts(env: NodeJS.ProcessEnv = process.env): Pro
       const pool = getPostgresPool(config.databaseUrl);
       if (pool) {
         const pgPosts = (await queryPostgresPosts(pool)).filter((p) => !deletedIds.has(p.id));
-        if (pgPosts.length > 0) {
-          return {
-            posts: deduplicateSavedPosts(pgPosts),
-            storageEngine: 'neon-postgres',
-            isCloudPersistent: true,
-            deletedIds: Array.from(deletedIds),
-          };
-        }
-        const { posts: seedCandidates } = await readFromFileStore(env);
-        const seeds = deduplicateSavedPosts(
-          (seedCandidates.length > 0 ? seedCandidates : getBundledSeedPosts()).filter(
-            (s) => !deletedIds.has(s.id)
-          )
-        );
         return {
-          posts: seeds,
+          posts: deduplicateSavedPosts(pgPosts),
           storageEngine: 'neon-postgres',
           isCloudPersistent: true,
           deletedIds: Array.from(deletedIds),
         };
       }
     } catch (pgErr) {
-      console.warn('[PostsStore] Neon PostgreSQL query failed, falling back to local file store:', pgErr);
+      console.warn('[PostsStore] Neon PostgreSQL query failed, falling back to ephemeral store:', pgErr);
     }
   }
 
@@ -404,11 +321,11 @@ export async function loadStoredPosts(env: NodeJS.ProcessEnv = process.env): Pro
   if (config.kvRestUrl && config.kvRestToken) {
     const kvPosts = await readFromKv(config.kvRestUrl, config.kvRestToken);
     if (kvPosts !== null) {
-      const seeded = deduplicateSavedPosts(
-        (kvPosts.length > 0 ? kvPosts : getBundledSeedPosts()).filter((p) => !deletedIds.has(p.id))
+      const filteredKv = deduplicateSavedPosts(
+        kvPosts.filter((p) => !deletedIds.has(p.id))
       );
       return {
-        posts: seeded,
+        posts: filteredKv,
         storageEngine: 'cloud-kv',
         isCloudPersistent: true,
         deletedIds: Array.from(deletedIds),
@@ -828,6 +745,8 @@ export function validateAndBuildPostRecord(
     bufferPostIds: input.existingRecord?.bufferPostIds,
     zernioPostIds: input.existingRecord?.zernioPostIds,
     countedInMetricoolMonth: input.existingRecord?.countedInMetricoolMonth,
+    lastDispatchFingerprint: input.existingRecord?.lastDispatchFingerprint,
+    lastDispatchedAt: input.existingRecord?.lastDispatchedAt,
   };
 
   return { ok: true, record };

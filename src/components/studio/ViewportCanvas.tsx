@@ -26,6 +26,7 @@ import {
   VolumeX,
   Maximize2,
   Minimize2,
+  Trash2,
 } from 'lucide-react';
 import {
   CarouselData,
@@ -74,6 +75,7 @@ interface ViewportCanvasProps {
   onUpdateLayoutOverride?: (id: GraphicalElementId, override: ElementLayoutOverride | null) => void;
   onDoubleClickElement?: (id: GraphicalElementId) => void;
   onUpdateSlideField?: <K extends keyof SlideData>(field: K, value: SlideData[K]) => void;
+  onDeleteElement?: (id: GraphicalElementId) => void;
   compactMobileStage?: boolean;
   isComparingBefore?: boolean;
 }
@@ -94,6 +96,7 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
   onUpdateLayoutOverride,
   onDoubleClickElement,
   onUpdateSlideField,
+  onDeleteElement,
   compactMobileStage = false,
   isComparingBefore = false,
 }) => {
@@ -137,8 +140,8 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
   // Dynamically compute exact layout bounds for every element on current slide
   const boundsMap = useMemo(() => {
     if (!currentSlide) return {} as Record<GraphicalElementId, ElementBounds>;
-    return computeSlideElementBounds(currentSlide, carousel);
-  }, [currentSlide, carousel]);
+    return computeSlideElementBounds(currentSlide, carousel, currentSlideIndex);
+  }, [currentSlide, carousel, currentSlideIndex]);
 
   const activeBounds = selectedElementId ? boundsMap[selectedElementId] : null;
   const hoveredBounds = hoveredElementId && hoveredElementId !== selectedElementId ? boundsMap[hoveredElementId] : null;
@@ -188,7 +191,8 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
         currentDx + deltaX,
         currentDy + deltaY,
         currentSlide,
-        carousel
+        carousel,
+        currentSlideIndex
       );
       onUpdateLayoutOverride(selectedElementId, {
         ...(currentOverride || {}),
@@ -196,7 +200,7 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
         dy: nextDy,
       });
     },
-    [selectedElementId, onUpdateLayoutOverride, currentSlide, currentDx, currentDy, carousel, currentOverride]
+    [selectedElementId, onUpdateLayoutOverride, currentSlide, currentDx, currentDy, carousel, currentSlideIndex, currentOverride]
   );
 
   const handleQuickScale = useCallback(
@@ -248,6 +252,13 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
       overrides: slide.layoutOverrides,
       compositionPreset: slide.compositionPreset,
       freeMoveLayout: slide.freeMoveLayout,
+      coverStyle: slide.coverStyle,
+      showSwipeCue: slide.showSwipeCue,
+      swipeCueText: slide.swipeCueText,
+      coverTeaserEn: slide.coverTeaserEn,
+      coverTeaserAr: slide.coverTeaserAr,
+      slideCount: carousel.slides.length,
+      postFormat: carousel.postFormat,
       imageZoom: slide.imageZoom,
       imagePanX: slide.imagePanX,
       imagePanY: slide.imagePanY,
@@ -463,50 +474,58 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
     }
   };
 
+  const handleQuickDelete = useCallback(() => {
+    if (!selectedElementId) return;
+    if (onDeleteElement) {
+      onDeleteElement(selectedElementId);
+      return;
+    }
+    if (selectedElementId === 'takeawaysBlock') {
+      onUpdateSlideField?.('takeaways', []);
+      onUpdateLayoutOverride?.('takeawaysBlock', null);
+      onSelectElement?.(null);
+      return;
+    }
+    const existing = (currentSlide?.layoutOverrides?.[selectedElementId] || {}) as ElementLayoutOverride;
+    onUpdateLayoutOverride?.(selectedElementId, { ...existing, hidden: true });
+    onSelectElement?.(null);
+  }, [currentSlide, onDeleteElement, onSelectElement, onUpdateLayoutOverride, onUpdateSlideField, selectedElementId]);
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const tag = (e.target as HTMLElement | null)?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
     if (e.key === 'Escape') {
       onSelectElement?.(null);
       e.preventDefault();
       return;
     }
 
-    if (!selectedElementId || !onUpdateLayoutOverride || !currentSlide) return;
-    const step = e.shiftKey ? 10 : 2;
-    let nextDx = currentDx;
-    let nextDy = currentDy;
-    let handled = false;
-
-    if (e.key === 'ArrowLeft') {
-      nextDx = currentDx - step;
-      handled = true;
-    } else if (e.key === 'ArrowRight') {
-      nextDx = currentDx + step;
-      handled = true;
-    } else if (e.key === 'ArrowUp') {
-      nextDy = currentDy - step;
-      handled = true;
-    } else if (e.key === 'ArrowDown') {
-      nextDy = currentDy + step;
-      handled = true;
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedElementId) {
+      e.preventDefault();
+      handleQuickDelete();
+      return;
     }
 
-    if (handled) {
+    if (!selectedElementId || !onUpdateLayoutOverride || !currentSlide) return;
+    const step = e.shiftKey ? 10 : 2;
+
+    if (e.key === 'ArrowLeft') {
       e.preventDefault();
-      const clamped = clampElementDrag(selectedElementId, nextDx, nextDy, currentSlide, carousel);
-      onUpdateLayoutOverride(selectedElementId, {
-        ...(currentOverride || {}),
-        dx: clamped.dx,
-        dy: clamped.dy,
-      });
+      handleNudge(-step, 0);
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      handleNudge(step, 0);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      handleNudge(0, -step);
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      handleNudge(0, step);
     }
   };
 
-  // Check if HUD pill should render inside box or above
-  const isPillInside = activeBounds && (activeBounds.y < 140 || selectedElementId === 'headerBadge');
-  const isToolbarAbove = activeBounds && activeBounds.y + activeBounds.height > spec.height - 220;
   const isTextAlignable = Boolean(selectedElementId && TEXT_ALIGNABLE_ELEMENTS.includes(selectedElementId));
-  const topSafePct = `${((spec.headerY / spec.height) * 100).toFixed(1)}%`;
-  const bottomSafePct = `${(((spec.height - spec.safeFooterCeilingY) / spec.height) * 100).toFixed(1)}%`;
 
   // Detect active white-card media (video vs image) for single-slide / full-card meme mode
   const activeMediaType = currentSlide ? getSlideMediaType(currentSlide) : 'none';
@@ -1146,12 +1165,24 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
               <div className="w-px h-3.5 bg-white/15 mx-0.5" />
               <button
                 type="button"
-                onClick={handleQuickHide}
-                className="p-1 rounded-lg hover:bg-rose-500/20 text-slate-300 hover:text-rose-300 transition-colors cursor-pointer"
-                title="Hide Element on Slide"
+                data-testid="viewport-delete-element-btn"
+                onClick={handleQuickDelete}
+                className="flex items-center gap-1 px-1.5 py-1 rounded-lg hover:bg-rose-500/20 text-rose-300 hover:text-rose-200 transition-colors cursor-pointer text-[10px] font-mono font-bold"
+                title={selectedElementId === 'takeawaysBlock' ? 'Delete Takeaways from Slide (Del)' : 'Delete / Hide Selected Element (Del)'}
               >
-                <EyeOff className="w-3.5 h-3.5" />
+                <Trash2 className="w-3.5 h-3.5" />
+                {selectedElementId === 'takeawaysBlock' && <span>Delete</span>}
               </button>
+              {selectedElementId !== 'takeawaysBlock' && (
+                <button
+                  type="button"
+                  onClick={handleQuickHide}
+                  className="p-1 rounded-lg hover:bg-rose-500/20 text-slate-300 hover:text-rose-300 transition-colors cursor-pointer"
+                  title="Hide Element on Slide"
+                >
+                  <EyeOff className="w-3.5 h-3.5" />
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => onUpdateLayoutOverride?.(selectedElementId, null)}

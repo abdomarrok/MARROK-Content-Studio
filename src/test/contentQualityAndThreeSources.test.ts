@@ -4,6 +4,7 @@ import {
   validateSourceSufficiency,
   InsufficientSourceError,
   applyHookEngineToSlide1,
+  cleanCarouselContentQuality,
 } from '../lib/synthesizer.ts';
 import { enrichAndPaceCarousel } from '../lib/autonomousPipeline.ts';
 import {
@@ -287,5 +288,78 @@ describe('Content Quality Engine, Footer Safe Ceiling & 3-Source Verification', 
       { text: '510 GB', isLtr: true },
       { text: '.', isLtr: false },
     ]);
+  });
+
+  it('auto-cleans Slide 3 "Verification" filler diagram node, filler metricLabel, Hub echoes, and template clichés in one pass', () => {
+    const brokenDeck: CarouselData = {
+      theme: 'teal',
+      category: 'AI SYSTEMS',
+      sourceMeta: { title: 'Grokbot Automated Verification' },
+      caption: 'Technical breakdown of Grokbot production trade-offs.',
+      slides: [
+        {
+          type: 'metric',
+          enTitle: 'Can human review survive AI scale?',
+          arTitle: 'هل يمكن للمراجعة البشرية الصمود؟',
+          enBody: 'Should not exist on slide 1.',
+          arBody: 'محتوى إضافي غير مطلوب.',
+          metricValue: '70%',
+          metricLabel: 'VERIFICATION',
+        },
+        {
+          type: 'hub',
+          satLabels: ['TECH', 'AI SYSTEMS', 'VERIFICATION', 'BOUNDARIES', 'OBSERVABILITY'],
+          enTitle: 'Automated agent pipelines.',
+          arTitle: 'خطوط الوكلاء الآلية.',
+          enBody: 'Grokbot ships 11,000 PRs monthly with a 0.5% revert rate across workers.',
+          arBody: 'يشحن النظام 11,000 طلب دمج شهرياً بمعدل تراجع 0.5%.',
+        },
+        {
+          type: 'row',
+          enTitle: 'Automated verification gates.',
+          arTitle: 'بوابات التحقق الآلي.',
+          enBody: 'Teams dedicate 70% of agent tokens to verification before merging code.',
+          arBody: 'تخصص الفرق 70% من الرموز لعمليات التحقق قبل دمج الشيفرة.',
+          diagramNodes: [
+            { label: 'Verification', sublabel: 'Static pass', status: 'ACTIVE', icon: 'shieldAlert' },
+            { label: 'Agent Tokens', sublabel: '70% allocation', status: 'VERIFIED', icon: 'cpu' },
+            { label: 'Merge Queue', sublabel: '0.5% revert', status: 'SECURED', icon: 'gitMerge' },
+          ],
+        },
+        {
+          type: 'cta',
+          enTitle: 'Review your pipeline today.',
+          arTitle: 'راجع مسار النشر اليوم.',
+          enBody: 'Keep p99 stable.',
+          arBody: 'حافظ على استقرار الأداء.',
+          ctaText: 'Join the discussion',
+        },
+      ],
+    };
+
+    const beforePreExport = runPreExportChecklist(brokenDeck, DEFAULT_PALETTES.teal);
+    const beforeCq = beforePreExport.find((c) => c.id === 'contentQuality');
+    expect(beforeCq?.passed).toBe(false);
+
+    const cleaned = cleanCarouselContentQuality(
+      brokenDeck,
+      'Grokbot ships 11,000 PRs monthly with 0.5% revert rate and 70% tokens on automated verification'
+    );
+
+    // Slide 3 diagram nodes must NOT contain "Verification" or any filler label
+    const slide3Labels = (cleaned.slides[2].diagramNodes || []).map((n) => n.label.toUpperCase());
+    expect(slide3Labels.length).toBe(3);
+    expect(slide3Labels).not.toContain('VERIFICATION');
+
+    // Slide 1 metricLabel must NOT be "VERIFICATION"
+    expect((cleaned.slides[0].metricLabel || '').toUpperCase()).not.toBe('VERIFICATION');
+
+    // Content Quality Gate and full checkContentQuality must pass cleanly with zero fails
+    const afterFails = checkContentQuality(cleaned).filter((r) => r.severity === 'fail');
+    expect(afterFails).toEqual([]);
+
+    const afterPreExport = runPreExportChecklist(cleaned, DEFAULT_PALETTES.teal);
+    const afterCq = afterPreExport.find((c) => c.id === 'contentQuality');
+    expect(afterCq?.passed).toBe(true);
   });
 });

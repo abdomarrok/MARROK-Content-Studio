@@ -16,6 +16,8 @@ import {
   Radar,
   FileEdit,
   AlertTriangle,
+  Plug2,
+  ChevronDown,
 } from 'lucide-react';
 import {
   CarouselData,
@@ -128,6 +130,8 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
     () => initialTab === 'single'
   );
   const [status, setStatus] = useState<PublishStatusResponse | null>(null);
+  const [showConnectionsMenu, setShowConnectionsMenu] = useState<boolean>(false);
+  const connectionsMenuRef = useRef<HTMLDivElement | null>(null);
 
   const [selectedTargets, setSelectedTargets] = useState<PublishTargetPlatform[]>([
     'instagram',
@@ -155,7 +159,7 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
     Boolean(carousel.sourceMeta?.verifiedNumbers === true)
   );
 
-  const [templateOpts, setTemplateOpts] = useState<MetricoolTemplateOptions>(
+  const [templateOpts] = useState<MetricoolTemplateOptions>(
     DEFAULT_METRICOOL_TEMPLATE_OPTIONS
   );
 
@@ -226,6 +230,24 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
   }, []);
 
   useEffect(() => {
+    if (!showConnectionsMenu) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (connectionsMenuRef.current && !connectionsMenuRef.current.contains(e.target as Node)) {
+        setShowConnectionsMenu(false);
+      }
+    };
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowConnectionsMenu(false);
+    };
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('keydown', handleEsc);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('keydown', handleEsc);
+    };
+  }, [showConnectionsMenu]);
+
+  useEffect(() => {
     setHubMode(normalizeHubMode(initialTab));
     if (initialTab === 'single') {
       setShowActiveComposer(true);
@@ -254,6 +276,25 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
 
   const effectiveStorageEngine: SavedPostStorageEngine =
     status?.storageEngine || storageEngine || 'local-disk';
+
+  const connectionIssues = useMemo(() => {
+    if (!status) return [];
+    const issues: string[] = [];
+    if (!status.cloudinaryConfigured) {
+      issues.push('Media staging (Cloudinary) required');
+    }
+    if (
+      effectiveStorageEngine !== 'neon-postgres' &&
+      effectiveStorageEngine !== 'cloud-kv' &&
+      effectiveStorageEngine !== 'local-disk'
+    ) {
+      issues.push('Offline local browser draft mode');
+    }
+    if (!status.bufferApiConfigured && !status.zernioApiConfigured) {
+      issues.push('No social publishing API connected');
+    }
+    return issues;
+  }, [status, effectiveStorageEngine]);
 
   const { draftCount, scheduledCount, targetDatePostCount } = useMemo(() => {
     const now = Date.now();
@@ -339,6 +380,12 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
   };
 
   const handleStageSlidesToCloudinary = async () => {
+    if (status && !status.cloudinaryConfigured) {
+      onShowToast(
+        '⚠️ Cloudinary media staging is required. Please configure CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in your environment.'
+      );
+      return;
+    }
     setIsBusy(true);
     try {
       const renderPreset =
@@ -358,9 +405,7 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
         [activePostKey]: uploaded.publicIds,
       }));
       onShowToast(
-        `✓ Staged ${uploaded.urls.length} slide(s) to Cloudinary (${
-          status?.cloudinaryCloudName || 'configured'
-        })`
+        `✓ Staged ${uploaded.urls.length} slide(s) to Cloudinary media staging`
       );
       await loadStatus();
     } catch (err) {
@@ -376,6 +421,12 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
     post: SavedPostRecord,
     targetsOverride?: PublishTargetPlatform[]
   ) => {
+    if (status && !status.cloudinaryConfigured) {
+      onShowToast(
+        '⚠️ Cloudinary media staging is required to publish. Please configure CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in your environment.'
+      );
+      return;
+    }
     const humanOk = Boolean(
       post.humanApproved === true || post.deck?.sourceMeta?.userReviewed === true
     );
@@ -474,6 +525,12 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
     mergeRemoteIds?: boolean;
     cancelExistingBeforeDispatch?: boolean;
   }) => {
+    if (status && !status.cloudinaryConfigured) {
+      onShowToast(
+        '⚠️ Cloudinary media staging is required to publish or schedule. Please configure CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in your environment.'
+      );
+      return;
+    }
     if (!activeHumanReviewed || !activeNumbersVerified) {
       onShowToast(
         '⚠️ Review Safety Gate: Check "Human Reviewed" and "Claims & Numbers Verified" before scheduling or publishing.'
@@ -737,8 +794,8 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
           </button>
         </div>
 
-        {/* Right: Quick Active Deck Publisher Trigger + Live Connection Status (Neon · Buffer · Zernio · Cloudinary) */}
-        <div className="flex flex-wrap items-center gap-3">
+        {/* Right: Quick Active Deck Publisher Trigger + Single Connections Menu (Problem Badge Only) */}
+        <div className="flex flex-wrap items-center gap-2.5">
           <button
             type="button"
             data-testid="toggle-active-composer-btn"
@@ -760,82 +817,158 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
             </span>
           </button>
 
-          <div
-            data-testid="connection-status-strip"
-            className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-slate-400 tabular-nums"
-          >
-            <span
-              data-testid="status-db-engine"
-              className={`inline-flex items-center gap-1.5 ${
-                effectiveStorageEngine === 'neon-postgres' ||
-                effectiveStorageEngine === 'cloud-kv'
-                  ? 'text-emerald-300'
-                  : !status
-                  ? 'text-slate-400'
-                  : effectiveStorageEngine === 'local-disk'
-                  ? 'text-cyan-300'
-                  : 'text-amber-300'
+          <div className="relative" ref={connectionsMenuRef}>
+            <button
+              type="button"
+              data-testid="connections-menu-btn"
+              aria-expanded={showConnectionsMenu}
+              aria-haspopup="menu"
+              onClick={() => setShowConnectionsMenu((prev) => !prev)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors ${
+                connectionIssues.length > 0
+                  ? 'border-amber-400/45 bg-amber-500/12 text-amber-200 hover:bg-amber-500/20'
+                  : 'border-white/15 bg-white/[0.04] text-slate-300 hover:text-white hover:bg-white/[0.08]'
               }`}
+              title={
+                connectionIssues.length > 0
+                  ? connectionIssues.join(' · ')
+                  : 'View publishing & storage connections'
+              }
             >
-              <Database className="w-3 h-3 shrink-0" />
-              <span>
-                {effectiveStorageEngine === 'neon-postgres'
-                  ? 'Neon Postgres'
-                  : effectiveStorageEngine === 'cloud-kv'
-                  ? 'Cloud KV'
-                  : !status
-                  ? 'Checking DB...'
-                  : effectiveStorageEngine === 'local-disk'
-                  ? 'Local Disk'
-                  : 'Offline Local Draft'}
-              </span>
-            </span>
-            <span aria-hidden="true" className="text-slate-600">
-              ·
-            </span>
-            <span className={status?.bufferApiConfigured ? 'text-emerald-300' : 'text-slate-500'}>
-              {status ? (status.bufferApiConfigured ? 'Buffer Ready' : 'Buffer Off') : 'Buffer ...'}
-            </span>
-            <span aria-hidden="true" className="text-slate-600">
-              ·
-            </span>
-            <span className={status?.zernioApiConfigured ? 'text-cyan-300' : 'text-slate-500'}>
-              {status ? (status.zernioApiConfigured ? 'Zernio Ready' : 'Zernio Off') : 'Zernio ...'}
-            </span>
-            <span aria-hidden="true" className="text-slate-600">
-              ·
-            </span>
-            <span
-              data-testid="status-cloudinary"
-              className={`inline-flex items-center gap-1 ${
-                status?.cloudinaryConfigured
-                  ? 'text-emerald-300'
-                  : !status
-                  ? 'text-slate-400'
-                  : 'text-amber-300'
-              }`}
-            >
-              <Cloud className="w-3 h-3 shrink-0" />
-              <span>
-                {!status
-                  ? 'Checking Media...'
-                  : status.cloudinaryConfigured
-                  ? status.cloudinaryCloudName || 'Cloudinary'
-                  : 'Staging Ephemeral'}
-              </span>
-            </span>
-            {status?.telegramConfigured && (
-              <>
-                <span aria-hidden="true" className="text-slate-600">
-                  ·
-                </span>
+              {connectionIssues.length > 0 ? (
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              ) : (
+                <Plug2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              )}
+              <span>Connections</span>
+              {connectionIssues.length > 0 && (
                 <span
-                  data-testid="status-telegram"
-                  className="text-emerald-300"
+                  data-testid="connections-issue-badge"
+                  className="px-1.5 py-0.2 rounded bg-amber-500/25 border border-amber-400/40 text-[10px] font-mono tabular-nums font-bold text-amber-200"
                 >
-                  Telegram Ready
+                  {connectionIssues.length}
                 </span>
-              </>
+              )}
+              <ChevronDown className="w-3 h-3 opacity-75 shrink-0" />
+            </button>
+
+            {showConnectionsMenu && (
+              <div
+                role="menu"
+                data-testid="connections-popover"
+                className="absolute right-0 top-full mt-2 w-72 rounded-xl border border-white/15 bg-[#080f14] p-3 shadow-2xl z-50 space-y-2 text-xs"
+              >
+                <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                  <span className="font-bold text-white">Connections & Storage</span>
+                  <button
+                    type="button"
+                    onClick={() => void loadStatus()}
+                    className="text-[11px] font-mono text-cyan-300 hover:text-cyan-200 cursor-pointer"
+                  >
+                    Refresh
+                  </button>
+                </div>
+
+                <div className="space-y-1.5 font-mono text-[11px]">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-slate-400 inline-flex items-center gap-1.5">
+                      <Database className="w-3 h-3 shrink-0" />
+                      <span>Storage</span>
+                    </span>
+                    <span
+                      data-testid="status-db-engine"
+                      className={
+                        effectiveStorageEngine === 'neon-postgres' ||
+                        effectiveStorageEngine === 'cloud-kv'
+                          ? 'text-emerald-300 font-semibold'
+                          : !status
+                          ? 'text-slate-400'
+                          : effectiveStorageEngine === 'local-disk'
+                          ? 'text-cyan-300'
+                          : 'text-amber-300 font-semibold'
+                      }
+                    >
+                      {effectiveStorageEngine === 'neon-postgres'
+                        ? 'Neon Postgres'
+                        : effectiveStorageEngine === 'cloud-kv'
+                        ? 'Cloud KV'
+                        : !status
+                        ? 'Checking...'
+                        : effectiveStorageEngine === 'local-disk'
+                        ? 'Local Disk'
+                        : 'Offline Local Draft'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-slate-400 inline-flex items-center gap-1.5">
+                      <Cloud className="w-3 h-3 shrink-0" />
+                      <span>Media Staging</span>
+                    </span>
+                    <span
+                      data-testid="status-cloudinary"
+                      className={
+                        status?.cloudinaryConfigured
+                          ? 'text-emerald-300 font-semibold'
+                          : !status
+                          ? 'text-slate-400'
+                          : 'text-amber-300 font-semibold'
+                      }
+                    >
+                      {!status
+                        ? 'Checking...'
+                        : status.cloudinaryConfigured
+                        ? 'Connected'
+                        : 'Cloudinary Required'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-slate-400">Buffer (IG · FB · LI)</span>
+                    <span
+                      className={
+                        status?.bufferApiConfigured ? 'text-emerald-300' : 'text-slate-500'
+                      }
+                    >
+                      {status ? (status.bufferApiConfigured ? 'Connected' : 'Not connected') : '...'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-slate-400">Zernio (TikTok)</span>
+                    <span
+                      className={
+                        status?.zernioApiConfigured ? 'text-emerald-300' : 'text-slate-500'
+                      }
+                    >
+                      {status ? (status.zernioApiConfigured ? 'Connected' : 'Not connected') : '...'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-slate-400">Telegram Intake</span>
+                    <span
+                      data-testid="status-telegram"
+                      className={
+                        status?.telegramConfigured ? 'text-emerald-300' : 'text-slate-500'
+                      }
+                    >
+                      {status ? (status.telegramConfigured ? 'Connected' : 'Off') : '...'}
+                    </span>
+                  </div>
+                </div>
+
+                {connectionIssues.length > 0 && (
+                  <div className="pt-2 border-t border-white/10 text-[11px] text-amber-200 space-y-1">
+                    {connectionIssues.map((issue) => (
+                      <div key={issue} className="flex items-start gap-1.5">
+                        <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0 mt-0.5" />
+                        <span>{issue}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -1184,6 +1317,21 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
                     </div>
                   )}
 
+                  {status && !status.cloudinaryConfigured && (
+                    <div
+                      data-testid="cloudinary-required-warning"
+                      className="p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 text-xs text-amber-200 flex items-start gap-2.5"
+                    >
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <div className="font-bold text-amber-300">Cloudinary Staging Required</div>
+                        <div className="text-[11px] text-amber-200/90 mt-0.5 leading-relaxed">
+                          Direct publishing to TikTok and social channels requires Cloudinary to host media slides. Configure <code className="px-1 py-0.5 rounded bg-black/40 font-mono text-[10px]">CLOUDINARY_CLOUD_NAME</code>, <code className="px-1 py-0.5 rounded bg-black/40 font-mono text-[10px]">CLOUDINARY_API_KEY</code>, and <code className="px-1 py-0.5 rounded bg-black/40 font-mono text-[10px]">CLOUDINARY_API_SECRET</code> in your environment variables.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <button
                     type="button"
                     data-testid="active-dispatch-btn"
@@ -1191,7 +1339,8 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
                       isBusy ||
                       selectedTargets.length === 0 ||
                       !activeHumanReviewed ||
-                      !activeNumbersVerified
+                      !activeNumbersVerified ||
+                      Boolean(status && !status.cloudinaryConfigured)
                     }
                     onClick={() => void handleDispatchPublishAndSchedule()}
                     className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg font-extrabold text-xs text-slate-950 transition-opacity cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
@@ -1199,7 +1348,9 @@ export const PublishingHubWorkspace: React.FC<PublishingHubWorkspaceProps> = ({
                   >
                     <Send className="w-4 h-4" />
                     <span>
-                      {scheduleMode === 'shareNow'
+                      {status && !status.cloudinaryConfigured
+                        ? 'Cloudinary Staging Required to Publish'
+                        : scheduleMode === 'shareNow'
                         ? 'Publish Now'
                         : scheduleMode === 'addToQueue'
                         ? 'Add to Channel Queue'

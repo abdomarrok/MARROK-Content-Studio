@@ -1,11 +1,18 @@
 import type {
+  CandidateRiskSignals,
   CarouselData,
+  ClusteredSourceItem,
+  FeedHealthStatus,
+  MetricEvidenceItem,
   PostFormat,
-  PublishTargetPlatform,
   SavedPostRecord,
   SavedPostStatus,
   SlideData,
+  SuggestedCalendarSlot,
   TopicScoreBreakdown,
+  TriageAction,
+  TriageDecisionRecord,
+  TriageSkipReason,
 } from '../../types.ts';
 import { analyzePostHistoryCadence } from '../theme/cadenceEngine.ts';
 import { runAutonomousPipeline } from '../autonomousPipeline.ts';
@@ -26,9 +33,22 @@ import {
   evaluateGathererCandidateQuality,
   type GathererQualityGateResult,
 } from '../qaChecks.ts';
-import { extractCleanSubject } from '../text/headlines.ts';
 import { saveValidPost, syncLocalVaultAfterManage } from '../storage/postsVaultClient.ts';
 import { withClientAuthHeaders } from '../security/clientSessionToken.ts';
+import {
+  buildGroundedFitLine,
+  buildProposedHook,
+  computeCandidateRiskSignals,
+  computeCalibratedTopicScore,
+  extractMetricEvidenceChips,
+  formatShortInboxDate,
+  isSingleMetricUnverified,
+  sanitizeFeedDisplayText,
+  sanitizeSafeHttpUrl,
+  scoreAndRankTopicBatch,
+  suggestCalendarSlotForCard,
+  validateUserSubmittedUrl,
+} from './inboxEngine.ts';
 
 export type GatherSourceType =
   | 'reddit'
@@ -68,6 +88,7 @@ export interface GatheredTopicItem {
   extractedMetrics: string[];
   recommendedFormat: 'carousel' | 'single' | 'reel';
   synthesisPrompt: string;
+  clusteredSources?: ClusteredSourceItem[];
 }
 
 export interface GatheredCandidatePost {
@@ -75,6 +96,9 @@ export interface GatheredCandidatePost {
   topic: GatheredTopicItem;
   deck: CarouselData;
   draftTitle: string;
+  proposedHookEn: string;
+  proposedHookAr: string;
+  isUntitledHook: boolean;
   themeId: string;
   postFormat: PostFormat;
   generatedAt: string;
@@ -84,6 +108,10 @@ export interface GatheredCandidatePost {
   scoreBreakdown: TopicScoreBreakdown;
   compositeScore: number;
   marrokAngle: string;
+  metricEvidence: MetricEvidenceItem[];
+  riskSignals: CandidateRiskSignals;
+  clusteredSources: ClusteredSourceItem[];
+  suggestedSlot: SuggestedCalendarSlot;
   alreadyCovered?: boolean;
   coveredPostId?: string;
   coveredPostTitle?: string;
@@ -97,7 +125,9 @@ export interface TopicRadarResponse {
   ok: boolean;
   cached: boolean;
   fetchedAt: string;
+  lastScannedAt?: string;
   topics: GatheredTopicItem[];
+  feedStatuses?: FeedHealthStatus[];
   warning?: string;
 }
 
@@ -109,7 +139,135 @@ export interface ExtractUrlResponse {
 
 const DISMISSED_TOPICS_KEY = 'marrok_dismissed_gather_topic_ids_v1';
 const CUSTOM_RSS_FEEDS_KEY = 'marrok_custom_rss_feeds_v1';
+const TRIAGE_DECISIONS_KEY = 'marrok_inbox_triage_decisions_v1';
 const candidateDeckCache = new Map<string, GatheredCandidatePost>();
+
+export function getLocalTriageDecisions(): TriageDecisionRecord[] {
+  try {
+    const raw = localStorage.getItem(TRIAGE_DECISIONS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as TriageDecisionRecord[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveLocalTriageDecisions(records: TriageDecisionRecord[]): void {
+  try {
+    localStorage.setItem(TRIAGE_DECISIONS_KEY, JSON.stringify(records.slice(0, 300)));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+export function clearLocalTriageDecisions(): void {
+  try {
+    localStorage.removeItem(TRIAGE_DECISIONS_KEY);
+  } catch {
+    // Ignore
+  }
+}
+
+export function isCandidateSkipped(
+  topicId: string,
+  decisions: TriageDecisionRecord[]
+): boolean {
+  const latest = decisions.find((d) => d.topicId === topicId);
+  return latest?.action === 'skip';
+}
+
+export function isCandidateSnoozed(
+  topicId: string,
+  decisions: TriageDecisionRecord[],
+  nowMs = Date.now()
+): boolean {
+  const latest = decisions.find((d) => d.topicId === topicId);
+  if (!latest || latest.action !== 'snooze' || !latest.snoozeUntil) return false;
+  const until = Date.parse(latest.snoozeUntil);
+  return Number.isFinite(until) && until > nowMs;
+}
+
+export async function fetchTriageDecisions(): Promise<TriageDecisionRecord[]> {
+  const local = getLocalTriageDecisions();
+  try {
+    const res = await fetch('/api/gather/triage?limit=250', {
+      method: 'GET',
+      credentials: 'include',
+      headers: withClientAuthHeaders({ Accept: 'application/json' }),
+    });
+    if (!res.ok) return local;
+    const data = (await res.json()) as { ok?: boolean; decisions?: TriageDecisionRecord[] };
+    if (Array.isArray(data?.decisions)) {
+      saveLocalTriageDecisions(data.decisions);
+      return data.decisions;
+    }
+    return local;
+  } catch {
+    return local;
+  }
+}
+
+export async function logTriageDecision(payload: {
+  topicId: string;
+  topicSignature?: string;
+  sourceDomain: string;
+  domainCategory: string;
+  action: TriageAction;
+  reason?: TriageSkipReason;
+  snoozeUntil?: string;
+}): Promise<TriageDecisionRecord> {
+  const fallbackRecord: TriageDecisionRecord = {
+    id: `triage_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    topicId: payload.topicId,
+    topicSignature: sanitizeFeedDisplayText(payload.topicSignature || payload.topicId, 160),
+    sourceDomain: payload.sourceDomain,
+    domainCategory: payload.domainCategory,
+    action: payload.action,
+    reason: payload.reason,
+    snoozeUntil: payload.snoozeUntil,
+    createdAt: new Date().toISOString(),
+  };
+
+  try {
+    const res = await fetch('/api/gather/triage', {
+      method: 'POST',
+      credentials: 'include',
+      headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { ok?: boolean; decision?: TriageDecisionRecord };
+      const saved = data?.decision || fallbackRecord;
+      const merged = [saved, ...getLocalTriageDecisions().filter((d) => d.id !== saved.id)].slice(
+        0,
+        300
+      );
+      saveLocalTriageDecisions(merged);
+      return saved;
+    }
+  } catch {
+    // Fall back to local persistence offline
+  }
+
+  const merged = [fallbackRecord, ...getLocalTriageDecisions()].slice(0, 300);
+  saveLocalTriageDecisions(merged);
+  return fallbackRecord;
+}
+
+export async function undoTriageDecision(id: string): Promise<void> {
+  const nextLocal = getLocalTriageDecisions().filter((d) => d.id !== id);
+  saveLocalTriageDecisions(nextLocal);
+  try {
+    await fetch(`/api/gather/triage/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: withClientAuthHeaders({ Accept: 'application/json' }),
+    });
+  } catch {
+    // Local removal already applied
+  }
+}
 
 export function getDismissedGatherTopicIds(): Set<string> {
   try {
@@ -201,13 +359,19 @@ export async function fetchTopicRadar(options?: {
 
 /**
  * Extracts clean article content, metrics, and metadata from any public https:// URL.
+ * Validates URLs client-side with SSRF parity before invoking the server proxy.
  */
 export async function extractArticleFromUrl(url: string): Promise<ExtractUrlResponse> {
+  const validation = validateUserSubmittedUrl(url);
+  if (!validation.ok) {
+    throw new Error(validation.error);
+  }
+
   const res = await fetch('/api/gather/extract-url', {
     method: 'POST',
     credentials: 'include',
     headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ url: url.trim() }),
+    body: JSON.stringify({ url: validation.normalizedUrl }),
   });
 
   const data = await res.json().catch(() => ({}));
@@ -273,7 +437,13 @@ export function deriveSourceDomain(url: string, fallbackSource?: string): string
   }
 }
 
-export function deriveTopicScoringMetadata(topic: GatheredTopicItem): {
+export function deriveTopicScoringMetadata(
+  topic: GatheredTopicItem,
+  options?: {
+    isVaultDuplicate?: boolean;
+    triageDecisions?: TriageDecisionRecord[];
+  }
+): {
   sourceDomain: string;
   publishedDateLabel: string;
   freshnessTag: 'Fresh' | 'Evergreen';
@@ -282,73 +452,53 @@ export function deriveTopicScoringMetadata(topic: GatheredTopicItem): {
   marrokAngle: string;
 } {
   const sourceDomain = topic.sourceDomain || deriveSourceDomain(topic.url, topic.sourceName);
-  const parsedMs = Date.parse(topic.publishedAt || '');
-  const ageDays = Number.isFinite(parsedMs)
-    ? Math.max(0, (Date.now() - parsedMs) / (1000 * 60 * 60 * 24))
-    : 7;
-  const publishedDateLabel = Number.isFinite(parsedMs)
-    ? new Date(parsedMs).toISOString().slice(0, 10)
-    : new Date().toISOString().slice(0, 10);
-  const rawFreshTag: 'fresh' | 'evergreen' =
-    topic.freshnessTag?.toLowerCase() === 'evergreen'
-      ? 'evergreen'
-      : topic.freshnessTag?.toLowerCase() === 'fresh'
-      ? 'fresh'
-      : ageDays <= 45
-      ? 'fresh'
-      : 'evergreen';
-  const freshnessTag: 'Fresh' | 'Evergreen' = rawFreshTag === 'fresh' ? 'Fresh' : 'Evergreen';
+  const publishedDateLabel = formatShortInboxDate(topic.publishedAt);
 
   let breakdown: TopicScoreBreakdown;
-  if (topic.scoreBreakdown) {
+  let groundedFitLine: string;
+
+  if (topic.scoreBreakdown && topic.scoreBreakdown.relevance !== undefined) {
     breakdown = topic.scoreBreakdown;
+    groundedFitLine =
+      (topic.marrokAngle || '').trim() ||
+      buildGroundedFitLine({
+        title: topic.title,
+        summary: topic.summary,
+        extractedMetrics: topic.extractedMetrics,
+        domainCategory: topic.domainCategory,
+        sourceDomain,
+      }).fitLine;
   } else {
-    const freshness = Math.max(
-      18,
-      Math.min(98, Math.round(ageDays <= 3 ? 96 : ageDays <= 14 ? 85 : ageDays <= 45 ? 70 : Math.max(22, 62 - (ageDays - 45) * 0.25)))
+    const calibrated = computeCalibratedTopicScore(
+      {
+        id: topic.id,
+        title: topic.title,
+        summary: topic.summary,
+        url: topic.url,
+        score: topic.score,
+        extractedMetrics: topic.extractedMetrics || [],
+        sourceType: topic.sourceType,
+        sourceDomain,
+        author: topic.author,
+        publishedAt: topic.publishedAt,
+        domainCategory: topic.domainCategory,
+        clusteredSources: topic.clusteredSources,
+      },
+      {
+        isVaultDuplicate: options?.isVaultDuplicate,
+        triageDecisions: options?.triageDecisions,
+      }
     );
-    const engagement = Math.max(30, Math.min(98, Math.round(topic.viralityScore || topic.score || 68)));
-    const relevanceSignal =
-      /\b(cost|cloud|postgres|redis|api|cache|latency|startup|sme|scale|migrat|security|deploy|container|docker|queue|worker|rate\s*limit)\b/i.test(
-        `${topic.title} ${topic.summary}`
-      )
-        ? 86
-        : 72;
-    const riskPenalty = /\b(0day|zero-day|exploit|hack|bypass|malware|cve-)\b/i.test(
-      `${topic.title} ${topic.summary}`
-    )
-      ? 34
-      : 10;
-    const composite = Math.max(
-      20,
-      Math.min(
-        99,
-        Math.round(
-          freshness * 0.25 +
-            engagement * 0.3 +
-            relevanceSignal * 0.35 +
-            (100 - riskPenalty) * 0.1
-        )
-      )
-    );
-    breakdown = {
-      freshness,
-      engagement,
-      clientRelevance: relevanceSignal,
-      platformRisk: riskPenalty,
-      riskScore: riskPenalty,
-      freshnessTag: rawFreshTag,
-      ageHours: Math.round(ageDays * 24),
-      composite,
-    };
+    breakdown = calibrated.scoreBreakdown;
+    groundedFitLine = (topic.marrokAngle || '').trim() || calibrated.marrokAngle;
   }
 
-  const defaultAngle =
-    (topic.marrokAngle || '').trim() ||
-    (topic.clientRelevanceReason || '').trim() ||
-    (topic.extractedMetrics && topic.extractedMetrics.length > 0
-      ? `What this means for startups & SMEs: cutting production cost and tail latency using ${topic.extractedMetrics[0]} benchmark patterns without over-engineering.`
-      : `What this means for your product: practical architecture trade-offs startups and SMEs can adopt immediately from ${sourceDomain}.`);
+  const rawFreshTag: 'fresh' | 'evergreen' =
+    breakdown.freshnessTag === 'evergreen' ||
+    topic.freshnessTag?.toLowerCase() === 'evergreen'
+      ? 'evergreen'
+      : 'fresh';
+  const freshnessTag: 'Fresh' | 'Evergreen' = rawFreshTag === 'fresh' ? 'Fresh' : 'Evergreen';
 
   return {
     sourceDomain,
@@ -356,13 +506,13 @@ export function deriveTopicScoringMetadata(topic: GatheredTopicItem): {
     freshnessTag,
     scoreBreakdown: breakdown,
     compositeScore: breakdown.composite,
-    marrokAngle: defaultAngle,
+    marrokAngle: sanitizeFeedDisplayText(groundedFitLine, 220),
   };
 }
 
 /**
- * Re-runs the Inbox Quality Gate & Summary-Only originality audit whenever the user edits
- * a candidate's Marrok angle or slide copy inside Inbox.
+ * Re-runs the Inbox Quality Gate, Summary-Only originality audit, and Risk Signals
+ * whenever the user edits a candidate's Marrok angle, hook, slide copy, or metric verification.
  */
 export function reEvaluateCandidateQuality(
   candidate: GatheredCandidatePost
@@ -383,13 +533,45 @@ export function reEvaluateCandidateQuality(
     deck: nextDeck,
   });
 
+  const nextRiskSignals = computeCandidateRiskSignals(
+    {
+      title: candidate.topic.title,
+      summary: candidate.topic.summary,
+      url: candidate.topic.url,
+      sourceType: candidate.topic.sourceType,
+      sourceDomain: candidate.sourceDomain,
+    },
+    candidate.metricEvidence || [],
+    candidate.alreadyCovered
+      ? { title: candidate.coveredPostTitle || candidate.topic.title }
+      : null
+  );
+
   return {
     ...candidate,
     marrokAngle: cleanAngle,
     deck: nextDeck,
+    riskSignals: nextRiskSignals,
     qualityGate,
     summaryOnlyWarning: qualityGate.summaryOnlyReason,
   };
+}
+
+function buildClusteredSourcesList(topic: GatheredTopicItem, sourceDomain: string): ClusteredSourceItem[] {
+  if (Array.isArray(topic.clusteredSources) && topic.clusteredSources.length > 0) {
+    return topic.clusteredSources;
+  }
+  const safeUrl = sanitizeSafeHttpUrl(topic.url);
+  if (!safeUrl) return [];
+  return [
+    {
+      sourceName: sanitizeFeedDisplayText(topic.sourceName || topic.brand || sourceDomain, 60),
+      sourceType: topic.sourceType || 'rss',
+      domain: sourceDomain,
+      url: safeUrl,
+      title: sanitizeFeedDisplayText(topic.title, 140),
+    },
+  ];
 }
 
 /**
@@ -400,31 +582,76 @@ export function buildLightweightLazyCandidate(
   topic: GatheredTopicItem,
   assignedThemeId: string,
   formatOverride: 'auto' | PostFormat = 'auto',
-  vaultMatch: SavedPostRecord | null = null
+  vaultMatch: SavedPostRecord | null = null,
+  options?: {
+    savedPosts?: SavedPostRecord[];
+    cardRankIndex?: number;
+    triageDecisions?: TriageDecisionRecord[];
+  }
 ): GatheredCandidatePost {
   const targetFormat: PostFormat =
     formatOverride !== 'auto' ? formatOverride : topic.recommendedFormat || 'carousel';
 
-  const meta = deriveTopicScoringMetadata(topic);
-  const { cleanSubject, arSubject } = extractCleanSubject(topic.title);
-  const hookHeadline = cleanSubject.split(/\s+/).length > 10
-    ? cleanSubject.split(/\s+/).slice(0, 10).join(' ')
-    : cleanSubject;
-  const arHeadline = `ماذا يعني ${arSubject} لمنتجك الهندسي؟`;
+  const cleanTopic: GatheredTopicItem = {
+    ...topic,
+    title: sanitizeFeedDisplayText(topic.title, 220),
+    summary: sanitizeFeedDisplayText(topic.summary, 3600),
+  };
+
+  const meta = deriveTopicScoringMetadata(cleanTopic, {
+    isVaultDuplicate: Boolean(vaultMatch),
+    triageDecisions: options?.triageDecisions,
+  });
+
+  const proposed = buildProposedHook({
+    title: cleanTopic.title,
+    summary: cleanTopic.summary,
+    extractedMetrics: cleanTopic.extractedMetrics,
+    domainCategory: cleanTopic.domainCategory,
+  });
+
+  const metricEvidence = extractMetricEvidenceChips({
+    id: cleanTopic.id,
+    title: cleanTopic.title,
+    summary: cleanTopic.summary,
+    url: cleanTopic.url,
+    extractedMetrics: cleanTopic.extractedMetrics,
+  });
+
+  const clusteredSources = buildClusteredSourcesList(cleanTopic, meta.sourceDomain);
+  const riskSignals = computeCandidateRiskSignals(
+    {
+      title: cleanTopic.title,
+      summary: cleanTopic.summary,
+      url: cleanTopic.url,
+      sourceType: cleanTopic.sourceType,
+      sourceDomain: meta.sourceDomain,
+    },
+    metricEvidence,
+    vaultMatch
+  );
+  const suggestedSlot = suggestCalendarSlotForCard(
+    options?.savedPosts || [],
+    options?.cardRankIndex ?? 0
+  );
+
+  const displayHookEn = proposed.isUntitled ? '' : proposed.hookEn;
+  const displayHookAr = proposed.isUntitled ? '' : proposed.hookAr;
 
   const draftSeedSlide: SlideData = {
     type: 'metric',
     storyRole: 'hook',
-    enTitle: hookHeadline || topic.title.slice(0, 48),
-    arTitle: arHeadline,
+    enTitle: displayHookEn || cleanTopic.title.slice(0, 48),
+    arTitle: displayHookAr || 'أضف عنواناً عربياً مقترحاً للمنشور',
     enBody: targetFormat === 'single' ? meta.marrokAngle.slice(0, 130) : '',
-    arBody: targetFormat === 'single' ? `أثر عملي على أداء وتكلفة أنظمة الشركات الناشئة.` : '',
-    metricValue: topic.extractedMetrics?.[0] || '',
-    metricLabel: topic.domainCategory.split(' ')[0] || 'SYSTEMS',
+    arBody: targetFormat === 'single' ? 'أثر عملي على أداء وتكلفة أنظمة الشركات الناشئة.' : '',
+    metricValue: cleanTopic.extractedMetrics?.[0] || '',
+    metricLabel: cleanTopic.domainCategory.split(' ')[0] || 'SYSTEMS',
     cornerTag: 'HOOK',
   };
 
-  const chosenHookType = targetFormat === 'single' ? 'poster' : inferDynamicCoverArchetype(draftSeedSlide);
+  const chosenHookType =
+    targetFormat === 'single' ? 'poster' : inferDynamicCoverArchetype(draftSeedSlide);
   const smart = resolveSmartSlideVisuals({ ...draftSeedSlide, type: chosenHookType }, 0, true);
   const slide1: SlideData = {
     ...draftSeedSlide,
@@ -447,40 +674,50 @@ export function buildLightweightLazyCandidate(
     diagramEdges: smart.diagramEdges,
     diagramFooter: smart.diagramFooter,
     hookClaimCard: smart.hookClaimCard,
-    layoutRationale: explainArchetypeChoice({ ...draftSeedSlide, type: chosenHookType }, 0, targetFormat === 'single' ? 1 : 8),
+    layoutRationale: explainArchetypeChoice(
+      { ...draftSeedSlide, type: chosenHookType },
+      0,
+      targetFormat === 'single' ? 1 : 8
+    ),
   };
 
   const lightweightDeck: CarouselData = {
-    id: `candidate_${topic.id}`,
+    id: `candidate_${cleanTopic.id}`,
     theme: assignedThemeId,
-    category: topic.domainCategory || 'SYSTEMS ARCHITECTURE',
+    category: cleanTopic.domainCategory || 'SYSTEMS ARCHITECTURE',
     brand: 'MARROK',
     brandUrl: 'marrok.org',
-    channel: topic.brand || topic.sourceName,
+    channel: cleanTopic.brand || cleanTopic.sourceName,
     postFormat: targetFormat,
-    caption: `${topic.title}\n\n${meta.marrokAngle}`,
+    caption: `${displayHookEn || cleanTopic.title}\n\n${meta.marrokAngle}`,
     slides: [slide1],
     sourceMeta: {
-      title: topic.title,
-      creator: topic.author || topic.sourceName,
-      channel: topic.sourceName,
-      published: topic.publishedAt,
-      url: topic.url,
+      title: cleanTopic.title,
+      creator: cleanTopic.author || cleanTopic.sourceName,
+      channel: cleanTopic.sourceName,
+      published: cleanTopic.publishedAt,
+      url: sanitizeSafeHttpUrl(cleanTopic.url) || undefined,
       viralityScore: meta.compositeScore,
-      viralAngle: topic.viralAngle,
+      viralAngle: cleanTopic.viralAngle,
       marrokAngle: meta.marrokAngle,
-      extractedSourceMetrics: topic.extractedMetrics || [],
+      extractedSourceMetrics: cleanTopic.extractedMetrics || [],
       userReviewed: false,
       verifiedNumbers: false,
-      groundingSources: [{ title: topic.title, url: topic.url }],
+      groundingSources: clusteredSources.map((s) => ({
+        title: s.title || cleanTopic.title,
+        url: s.url,
+      })),
     },
   };
 
   const baseCandidate: GatheredCandidatePost = {
-    id: topic.id,
-    topic,
+    id: cleanTopic.id,
+    topic: cleanTopic,
     deck: lightweightDeck,
-    draftTitle: slide1.enTitle || topic.title,
+    draftTitle: displayHookEn,
+    proposedHookEn: displayHookEn,
+    proposedHookAr: displayHookAr,
+    isUntitledHook: proposed.isUntitled,
     themeId: assignedThemeId,
     postFormat: targetFormat,
     generatedAt: new Date().toISOString(),
@@ -490,6 +727,10 @@ export function buildLightweightLazyCandidate(
     scoreBreakdown: meta.scoreBreakdown,
     compositeScore: meta.compositeScore,
     marrokAngle: meta.marrokAngle,
+    metricEvidence,
+    riskSignals,
+    clusteredSources,
+    suggestedSlot,
     alreadyCovered: Boolean(vaultMatch),
     coveredPostId: vaultMatch?.id,
     coveredPostTitle: vaultMatch?.title,
@@ -509,18 +750,37 @@ export function buildCandidateFromTopicSync(
   topic: GatheredTopicItem,
   assignedThemeId: string,
   formatOverride: 'auto' | PostFormat = 'auto',
-  vaultMatch: SavedPostRecord | null = null
+  vaultMatch: SavedPostRecord | null = null,
+  options?: {
+    savedPosts?: SavedPostRecord[];
+    cardRankIndex?: number;
+    triageDecisions?: TriageDecisionRecord[];
+    preserveMetricEvidence?: MetricEvidenceItem[];
+    preserveHookEn?: string;
+    preserveHookAr?: string;
+  }
 ): GatheredCandidatePost {
   const targetFormat: PostFormat =
     formatOverride !== 'auto' ? formatOverride : topic.recommendedFormat || 'carousel';
 
-  const meta = deriveTopicScoringMetadata(topic);
-  const cacheKey = `${topic.id}|${targetFormat}`;
+  const cleanTopic: GatheredTopicItem = {
+    ...topic,
+    title: sanitizeFeedDisplayText(topic.title, 220),
+    summary: sanitizeFeedDisplayText(topic.summary, 3600),
+  };
+
+  const meta = deriveTopicScoringMetadata(cleanTopic, {
+    isVaultDuplicate: Boolean(vaultMatch),
+    triageDecisions: options?.triageDecisions,
+  });
+  const cacheKey = `${cleanTopic.id}|${targetFormat}`;
   const existing = candidateDeckCache.get(cacheKey);
   if (existing && existing.isDeckSynthesized) {
+    const mergedMetrics = options?.preserveMetricEvidence || existing.metricEvidence;
     return reEvaluateCandidateQuality({
       ...existing,
       themeId: assignedThemeId,
+      metricEvidence: mergedMetrics,
       alreadyCovered: Boolean(vaultMatch),
       coveredPostId: vaultMatch?.id,
       coveredPostTitle: vaultMatch?.title,
@@ -533,8 +793,8 @@ export function buildCandidateFromTopicSync(
   }
 
   let deck = synthesizeCarousel({
-    prompt: topic.synthesisPrompt,
-    categoryHint: topic.domainCategory,
+    prompt: cleanTopic.synthesisPrompt,
+    categoryHint: cleanTopic.domainCategory,
     postFormat: targetFormat === 'single' ? 'single' : 'carousel',
   });
 
@@ -548,47 +808,92 @@ export function buildCandidateFromTopicSync(
   }
   deck = autoFinalizeCarouselDeck(deck);
 
+  const proposed = buildProposedHook({
+    title: cleanTopic.title,
+    summary: cleanTopic.summary,
+    extractedMetrics: cleanTopic.extractedMetrics,
+    domainCategory: cleanTopic.domainCategory,
+  });
+
+  const hookEn = options?.preserveHookEn || (proposed.isUntitled ? '' : proposed.hookEn);
+  const hookAr = options?.preserveHookAr || (proposed.isUntitled ? '' : proposed.hookAr);
+
   // Guarantee per-slide layoutRationale on every finalized slide
-  const finalSlides = deck.slides.map((s, idx) => ({
-    ...s,
-    layoutRationale: s.layoutRationale || explainArchetypeChoice(s, idx, deck.slides.length),
-  }));
+  const finalSlides = deck.slides.map((s, idx) => {
+    const patched =
+      idx === 0 && hookEn
+        ? { ...s, enTitle: hookEn, arTitle: hookAr || s.arTitle }
+        : s;
+    return {
+      ...patched,
+      layoutRationale: patched.layoutRationale || explainArchetypeChoice(patched, idx, deck.slides.length),
+    };
+  });
   deck = { ...deck, slides: finalSlides };
 
-  const draftTitle = deck.slides[0]?.enTitle || topic.title;
+  const metricEvidence =
+    options?.preserveMetricEvidence ||
+    extractMetricEvidenceChips({
+      id: cleanTopic.id,
+      title: cleanTopic.title,
+      summary: cleanTopic.summary,
+      url: cleanTopic.url,
+      extractedMetrics: cleanTopic.extractedMetrics,
+    });
+  const clusteredSources = buildClusteredSourcesList(cleanTopic, meta.sourceDomain);
+  const riskSignals = computeCandidateRiskSignals(
+    {
+      title: cleanTopic.title,
+      summary: cleanTopic.summary,
+      url: cleanTopic.url,
+      sourceType: cleanTopic.sourceType,
+      sourceDomain: meta.sourceDomain,
+    },
+    metricEvidence,
+    vaultMatch
+  );
+  const suggestedSlot = suggestCalendarSlotForCard(
+    options?.savedPosts || [],
+    options?.cardRankIndex ?? 0
+  );
+
+  const draftTitle = hookEn || deck.slides[0]?.enTitle || cleanTopic.title;
   const enrichedDeck: CarouselData = {
     ...deck,
-    id: `candidate_${topic.id}`,
+    id: `candidate_${cleanTopic.id}`,
     theme: assignedThemeId,
-    category: topic.domainCategory || deck.category || 'SYSTEMS ARCHITECTURE',
+    category: cleanTopic.domainCategory || deck.category || 'SYSTEMS ARCHITECTURE',
     brand: 'MARROK',
     brandUrl: 'marrok.org',
-    channel: topic.brand || topic.sourceName || deck.channel,
+    channel: cleanTopic.brand || cleanTopic.sourceName || deck.channel,
     postFormat: targetFormat,
     sourceMeta: {
       ...deck.sourceMeta,
-      title: topic.title,
-      creator: topic.author || topic.sourceName,
-      channel: topic.sourceName,
-      published: topic.publishedAt,
-      url: topic.url,
+      title: cleanTopic.title,
+      creator: cleanTopic.author || cleanTopic.sourceName,
+      channel: cleanTopic.sourceName,
+      published: cleanTopic.publishedAt,
+      url: sanitizeSafeHttpUrl(cleanTopic.url) || undefined,
       viralityScore: meta.compositeScore,
-      viralAngle: topic.viralAngle,
+      viralAngle: cleanTopic.viralAngle,
       marrokAngle: meta.marrokAngle,
       userReviewed: false,
       verifiedNumbers: false,
       groundingSources: [
-        { title: topic.title, url: topic.url },
+        ...clusteredSources.map((s) => ({ title: s.title || cleanTopic.title, url: s.url })),
         ...(deck.sourceMeta?.groundingSources || []),
       ],
     },
   };
 
   const candidate = reEvaluateCandidateQuality({
-    id: topic.id,
-    topic,
+    id: cleanTopic.id,
+    topic: cleanTopic,
     deck: enrichedDeck,
     draftTitle,
+    proposedHookEn: hookEn,
+    proposedHookAr: hookAr,
+    isUntitledHook: !hookEn && proposed.isUntitled,
     themeId: assignedThemeId,
     postFormat: targetFormat,
     generatedAt: new Date().toISOString(),
@@ -598,6 +903,10 @@ export function buildCandidateFromTopicSync(
     scoreBreakdown: meta.scoreBreakdown,
     compositeScore: meta.compositeScore,
     marrokAngle: meta.marrokAngle,
+    metricEvidence,
+    riskSignals,
+    clusteredSources,
+    suggestedSlot,
     alreadyCovered: Boolean(vaultMatch),
     coveredPostId: vaultMatch?.id,
     coveredPostTitle: vaultMatch?.title,
@@ -612,9 +921,9 @@ export function buildCandidateFromTopicSync(
 
 /**
  * Lazy Background Content Gatherer:
- * Discovers trend topics, excludes ONLY dismissed IDs, flags topics matching existing Vault posts
- * with `alreadyCovered: true` (never hiding them silently), ranks fresh high-composite topics first,
- * and creates fast lazy Slide 1 Hook Inbox previews without triggering eager full-deck synthesis for all 21 items.
+ * Clusters overlapping stories across feeds, applies calibrated 5-factor scoring with
+ * domain-balance decay, Vault duplicate penalties, triage learning feedback, and anti-rumor capping,
+ * hides dismissed/skipped/snoozed items, and prepares fast Slide 1 hook cards with suggested calendar slots.
  */
 export async function generateGatheredCandidatesInBackground(
   topics: GatheredTopicItem[],
@@ -622,25 +931,41 @@ export async function generateGatheredCandidatesInBackground(
   options?: {
     formatOverride?: 'auto' | PostFormat;
     lazy?: boolean;
+    triageDecisions?: TriageDecisionRecord[];
     onProgress?: (current: number, total: number, currentTitle: string) => void;
   }
 ): Promise<GatheredCandidatePost[]> {
   const dismissedIds = getDismissedGatherTopicIds();
+  const decisions = options?.triageDecisions ?? getLocalTriageDecisions();
   const useLazy = options?.lazy !== false;
+  const nowMs = Date.now();
 
-  const visibleTopics = topics
-    .filter((t) => !dismissedIds.has(t.id))
+  const eligible = topics.filter(
+    (t) =>
+      !dismissedIds.has(t.id) &&
+      !isCandidateSkipped(t.id, decisions) &&
+      !isCandidateSnoozed(t.id, decisions, nowMs)
+  );
+
+  // Cluster overlapping stories and apply calibrated 5-factor batch ranking
+  const rankedTopics = scoreAndRankTopicBatch(eligible, {
+    savedPosts,
+    triageDecisions: decisions,
+    isDuplicateFn: (t) => Boolean(isTopicAlreadyInVault(t, savedPosts)),
+    nowMs,
+  });
+
+  const visibleTopics = rankedTopics
     .map((t) => ({
-      topic: t,
-      vaultMatch: isTopicAlreadyInVault(t, savedPosts),
-      meta: deriveTopicScoringMetadata(t),
+      topic: t as GatheredTopicItem,
+      vaultMatch: isTopicAlreadyInVault(t as GatheredTopicItem, savedPosts),
     }))
     .sort((a, b) => {
-      // Push already-covered items below uncovered ones, then sort by composite score
       if (Boolean(a.vaultMatch) !== Boolean(b.vaultMatch)) {
         return a.vaultMatch ? 1 : -1;
       }
-      return b.meta.compositeScore - a.meta.compositeScore;
+      return (b.topic.scoreBreakdown?.composite ?? b.topic.viralityScore ?? 0) -
+        (a.topic.scoreBreakdown?.composite ?? a.topic.viralityScore ?? 0);
     });
 
   const candidates: GatheredCandidatePost[] = [];
@@ -665,19 +990,21 @@ export async function generateGatheredCandidatesInBackground(
           topic,
           assignedThemeId,
           options?.formatOverride || 'auto',
-          vaultMatch
+          vaultMatch,
+          { savedPosts, cardRankIndex: i, triageDecisions: decisions }
         )
       : buildCandidateFromTopicSync(
           topic,
           assignedThemeId,
           options?.formatOverride || 'auto',
-          vaultMatch
+          vaultMatch,
+          { savedPosts, cardRankIndex: i, triageDecisions: decisions }
         );
     candidates.push(candidate);
 
     rollingHistory.unshift({
       id: candidate.id,
-      title: candidate.draftTitle,
+      title: candidate.draftTitle || topic.title,
       category: topic.domainCategory,
       creatorHandle: '@MARROK',
       postStatus: 'posted',
@@ -727,12 +1054,19 @@ export async function hydrateCandidateDeckOnDemand(
           title: candidate.coveredPostTitle || candidate.topic.title,
           postStatus: candidate.coveredPostStatus || 'validated',
         } as SavedPostRecord)
-      : null
+      : null,
+    {
+      preserveMetricEvidence: candidate.metricEvidence,
+      preserveHookEn: candidate.draftTitle || candidate.proposedHookEn,
+      preserveHookAr: candidate.proposedHookAr,
+    }
   );
 
   return reEvaluateCandidateQuality({
     ...hydrated,
     marrokAngle: candidate.marrokAngle || hydrated.marrokAngle,
+    suggestedSlot: candidate.suggestedSlot || hydrated.suggestedSlot,
+    clusteredSources: candidate.clusteredSources || hydrated.clusteredSources,
   });
 }
 
@@ -896,8 +1230,18 @@ export async function acceptGatheredCandidatesToDrafts(
         );
       }
 
+      if (isSingleMetricUnverified(rawCandidate.metricEvidence)) {
+        throw new Error(
+          `Verify "${rawCandidate.metricEvidence[0].label}" against its source quote before adding to drafts.`
+        );
+      }
+
+      if (rawCandidate.isUntitledHook && !(rawCandidate.draftTitle || '').trim()) {
+        throw new Error('Add a 2–5 word hook headline before adding to drafts.');
+      }
+
       if (!rawCandidate.marrokAngle || rawCandidate.marrokAngle.trim().length < 15) {
-        throw new Error('Add a Marrok angle (what this means for your product) before moving to Draft.');
+        throw new Error('Add a Marrok angle (what this means for your product) before adding to drafts.');
       }
 
       // Lazy full-deck generation only at inspection / acceptance time
@@ -924,6 +1268,20 @@ export async function acceptGatheredCandidatesToDrafts(
         postFormat: candidate.postFormat,
         sourceMeta: {
           ...candidate.deck.sourceMeta,
+          title: candidate.deck.sourceMeta?.title || candidate.topic.title,
+          url: candidate.deck.sourceMeta?.url || candidate.topic.url,
+          published: candidate.deck.sourceMeta?.published || candidate.topic.publishedAt,
+          sourceSummary:
+            candidate.deck.sourceMeta?.sourceSummary ||
+            (candidate.topic.summary || '').slice(0, 2200),
+          metricEvidence:
+            candidate.metricEvidence && candidate.metricEvidence.length > 0
+              ? candidate.metricEvidence.map((m) => ({ ...m }))
+              : candidate.deck.sourceMeta?.metricEvidence,
+          extractedSourceMetrics:
+            candidate.topic.extractedMetrics && candidate.topic.extractedMetrics.length > 0
+              ? candidate.topic.extractedMetrics
+              : candidate.deck.sourceMeta?.extractedSourceMetrics,
           marrokAngle: candidate.marrokAngle.trim(),
           userReviewed: false,
           humanApproved: false,
@@ -961,32 +1319,6 @@ export async function acceptGatheredCandidatesToDrafts(
     draftPosts,
     failedCandidates,
   };
-}
-
-/**
- * Legacy wrapper updated for Review Safety:
- * Queues accepted items strictly as unreviewed Drafts (`userReviewed: false`, `verifiedNumbers: false`)
- * without auto-scheduling.
- */
-export async function acceptGatheredCandidatesIntoSchedule(
-  items: Array<{
-    candidate: GatheredCandidatePost;
-    datePart?: string;
-    timeShort?: string;
-    targets?: PublishTargetPlatform[];
-  }>,
-  options?: {
-    skipAiUpgrade?: boolean;
-    onProgress?: (current: number, total: number, title: string) => void;
-  }
-): Promise<AcceptCandidatesResult> {
-  return acceptGatheredCandidatesToDrafts(
-    items.map((item) => item.candidate),
-    {
-      useAiUpgrade: options?.skipAiUpgrade === false,
-      onProgress: options?.onProgress,
-    }
-  );
 }
 
 export interface BatchGatherResult {

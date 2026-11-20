@@ -1,4 +1,3 @@
-import React from 'react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import {
@@ -378,11 +377,16 @@ describe('Inbox -> Draft -> Schedule Workflow, Scoring, Quality Gates & Safety',
     expect(screen.getByTestId('hub-tab-draft')).toBeInTheDocument();
     expect(screen.getByTestId('hub-tab-schedule')).toBeInTheDocument();
 
-    // 2. Status Row confirms Neon Postgres & Cloudinary
+    // 2. Healthy Connections menu has no warning badge, never leaks Cloudinary cloud name, and confirms Neon Postgres + Connected
+    expect(screen.queryByTestId('connections-issue-badge')).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('marrok-cdn');
+    fireEvent.click(screen.getByTestId('connections-menu-btn'));
     await waitFor(() => {
       expect(screen.getByTestId('status-db-engine')).toHaveTextContent('Neon Postgres');
-      expect(screen.getByTestId('status-cloudinary')).toHaveTextContent('marrok-cdn');
+      expect(screen.getByTestId('status-cloudinary')).toHaveTextContent('Connected');
     });
+    expect(document.body.textContent).not.toContain('marrok-cdn');
+    fireEvent.click(screen.getByTestId('connections-menu-btn'));
 
     // 3. Draft safety gate disables Publish Now & Schedule until BOTH checkboxes are checked
     const publishNowBtn = screen.getByTestId('draft-publish-now-post_draft_1');
@@ -449,5 +453,92 @@ describe('Inbox -> Draft -> Schedule Workflow, Scoring, Quality Gates & Safety',
       expect(screen.getByTestId('cadence-overload-warning')).toBeInTheDocument();
       expect(screen.getByTestId('schedule-publish-now-post_sched_0')).toBeInTheDocument();
     });
+  });
+
+  it('renders "Cloudinary Required" badge and warning callout, disables publish button, and blocks direct publishing when Cloudinary is unconfigured', async () => {
+    const validDeck = makeValidDeck({
+      sourceMeta: {
+        marrokAngle: 'What this means for your product: verify Cloudinary requirements.',
+        userReviewed: true,
+        humanApproved: true,
+        verifiedNumbers: true,
+      },
+    });
+
+    const unconfiguredStatus = {
+      storageEngine: 'neon-postgres',
+      databaseConfigured: true,
+      cloudinaryConfigured: false,
+      cloudinaryCloudName: null,
+      bufferApiConfigured: true,
+      zernioApiConfigured: true,
+      currentMonthKey: '2026-11',
+      metricoolUsedThisMonth: 0,
+      metricoolMonthlyLimit: 20,
+      bufferQueueLimitPerChannel: 10,
+      stagedCloudinarySlidesCount: 0,
+      cleanedCloudinaryPostsCount: 0,
+      channels: [],
+    };
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/api/publish/status')) {
+        return {
+          ok: true,
+          json: async () => unconfiguredStatus,
+          text: async () => JSON.stringify(unconfiguredStatus),
+          headers: new Headers({ 'Content-Type': 'application/json' }),
+        } as unknown as Response;
+      }
+      if (url.includes('/api/publish/tiktok-music')) {
+        return {
+          ok: true,
+          json: async () => ({ ok: true, source: 'fallback', tracks: [] }),
+          text: async () => JSON.stringify({ ok: true, source: 'fallback', tracks: [] }),
+          headers: new Headers({ 'Content-Type': 'application/json' }),
+        } as unknown as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({ ok: true }),
+        text: async () => JSON.stringify({ ok: true }),
+        headers: new Headers({ 'Content-Type': 'application/json' }),
+      } as unknown as Response;
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const onShowToast = vi.fn();
+
+    render(
+      <PublishingHubWorkspace
+        initialTab="single"
+        carousel={validDeck}
+        theme={DEFAULT_PALETTES.teal}
+        savedPosts={[]}
+        storageEngine="neon-postgres"
+        onBackToStudio={vi.fn()}
+        onRefreshVault={vi.fn()}
+        onShowToast={onShowToast}
+      />
+    );
+
+    // 1. Connections button displays issue badge and popover shows "Cloudinary Required"
+    await waitFor(() => {
+      expect(screen.getByTestId('connections-issue-badge')).toHaveTextContent('1');
+    });
+    fireEvent.click(screen.getByTestId('connections-menu-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('status-cloudinary')).toHaveTextContent('Cloudinary Required');
+    });
+
+    // 2. Warning banner is rendered
+    expect(screen.getByTestId('cloudinary-required-warning')).toBeInTheDocument();
+    expect(screen.getByTestId('cloudinary-required-warning')).toHaveTextContent(/Cloudinary Staging Required/i);
+
+    // 3. Dispatch button is disabled and displays warning label
+    const dispatchBtn = screen.getByTestId('active-dispatch-btn');
+    expect(dispatchBtn).toBeDisabled();
+    expect(dispatchBtn).toHaveTextContent('Cloudinary Staging Required to Publish');
   });
 });

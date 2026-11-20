@@ -1,14 +1,28 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import type { Request, Response } from 'express';
 import type {
   CarouselData,
+  ClusteredSourceItem,
+  FeedHealthStatus,
   NumericEvidenceDiscrepancy,
   SavedPostRecord,
   TopicScoreBreakdown,
+  TriageAction,
+  TriageDecisionRecord,
+  TriageSkipReason,
 } from '../../src/types.ts';
 import { TECH_ICONS_LIST } from '../constants.ts';
 import { getServerConfig } from '../config.ts';
-import { isAllowedProxyUrl, resolveAndValidateHost, fetchSafeRemoteText } from './proxyController.ts';
+import {
+  getPostgresPool,
+  queryPostgresTriageDecisions,
+  insertPostgresTriageDecision,
+  deletePostgresTriageDecision,
+} from '../db/postgres.ts';
+import { isAllowedProxyUrl, fetchSafeRemoteText } from './proxyController.ts';
 import { handleGenerateCarousel } from './generateController.ts';
 import {
   deleteSingleStoredPost,
@@ -24,6 +38,16 @@ import {
   runPlatformRiskChecks,
 } from '../../src/lib/riskChecks.ts';
 import { analyzePostHistoryCadence } from '../../src/lib/theme/cadenceEngine.ts';
+import {
+  computeCalibratedTopicScore,
+  sanitizeFeedDisplayText,
+  scoreAndRankTopicBatch,
+} from '../../src/lib/gather/inboxEngine.ts';
+
+const SEARCHABLE_TECH_ICONS = TECH_ICONS_LIST.map((item) => ({
+  item,
+  searchStr: `${item.name.toLowerCase()} ${item.title.toLowerCase()} ${item.category.toLowerCase()}`,
+}));
 
 /**
  * Subject-based media search: official tech icons + Wikimedia technical diagrams.
@@ -32,13 +56,9 @@ export async function handleSearchMedia(req: Request, res: Response) {
   const query = ((req.query.q as string) || '').trim().toLowerCase();
 
   // 1. Filter curated tech brand icons
-  const matchedIcons = TECH_ICONS_LIST.filter(
-    (item) =>
-      !query ||
-      item.name.includes(query) ||
-      item.title.toLowerCase().includes(query) ||
-      item.category.toLowerCase().includes(query)
-  );
+  const matchedIcons = query
+    ? SEARCHABLE_TECH_ICONS.filter(({ searchStr }) => searchStr.includes(query)).map(({ item }) => item)
+    : TECH_ICONS_LIST;
 
   // 2. Fetch subject-based diagrams / illustrations from Wikimedia Commons API
   const matchedImages: { title: string; url: string; thumbUrl: string; source: string }[] = [];
@@ -117,16 +137,12 @@ export interface GatheredTopicItem {
   extractedMetrics: string[];
   recommendedFormat: 'carousel' | 'single' | 'reel';
   synthesisPrompt: string;
-}
-
-export interface ExtractedUrlPayload {
-  ok: boolean;
-  topic: GatheredTopicItem;
-  rawTextLength: number;
+  clusteredSources?: ClusteredSourceItem[];
 }
 
 const RADAR_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 let cachedRadarItems: GatheredTopicItem[] | null = null;
+let cachedFeedStatuses: FeedHealthStatus[] = [];
 let cachedRadarTimestamp = 0;
 
 const METRIC_REGEX =
@@ -146,7 +162,9 @@ const PROMPT_INJECTION_PATTERNS: RegExp[] = [
  */
 export function sanitizeUntrustedScrapedText(rawText: string): string {
   if (!rawText) return '';
-  let cleaned = rawText;
+  let cleaned = rawText
+    .replace(/[\u202A-\u202E\u2066-\u2069\u200E\u200F\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .replace(/javascript\s*:/gi, '');
   for (const pattern of PROMPT_INJECTION_PATTERNS) {
     cleaned = cleaned.replace(pattern, '[REDACTED_UNTRUSTED_DIRECTIVE]');
   }
@@ -917,17 +935,23 @@ export function buildDefaultMarrokAngle(item: {
 }
 
 /**
- * Computes transparent 4-factor scoring (`freshness`, `engagement`, `clientRelevance`, `platformRisk`),
- * down-ranks stale news, and classifies Fresh vs Evergreen tag + viral hook angle.
+ * Computes calibrated 5-factor scoring (`relevance`, `freshness`, `novelty`, `verifiability`,
+ * `domainBalance`) alongside backward-compatible 4-factor keys, down-ranks stale news, and
+ * enforces the anti-rumor ceiling.
  */
 export function computeTopicViralityScore(item: {
+  id?: string;
   title: string;
   summary: string;
+  url?: string;
   score: number;
   extractedMetrics: string[];
   sourceType?: GatherSourceType;
+  sourceDomain?: string;
+  author?: string;
   publishedAt?: string;
   domainCategory?: string;
+  clusteredSources?: ClusteredSourceItem[];
 }): {
   viralityScore: number;
   viralAngle: string;
@@ -935,132 +959,39 @@ export function computeTopicViralityScore(item: {
   clientRelevanceReason: string;
   marrokAngle: string;
 } {
-  const combined = `${item.title || ''} ${item.summary || ''}`;
-  const lower = combined.toLowerCase();
-
-  // 1. Freshness & age decay
-  const parsedPub = item.publishedAt ? Date.parse(item.publishedAt) : NaN;
-  const ageHours = Number.isFinite(parsedPub)
-    ? Math.max(0, (Date.now() - parsedPub) / 3600_000)
-    : 24;
-
-  const isEvergreenSubject =
-    item.sourceType === 'curated' ||
-    /\b(how\s+we|architecture|internals|guide|postmortem|under\s+the\s+hood|migration|pattern|playbook)\b/i.test(
-      combined
-    );
-
-  let freshness = 88;
-  if (ageHours <= 12) freshness = 96;
-  else if (ageHours <= 48) freshness = 90;
-  else if (ageHours <= 72) freshness = 82;
-  else if (ageHours <= 7 * 24) freshness = 70;
-  else if (ageHours <= 30 * 24) freshness = isEvergreenSubject ? 58 : 42;
-  else freshness = isEvergreenSubject ? 48 : 24;
-
-  const freshnessTag: 'fresh' | 'evergreen' =
-    ageHours <= 7 * 24 && !isEvergreenSubject
-      ? 'fresh'
-      : ageHours <= 72
-      ? 'fresh'
-      : 'evergreen';
-
-  // 2. Engagement signal (community score + metric richness + story tension)
-  const rawScore = Math.max(10, Number(item.score) || 50);
-  const velocityPts = Math.min(35, Math.round(Math.log10(rawScore) * 12));
-  const metricPts = Math.min(28, (item.extractedMetrics?.length || 0) * 9);
-  let angleBonus = 6;
-  let viralAngle = 'SYSTEMS DEEP DIVE';
-
-  if (
-    /\b(?:vs\.?|versus|replacing|replaced|migrating\s+from|ditched|outperforms|beats|instead\s+of)\b/i.test(
-      combined
-    )
-  ) {
-    angleBonus = 18;
-    viralAngle = 'ARCHITECTURE SHOWDOWN';
-  } else if (
-    /\b(?:cve-\d+|zero[- ]?day|vulnerability|exploit|breach|post[- ]?quantum|crisis|gamble|outage|postmortem)\b/i.test(
-      lower
-    )
-  ) {
-    angleBonus = 16;
-    viralAngle = 'HIGH-STAKES RISK';
-  } else if (
-    /(?:\$\d|\b\d+(?:\.\d+)?\s*(?:%|x|ms|gb\/s|tb|trillion|billion)\b)/i.test(item.title || '')
-  ) {
-    angleBonus = 15;
-    viralAngle = 'BENCHMARK SHOCK';
-  } else if (
-    /\b(?:deepseek|llm|agent|agentic|kv[- ]?cache|inference|vllm|moe|mla|cuda|transformer|rag)\b/i.test(
-      lower
-    )
-  ) {
-    angleBonus = 14;
-    viralAngle = 'AI BREAKTHROUGH';
-  } else if (item.sourceType === 'github' || /\b(?:open[- ]?source|github|rust|ebpf|zig)\b/i.test(lower)) {
-    angleBonus = 12;
-    viralAngle = 'OPEN-SOURCE BREAKOUT';
-  }
-
-  const engagement = Math.max(38, Math.min(99, 28 + velocityPts + metricPts + angleBonus));
-
-  // 3. Client relevance (startups & SME product teams)
-  const { clientRelevance, clientRelevanceReason, marrokAngle } = buildDefaultMarrokAngle(item);
-
-  // 4. Platform risk (moderation, ragebait, politics/drama penalty)
-  let riskScore = 8; // baseline low risk (8%)
-  if (/\b(hack|exploit|weapon|bypass|pirat|crack|leak)\b/i.test(lower)) riskScore += 18;
-  if (/\b(layoff|drama|scandal|lawsuit|fired|politic)\b/i.test(lower)) riskScore += 16;
-  if (!item.extractedMetrics || item.extractedMetrics.length === 0) riskScore += 6;
-  riskScore = Math.max(4, Math.min(75, riskScore));
-  const platformRisk = 100 - riskScore;
-
-  // Weighted composite + explicit age decay penalty so stale news sinks below fresh candidates
-  let compositeRaw =
-    freshness * 0.28 +
-    engagement * 0.27 +
-    clientRelevance * 0.30 +
-    platformRisk * 0.15;
-
-  if (ageHours > 14 * 24) {
-    compositeRaw -= isEvergreenSubject ? 8 : 20;
-  } else if (ageHours > 7 * 24) {
-    compositeRaw -= isEvergreenSubject ? 3 : 10;
-  }
-
-  const composite = Math.max(25, Math.min(99, Math.round(compositeRaw)));
-
+  const calibrated = computeCalibratedTopicScore(item);
+  const angleInfo = buildDefaultMarrokAngle(item);
   return {
-    viralityScore: composite,
-    viralAngle,
-    scoreBreakdown: {
-      composite,
-      freshness: Math.round(freshness),
-      engagement: Math.round(engagement),
-      clientRelevance: Math.round(clientRelevance),
-      platformRisk: Math.round(platformRisk),
-      riskScore: Math.round(riskScore),
-      ageHours: Math.round(ageHours),
-      freshnessTag,
-    },
-    clientRelevanceReason,
-    marrokAngle,
+    viralityScore: calibrated.viralityScore,
+    viralAngle: calibrated.viralAngle,
+    scoreBreakdown: calibrated.scoreBreakdown,
+    clientRelevanceReason: calibrated.clientRelevanceReason || angleInfo.clientRelevanceReason,
+    marrokAngle: angleInfo.marrokAngle,
   };
 }
 
 function attachViralityMetadata(item: GatheredTopicItem): GatheredTopicItem {
+  const safeTitle = sanitizeFeedDisplayText(item.title, 220) || item.title;
+  const safeSummary = sanitizeFeedDisplayText(item.summary, 3600) || item.summary;
   const sourceDomain = item.sourceDomain || extractSourceDomain(item.url, item.brandUrl);
   const publishedDateLabel = item.publishedDateLabel || formatPublishedDateLabel(item.publishedAt);
-  const computed = computeTopicViralityScore(item);
+  const sanitizedItem: GatheredTopicItem = {
+    ...item,
+    title: safeTitle,
+    summary: safeSummary,
+    sourceDomain,
+  };
+  const computed = computeTopicViralityScore(sanitizedItem);
   const scoreBreakdown = item.scoreBreakdown || computed.scoreBreakdown;
   return {
-    ...item,
-    sourceDomain,
+    ...sanitizedItem,
     publishedDateLabel,
     freshnessTag: item.freshnessTag || scoreBreakdown.freshnessTag,
     scoreBreakdown,
-    viralityScore: typeof item.viralityScore === 'number' && item.scoreBreakdown ? item.viralityScore : computed.viralityScore,
+    viralityScore:
+      typeof item.viralityScore === 'number' && item.scoreBreakdown
+        ? item.viralityScore
+        : computed.viralityScore,
     viralAngle: item.viralAngle || computed.viralAngle,
     clientRelevanceReason: item.clientRelevanceReason || computed.clientRelevanceReason,
     marrokAngle: item.marrokAngle || computed.marrokAngle,
@@ -1155,11 +1086,45 @@ async function fetchAiAndSystemsRssFeeds(limitPerFeed = 2): Promise<GatheredTopi
   }
 }
 
+async function runFeedWithHealth(
+  id: string,
+  name: string,
+  fetcher: () => Promise<GatheredTopicItem[]>
+): Promise<{ items: GatheredTopicItem[]; health: FeedHealthStatus }> {
+  const scannedAt = new Date().toISOString();
+  try {
+    const items = await fetcher();
+    return {
+      items,
+      health: {
+        id,
+        name,
+        status: items.length > 0 ? 'ok' : 'partial',
+        itemCount: items.length,
+        lastScannedAt: scannedAt,
+        ...(items.length === 0 ? { errorMessage: 'Feed returned 0 matching items' } : {}),
+      },
+    };
+  } catch (err) {
+    return {
+      items: [],
+      health: {
+        id,
+        name,
+        status: 'error',
+        itemCount: 0,
+        lastScannedAt: scannedAt,
+        errorMessage: err instanceof Error ? err.message : 'Feed scan failed',
+      },
+    };
+  }
+}
+
 /**
  * GET /api/gather/radar
  * Aggregates live technical stories across GitHub Trending, Reddit Social Tech Trends, Hacker News,
  * Lobsters, Cloudflare RSS, AI & Systems RSS, Custom RSS, and Curated High-Signal topics,
- * ranked by Virality Score descending.
+ * clustered across feeds, ranked by calibrated 5-factor scoring + triage learning, with per-feed health.
  */
 export async function handleGetTopicRadar(req: Request, res: Response): Promise<void> {
   try {
@@ -1180,6 +1145,8 @@ export async function handleGetTopicRadar(req: Request, res: Response): Promise<
         ok: true,
         cached: true,
         fetchedAt: new Date(cachedRadarTimestamp).toISOString(),
+        lastScannedAt: new Date(cachedRadarTimestamp).toISOString(),
+        feedStatuses: cachedFeedStatuses,
         topics: filtered,
       });
       return;
@@ -1190,67 +1157,113 @@ export async function handleGetTopicRadar(req: Request, res: Response): Promise<
           .split(',')
           .map((u) => u.trim())
           .filter(Boolean)
-          .slice(0, 3)
+          .slice(0, 6)
       : [];
 
+    const customFeedTasks = customRssUrls.map((u, idx) => {
+      const label = extractSourceDomain(u, `Custom RSS #${idx + 1}`);
+      if (!isAllowedProxyUrl(u, false)) {
+        return Promise.resolve<{ items: GatheredTopicItem[]; health: FeedHealthStatus }>({
+          items: [],
+          health: {
+            id: `custom_rss_${idx}`,
+            name: `RSS · ${label}`,
+            status: 'error',
+            itemCount: 0,
+            lastScannedAt: new Date(now).toISOString(),
+            errorMessage: 'Blocked by SSRF policy: only public https:// feeds are permitted.',
+          },
+        });
+      }
+      return runFeedWithHealth(`custom_rss_${idx}`, `RSS · ${label}`, () => fetchCustomRssFeed(u, 4));
+    });
+
     const [
-      githubItems,
-      redditItems,
-      hnItems,
-      lobstersItems,
-      rssItems,
-      aiRssItems,
-      ...customRssBatches
+      githubRes,
+      redditRes,
+      hnRes,
+      lobstersRes,
+      cfRssRes,
+      aiRssRes,
+      ...customResults
     ] = await Promise.all([
-      fetchGitHubTrendingRepos(4),
-      fetchRedditTechTrends(5),
-      fetchHackerNewsTopTech(6),
-      fetchLobstersHottest(5),
-      fetchCloudflareEngineeringRss(4),
-      fetchAiAndSystemsRssFeeds(2),
-      ...customRssUrls.map((u) => fetchCustomRssFeed(u, 4)),
+      runFeedWithHealth('github', 'GitHub Trending', () => fetchGitHubTrendingRepos(4)),
+      runFeedWithHealth('reddit', 'Reddit Tech', () => fetchRedditTechTrends(5)),
+      runFeedWithHealth('hn', 'Hacker News', () => fetchHackerNewsTopTech(6)),
+      runFeedWithHealth('lobsters', 'Lobste.rs', () => fetchLobstersHottest(5)),
+      runFeedWithHealth('cloudflare_rss', 'Cloudflare Blog RSS', () => fetchCloudflareEngineeringRss(4)),
+      runFeedWithHealth('eng_rss', 'Engineering & AI RSS', () => fetchAiAndSystemsRssFeeds(2)),
+      ...customFeedTasks,
     ]);
 
-    const customItems = customRssBatches.flat();
-    const combinedMap = new Map<string, GatheredTopicItem>();
-    for (const rawItem of [
-      ...customItems,
-      ...githubItems,
-      ...redditItems,
-      ...rssItems,
-      ...aiRssItems,
-      ...hnItems,
-      ...lobstersItems,
-      ...CURATED_ENGINEERING_TOPICS,
-    ]) {
-      const item = attachViralityMetadata(rawItem);
-      const key = item.url.toLowerCase().replace(/\/+$/, '');
-      if (!combinedMap.has(key)) {
-        combinedMap.set(key, item);
-      }
-    }
+    const feedStatuses: FeedHealthStatus[] = [
+      githubRes.health,
+      redditRes.health,
+      hnRes.health,
+      lobstersRes.health,
+      cfRssRes.health,
+      aiRssRes.health,
+      ...customResults.map((r) => r.health),
+    ];
 
-    const merged = Array.from(combinedMap.values()).sort(
-      (a, b) => (b.viralityScore ?? 0) - (a.viralityScore ?? 0)
-    );
+    const customItems = customResults.flatMap((r) => r.items);
+    const rawCombined = [
+      ...customItems,
+      ...githubRes.items,
+      ...redditRes.items,
+      ...cfRssRes.items,
+      ...aiRssRes.items,
+      ...hnRes.items,
+      ...lobstersRes.items,
+      ...CURATED_ENGINEERING_TOPICS,
+    ].map(attachViralityMetadata);
+
+    const [triageDecisions, storedPostsRes] = await Promise.all([
+      loadStoredTriageDecisions().catch(() => [] as TriageDecisionRecord[]),
+      loadStoredPosts().catch(() => ({ posts: [] as SavedPostRecord[] })),
+    ]);
+
+    const savedPosts = storedPostsRes.posts || [];
+    const ranked = scoreAndRankTopicBatch(rawCombined, {
+      savedPosts,
+      triageDecisions,
+      nowMs: now,
+    }) as GatheredTopicItem[];
+
+    const scannedIso = new Date(now).toISOString();
     if (!customRssParam) {
-      cachedRadarItems = merged;
+      cachedRadarItems = ranked;
+      cachedFeedStatuses = feedStatuses;
       cachedRadarTimestamp = now;
     }
 
-    const filtered = filterRadarItems(merged, sourceFilter, categoryFilter);
+    const filtered = filterRadarItems(ranked, sourceFilter, categoryFilter);
     res.json({
       ok: true,
       cached: false,
-      fetchedAt: new Date(now).toISOString(),
+      fetchedAt: scannedIso,
+      lastScannedAt: scannedIso,
+      feedStatuses,
       topics: filtered,
     });
   } catch (err) {
+    const nowIso = new Date().toISOString();
     res.json({
       ok: true,
       cached: true,
-      fetchedAt: new Date().toISOString(),
-      topics: CURATED_ENGINEERING_TOPICS.map(attachViralityMetadata),
+      fetchedAt: nowIso,
+      lastScannedAt: nowIso,
+      feedStatuses: [
+        {
+          id: 'curated',
+          name: 'Curated Baseline',
+          status: 'partial',
+          itemCount: CURATED_ENGINEERING_TOPICS.length,
+          lastScannedAt: nowIso,
+          errorMessage: err instanceof Error ? err.message : 'Live feeds unavailable',
+        },
+      ],
+      topics: scoreAndRankTopicBatch(CURATED_ENGINEERING_TOPICS.map(attachViralityMetadata)),
       warning: err instanceof Error ? err.message : 'Fallback to curated engineering topics',
     });
   }
@@ -1277,24 +1290,6 @@ function filterRadarItems(
     }
     return true;
   });
-}
-
-/**
- * Follows up to maxHops HTTPS redirects manually, validating every hop against SSRF rules
- * (protocol, blocked hostnames, private/loopback IPs, and DNS resolution).
- */
-export async function fetchSafeUrlHtml(
-  initialUrl: string,
-  maxHops = 3
-): Promise<{ response: globalThis.Response; finalUrl: string }> {
-  const { response, finalUrl } = await fetchSafeRemoteText(initialUrl, {
-    maxHops,
-    maxBytes: 600_000,
-    timeoutMs: 7500,
-    acceptHeader: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8',
-    userAgent: 'MARROK-Content-Studio-Reader/2.0 (+https://marrok.org)',
-  });
-  return { response, finalUrl };
 }
 
 export async function extractUrlTopicInternal(
@@ -1568,7 +1563,7 @@ export async function runAutopilotForTopic(
     };
   }
 
-  let deck: CarouselData = sanitizeFullCarousel(JSON.parse(JSON.stringify(genResult.deck)));
+  let deck: CarouselData = sanitizeFullCarousel(structuredClone(genResult.deck));
   const cadenceAnalysis = analyzePostHistoryCadence(existingPosts, deck.theme, {
     prompt: topic.title,
     category: topic.domainCategory,
@@ -2305,3 +2300,186 @@ export async function handleTelegramWebhook(req: Request, res: Response): Promis
     previewText,
   });
 }
+
+// ============================================================================
+// Persistent Inbox Triage Decision Log (PostgreSQL + Ephemeral Disk Fallback)
+// ============================================================================
+
+const ALLOWED_TRIAGE_ACTIONS = new Set<TriageAction>(['draft', 'skip', 'snooze']);
+const ALLOWED_SKIP_REASONS = new Set<TriageSkipReason>([
+  'off-topic',
+  'too-basic',
+  'already-covered',
+  'cant-verify',
+  'risky',
+]);
+
+function getTriageFallbackPath(): string {
+  return process.env.TRIAGE_STORAGE_FILE || path.join(os.tmpdir(), 'marrok-inbox-triage.json');
+}
+
+async function loadFallbackTriageDecisions(): Promise<TriageDecisionRecord[]> {
+  try {
+    const raw = await fs.readFile(getTriageFallbackPath(), 'utf-8');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as TriageDecisionRecord[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveFallbackTriageDecisions(records: TriageDecisionRecord[]): Promise<void> {
+  try {
+    await fs.writeFile(getTriageFallbackPath(), JSON.stringify(records.slice(0, 300), null, 2), 'utf-8');
+  } catch {
+    // Non-fatal in read-only environments
+  }
+}
+
+export async function loadStoredTriageDecisions(limit = 250): Promise<TriageDecisionRecord[]> {
+  const cfg = getServerConfig();
+  if (cfg.databaseUrl) {
+    const pool = getPostgresPool(cfg.databaseUrl);
+    if (pool) {
+      try {
+        return await queryPostgresTriageDecisions(pool, limit);
+      } catch (err) {
+        console.warn('[TriageStore] Postgres query failed, using fallback store:', err);
+      }
+    }
+  }
+  return (await loadFallbackTriageDecisions()).slice(0, limit);
+}
+
+export async function saveStoredTriageDecision(
+  decision: TriageDecisionRecord
+): Promise<{ record: TriageDecisionRecord; storage: 'postgres' | 'fallback' }> {
+  const cfg = getServerConfig();
+  if (cfg.databaseUrl) {
+    const pool = getPostgresPool(cfg.databaseUrl);
+    if (pool) {
+      try {
+        const saved = await insertPostgresTriageDecision(pool, decision);
+        return { record: saved, storage: 'postgres' };
+      } catch (err) {
+        console.warn('[TriageStore] Postgres insert failed, using fallback store:', err);
+      }
+    }
+  }
+  const existing = await loadFallbackTriageDecisions();
+  const next = [decision, ...existing.filter((d) => d.id !== decision.id)].slice(0, 300);
+  await saveFallbackTriageDecisions(next);
+  return { record: decision, storage: 'fallback' };
+}
+
+export async function removeStoredTriageDecision(id: string): Promise<boolean> {
+  const cfg = getServerConfig();
+  if (cfg.databaseUrl) {
+    const pool = getPostgresPool(cfg.databaseUrl);
+    if (pool) {
+      try {
+        return await deletePostgresTriageDecision(pool, id);
+      } catch (err) {
+        console.warn('[TriageStore] Postgres delete failed, using fallback store:', err);
+      }
+    }
+  }
+  const existing = await loadFallbackTriageDecisions();
+  const next = existing.filter((d) => d.id !== id);
+  await saveFallbackTriageDecisions(next);
+  return next.length < existing.length;
+}
+
+/**
+ * GET /api/gather/triage
+ */
+export async function handleListTriageDecisions(_req: Request, res: Response): Promise<void> {
+  try {
+    const decisions = await loadStoredTriageDecisions(250);
+    res.json({ ok: true, decisions });
+  } catch (err) {
+    res.status(500).json({
+      error: err instanceof Error ? err.message : 'Failed to load triage decisions',
+    });
+  }
+}
+
+/**
+ * POST /api/gather/triage
+ */
+export async function handleRecordTriageDecision(req: Request, res: Response): Promise<void> {
+  const body = (req.body || {}) as Record<string, unknown>;
+  const topicId = typeof body.topicId === 'string' ? sanitizeFeedDisplayText(body.topicId, 120) : '';
+  const action = typeof body.action === 'string' ? (body.action as TriageAction) : undefined;
+  const reason = typeof body.reason === 'string' ? (body.reason as TriageSkipReason) : undefined;
+
+  if (!topicId || !action || !ALLOWED_TRIAGE_ACTIONS.has(action)) {
+    res.status(400).json({
+      error: 'Valid topicId and action ("draft" | "skip" | "snooze") are required.',
+    });
+    return;
+  }
+
+  if (reason && !ALLOWED_SKIP_REASONS.has(reason)) {
+    res.status(400).json({ error: 'Invalid skip reason.' });
+    return;
+  }
+
+  const snoozeUntil =
+    typeof body.snoozeUntil === 'string' && !Number.isNaN(Date.parse(body.snoozeUntil))
+      ? new Date(body.snoozeUntil).toISOString()
+      : null;
+
+  const decision: TriageDecisionRecord = {
+    id:
+      typeof body.id === 'string' && body.id.trim()
+        ? body.id.trim().slice(0, 64)
+        : `tri_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`,
+    topicId,
+    topicSignature:
+      typeof body.topicSignature === 'string'
+        ? sanitizeFeedDisplayText(body.topicSignature, 220)
+        : undefined,
+    sourceDomain:
+      typeof body.sourceDomain === 'string'
+        ? sanitizeFeedDisplayText(body.sourceDomain, 160).toLowerCase()
+        : 'unknown',
+    domainCategory:
+      typeof body.domainCategory === 'string'
+        ? sanitizeFeedDisplayText(body.domainCategory, 100).toUpperCase()
+        : 'DISTRIBUTED SYSTEMS',
+    action,
+    ...(reason ? { reason } : {}),
+    snoozeUntil,
+    createdAt: new Date().toISOString(),
+  };
+
+  try {
+    const saved = await saveStoredTriageDecision(decision);
+    res.status(200).json({ ok: true, decision: saved.record, storage: saved.storage });
+  } catch (err) {
+    res.status(500).json({
+      error: err instanceof Error ? err.message : 'Failed to save triage decision',
+    });
+  }
+}
+
+/**
+ * DELETE /api/gather/triage/:id (used by Undo [Z])
+ */
+export async function handleDeleteTriageDecision(req: Request, res: Response): Promise<void> {
+  const id = typeof req.params?.id === 'string' ? req.params.id.trim() : '';
+  if (!id) {
+    res.status(400).json({ error: 'Decision id is required.' });
+    return;
+  }
+  try {
+    const deleted = await removeStoredTriageDecision(id);
+    res.status(200).json({ ok: true, deleted, id });
+  } catch (err) {
+    res.status(500).json({
+      error: err instanceof Error ? err.message : 'Failed to undo triage decision',
+    });
+  }
+}
+

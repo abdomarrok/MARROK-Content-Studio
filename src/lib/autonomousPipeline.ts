@@ -11,6 +11,9 @@ import {
   validateSourceSufficiency,
   InsufficientSourceError,
   applyHookEngineToSlide1,
+  applyDeckAwareAutoLayout,
+  deriveCoverTeaserForSlide,
+  resolveSlide1CoverStyle,
 } from './synthesis';
 import { parseCarouselData } from './validation/carousel';
 import { parseImageDataUrl } from './validation/image';
@@ -122,24 +125,34 @@ export function enrichAndPaceCarousel(
       ? enrichedSlides
       : balanceCarouselVisualPacing(enrichedSlides);
 
-  // Re-ensure Slide 1 multi-slide hook rule (zero body text on slide 0) after pacing
-  const hookSecuredSlides =
-    !isSingleCarousel && balancedSlides.length > 1
-      ? balancedSlides.map((s, idx) =>
-          idx === 0
-            ? {
-                ...s,
-                storyRole: 'hook' as const,
-                enBody: '',
-                arBody: '',
-              }
-            : s
-        )
-      : balancedSlides;
+  const autoLaidOutSlides = applyDeckAwareAutoLayout(balancedSlides, {
+    postFormat: isSingleCarousel ? 'single' : 'carousel',
+    preserveAuthenticAiVisuals: true,
+  });
+
+  // Re-ensure Slide 1 multi-slide hook rule (zero body text on slide 0) + Cover Hero defaults after pacing
+  const finalPacedSlides =
+    !isSingleCarousel && autoLaidOutSlides.length > 1
+      ? autoLaidOutSlides.map((s, idx) => {
+          if (idx !== 0 || s.standaloneMeme) return s;
+          const teasers = deriveCoverTeaserForSlide(s, autoLaidOutSlides);
+          return {
+            ...s,
+            storyRole: 'hook' as const,
+            compositionPreset: s.manualLayoutLocked ? s.compositionPreset : ('headline-first' as const),
+            coverStyle: s.coverStyle || resolveSlide1CoverStyle(s, autoLaidOutSlides),
+            coverTeaserEn: s.coverTeaserEn || teasers.coverTeaserEn,
+            coverTeaserAr: s.coverTeaserAr || teasers.coverTeaserAr,
+            showSwipeCue: s.showSwipeCue ?? true,
+            enBody: '',
+            arBody: '',
+          };
+        })
+      : autoLaidOutSlides;
 
   cleanCarousel = {
     ...cleanCarousel,
-    slides: hookSecuredSlides,
+    slides: finalPacedSlides,
   };
 
   // Step 4: Quality verification check
@@ -307,7 +320,7 @@ export async function runAutonomousPipeline(
   }
 
   // Domain-Aware Theme Routing: match input topic to best visual theme
-  const domainTheme = resolveDomainTheme(rawInput);
+  const domainTheme = theme?.id || resolveDomainTheme(rawInput);
   if (!rawCarousel.theme || rawCarousel.theme === 'default') {
     rawCarousel.theme = domainTheme;
   }
@@ -315,9 +328,16 @@ export async function runAutonomousPipeline(
   // Step 2 & 3: Protect Authentic AI Output vs Fallback Pipeline
   let cleanCarousel: CarouselData;
   if (!rawCarousel.sourceMeta?.isFallback) {
-    // 100% Authentic AI Output: Preserve the AI's exact headlines, natural Arabic translations, and diagram nodes!
-    // Only apply lightweight markdown stripping without altering copy or diagrams:
-    cleanCarousel = sanitizeFullCarousel(rawCarousel);
+    // 100% Authentic AI Output: Preserve the AI's exact headlines, natural Arabic translations, and diagram nodes,
+    // while running deck-aware Auto-Layout with preserveAuthenticAiVisuals: true to fix weak/repetitive slides and default Auto mode on.
+    const sanitized = sanitizeFullCarousel(rawCarousel);
+    cleanCarousel = {
+      ...sanitized,
+      slides: applyDeckAwareAutoLayout(sanitized.slides, {
+        postFormat: isSinglePost ? 'single' : 'carousel',
+        preserveAuthenticAiVisuals: true,
+      }),
+    };
   } else {
     // Local Synthesis Fallback: Apply layout enrichment and visual pacing
     onProgress?.('Enforcing Spec §8 character limits, polishing headlines & pacing...');

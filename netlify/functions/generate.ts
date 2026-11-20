@@ -20,5 +20,5 @@ export async function handler(
 export default handler;
 
 export const config: Config = {
-  path: ['/api/generate', '/api/generate-image', '/api/refine-slide'],
+  path: ['/api/generate', '/api/generate-image', '/api/refine-slide', '/api/direct-visual'],
 };

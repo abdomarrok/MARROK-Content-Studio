@@ -6,7 +6,6 @@ import {
 
 export const EXIT_DURATION = 0.20; // 200ms outgoing content exit (never overlaps incoming slide)
 export const ENTRY_DURATION = 0.30; // 300ms incoming content entry (never overlaps outgoing slide)
-export const TRANSITION_WINDOW = EXIT_DURATION + ENTRY_DURATION;
 
 export type ConcreteTransitionMode = Exclude<MotionTransitionType, 'auto'>;
 
@@ -36,7 +35,7 @@ export interface SceneTransitionFrameState {
   layers: SceneRenderLayer[];
 }
 
-const clamp = (x: number, a = 0, b = 1): number => Math.min(b, Math.max(a, x));
+import { clamp } from './math.ts';
 
 function easeOutCubic(t: number): number {
   const c = clamp(t, 0, 1);

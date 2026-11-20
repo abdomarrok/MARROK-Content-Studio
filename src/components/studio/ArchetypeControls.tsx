@@ -1,21 +1,17 @@
 import React, { useState } from 'react';
 import {
-  Cpu,
-  Layers,
-  Image as ImageIcon,
-  Code,
-  Gauge,
-  Columns,
-  ArrowRight,
-  ArrowLeftRight,
-  LayoutTemplate,
-  Hash,
-  Wand2,
+  Sparkles,
   Lock,
   Unlock,
+  LayoutGrid,
+  ChevronDown,
+  Sliders,
+  Loader2,
+  Wand2,
 } from 'lucide-react';
 import {
   CarouselData,
+  CoverStyle,
   SlideData,
   SlideType,
   ThemePalette,
@@ -23,11 +19,25 @@ import {
   DiagramNode,
 } from '../../types.ts';
 import {
-  analyzeSlideTextForArchetype,
   resolveSmartSlideVisuals,
   explainArchetypeChoice,
 } from '../../lib/synthesis/smartVisualDefaults.ts';
+import { deriveVisualSpecFromSlide } from '../../lib/synthesis/visualSpecBuilder.ts';
+import {
+  COVER_STYLE_OPTIONS,
+  getSlideCatalogId,
+  materializeLayoutForSlide,
+  rankSlideLayoutsForDeck,
+  resolveSlide1CoverStyle,
+} from '../../lib/synthesis/autoLayoutEngine.ts';
 import { IconPickerPopover } from './IconPickerPopover.tsx';
+import {
+  VisualGalleryPicker,
+  VisualCatalogEntry,
+  getActiveVisualCatalogEntry,
+  getCategoryLabel,
+  renderVisualThumbnail,
+} from './VisualGalleryPicker.tsx';
 import {
   HubArchetypeEditor,
   DiagramSchematicEditor,
@@ -38,6 +48,7 @@ import {
   ImageArchetypeEditor,
   CtaArchetypeEditor,
   SubjectPairArchetypeEditor,
+  VisualSpecArchetypeEditor,
   EXPECTATIONS_VS_REALITY_MEME_URL,
 } from './archetypes/index.ts';
 
@@ -53,6 +64,9 @@ export interface ArchetypeControlsProps {
   onUpdateField: (field: keyof SlideData, value: any) => void;
   onUpdateSlideFields?: (updates: Partial<SlideData>) => void;
   onSmartMatchVisuals?: (useRecommendedArchetype?: boolean) => void;
+  onToggleAutoLayout?: () => void;
+  onReimagineVisual?: () => void;
+  isReimaginingVisual?: boolean;
   onDiversifyDeckVisuals?: () => void;
   onUpdateCarouselField?: (field: keyof CarouselData, value: any) => void;
   onUpdateSatLabel: (index: number, value: string) => void;
@@ -72,6 +86,12 @@ export interface ArchetypeControlsProps {
   onGenerateFromVideo?: (fileOrUrl?: File | string) => void;
   isGeneratingFromVideo?: boolean;
   onGenerateFromPhoto?: (file: File, dataUrl: string, mode: 'meme' | 'graphic') => void;
+  /** Optional Position & Scale panel folded cleanly into Visual tab */
+  positionSection?: React.ReactNode;
+  isPositionSectionOpen?: boolean;
+  onTogglePositionSection?: () => void;
+  activeOverridesCount?: number;
+  onApplyCoverStyle?: (coverStyle: CoverStyle) => void;
 }
 
 function normalizeDiagramVariant(raw?: string): DiagramVariant {
@@ -87,23 +107,6 @@ function normalizeDiagramVariant(raw?: string): DiagramVariant {
   return 'topology';
 }
 
-const ARCHETYPES: {
-  id: SlideType;
-  label: string;
-  icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>;
-}[] = [
-  { id: 'poster', label: 'Poster', icon: LayoutTemplate },
-  { id: 'hub', label: 'Hub', icon: Cpu },
-  { id: 'row', label: 'Mechanism', icon: Layers },
-  { id: 'number', label: 'Number', icon: Hash },
-  { id: 'image', label: 'Meme / Image', icon: ImageIcon },
-  { id: 'code', label: 'Code Diff', icon: Code },
-  { id: 'metric', label: 'Metric', icon: Gauge },
-  { id: 'compare', label: 'Compare', icon: Columns },
-  { id: 'subjectPair', label: 'Subject Pair', icon: ArrowLeftRight },
-  { id: 'cta', label: 'CTA', icon: ArrowRight },
-];
-
 export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
   currentSlide,
   currentSlideIndex = 0,
@@ -113,6 +116,9 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
   onUpdateField,
   onUpdateSlideFields,
   onSmartMatchVisuals,
+  onToggleAutoLayout,
+  onReimagineVisual,
+  isReimaginingVisual = false,
   onDiversifyDeckVisuals,
   onUpdateCarouselField,
   onUpdateSatLabel,
@@ -132,7 +138,14 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
   onGenerateFromVideo,
   isGeneratingFromVideo = false,
   onGenerateFromPhoto,
+  positionSection,
+  isPositionSectionOpen = false,
+  onTogglePositionSection,
+  activeOverridesCount = 0,
+  onApplyCoverStyle,
 }) => {
+  const [isGalleryOpen, setIsGalleryOpen] = useState(false);
+  const [isDeckOptionsOpen, setIsDeckOptionsOpen] = useState(false);
   const [iconPickerState, setIconPickerState] = useState<{
     isOpen: boolean;
     title: string;
@@ -158,102 +171,32 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
 
   const totalSlides = carousel?.slides?.length || 8;
   const smart = resolveSmartSlideVisuals(currentSlide, currentSlideIndex, false);
-  const recommendedArchetype = analyzeSlideTextForArchetype(currentSlide, currentSlideIndex);
   const recommendedVariant = smart.recommendedVariant;
-  const activeDiagramVariant = normalizeDiagramVariant(currentSlide.diagramVariant || smart.diagramVariant);
+  const activeDiagramVariant = normalizeDiagramVariant(
+    currentSlide.diagramVariant || smart.diagramVariant
+  );
   const isManualLocked = Boolean(currentSlide.manualLayoutLocked);
   const activeRationale =
     currentSlide.layoutRationale ||
     explainArchetypeChoice(currentSlide, currentSlideIndex, totalSlides);
 
-  const renderArchetypeMiniThumbnail = (type: SlideType, isActive: boolean) => {
-    const stroke = isActive ? theme.accent : '#94a3b8';
-    const fill = isActive ? `${theme.accent}33` : 'rgba(255,255,255,0.06)';
-    switch (type) {
-      case 'hub':
-        return (
-          <svg viewBox="0 0 36 24" className="w-8 h-5 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
-            <circle cx="18" cy="12" r="7.5" fill="none" stroke={stroke} strokeWidth="0.9" strokeDasharray="1.5 1.5" opacity="0.65" />
-            <rect x="14.5" y="8.5" width="7" height="7" rx="2" fill={fill} stroke={stroke} strokeWidth="1.2" />
-            <circle cx="18" cy="3.5" r="1.6" fill={stroke} />
-            <circle cx="26" cy="9" r="1.6" fill={stroke} />
-            <circle cx="23.5" cy="18.5" r="1.6" fill={stroke} />
-            <circle cx="12.5" cy="18.5" r="1.6" fill={stroke} />
-            <circle cx="10" cy="9" r="1.6" fill={stroke} />
-          </svg>
-        );
-      case 'row':
-        return (
-          <svg viewBox="0 0 36 24" className="w-8 h-5 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
-            <rect x="3" y="7" width="7.5" height="10" rx="1.5" fill={fill} stroke={stroke} strokeWidth="1.1" />
-            <line x1="10.5" y1="12" x2="14" y2="12" stroke={stroke} strokeWidth="1.1" />
-            <rect x="14" y="7" width="8" height="10" rx="1.5" fill={fill} stroke={stroke} strokeWidth="1.1" />
-            <line x1="22" y1="12" x2="25.5" y2="12" stroke={stroke} strokeWidth="1.1" />
-            <rect x="25.5" y="7" width="7.5" height="10" rx="1.5" fill={fill} stroke={stroke} strokeWidth="1.1" />
-          </svg>
-        );
-      case 'compare':
-        return (
-          <svg viewBox="0 0 36 24" className="w-8 h-5 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
-            <rect x="3" y="4" width="13.5" height="16" rx="2" fill="rgba(244,63,94,0.18)" stroke="#fb7185" strokeWidth="1.1" />
-            <rect x="19.5" y="4" width="13.5" height="16" rx="2" fill={fill} stroke={stroke} strokeWidth="1.1" />
-          </svg>
-        );
-      case 'code':
-        return (
-          <svg viewBox="0 0 36 24" className="w-8 h-5 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
-            <rect x="3" y="3.5" width="30" height="17" rx="2" fill="rgba(0,0,0,0.65)" stroke={stroke} strokeWidth="1.1" />
-            <line x1="6" y1="8.5" x2="19" y2="8.5" stroke="#fb7185" strokeWidth="1.4" />
-            <line x1="6" y1="12" x2="27" y2="12" stroke={stroke} strokeWidth="1.4" />
-            <line x1="6" y1="15.5" x2="23" y2="15.5" stroke="#34d399" strokeWidth="1.4" />
-          </svg>
-        );
-      case 'metric':
-        return (
-          <svg viewBox="0 0 36 24" className="w-8 h-5 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
-            <rect x="3.5" y="4" width="29" height="16" rx="2" fill={fill} stroke={stroke} strokeWidth="1.1" />
-            <text x="18" y="14.5" textAnchor="middle" fill={stroke} fontSize="7.5" fontWeight="bold" fontFamily="monospace">
-              99%
-            </text>
-          </svg>
-        );
-      case 'number':
-        return (
-          <svg viewBox="0 0 36 24" className="w-8 h-5 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
-            <rect x="4" y="4.5" width="12" height="15" rx="2" fill={fill} stroke={stroke} strokeWidth="1.1" />
-            <text x="10" y="14.5" textAnchor="middle" fill={stroke} fontSize="7.5" fontWeight="bold" fontFamily="monospace">
-              01
-            </text>
-            <line x1="19" y1="9.5" x2="31" y2="9.5" stroke={stroke} strokeWidth="1.3" />
-            <line x1="19" y1="14" x2="28" y2="14" stroke={stroke} strokeWidth="1.1" opacity="0.6" />
-          </svg>
-        );
-      case 'image':
-        return (
-          <svg viewBox="0 0 36 24" className="w-8 h-5 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
-            <rect x="4" y="3.5" width="28" height="17" rx="2" fill="#f8fafc" stroke={stroke} strokeWidth="1.1" />
-            <circle cx="11" cy="9" r="1.8" fill="#0f172a" />
-            <path d="M6.5 18 L13.5 11.5 L19 16 L24.5 10 L30 18 Z" fill={stroke} opacity="0.85" />
-          </svg>
-        );
-      case 'poster':
-        return (
-          <svg viewBox="0 0 36 24" className="w-8 h-5 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
-            <rect x="4" y="3.5" width="28" height="8" rx="1.5" fill={fill} stroke={stroke} strokeWidth="1.1" />
-            <line x1="5" y1="14.5" x2="31" y2="14.5" stroke={stroke} strokeWidth="1.2" />
-            <line x1="5" y1="17.5" x2="26" y2="17.5" stroke={stroke} strokeWidth="1.1" opacity="0.7" />
-            <line x1="5" y1="20.5" x2="29" y2="20.5" stroke={stroke} strokeWidth="1.1" opacity="0.5" />
-          </svg>
-        );
-      case 'cta':
-      default:
-        return (
-          <svg viewBox="0 0 36 24" className="w-8 h-5 rounded bg-black/50 border border-white/10 shrink-0" aria-hidden="true">
-            <line x1="7" y1="8" x2="29" y2="8" stroke="#f8fafc" strokeWidth="1.4" />
-            <rect x="8" y="12.5" width="20" height="6.5" rx="3.2" fill={stroke} />
-          </svg>
-        );
+  const activeCatalogEntry = getActiveVisualCatalogEntry(
+    currentSlide,
+    activeDiagramVariant
+  );
+
+  const applyLayoutPatch = (patch: Partial<SlideData>) => {
+    if (onUpdateSlideFields) {
+      onUpdateSlideFields(patch);
+      return;
     }
+    if (patch.type && patch.type !== currentSlide.type) {
+      onSetSlideType(patch.type);
+    }
+    (Object.keys(patch) as Array<keyof SlideData>).forEach((key) => {
+      if (key === 'type') return;
+      onUpdateField(key, patch[key]);
+    });
   };
 
   const handleSelectVariant = (variantId: DiagramVariant) => {
@@ -274,215 +217,267 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
         diagramEdges: nextSmart.diagramEdges,
         diagramFooter: nextSmart.diagramFooter,
         layoutRationale: nextRationale,
+        manualLayoutLocked: true,
       });
     } else {
       onUpdateField('diagramVariant', variantId);
       onUpdateField('layoutRationale', nextRationale);
+      onUpdateField('manualLayoutLocked', true);
     }
   };
 
-  const handleTriggerSmartMatch = (switchArchetype: boolean = true) => {
-    const targetType: SlideType = switchArchetype
-      ? analyzeSlideTextForArchetype(currentSlide, currentSlideIndex)
-      : currentSlide.type;
-    const refreshed = resolveSmartSlideVisuals(
-      { ...currentSlide, type: targetType },
-      currentSlideIndex,
-      true
-    );
-    const rationale = explainArchetypeChoice(
-      { ...currentSlide, type: targetType, diagramVariant: refreshed.diagramVariant },
-      currentSlideIndex,
-      totalSlides
-    );
-
-    if (onSmartMatchVisuals) {
-      onSmartMatchVisuals(switchArchetype);
+  const handleSelectCatalogEntry = (entry: VisualCatalogEntry) => {
+    if (entry.slideType === 'row' && entry.diagramVariant) {
+      if (currentSlide.type !== 'row') {
+        onSetSlideType('row');
+      }
+      handleSelectVariant(entry.diagramVariant);
       return;
     }
 
-    if (switchArchetype) {
-      onSetSlideType(targetType);
+    if (entry.slideType === 'visual' && entry.visualKind) {
+      if (currentSlide.type !== 'visual') {
+        onSetSlideType('visual');
+      }
+      const nextSpec = deriveVisualSpecFromSlide(
+        currentSlide,
+        entry.visualKind,
+        currentSlideIndex
+      );
+      const mergedSpec = currentSlide.visualSpec
+        ? { ...currentSlide.visualSpec, ...nextSpec, kind: entry.visualKind }
+        : nextSpec;
+      const nextRationale = explainArchetypeChoice(
+        { ...currentSlide, type: 'visual', visualSpec: mergedSpec },
+        currentSlideIndex,
+        totalSlides
+      );
+      if (onUpdateSlideFields) {
+        onUpdateSlideFields({
+          type: 'visual',
+          visualSpec: mergedSpec,
+          layoutRationale: nextRationale,
+          manualLayoutLocked: true,
+        });
+      } else {
+        onUpdateField('visualSpec', mergedSpec);
+        onUpdateField('layoutRationale', nextRationale);
+        onUpdateField('manualLayoutLocked', true);
+      }
+      return;
     }
 
-    const updatedFields: Partial<SlideData> = {
-      type: targetType,
-      centerIcon: refreshed.centerIcon,
-      centerTag: refreshed.centerTag,
-      satLabels: refreshed.satLabels,
-      satIcons: refreshed.satIcons,
-      diagramVariant: refreshed.diagramVariant,
-      diagramNodes: refreshed.diagramNodes,
-      diagramEdges: refreshed.diagramEdges,
-      diagramFooter: refreshed.diagramFooter,
-      stepNumber: refreshed.stepNumber,
-      stepLabel: refreshed.stepLabel,
-      metricValue: refreshed.metricValue,
-      metricLabel: refreshed.metricLabel,
-      metricDiff: refreshed.metricDiff,
-      metricIcon: refreshed.metricIcon,
-      codeFileName: refreshed.codeFileName,
-      codeLanguage: refreshed.codeLanguage,
-      codeSnippet: refreshed.codeSnippet,
-      compareLeftTitle: refreshed.compareLeftTitle,
-      compareLeftBody: refreshed.compareLeftBody,
-      compareRightTitle: refreshed.compareRightTitle,
-      compareRightBody: refreshed.compareRightBody,
-      layoutRationale: rationale,
-    };
+    onSetSlideType(entry.slideType);
+    onUpdateField('manualLayoutLocked', true);
+  };
 
-    if (onUpdateSlideFields) {
-      onUpdateSlideFields(updatedFields);
-    } else {
-      onUpdateField('layoutRationale', rationale);
-      if (targetType === 'metric') {
-        onUpdateField('metricValue', refreshed.metricValue);
-        onUpdateField('metricLabel', refreshed.metricLabel);
-        onUpdateField('metricDiff', refreshed.metricDiff);
-        onUpdateField('metricIcon', refreshed.metricIcon);
-      } else if (targetType === 'compare') {
-        onUpdateField('compareLeftTitle', refreshed.compareLeftTitle);
-        onUpdateField('compareLeftBody', refreshed.compareLeftBody);
-        onUpdateField('compareRightTitle', refreshed.compareRightTitle);
-        onUpdateField('compareRightBody', refreshed.compareRightBody);
-      } else if (targetType === 'code') {
-        onUpdateField('codeFileName', refreshed.codeFileName);
-        onUpdateField('codeLanguage', refreshed.codeLanguage);
-        onUpdateField('codeSnippet', refreshed.codeSnippet);
-      } else if (targetType === 'number') {
-        onUpdateField('stepNumber', refreshed.stepNumber);
-        onUpdateField('stepLabel', refreshed.stepLabel);
-        onUpdateField('centerIcon', refreshed.numberIcon);
-      } else if (targetType === 'row') {
-        onUpdateField('diagramVariant', refreshed.diagramVariant);
-        onUpdateField('diagramNodes', refreshed.diagramNodes);
-        onUpdateField('diagramEdges', refreshed.diagramEdges);
-        onUpdateField('diagramFooter', refreshed.diagramFooter);
+  const handleToggleAutoClick = () => {
+    if (onToggleAutoLayout) {
+      onToggleAutoLayout();
+      return;
+    }
+    if (isManualLocked) {
+      if (onSmartMatchVisuals) {
+        onSmartMatchVisuals(true);
+        return;
       }
+      const slides = carousel?.slides && carousel.slides.length > 0 ? carousel.slides : [currentSlide];
+      const ranked = rankSlideLayoutsForDeck(currentSlide, slides, currentSlideIndex, {
+        postFormat: carousel?.postFormat,
+      });
+      const best = ranked[0];
+      if (best) {
+        const materialized = materializeLayoutForSlide(currentSlide, best, currentSlideIndex, slides.length, {
+          rationalePrefix: 'Auto-picked',
+          lockLayout: false,
+          forceRefreshVisuals: true,
+        });
+        applyLayoutPatch(materialized);
+      } else {
+        onUpdateField('manualLayoutLocked', false);
+      }
+    } else {
+      onUpdateField('manualLayoutLocked', true);
     }
   };
 
+  const handleReimagineClick = () => {
+    if (onReimagineVisual) {
+      onReimagineVisual();
+      return;
+    }
+    const slides = carousel?.slides && carousel.slides.length > 0 ? carousel.slides : [currentSlide];
+    const currentId = getSlideCatalogId(currentSlide, activeDiagramVariant);
+    const ranked = rankSlideLayoutsForDeck(currentSlide, slides, currentSlideIndex, {
+      postFormat: carousel?.postFormat,
+      excludeIds: [currentId],
+    });
+    const nextCandidate =
+      ranked.find((c) => c.id !== currentId && c.slideType !== 'image' && c.slideType !== 'cta') ||
+      ranked[0];
+    if (nextCandidate) {
+      const materialized = materializeLayoutForSlide(
+        currentSlide,
+        nextCandidate,
+        currentSlideIndex,
+        slides.length,
+        {
+          rationalePrefix: 'Re-imagined',
+          lockLayout: false,
+          forceRefreshVisuals: true,
+        }
+      );
+      applyLayoutPatch(materialized);
+    }
+  };
+
+  const showCoverQuickBar =
+    Boolean(onApplyCoverStyle) &&
+    currentSlideIndex === 0 &&
+    Boolean(carousel && carousel.slides.length > 1) &&
+    carousel?.postFormat !== 'single' &&
+    carousel?.postFormat !== 'meme' &&
+    !currentSlide.standaloneMeme &&
+    currentSlide.type !== 'poster';
+  const activeCoverStyle =
+    currentSlide.coverStyle || resolveSlide1CoverStyle(currentSlide, carousel?.slides);
+
   return (
     <div className="space-y-4">
-      {/* 1. Top-Level Slide Layout Archetype Switcher + Smart Match Bar */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-2">
-            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              Slide Layout Archetype
-            </label>
-            <span className="text-[10px] font-mono text-slate-500">·</span>
-            <span className="text-[10px] font-mono text-slate-400">
-              Best Fit:{' '}
-              <strong className="uppercase" style={{ color: theme.accent }}>
-                {recommendedArchetype}
-              </strong>
-            </span>
-          </div>
-
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <button
-              type="button"
-              data-testid="toggle-cascade-lock-btn"
-              onClick={() => onUpdateField('manualLayoutLocked', !isManualLocked)}
-              className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-semibold transition-colors cursor-pointer whitespace-nowrap ${
-                isManualLocked
-                  ? 'bg-amber-500/20 border-amber-400/50 text-amber-200'
-                  : 'bg-white/[0.04] hover:bg-white/[0.08] border-white/15 text-slate-300 hover:text-white'
-              }`}
-              title="Cascade Lock: Protect this slide's manually edited layout when running Diversify Deck or Sync Deck"
-            >
-              {isManualLocked ? (
-                <>
-                  <Lock className="w-3 h-3 text-amber-300" />
-                  <span>Cascade Locked</span>
-                </>
-              ) : (
-                <>
-                  <Unlock className="w-3 h-3 text-slate-400" />
-                  <span>Cascade Lock</span>
-                </>
-              )}
-            </button>
-
-            {onDiversifyDeckVisuals && totalSlides > 1 && (
-              <button
-                type="button"
-                onClick={onDiversifyDeckVisuals}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/35 text-[11px] font-semibold text-amber-200 transition-colors cursor-pointer whitespace-nowrap"
-                title="Auto-diversify unlocked slides across Compare, Code, Metric, and varied Diagram schematics matched to each slide's copy"
-              >
-                <Wand2 className="w-3 h-3" />
-                <span>Diversify Deck (2–7)</span>
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => handleTriggerSmartMatch(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/35 text-[11px] font-semibold text-cyan-200 transition-colors cursor-pointer whitespace-nowrap"
-              title="Analyze slide text to assign the most appropriate archetype (Metric, Compare, Code, Row, or Number) and update layout configuration"
-            >
-              <Wand2 className="w-3 h-3" />
-              <span>Smart Match</span>
-            </button>
-          </div>
-        </div>
-
-        {/* One-Line Layout Rationale Banner */}
+      {showCoverQuickBar && onApplyCoverStyle && (
         <div
-          data-testid="layout-rationale-banner"
-          className="px-3 py-1.5 rounded-xl bg-black/50 border border-white/10 flex items-center justify-between gap-2 text-[11px] font-mono text-slate-300"
+          data-testid="archetype-cover-style-bar"
+          className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.08] space-y-2"
         >
-          <span className="truncate">
-            <strong className="text-cyan-300 uppercase">{currentSlide.type}</strong>
-            {currentSlide.type === 'row' && activeDiagramVariant
-              ? ` (${activeDiagramVariant})`
-              : ''}
-            {' — '}
-            {activeRationale}
-          </span>
-          {isManualLocked && (
-            <span className="text-[10px] text-amber-300 shrink-0 font-bold">
-              LOCKED
-            </span>
-          )}
+          <div className="flex items-center justify-between gap-2 text-[11px]">
+            <span className="font-semibold text-white">Slide 1 Cover Hero Style</span>
+            <span className="text-slate-400">Headline-first framing</span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+            {COVER_STYLE_OPTIONS.map((opt) => {
+              const active = activeCoverStyle === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  data-testid={`visual-cover-style-${opt.id}`}
+                  onClick={() => onApplyCoverStyle(opt.id)}
+                  className={`px-2 py-1.5 rounded-lg border text-xs font-medium transition-colors cursor-pointer truncate ${
+                    active
+                      ? 'text-white font-semibold'
+                      : 'bg-black/40 border-white/[0.08] text-slate-300 hover:text-white'
+                  }`}
+                  style={
+                    active
+                      ? {
+                          backgroundColor: `${theme.accent}1A`,
+                          borderColor: `${theme.accent}80`,
+                        }
+                      : undefined
+                  }
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 1. Calm Active Visual Card (Auto/Manual Status + Re-imagine AI Director + Grouped Gallery) */}
+      <div
+        data-testid="active-visual-card"
+        className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/[0.08]"
+      >
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          {renderVisualThumbnail(activeCatalogEntry, theme, true)}
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-white truncate">
+                {activeCatalogEntry.label}
+              </span>
+              <button
+                type="button"
+                data-testid="toggle-auto-layout-btn"
+                onClick={handleToggleAutoClick}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                  isManualLocked
+                    ? 'bg-amber-500/15 border-amber-400/40 text-amber-200 hover:bg-amber-500/25'
+                    : 'bg-emerald-500/15 border-emerald-400/40 text-emerald-200 hover:bg-emerald-500/25'
+                }`}
+                title={
+                  isManualLocked
+                    ? 'Manual mode: layout stays locked. Click to restore Auto layout.'
+                    : 'Auto mode: layout adapts to your copy and deck flow. Click to lock manually.'
+                }
+              >
+                {isManualLocked ? (
+                  <>
+                    <Lock className="w-2.5 h-2.5" />
+                    <span>Manual</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-2.5 h-2.5" />
+                    <span>Auto</span>
+                  </>
+                )}
+              </button>
+            </div>
+            <div
+              data-testid="active-visual-rationale"
+              className="text-[11px] text-slate-400 truncate mt-0.5"
+              title={activeRationale}
+            >
+              {getCategoryLabel(activeCatalogEntry.category)} · {activeRationale}
+            </div>
+          </div>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 bg-black/60 p-1.5 rounded-xl border border-white/10">
-          {ARCHETYPES.map((arch) => {
-            const Icon = arch.icon;
-            const isSelected = currentSlide.type === arch.id;
-            const isRecommended = recommendedArchetype === arch.id && !isSelected;
-            return (
-              <button
-                key={arch.id}
-                type="button"
-                onClick={() => onSetSlideType(arch.id)}
-                className={`relative flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
-                  isSelected
-                    ? 'bg-white/20 text-white shadow-sm border border-white/25'
-                    : isRecommended
-                    ? 'bg-white/[0.05] text-slate-200 border border-cyan-500/35 hover:bg-white/10'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04] border border-transparent'
-                }`}
-              >
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <Icon
-                    className="w-3.5 h-3.5 shrink-0"
-                    style={{ color: isSelected || isRecommended ? theme.accent : undefined }}
-                  />
-                  <span className="truncate">{arch.label}</span>
-                </div>
-                {renderArchetypeMiniThumbnail(arch.id, isSelected)}
-              </button>
-            );
-          })}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            type="button"
+            data-testid="reimagine-visual-btn"
+            disabled={isReimaginingVisual}
+            onClick={handleReimagineClick}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.09] disabled:opacity-60 border border-white/[0.08] text-xs font-medium text-slate-200 hover:text-white transition-colors cursor-pointer whitespace-nowrap"
+            title="Ask the AI Visual Director for a fresh layout angle that avoids sibling repetition"
+          >
+            {isReimaginingVisual ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: theme.accent }} />
+            ) : (
+              <Wand2 className="w-3.5 h-3.5" style={{ color: theme.accent }} />
+            )}
+            <span>{isReimaginingVisual ? 'Designing...' : 'Re-imagine'}</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="open-visual-gallery-btn"
+            onClick={() => setIsGalleryOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold text-white transition-colors cursor-pointer whitespace-nowrap hover:brightness-110"
+            style={{
+              backgroundColor: `${theme.accent}22`,
+              borderColor: `${theme.accent}66`,
+            }}
+          >
+            <LayoutGrid className="w-3.5 h-3.5" style={{ color: theme.accent }} />
+            <span>Change Layout</span>
+          </button>
         </div>
       </div>
 
-      {/* 2. Contextual Archetype Visual Editors */}
+      {/* 2. Essentials-First Contextual Editor for Active Visual */}
+      {currentSlide.type === 'visual' && (
+        <VisualSpecArchetypeEditor
+          currentSlide={currentSlide}
+          currentSlideIndex={currentSlideIndex}
+          theme={theme}
+          onUpdateField={onUpdateField}
+          hideModeSwitcher={true}
+        />
+      )}
 
-      {/* ARCHETYPE: HUB */}
       {currentSlide.type === 'hub' && (
         <HubArchetypeEditor
           currentSlide={currentSlide}
@@ -499,7 +494,6 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
         />
       )}
 
-      {/* ARCHETYPE: ROW & POSTER SCHEMATICS */}
       {(currentSlide.type === 'row' || currentSlide.type === 'poster') && (
         <DiagramSchematicEditor
           currentSlide={currentSlide}
@@ -515,7 +509,6 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
         />
       )}
 
-      {/* ARCHETYPE: NUMBER */}
       {currentSlide.type === 'number' && (
         <NumberArchetypeEditor
           currentSlide={currentSlide}
@@ -528,7 +521,6 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
         />
       )}
 
-      {/* ARCHETYPE: CODE */}
       {currentSlide.type === 'code' && (
         <CodeArchetypeEditor
           currentSlide={currentSlide}
@@ -537,7 +529,6 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
         />
       )}
 
-      {/* ARCHETYPE: METRIC */}
       {currentSlide.type === 'metric' && (
         <MetricArchetypeEditor
           currentSlide={currentSlide}
@@ -548,7 +539,6 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
         />
       )}
 
-      {/* ARCHETYPE: COMPARE */}
       {currentSlide.type === 'compare' && (
         <CompareArchetypeEditor
           currentSlide={currentSlide}
@@ -557,7 +547,6 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
         />
       )}
 
-      {/* ARCHETYPE: SUBJECT PAIR */}
       {currentSlide.type === 'subjectPair' && (
         <SubjectPairArchetypeEditor
           currentSlide={currentSlide}
@@ -566,7 +555,6 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
         />
       )}
 
-      {/* ARCHETYPE: IMAGE & POSTER MEDIA */}
       {(currentSlide.type === 'image' || currentSlide.type === 'poster') && (
         <ImageArchetypeEditor
           currentSlide={currentSlide}
@@ -589,7 +577,6 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
         />
       )}
 
-      {/* ARCHETYPE: CTA */}
       {currentSlide.type === 'cta' && (
         <CtaArchetypeEditor
           currentSlide={currentSlide}
@@ -599,6 +586,129 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
           onUpdateCarouselField={onUpdateCarouselField}
         />
       )}
+
+      {/* 3. Progressive Disclosure: Position & Scale (Replaces Separate 4. Adjust Tab) */}
+      {positionSection && (
+        <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] overflow-hidden">
+          <button
+            type="button"
+            data-testid="position-scale-accordion-toggle"
+            onClick={() => onTogglePositionSection?.()}
+            aria-expanded={isPositionSectionOpen}
+            className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-xs font-medium text-slate-300 hover:text-white hover:bg-white/[0.03] transition-colors cursor-pointer"
+          >
+            <span className="flex items-center gap-2">
+              <Sliders className="w-3.5 h-3.5 text-slate-400" />
+              <span>Position &amp; Scale</span>
+              {activeOverridesCount > 0 && (
+                <span className="text-[11px] font-mono tabular-nums text-cyan-300">
+                  · {activeOverridesCount} adjusted
+                </span>
+              )}
+            </span>
+            <ChevronDown
+              className={`w-3.5 h-3.5 text-slate-400 transition-transform ${
+                isPositionSectionOpen ? 'rotate-180' : ''
+              }`}
+            />
+          </button>
+          {isPositionSectionOpen && (
+            <div className="px-3 pb-3 pt-2 border-t border-white/[0.06] animate-fade-in">
+              {positionSection}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 4. Progressive Disclosure: Layout Rationale, Cascade Lock & Deck Diversify */}
+      <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] overflow-hidden">
+        <button
+          type="button"
+          data-testid="deck-layout-options-toggle"
+          onClick={() => setIsDeckOptionsOpen((prev) => !prev)}
+          aria-expanded={isDeckOptionsOpen}
+          className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-xs font-medium text-slate-300 hover:text-white hover:bg-white/[0.03] transition-colors cursor-pointer"
+        >
+          <span className="flex items-center gap-2">
+            {isManualLocked ? (
+              <Lock className="w-3.5 h-3.5 text-amber-300" />
+            ) : (
+              <Unlock className="w-3.5 h-3.5 text-slate-400" />
+            )}
+            <span>Deck &amp; Layout Options</span>
+            {isManualLocked && (
+              <span className="text-[11px] text-amber-300">· Locked</span>
+            )}
+          </span>
+          <ChevronDown
+            className={`w-3.5 h-3.5 text-slate-400 transition-transform ${
+              isDeckOptionsOpen ? 'rotate-180' : ''
+            }`}
+          />
+        </button>
+
+        {isDeckOptionsOpen && (
+          <div className="px-3 pb-3 pt-2 border-t border-white/[0.06] space-y-2.5 animate-fade-in">
+            <div
+              data-testid="layout-rationale-banner"
+              className="text-[11px] text-slate-400 leading-relaxed"
+            >
+              <strong className="text-slate-200">{activeCatalogEntry.label}:</strong>{' '}
+              {activeRationale}
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                data-testid="toggle-cascade-lock-btn"
+                onClick={() => onUpdateField('manualLayoutLocked', !isManualLocked)}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors cursor-pointer ${
+                  isManualLocked
+                    ? 'bg-amber-500/15 border-amber-400/40 text-amber-200'
+                    : 'bg-white/[0.04] hover:bg-white/[0.08] border-white/10 text-slate-300 hover:text-white'
+                }`}
+                title="Protect this slide's layout when running Diversify Deck"
+              >
+                {isManualLocked ? (
+                  <>
+                    <Lock className="w-3.5 h-3.5 text-amber-300" />
+                    <span>Cascade Locked</span>
+                  </>
+                ) : (
+                  <>
+                    <Unlock className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Cascade Lock</span>
+                  </>
+                )}
+              </button>
+
+              {onDiversifyDeckVisuals && totalSlides > 1 && (
+                <button
+                  type="button"
+                  onClick={onDiversifyDeckVisuals}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 text-xs font-medium text-slate-200 transition-colors cursor-pointer"
+                  title="Auto-diversify unlocked slides across charts, code, metrics, and schematics"
+                >
+                  <Wand2 className="w-3.5 h-3.5" style={{ color: theme.accent }} />
+                  <span>Diversify Deck</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Unified Grouped Visual Gallery Modal */}
+      <VisualGalleryPicker
+        isOpen={isGalleryOpen}
+        onClose={() => setIsGalleryOpen(false)}
+        currentSlide={currentSlide}
+        currentSlideIndex={currentSlideIndex}
+        slides={carousel?.slides}
+        activeEntryId={activeCatalogEntry.id}
+        theme={theme}
+        onSelectEntry={handleSelectCatalogEntry}
+      />
 
       {/* Vector Icon Picker Modal Popover */}
       <IconPickerPopover

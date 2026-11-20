@@ -324,7 +324,7 @@ export function createRateLimiter(options?: { windowMs?: number; maxRequests?: n
       }
     }
 
-    next();
+    return next();
   };
 }
 

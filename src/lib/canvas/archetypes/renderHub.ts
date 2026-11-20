@@ -206,7 +206,7 @@ export async function drawHubSlide(
   // Satellite Badges with 5 distinct technical labels, step numbers, and min 24px font at 1080x1920
   const satIcons = smart.satIcons && smart.satIcons.length > 0 ? smart.satIcons : slide.satIcons || smart.satIcons;
   const satLabels = rawLabels || smart.satLabels;
-  const satW = 228;
+  const satW = 246;
   const satH = 132;
   const satIconSize = 48;
 
@@ -259,9 +259,8 @@ export async function drawHubSlide(
 
       // Crisp Technical Label Pill (min 24px bold font at 1080x1920 for effortless mobile readability)
       const rawLabel = (satLabels[i] || DEFAULT_ICON_LABELS[sIconName] || sIconName.toUpperCase()).trim();
-      // Preserve 2-word technical labels up to 16 chars (e.g., "DURABLE OBJECTS", "SPENDING CAPS")
-      const shortLabel = rawLabel.length > 16 ? rawLabel.slice(0, 16).trim() : rawLabel;
-      const pillW = 214;
+      const shortLabel = rawLabel.length > 15 ? rawLabel.slice(0, 15).trim() : rawLabel;
+      const pillW = 234;
       const pillH = 42;
       const pillX = sx - pillW / 2;
       const pillY = sy + satH / 2 - 48;
@@ -271,11 +270,11 @@ export async function drawHubSlide(
       const fitSat = fitTextInBox(
         ctx,
         shortLabel.toUpperCase(),
-        pillW - 10,
+        pillW - 8,
         24,
         '"Plus Jakarta Sans", "JetBrains Mono", sans-serif',
         '800',
-        { minFontSize: 24 }
+        { minFontSize: 24, ellipsis: false }
       );
       ctx.font = `800 ${Math.max(24, fitSat.fontSize)}px "Plus Jakarta Sans", "JetBrains Mono", sans-serif`;
       ctx.fillStyle = '#FFFFFF';

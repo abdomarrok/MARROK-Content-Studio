@@ -11,6 +11,7 @@
 
 import { CarouselData, NumericEvidenceDiscrepancy } from '../types';
 import { isPlaceholderOrEmptyBrandValue } from './bundledTechSvgs';
+import { extractSlideText } from './text/slideText';
 
 export type RiskStatus = 'PASS' | 'WARN' | 'BLOCK';
 
@@ -247,7 +248,7 @@ function checkCopyright(carousel: CarouselData, rawInput: string = ''): RiskChec
         };
       }
     }
-    const slideText = `${carousel.slides[i].enTitle || ''} ${carousel.slides[i].arTitle || ''} ${carousel.slides[i].enBody || ''} ${carousel.slides[i].arBody || ''}`;
+    const slideText = extractSlideText(carousel.slides[i]);
     if (/\b(?:System\s+[AB12]|Company\s+[AB12]|Brand\s+[AB12]|PIPELINE\s+MIGRATION|DATASTREAM\s+MIGRATION)\b/i.test(slideText)) {
       return {
         id: 'copyright',

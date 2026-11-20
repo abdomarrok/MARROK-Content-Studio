@@ -10,7 +10,6 @@ import {
   Type,
   Layers,
   Film,
-  Code,
   Undo2,
   Redo2,
   Eye,
@@ -18,6 +17,7 @@ import {
 import { type GatheredTopicItem } from '../lib/gather/gatherClient.ts';
 import {
   CarouselData,
+  CoverStyle,
   PostFormat,
   SlideData,
   SlideType,
@@ -61,18 +61,30 @@ import { sanitizeSlide } from '../lib/textSanitizer.ts';
 import {
   seedSlideArchetypeData,
   synthesizeCarousel,
-  condenseCarouselToSingleSlide,
   resolveSmartSlideVisuals,
   analyzeSlideTextForArchetype,
   diversifyDeckArchetypesAndVisuals,
   autoSyncSlideGraphicsFromCopy,
   autoFitSlideCopyToLimits,
-  explainArchetypeChoice,
   validateSourceSufficiency,
   InsufficientSourceError,
-  applyHookEngineToSlide1,
-  extractSourceQuotedHubNodes,
+  cleanCarouselContentQuality,
+  evaluateAutoLayoutForSlideEdit,
+  getSlideCatalogId,
+  materializeLayoutForSlide,
+  rankSlideLayoutsForDeck,
+  findCatalogDescriptor,
+  applyCoverStyleToSlide,
+  resolveSlide1CoverStyle,
+  deriveCoverTeaserForSlide,
 } from '../lib/synthesizer.ts';
+import { requestAiVisualDirection } from '../lib/studio/visualDirectorClient.ts';
+import {
+  switchCarouselPostFormat,
+  snapshotFormatDraft,
+  resolveEffectivePostFormat,
+  filterRelevantHookVariants,
+} from '../lib/studio/formatWorkspace.ts';
 import { runQAChecks, CHAR_LIMITS, type PreExportCheckId } from '../lib/qaChecks.ts';
 import { runPlatformRiskChecks } from '../lib/riskChecks.ts';
 import { autoPolishHeadline, autoFitTextToLimits } from '../lib/text/headlines.ts';
@@ -211,8 +223,9 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   const [isExportingZip, setIsExportingZip] = useState(false);
   const [exportProgress, setExportProgress] = useState<{ current: number; total: number } | null>(null);
 
-  // Right-Hand Tabbed Inspector ('copy' | 'visual' | 'position' | 'caption')
+  // Right-Hand 3-Tab Inspector ('copy' | 'visual' | 'review'; legacy 'position'/'caption' route cleanly)
   const [inspectorTab, setInspectorTab] = useState<'copy' | 'visual' | 'position' | 'caption' | 'review'>('copy');
+  const [isPositionSectionOpen, setIsPositionSectionOpen] = useState(false);
 
   // Direct Graphical Control & Hit-Testing States
   const [selectedElementId, setSelectedElementId] = useState<GraphicalElementId | null>(null);
@@ -246,7 +259,6 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   // Mobile Studio Segmented Mode Switcher ('canvas' | 'editor') & Draggable Bottom Sheet ('peek' | 'half' | 'full')
   const [mobileStudioTab, setMobileStudioTab] = useState<'canvas' | 'editor'>('canvas');
   const [mobileSheetSnap, setMobileSheetSnap] = useState<'peek' | 'half' | 'full'>('half');
-  const isMobileEditorExpanded = mobileSheetSnap === 'full';
   const isSheetOpen = isMobileSheetOpen || mobileStudioTab === 'editor';
   const sheetDragStartYRef = useRef<number | null>(null);
 
@@ -265,7 +277,14 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   const generationRunIdRef = useRef(0);
   const deckRevisionRef = useRef(0);
   const isMountedRef = useRef(true);
-  const stashedCarouselSlidesRef = useRef<SlideData[] | null>(null);
+
+  // Smart Auto-Layout & On-Demand AI Visual Director state
+  const [isReimaginingVisual, setIsReimaginingVisual] = useState(false);
+  const reimagineAbortRef = useRef<AbortController | null>(null);
+  const triedLayoutsBySlideRef = useRef<Map<number, { textKey: string; triedIds: string[] }>>(new Map());
+  const lastAutoEvalKeyRef = useRef<string>('');
+  const latestCarouselRef = useRef(carousel);
+  latestCarouselRef.current = carousel;
 
   useEffect(() => {
     return () => {
@@ -273,17 +292,12 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     };
   }, []);
 
-  const activePostFormat: PostFormat =
-    carousel.postFormat === 'reel'
-      ? 'reel'
-      : carousel.postFormat === 'meme' ||
-        (carousel.slides.length === 1 && Boolean(carousel.slides[0]?.standaloneMeme))
-      ? 'meme'
-      : carousel.postFormat === 'single' || carousel.slides.length === 1
-      ? 'single'
-      : 'carousel';
+  const activePostFormat: PostFormat = resolveEffectivePostFormat(carousel);
 
-  const activeDimensionSpec = getCanvasDimensionSpec(carousel.dimensionPreset);
+  const visibleHookVariants = useMemo(
+    () => filterRelevantHookVariants(carousel.hookVariants, carousel.slides, carousel.category),
+    [carousel.hookVariants, carousel.slides, carousel.category]
+  );
 
   const handleSelectDimensionPreset = (preset: CanvasDimensionPreset) => {
     const nextSpec = getCanvasDimensionSpec(preset);
@@ -314,118 +328,33 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     setSelectedMotionSceneId(nextReel.scenes[0]?.id || null);
   };
 
-  const handleCondenseToSingleSlide = () => {
-    if (carousel.slides.length > 1) {
-      stashedCarouselSlidesRef.current = carousel.slides.map((s) => ({ ...s }));
-    }
-    const sourceDeck: CarouselData =
-      stashedCarouselSlidesRef.current && stashedCarouselSlidesRef.current.length > 1
-        ? { ...carousel, slides: stashedCarouselSlidesRef.current }
-        : carousel;
-    const condensed = condenseCarouselToSingleSlide(sourceDeck);
-    applyDeckUpdate((prev) => ({
-      ...prev,
-      ...condensed,
-      postFormat: 'single',
-      slides: condensed.slides.map((s) => ({
-        ...s,
-        standaloneMeme: false,
-        imageFrameMode: s.imageUrl ? 'hero' : s.imageFrameMode,
-      })),
-    }));
-    changeSlide(0, 1);
-    onShowToast('Switched to 1-Slide Infographic Poster');
-  };
-
   const handleSwitchPostFormat = (nextFormat: PostFormat) => {
     if (nextFormat === activePostFormat) return;
 
-    if (nextFormat === 'meme') {
-      if (carousel.slides.length > 1) {
-        stashedCarouselSlidesRef.current = carousel.slides.map((s) => ({ ...s }));
-      }
-      const existingImageUrl = carousel.slides[currentSlideIndex]?.imageUrl || carousel.slides[0]?.imageUrl || uploadedImage?.base64 || '';
-      applyDeckUpdate((prev) => buildCleanMemeCarouselDeck(prev, existingImageUrl, uploadedImage?.name));
-      changeSlide(0, 1);
-      setInspectorTab('copy');
-      onShowToast('Switched to Dedicated Meme Post Studio (clean full card)');
-      return;
-    }
+    const result = switchCarouselPostFormat(carousel, nextFormat, {
+      activeSlideIndex: currentSlideIndexRef.current,
+      theme,
+      uploadedImage,
+      promptInput,
+      categoryHint,
+      activeTab,
+    });
 
-    if (nextFormat === 'reel') {
-      if (carousel.slides.length > 1) {
-        stashedCarouselSlidesRef.current = carousel.slides.map((s) => ({ ...s }));
-      }
-      const nextReel =
-        carousel.reelConfig || convertCarouselToMotionReel(carousel, theme, 'marrok-slides', 'bilingual');
-      applyDeckUpdate((prev) => ({
-        ...prev,
-        postFormat: 'reel',
-        reelConfig: nextReel,
-      }));
-      setSelectedMotionSceneId(nextReel.scenes[0]?.id || null);
+    applyDeckUpdate(() => result.nextCarousel);
+    changeSlide(result.nextSlideIndex, result.nextCarousel.slides.length);
+
+    if (nextFormat === 'meme') {
+      setInspectorTab('copy');
+    } else if (nextFormat === 'reel') {
+      setSelectedMotionSceneId(result.nextCarousel.reelConfig?.scenes[0]?.id || null);
       if (inspectorTab !== 'caption' && inspectorTab !== 'review') {
         setInspectorTab('copy');
       }
-      onShowToast('Switched to 9:16 Motion Reel Studio');
-      return;
     }
 
-    if (nextFormat === 'single') {
-      handleCondenseToSingleSlide();
-      return;
+    if (result.toastMessage) {
+      onShowToast(result.toastMessage);
     }
-
-    // Switching from 'single', 'meme', or 'reel' -> 'carousel'
-    if (carousel.slides.length >= 3) {
-      applyDeckUpdate((prev) => ({
-        ...prev,
-        postFormat: 'carousel',
-      }));
-      changeSlide(0, carousel.slides.length);
-      onShowToast(`Switched to ${carousel.slides.length}-slide carousel`);
-      return;
-    }
-
-    const stashed = stashedCarouselSlidesRef.current;
-    if (stashed && stashed.length >= 3) {
-      const currentSingle = carousel.slides[0];
-      const restored = stashed.map((s, idx) => (idx === 0 && currentSingle ? { ...s, ...currentSingle } : s));
-      applyDeckUpdate((prev) => ({
-        ...prev,
-        postFormat: 'carousel',
-        slides: restored,
-      }));
-      changeSlide(0, restored.length);
-      onShowToast(`Restored ${restored.length}-slide carousel`);
-      return;
-    }
-
-    // Expand a fresh single-slide post into a full 8-slide carousel
-    const seedTopic = promptInput.trim() || carousel.slides[0]?.enTitle || carousel.category || 'System Architecture';
-    const expanded = synthesizeCarousel({
-      prompt: seedTopic,
-      categoryHint,
-      inputMode: activeTab,
-      postFormat: 'carousel',
-    });
-    const currentFirst = carousel.slides[0];
-    if (currentFirst && expanded.slides.length > 0) {
-      expanded.slides[0] = {
-        ...expanded.slides[0],
-        enTitle: currentFirst.enTitle || expanded.slides[0].enTitle,
-        arTitle: currentFirst.arTitle || expanded.slides[0].arTitle,
-        enBody: currentFirst.enBody || expanded.slides[0].enBody,
-        arBody: currentFirst.arBody || expanded.slides[0].arBody,
-      };
-    }
-    applyDeckUpdate((prev) => ({
-      ...prev,
-      postFormat: 'carousel',
-      slides: expanded.slides,
-    }));
-    changeSlide(0, expanded.slides.length);
-    onShowToast(`Expanded into ${expanded.slides.length}-slide carousel`);
   };
 
   useEffect(() => {
@@ -434,6 +363,8 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       isMountedRef.current = false;
       generationAbortRef.current?.abort();
       generationAbortRef.current = null;
+      reimagineAbortRef.current?.abort();
+      reimagineAbortRef.current = null;
     };
   }, []);
 
@@ -582,7 +513,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       const sourceSlide = prev.slides[targetIndex];
       if (!sourceSlide) return prev;
       const clonedOverrides = sourceSlide.layoutOverrides
-        ? JSON.parse(JSON.stringify(sourceSlide.layoutOverrides))
+        ? structuredClone(sourceSlide.layoutOverrides)
         : undefined;
       const newSlides = prev.slides.map((s, idx) => {
         if (idx === targetIndex) return s;
@@ -600,7 +531,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
             s.type === 'row' && sourceSlide.type === 'row' && sourceSlide.diagramVariant
               ? sourceSlide.diagramVariant
               : s.diagramVariant,
-          layoutOverrides: clonedOverrides ? JSON.parse(JSON.stringify(clonedOverrides)) : undefined,
+          layoutOverrides: clonedOverrides ? structuredClone(clonedOverrides) : undefined,
         };
       });
       return {
@@ -739,10 +670,18 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
       if (resolvedMode === 'meme') {
         applyDeckUpdate((prev) => {
-          if (prev.slides.length > 1) {
-            stashedCarouselSlidesRef.current = prev.slides.map((s) => ({ ...s }));
-          }
-          return buildCleanMemeCarouselDeck(prev, base64, file.name);
+          const prevFormat = resolveEffectivePostFormat(prev);
+          const nextDrafts =
+            prevFormat !== 'meme'
+              ? snapshotFormatDraft(prev.formatDrafts, prevFormat, prev.slides, currentSlideIndexRef.current)
+              : prev.formatDrafts;
+          const memeDeck = buildCleanMemeCarouselDeck(prev, base64, file.name);
+          return {
+            ...memeDeck,
+            postFormat: 'meme',
+            formatDrafts: nextDrafts,
+            hookVariants: filterRelevantHookVariants(prev.hookVariants, memeDeck.slides, memeDeck.category),
+          };
         });
         changeSlide(0, 1);
         setIsExpanded(false);
@@ -799,10 +738,18 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         const { base64, mimeType, sizeKb } = await compressImageClientSide(file);
         setUploadedImage({ base64, mimeType, name: file.name, sizeKb });
         applyDeckUpdate((prev) => {
-          if (prev.slides.length > 1) {
-            stashedCarouselSlidesRef.current = prev.slides.map((s) => ({ ...s }));
-          }
-          return buildCleanMemeCarouselDeck(prev, base64, file.name);
+          const prevFormat = resolveEffectivePostFormat(prev);
+          const nextDrafts =
+            prevFormat !== 'meme'
+              ? snapshotFormatDraft(prev.formatDrafts, prevFormat, prev.slides, currentSlideIndexRef.current)
+              : prev.formatDrafts;
+          const memeDeck = buildCleanMemeCarouselDeck(prev, base64, file.name);
+          return {
+            ...memeDeck,
+            postFormat: 'meme',
+            formatDrafts: nextDrafts,
+            hookVariants: filterRelevantHookVariants(prev.hookVariants, memeDeck.slides, memeDeck.category),
+          };
         });
         changeSlide(0, 1);
         setIsExpanded(false);
@@ -1019,12 +966,6 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
       onSelectTheme(resolvedTheme);
 
-      if (generated.slides.length > 1) {
-        stashedCarouselSlidesRef.current = generated.slides.map((s) => ({ ...s }));
-      } else {
-        stashedCarouselSlidesRef.current = null;
-      }
-
       const activeSlideBeforeGen = carousel.slides[currentSlideIndex] || carousel.slides[0];
       const preserveActiveVideo = activeSlideBeforeGen && isVideoSlide(activeSlideBeforeGen);
       const mergedSlides = preserveActiveVideo
@@ -1054,11 +995,19 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           )
         : generated.slides;
 
+      const scopedGeneratedHooks = filterRelevantHookVariants(
+        generated.hookVariants,
+        mergedSlides,
+        generated.category
+      );
+
       const finalGenerated: CarouselData =
         activePostFormat === 'reel'
           ? {
               ...generated,
               slides: mergedSlides,
+              formatDrafts: undefined,
+              hookVariants: scopedGeneratedHooks,
               theme: resolvedTheme.id,
               postFormat: 'reel',
               reelConfig: convertCarouselToMotionReel(
@@ -1071,6 +1020,8 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           : {
               ...generated,
               slides: mergedSlides,
+              formatDrafts: undefined,
+              hookVariants: scopedGeneratedHooks,
               dimensionPreset: preserveActiveVideo
                 ? carousel.dimensionPreset || 'ig-3:4'
                 : generated.dimensionPreset,
@@ -1161,15 +1112,17 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       if (processed.theme && DEFAULT_PALETTES[processed.theme]) {
         onSelectTheme(DEFAULT_PALETTES[processed.theme]);
       }
-      if (processed.slides.length > 1) {
-        stashedCarouselSlidesRef.current = processed.slides.map((s) => ({ ...s }));
-      } else {
-        stashedCarouselSlidesRef.current = null;
-      }
+      const scopedProcessedHooks = filterRelevantHookVariants(
+        processed.hookVariants,
+        processed.slides,
+        processed.category
+      );
       const finalProcessed: CarouselData =
         activePostFormat === 'reel'
           ? {
               ...processed,
+              formatDrafts: undefined,
+              hookVariants: scopedProcessedHooks,
               postFormat: 'reel',
               reelConfig: convertCarouselToMotionReel(
                 processed,
@@ -1178,7 +1131,11 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 activeReelConfig.languageMode || 'bilingual'
               ),
             }
-          : processed;
+          : {
+              ...processed,
+              formatDrafts: undefined,
+              hookVariants: scopedProcessedHooks,
+            };
       onUpdateCarousel(finalProcessed);
       changeSlide(0, finalProcessed.slides.length);
       onShowToast(
@@ -1208,16 +1165,25 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   };
 
   // Inline Slide Data Updater
-  const handleUpdateCurrentSlide = (field: keyof SlideData, value: any) => {
+  const handleUpdateCurrentSlide = <K extends keyof SlideData>(field: K, value: SlideData[K]) => {
     applyDeckUpdate((prev) => {
       const targetIndex = Math.min(currentSlideIndex, prev.slides.length - 1);
       if (targetIndex < 0) return prev;
 
+      const currentSlideSnapshot = prev.slides[targetIndex];
+      let nextOverrides = currentSlideSnapshot.layoutOverrides;
+      if (field === 'takeaways' && Array.isArray(value) && value.length === 0 && nextOverrides?.takeawaysBlock) {
+        const cleaned = { ...nextOverrides };
+        delete cleaned.takeawaysBlock;
+        nextOverrides = Object.keys(cleaned).length > 0 ? cleaned : undefined;
+      }
+
       const newSlides = [...prev.slides];
       newSlides[targetIndex] = sanitizeSlide(
         {
-          ...newSlides[targetIndex],
+          ...currentSlideSnapshot,
           [field]: value,
+          layoutOverrides: nextOverrides,
         },
         targetIndex,
         prev.slides.length
@@ -1231,19 +1197,53 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     });
   };
 
+  const handleDeleteCanvasElement = (elementId: GraphicalElementId) => {
+    if (elementId === 'takeawaysBlock') {
+      applyDeckUpdate((prev) => {
+        const targetIndex = Math.min(currentSlideIndex, prev.slides.length - 1);
+        if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
+        const current = prev.slides[targetIndex];
+        const nextOverrides = { ...(current.layoutOverrides || {}) };
+        delete nextOverrides.takeawaysBlock;
+        const newSlides = [...prev.slides];
+        newSlides[targetIndex] = {
+          ...current,
+          takeaways: [],
+          layoutOverrides: Object.keys(nextOverrides).length > 0 ? nextOverrides : undefined,
+        };
+        return { ...prev, slides: newSlides };
+      });
+      setSelectedElementId(null);
+      onShowToast('Removed Takeaways card from slide');
+      return;
+    }
+
+    const current = carousel.slides[currentSlideIndex];
+    const existing = current?.layoutOverrides?.[elementId] || {};
+    handleUpdateElementLayoutOverride(elementId, {
+      ...existing,
+      hidden: true,
+    });
+    setSelectedElementId(null);
+    onShowToast(`Removed ${elementId} from slide`);
+  };
+
   // 1-Click Auto-Fit Slide Copy to Spec §8 Limits
   const handleAutoFitCurrentSlide = () => {
     applyDeckUpdate((prev) => {
       const targetIndex = Math.min(currentSlideIndex, prev.slides.length - 1);
       const slide = prev.slides[targetIndex];
       if (!slide) return prev;
+      const isHook = targetIndex === 0 || slide.type === 'hub';
+      const enTitleLimit = isHook ? CHAR_LIMITS.hookTitle : CHAR_LIMITS.enTitle;
+      const arTitleLimit = isHook ? CHAR_LIMITS.hookArTitle : CHAR_LIMITS.arTitle;
 
       const newSlides = [...prev.slides];
       newSlides[targetIndex] = sanitizeSlide(
         {
           ...slide,
-          enTitle: autoFitTextToLimits(autoPolishHeadline(slide.enTitle || ''), CHAR_LIMITS.enTitle),
-          arTitle: autoFitTextToLimits(fixArabicPunctuation(slide.arTitle || ''), CHAR_LIMITS.arTitle),
+          enTitle: autoFitTextToLimits(autoPolishHeadline(slide.enTitle || ''), enTitleLimit),
+          arTitle: autoFitTextToLimits(fixArabicPunctuation(slide.arTitle || ''), arTitleLimit),
           enBody: autoFitTextToLimits(slide.enBody || '', CHAR_LIMITS.enBody),
           arBody: autoFitTextToLimits(fixArabicPunctuation(slide.arBody || ''), CHAR_LIMITS.arBody),
         },
@@ -1256,7 +1256,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     onShowToast(`Auto-fitted Slide ${currentSlideIndex + 1} copy to character limits`);
   };
 
-  // Immediate Archetype Switcher: Auto-seeds required fields on the fly
+  // Immediate Archetype Switcher: Auto-seeds required fields and locks layout manually
   const handleSetSlideType = (newType: SlideType) => {
     applyDeckUpdate((prev) => {
       const targetIndex = Math.min(currentSlideIndex, prev.slides.length - 1);
@@ -1264,8 +1264,13 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       if (!current) return prev;
 
       const seeded = seedSlideArchetypeData(current, newType, targetIndex, false);
+      const lockedSeeded: SlideData = {
+        ...seeded,
+        manualLayoutLocked: true,
+        layoutRationale: `Manual ${newType.toUpperCase()} — locked by creator`,
+      };
       const newSlides = [...prev.slides];
-      newSlides[targetIndex] = sanitizeSlide(seeded, targetIndex, prev.slides.length);
+      newSlides[targetIndex] = sanitizeSlide(lockedSeeded, targetIndex, prev.slides.length);
 
       return {
         ...prev,
@@ -1273,16 +1278,167 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         sourceMeta: prev.sourceMeta ? { ...prev.sourceMeta } : undefined,
       };
     });
-    onShowToast(`Switched layout to ${newType.toUpperCase()}`);
+    onShowToast(`Switched layout to ${newType.toUpperCase()} (Manual lock enabled)`);
   };
 
-  // 1-Click Smart Match Visuals to Slide Copy
+  // Toggle Auto vs Manual Layout Mode on Active Slide
+  const handleToggleAutoLayout = () => {
+    const targetIndex = Math.min(currentSlideIndexRef.current, latestCarouselRef.current.slides.length - 1);
+    const current = latestCarouselRef.current.slides[targetIndex];
+    if (!current) return;
+
+    if (current.manualLayoutLocked) {
+      const deckSlides = latestCarouselRef.current.slides;
+      const ranked = rankSlideLayoutsForDeck(current, deckSlides, targetIndex, {
+        postFormat: activePostFormat,
+      });
+      const best = ranked[0];
+      let chosenLabel = current.type.toUpperCase();
+      applyDeckUpdate((prev) => {
+        const idx = Math.min(targetIndex, prev.slides.length - 1);
+        const curr = prev.slides[idx];
+        if (!curr) return prev;
+        const updatedSlide = best
+          ? materializeLayoutForSlide(curr, best, idx, prev.slides.length, {
+              rationalePrefix: 'Auto-picked',
+              lockLayout: false,
+              forceRefreshVisuals: true,
+            })
+          : { ...curr, manualLayoutLocked: false };
+        if (best) chosenLabel = best.label;
+        const newSlides = [...prev.slides];
+        newSlides[idx] = sanitizeSlide(updatedSlide, idx, prev.slides.length);
+        return {
+          ...prev,
+          slides: newSlides,
+          sourceMeta: prev.sourceMeta ? { ...prev.sourceMeta } : undefined,
+        };
+      });
+      lastAutoEvalKeyRef.current = `${targetIndex}|${current.enTitle || ''}|${current.arTitle || ''}|${current.enBody || ''}|${current.arBody || ''}|${activePostFormat}|false`;
+      onShowToast(`Auto layout enabled: ${chosenLabel}`);
+    } else {
+      applyDeckUpdate((prev) => {
+        const idx = Math.min(targetIndex, prev.slides.length - 1);
+        const curr = prev.slides[idx];
+        if (!curr) return prev;
+        const newSlides = [...prev.slides];
+        newSlides[idx] = {
+          ...curr,
+          manualLayoutLocked: true,
+          layoutRationale: curr.layoutRationale || `Manual ${curr.type.toUpperCase()} — locked by creator`,
+        };
+        return { ...prev, slides: newSlides };
+      });
+      lastAutoEvalKeyRef.current = `${targetIndex}|${current.enTitle || ''}|${current.arTitle || ''}|${current.enBody || ''}|${current.arBody || ''}|${activePostFormat}|true`;
+      onShowToast(`Manual layout locked for Slide ${targetIndex + 1}`);
+    }
+  };
+
+  // On-Demand AI Visual Director ("Re-imagine")
+  const handleReimagineVisual = async () => {
+    const deckSnapshot = latestCarouselRef.current;
+    const targetIndex = Math.min(currentSlideIndexRef.current, deckSnapshot.slides.length - 1);
+    const targetSlide = deckSnapshot.slides[targetIndex];
+    if (!targetSlide) return;
+
+    reimagineAbortRef.current?.abort();
+    const controller = new AbortController();
+    reimagineAbortRef.current = controller;
+    setIsReimaginingVisual(true);
+
+    const textKey = `${targetSlide.enTitle || ''}|${targetSlide.enBody || ''}|${targetSlide.arTitle || ''}`;
+    const existingEntry = triedLayoutsBySlideRef.current.get(targetIndex);
+    const currentCatalogId = getSlideCatalogId(targetSlide);
+    const prevTried = existingEntry && existingEntry.textKey === textKey ? existingEntry.triedIds : [];
+    const excludeLayouts = Array.from(new Set([...prevTried, currentCatalogId]));
+
+    try {
+      const result = await requestAiVisualDirection({
+        slide: targetSlide,
+        slides: deckSnapshot.slides,
+        slideIndex: targetIndex,
+        category: deckSnapshot.category,
+        postFormat: activePostFormat,
+        excludeLayouts,
+        signal: controller.signal,
+      });
+
+      if (!isMountedRef.current || controller.signal.aborted) return;
+
+      triedLayoutsBySlideRef.current.set(targetIndex, {
+        textKey,
+        triedIds: Array.from(new Set([...excludeLayouts, result.chosenLayoutId])),
+      });
+
+      lastAutoEvalKeyRef.current = `${targetIndex}|${targetSlide.enTitle || ''}|${targetSlide.arTitle || ''}|${targetSlide.enBody || ''}|${targetSlide.arBody || ''}|${activePostFormat}|false`;
+
+      applyDeckUpdate((prev) => {
+        if (targetIndex < 0 || targetIndex >= prev.slides.length) return prev;
+        const curr = prev.slides[targetIndex];
+        const merged: SlideData = {
+          ...curr,
+          ...result.slideUpdates,
+          enTitle: curr.enTitle,
+          arTitle: curr.arTitle,
+          enBody: curr.enBody,
+          arBody: curr.arBody,
+          manualLayoutLocked: false,
+          layoutRationale: result.rationale,
+        };
+        const newSlides = [...prev.slides];
+        newSlides[targetIndex] = sanitizeSlide(merged, targetIndex, prev.slides.length);
+        return {
+          ...prev,
+          slides: newSlides,
+          sourceMeta: prev.sourceMeta ? { ...prev.sourceMeta } : undefined,
+        };
+      });
+
+      const chosenDesc = findCatalogDescriptor(result.chosenLayoutId);
+      const engineTag = result.engine === 'ungrounded' ? 'AI Visual Director' : 'Smart Director';
+      onShowToast(`${engineTag}: switched to ${chosenDesc?.label || result.chosenLayoutId}`);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      onShowToast(err instanceof Error ? err.message : 'Could not re-imagine visual layout');
+    } finally {
+      if (reimagineAbortRef.current === controller) {
+        reimagineAbortRef.current = null;
+        if (isMountedRef.current) {
+          setIsReimaginingVisual(false);
+        }
+      }
+    }
+  };
+
+  // 1-Click Smart Match Visuals to Slide Copy (sets manualLayoutLocked: false when picking best fit)
   const handleSmartMatchVisuals = (useRecommendedArchetype = true) => {
     let matchedTypeLabel = '';
     applyDeckUpdate((prev) => {
       const targetIndex = Math.min(currentSlideIndex, prev.slides.length - 1);
       const current = prev.slides[targetIndex];
       if (!current) return prev;
+
+      if (useRecommendedArchetype) {
+        const ranked = rankSlideLayoutsForDeck(current, prev.slides, targetIndex, {
+          postFormat: resolveEffectivePostFormat(prev),
+        });
+        const best = ranked[0];
+        if (best) {
+          matchedTypeLabel = best.label;
+          const materialized = materializeLayoutForSlide(current, best, targetIndex, prev.slides.length, {
+            rationalePrefix: 'Auto-picked',
+            lockLayout: false,
+            forceRefreshVisuals: true,
+          });
+          const newSlides = [...prev.slides];
+          newSlides[targetIndex] = sanitizeSlide(materialized, targetIndex, prev.slides.length);
+          return {
+            ...prev,
+            slides: newSlides,
+            sourceMeta: prev.sourceMeta ? { ...prev.sourceMeta } : undefined,
+          };
+        }
+      }
 
       const recommendedArchetype = analyzeSlideTextForArchetype(current, targetIndex);
       const targetType: SlideType = useRecommendedArchetype
@@ -1292,7 +1448,11 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
       const seeded = seedSlideArchetypeData(current, targetType, targetIndex, true);
       const newSlides = [...prev.slides];
-      newSlides[targetIndex] = sanitizeSlide(seeded, targetIndex, prev.slides.length);
+      newSlides[targetIndex] = sanitizeSlide(
+        { ...seeded, manualLayoutLocked: useRecommendedArchetype ? false : current.manualLayoutLocked },
+        targetIndex,
+        prev.slides.length
+      );
 
       return {
         ...prev,
@@ -1302,12 +1462,12 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     });
     onShowToast(
       useRecommendedArchetype
-        ? `Smart Match: assigned ${matchedTypeLabel} & updated layout configuration`
-        : `Smart-matched ${matchedTypeLabel} visual elements to slide copy`
+        ? `Auto-picked ${matchedTypeLabel} for slide copy`
+        : `Updated ${matchedTypeLabel} visual elements from slide copy`
     );
   };
 
-  // 1-Click Schematic Variant Switcher from Stage Console
+  // 1-Click Schematic Variant Switcher from Stage Console (locks manually)
   const handleSelectDiagramVariant = (variant: DiagramVariant) => {
     applyDeckUpdate((prev) => {
       const targetIndex = Math.min(currentSlideIndex, prev.slides.length - 1);
@@ -1328,6 +1488,8 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           diagramNodes: refreshed.diagramNodes,
           diagramEdges: refreshed.diagramEdges,
           diagramFooter: refreshed.diagramFooter,
+          manualLayoutLocked: true,
+          layoutRationale: `Manual ${variant.toUpperCase()} — locked by creator`,
         },
         targetIndex,
         prev.slides.length
@@ -1399,7 +1561,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       const idx = Math.min(currentSlideIndex, prev.slides.length - 1);
       const current = prev.slides[idx];
       if (!current) return prev;
-      const clone = JSON.parse(JSON.stringify(current));
+      const clone = structuredClone(current);
       const newSlides = [...prev.slides];
       newSlides.splice(idx + 1, 0, clone);
       return { ...prev, slides: newSlides };
@@ -1446,29 +1608,95 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     onShowToast(`Moved slide to position #${targetIndex + 1}`);
   };
 
+  const handleApplyCoverStyle = (coverStyle: CoverStyle) => {
+    applyDeckUpdate((prev) => {
+      if (!prev.slides[0]) return prev;
+      const newSlides = [...prev.slides];
+      const nextCover = applyCoverStyleToSlide(
+        newSlides[0],
+        coverStyle,
+        0,
+        newSlides.length,
+        true,
+        newSlides
+      );
+      newSlides[0] = sanitizeSlide(nextCover, 0, newSlides.length);
+      return { ...prev, slides: newSlides };
+    });
+    onShowToast(`Slide 1 Cover style switched to ${coverStyle}`);
+  };
+
   const handleApplyHookVariant = (variant: HookVariant) => {
     applyDeckUpdate((prev) => {
       if (!prev.slides[0]) return prev;
       const newSlides = [...prev.slides];
-      const targetType = variant.coverArchetype || newSlides[0].type;
-      const updatedSlide0 = {
-        ...newSlides[0],
-        type: targetType,
+      const isMultiDeck =
+        newSlides.length > 1 && prev.postFormat !== 'single' && prev.postFormat !== 'meme';
+      const baseSlide0 = newSlides[0];
+      const resolvedStyle =
+        variant.coverStyle ||
+        baseSlide0.coverStyle ||
+        resolveSlide1CoverStyle(
+          {
+            ...baseSlide0,
+            enTitle: variant.enTitle,
+            arTitle: variant.arTitle,
+          },
+          newSlides
+        );
+      const derivedTeasers = isMultiDeck
+        ? deriveCoverTeaserForSlide(
+            {
+              ...baseSlide0,
+              enTitle: variant.enTitle,
+              arTitle: variant.arTitle,
+              coverTeaserEn: variant.coverTeaserEn || baseSlide0.coverTeaserEn,
+              coverTeaserAr: variant.coverTeaserAr || baseSlide0.coverTeaserAr,
+            },
+            newSlides
+          )
+        : undefined;
+
+      const updatedSlide0: SlideData = {
+        ...baseSlide0,
+        type: variant.coverArchetype || baseSlide0.type,
         enTitle: variant.enTitle,
         arTitle: variant.arTitle,
-        enBody: variant.enBody,
-        arBody: variant.arBody,
-        centerIcon: variant.centerIcon || newSlides[0].centerIcon,
-        hookKicker: variant.hookKicker || newSlides[0].hookKicker,
+        enBody: isMultiDeck ? '' : variant.enBody,
+        arBody: isMultiDeck ? '' : variant.arBody,
+        centerIcon: variant.centerIcon || baseSlide0.centerIcon,
+        hookKicker: variant.hookKicker || baseSlide0.hookKicker,
+        ...(isMultiDeck
+          ? {
+              storyRole: 'hook' as const,
+              compositionPreset: 'headline-first' as const,
+              coverStyle: resolvedStyle,
+              coverTeaserEn: variant.coverTeaserEn || derivedTeasers?.coverTeaserEn || '',
+              coverTeaserAr: variant.coverTeaserAr || derivedTeasers?.coverTeaserAr || '',
+              showSwipeCue: baseSlide0.showSwipeCue ?? true,
+            }
+          : {}),
       };
-      newSlides[0] = autoSyncSlideGraphicsFromCopy(
-        seedSlideArchetypeData(updatedSlide0, targetType),
-        0
-      );
+
+      const prepared = isMultiDeck
+        ? applyCoverStyleToSlide(
+            updatedSlide0,
+            resolvedStyle,
+            0,
+            newSlides.length,
+            Boolean(baseSlide0.manualLayoutLocked),
+            newSlides
+          )
+        : autoSyncSlideGraphicsFromCopy(
+            seedSlideArchetypeData(updatedSlide0, updatedSlide0.type),
+            0
+          );
+
+      newSlides[0] = sanitizeSlide(prepared, 0, newSlides.length);
       return { ...prev, slides: newSlides };
     });
     onShowToast(
-      `Applied "${variant.tag}" Hook${variant.coverArchetype ? ` (${variant.coverArchetype.toUpperCase()} Cover)` : ''} to Slide 1`
+      `Applied "${variant.tag}" Hook${variant.coverStyle ? ` (${variant.coverStyle})` : variant.coverArchetype ? ` (${variant.coverArchetype.toUpperCase()} Cover)` : ''} to Slide 1`
     );
   };
 
@@ -1682,11 +1910,15 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           targetIndex,
           prev.slides.length
         );
+        const nextCategory = result.category || prev.category;
         return {
           ...prev,
-          category: result.category || prev.category,
+          category: nextCategory,
           caption: result.caption || prev.caption,
-          hookVariants: result.hookVariants || prev.hookVariants,
+          hookVariants:
+            result.hookVariants && result.hookVariants.length > 0
+              ? result.hookVariants
+              : filterRelevantHookVariants(prev.hookVariants, newSlides, nextCategory),
           slides: newSlides,
         };
       });
@@ -1742,15 +1974,18 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
       if (effectiveMode === 'meme') {
         setPhotoCopySuggestion(null);
-        applyDeckUpdate((prev) => ({
-          ...prev,
-          category: result.category || prev.category,
-          caption: result.caption || prev.caption,
-          hookVariants:
-            result.hookVariants && result.hookVariants.length > 0
-              ? result.hookVariants
-              : prev.hookVariants,
-        }));
+        applyDeckUpdate((prev) => {
+          const nextCategory = result.category || prev.category;
+          return {
+            ...prev,
+            category: nextCategory,
+            caption: result.caption || prev.caption,
+            hookVariants:
+              result.hookVariants && result.hookVariants.length > 0
+                ? result.hookVariants
+                : filterRelevantHookVariants(prev.hookVariants, prev.slides, nextCategory),
+          };
+        });
         onShowToast('✨ Auto-generated category tag & social caption from your meme!');
       } else {
         // Normal Slide Graphic mode: keep existing slide text untouched and offer optional 1-click AI headline suggestion!
@@ -1842,12 +2077,25 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
     if (checkId === 'missingSource') {
       applyDeckUpdate((prev) => {
+        let urlHost = '';
+        if (prev.sourceMeta?.url) {
+          try {
+            urlHost = new URL(prev.sourceMeta.url).hostname.replace(/^www\./, '');
+          } catch {
+            urlHost = '';
+          }
+        }
+        const rawChannel = prev.channel?.trim() || '';
+        const cleanChannel = /Engineering Technical Report/i.test(rawChannel) ? '' : rawChannel;
         const inferredSource =
           prev.sourceMeta?.creator?.trim() ||
           prev.sourceMeta?.channel?.trim() ||
+          urlHost ||
           prev.sourceMeta?.title?.trim() ||
-          prev.channel?.trim() ||
-          'Engineering Technical Report';
+          cleanChannel ||
+          prev.brandUrl?.trim() ||
+          prev.brand?.trim() ||
+          'marrok.org';
         const nextSlides = prev.slides.map((s, idx) =>
           idx === prev.slides.length - 1
             ? {
@@ -1909,75 +2157,8 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     }
 
     if (checkId === 'contentQuality') {
-      applyDeckUpdate((prev) => {
-        const isMulti = prev.postFormat !== 'single' && prev.slides.length > 1;
-        const deckCorpus = [
-          promptInput,
-          prev.sourceMeta?.title || prev.category,
-          prev.caption,
-          ...prev.slides.map((s) => `${s.enTitle || ''} ${s.enBody || ''}`),
-        ]
-          .filter(Boolean)
-          .join(' ');
-        const stripTemplates = (value: string) =>
-          (value || '')
-            .replace(/\ba breakdown of technical mechanisms behind\b/gi, '')
-            .replace(/\btechnical breakdown of\b/gi, '')
-            .replace(/\bcore mechanisms?\b/gi, 'architecture paths')
-            .replace(/\boperational boundaries\b/gi, 'deployment limits')
-            .replace(/\b(?:real\s+)?production\s+trade-?offs?\b/gi, 'runtime limits')
-            .replace(/\barchitectural\s+trade-?offs?\b/gi, 'design limits')
-            .replace(/تحليل معماري لمنظومة/g, 'قراءة هندسية في')
-            .replace(/تحليل هندسي معمق/g, 'آلية العمل')
-            .replace(/مقايضات الإنتاج|تنازلات الإنتاج|آليات النظام الأساسية/g, 'حدود التشغيل الفعلية')
-            .replace(/\s*المعتمد\b/g, '')
-            .replace(/\s{2,}/g, ' ')
-            .trim();
-
-        const cleanedCaption = stripTemplates(prev.caption || '');
-
-        const cleanedSlides = prev.slides.map((slide, idx) => {
-          if (targetSlideIdx !== undefined && idx !== targetSlideIdx) return slide;
-          let updated: SlideData = {
-            ...slide,
-            enTitle: stripTemplates(slide.enTitle || ''),
-            arTitle: stripTemplates(slide.arTitle || ''),
-            enBody: isMulti && idx === 0 ? '' : stripTemplates(slide.enBody || ''),
-            arBody: isMulti && idx === 0 ? '' : stripTemplates(slide.arBody || ''),
-          };
-
-          if (updated.type === 'hub' || updated.diagramVariant === 'topology') {
-            const hubExtracted = extractSourceQuotedHubNodes(
-              `${updated.enTitle} ${updated.enBody} ${deckCorpus}`,
-              { titleText: updated.enTitle, category: prev.category }
-            );
-            updated = {
-              ...updated,
-              satLabels: hubExtracted.satLabels,
-              hubNodeReasons: hubExtracted.hubNodeReasons,
-            };
-          }
-
-          if (isMulti && idx === 0) {
-            updated = applyHookEngineToSlide1(updated, false, deckCorpus);
-            updated = {
-              ...updated,
-              storyRole: 'hook',
-              enBody: '',
-              arBody: '',
-            };
-          }
-
-          return sanitizeSlide(
-            autoSyncSlideGraphicsFromCopy(updated, idx),
-            idx,
-            prev.slides.length
-          );
-        });
-
-        return { ...prev, caption: cleanedCaption, slides: cleanedSlides };
-      });
-      onShowToast('Cleaned template phrasing & re-anchored Slide 1 + Hub nodes to source');
+      applyDeckUpdate((prev) => cleanCarouselContentQuality(prev, promptInput));
+      onShowToast('Auto-cleaned filler labels, template phrasing & source-anchored nodes');
       return;
     }
 
@@ -2098,6 +2279,68 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     () => resolveSmartSlideVisuals(currentSlide, currentSlideIndex, false),
     [currentSlide, currentSlideIndex]
   );
+
+  // Debounced live copy watcher: upgrades unlocked slide layouts automatically without flickering
+  const currentSlideEvalKey = currentSlide
+    ? `${currentSlideIndex}|${currentSlide.enTitle || ''}|${currentSlide.arTitle || ''}|${currentSlide.enBody || ''}|${currentSlide.arBody || ''}|${activePostFormat}|${Boolean(currentSlide.manualLayoutLocked)}`
+    : '';
+
+  useEffect(() => {
+    if (!currentSlideEvalKey) return;
+    if (!lastAutoEvalKeyRef.current) {
+      lastAutoEvalKeyRef.current = currentSlideEvalKey;
+      return;
+    }
+    const [prevIdx] = lastAutoEvalKeyRef.current.split('|');
+    const [nextIdx] = currentSlideEvalKey.split('|');
+    if (prevIdx !== nextIdx) {
+      lastAutoEvalKeyRef.current = currentSlideEvalKey;
+      return;
+    }
+    if (lastAutoEvalKeyRef.current === currentSlideEvalKey) {
+      return;
+    }
+
+    const slideSnapshot = latestCarouselRef.current.slides[currentSlideIndex];
+    if (
+      isGenerating ||
+      isReimaginingVisual ||
+      !slideSnapshot ||
+      slideSnapshot.manualLayoutLocked ||
+      slideSnapshot.type === 'cta' ||
+      slideSnapshot.standaloneMeme ||
+      slideSnapshot.imageUrl ||
+      slideSnapshot.videoUrl
+    ) {
+      lastAutoEvalKeyRef.current = currentSlideEvalKey;
+      return;
+    }
+
+    const targetIdx = currentSlideIndex;
+    const timer = window.setTimeout(() => {
+      const deckNow = latestCarouselRef.current;
+      const slideNow = deckNow.slides[targetIdx];
+      if (!slideNow || slideNow.manualLayoutLocked || isReimaginingVisual) return;
+
+      const formatNow = resolveEffectivePostFormat(deckNow);
+      const nextSlide = evaluateAutoLayoutForSlideEdit(slideNow, deckNow.slides, targetIdx, {
+        postFormat: formatNow,
+      });
+
+      lastAutoEvalKeyRef.current = `${targetIdx}|${slideNow.enTitle || ''}|${slideNow.arTitle || ''}|${slideNow.enBody || ''}|${slideNow.arBody || ''}|${formatNow}|${Boolean(slideNow.manualLayoutLocked)}`;
+
+      if (!nextSlide) return;
+
+      applyDeckUpdate((prev) => {
+        if (targetIdx < 0 || targetIdx >= prev.slides.length) return prev;
+        const newSlides = [...prev.slides];
+        newSlides[targetIdx] = sanitizeSlide(nextSlide, targetIdx, prev.slides.length);
+        return { ...prev, slides: newSlides };
+      });
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [currentSlideEvalKey, currentSlideIndex, isGenerating, isReimaginingVisual]);
 
   const handleUpdateSatLabel = (index: number, value: string) => {
     const currentLabels = [...smartCurrentVisuals.satLabels];
@@ -2336,7 +2579,8 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                     if (id === 'graphicCard' || id === 'attributionCard') {
                       setInspectorTab('visual');
                     } else if (id === 'headerBadge') {
-                      setInspectorTab('position');
+                      setInspectorTab('visual');
+                      setIsPositionSectionOpen(true);
                     } else {
                       setInspectorTab('copy');
                     }
@@ -2344,6 +2588,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   onUpdateLayoutOverride={handleUpdateElementLayoutOverride}
                   onDoubleClickElement={handleDoubleClickCanvasElement}
                   onUpdateSlideField={handleUpdateCurrentSlide}
+                  onDeleteElement={handleDeleteCanvasElement}
                   compactMobileStage={isSheetOpen && mobileSheetSnap === 'full'}
                   isComparingBefore={isComparingBefore}
                 />
@@ -2438,15 +2683,15 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   className="w-2 h-2 rounded-full shrink-0"
                   style={{ backgroundColor: theme.accent }}
                 />
-                <span className="text-[11px] font-mono tabular-nums font-bold uppercase tracking-wider text-slate-200 truncate">
-                  S{currentSlideIndex + 1} ·{' '}
+                <span className="text-[11px] font-medium text-slate-200 truncate">
+                  Slide {currentSlideIndex + 1} ·{' '}
                   {inspectorTab === 'copy'
-                    ? 'Slide Text'
-                    : inspectorTab === 'visual'
-                    ? `Design (${currentSlide.type})`
-                    : inspectorTab === 'position'
-                    ? 'Adjust'
-                    : 'P. OK'}
+                    ? activePostFormat === 'reel'
+                      ? 'Motion'
+                      : 'Content'
+                    : inspectorTab === 'visual' || inspectorTab === 'position'
+                    ? 'Visual'
+                    : 'Publish'}
                 </span>
               </div>
 
@@ -2526,83 +2771,73 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
             </div>
           </div>
 
-          {/* Unified Guided Wizard & Categorized Inspector Tab Bar (Desktop lg:+) */}
+          {/* Clean 3-Tab Inspector Bar (Desktop lg:+) */}
           <div
             data-testid="guided-wizard-bar"
-            aria-label="Guided Creation Steps"
-            className="hidden lg:flex items-center justify-between gap-2 px-3 pt-2.5 pb-2 border-b border-white/10 bg-black/40 shrink-0 overflow-x-auto no-scrollbar"
+            aria-label="Studio Inspector Tabs"
+            className="hidden lg:flex items-center justify-between gap-2 px-3.5 py-2 border-b border-white/[0.08] bg-black/25 shrink-0"
           >
-            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
-              {/* Step 1: Ingest (Opens Source / OCR Drawer) */}
-              <button
-                type="button"
-                onClick={() => setIsExpanded((prev) => !prev)}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                  isExpanded
-                    ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                    : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
-                }`}
-              >
-                <span className="text-[10px] font-mono tabular-nums text-slate-400">1.</span>
-                <span>Ingest</span>
-              </button>
-
+            <div className="flex items-center gap-1 shrink-0" role="tablist">
               {activePostFormat === 'reel' ? (
                 <>
                   <button
                     type="button"
+                    role="tab"
+                    aria-selected={!isExpanded && inspectorTab === 'copy'}
                     data-testid="tab-content"
                     onClick={() => {
                       setIsExpanded(false);
                       setInspectorTab('copy');
                     }}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
                       !isExpanded && inspectorTab === 'copy'
-                        ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                        : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                        ? 'bg-white/12 text-white'
+                        : 'text-slate-400 hover:text-white hover:bg-white/[0.04]'
                     }`}
                   >
-                    <Film className="w-3.5 h-3.5" style={!isExpanded && inspectorTab === 'copy' ? { color: theme.accent } : undefined} />
-                    <span>2. Content & Motion</span>
-                    <span className="text-[10px] font-mono uppercase text-slate-400">
-                      · {activeReelConfig.templateId}
-                    </span>
+                    <Film
+                      className="w-3.5 h-3.5"
+                      style={!isExpanded && inspectorTab === 'copy' ? { color: theme.accent } : undefined}
+                    />
+                    <span>Motion</span>
                   </button>
 
                   <button
                     type="button"
+                    role="tab"
+                    aria-selected={!isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption')}
                     data-testid="tab-review"
                     onClick={() => {
                       setIsExpanded(false);
                       setInspectorTab('review');
                     }}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
                       hasContentQualityBlocker
-                        ? 'bg-rose-500/20 text-rose-200 border border-rose-500/55 shadow-sm'
+                        ? 'bg-rose-500/20 text-rose-200 border border-rose-500/45'
                         : !isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption')
-                        ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                        : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                        ? 'bg-white/12 text-white'
+                        : 'text-slate-400 hover:text-white hover:bg-white/[0.04]'
                     }`}
                   >
                     <CheckCircle2
                       className={`w-3.5 h-3.5 ${hasContentQualityBlocker ? 'text-rose-400' : ''}`}
-                      style={!hasContentQualityBlocker && !isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption') ? { color: theme.accent } : undefined}
+                      style={
+                        !hasContentQualityBlocker && !isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption')
+                          ? { color: theme.accent }
+                          : undefined
+                      }
                     />
-                    <span>3. P. OK / Publish</span>
+                    <span>Publish</span>
                     {blockersCount > 0 ? (
                       <span
-                        className={`text-[11px] font-mono tabular-nums px-1.5 py-0.5 rounded-md ${
-                          hasContentQualityBlocker
-                            ? 'bg-rose-500/30 text-rose-200 border border-rose-400/50 font-bold'
-                            : 'text-amber-300'
+                        className={`text-[11px] font-mono tabular-nums ${
+                          hasContentQualityBlocker ? 'text-rose-200 font-bold' : 'text-amber-300'
                         }`}
                       >
                         · {blockersCount}
                       </span>
                     ) : (
-                      <span className="text-[11px] font-mono text-emerald-400">
-                        · Ready
-                      </span>
+                      <span className="text-[11px] font-mono text-emerald-400">· Ready</span>
                     )}
                   </button>
                 </>
@@ -2610,127 +2845,118 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 <>
                   <button
                     type="button"
+                    role="tab"
+                    aria-selected={!isExpanded && inspectorTab === 'copy'}
                     data-testid="tab-content"
                     onClick={() => {
                       setIsExpanded(false);
                       setInspectorTab('copy');
                     }}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
                       !isExpanded && inspectorTab === 'copy'
-                        ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                        : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                        ? 'bg-white/12 text-white'
+                        : 'text-slate-400 hover:text-white hover:bg-white/[0.04]'
                     }`}
                   >
-                    <Type className="w-3.5 h-3.5" style={!isExpanded && inspectorTab === 'copy' ? { color: theme.accent } : undefined} />
-                    <span>2. Slide Text</span>
+                    <Type
+                      className="w-3.5 h-3.5"
+                      style={!isExpanded && inspectorTab === 'copy' ? { color: theme.accent } : undefined}
+                    />
+                    <span>Content</span>
                   </button>
 
                   <button
                     type="button"
+                    role="tab"
+                    aria-selected={!isExpanded && (inspectorTab === 'visual' || inspectorTab === 'position')}
                     data-testid="tab-design"
                     onClick={() => {
                       setIsExpanded(false);
                       setInspectorTab('visual');
                     }}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                      !isExpanded && inspectorTab === 'visual'
-                        ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                        : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                      !isExpanded && (inspectorTab === 'visual' || inspectorTab === 'position')
+                        ? 'bg-white/12 text-white'
+                        : 'text-slate-400 hover:text-white hover:bg-white/[0.04]'
                     }`}
                   >
-                    <Layers className="w-3.5 h-3.5" style={!isExpanded && inspectorTab === 'visual' ? { color: theme.accent } : undefined} />
-                    <span>3. Design</span>
-                    <span className="text-[10px] font-mono uppercase text-slate-400">
-                      · {currentSlide.type}
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    data-testid="tab-adjust"
-                    onClick={() => {
-                      setIsExpanded(false);
-                      setInspectorTab('position');
-                    }}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                      !isExpanded && inspectorTab === 'position'
-                        ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                        : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
-                    }`}
-                  >
-                    <Sliders className="w-3.5 h-3.5" style={!isExpanded && inspectorTab === 'position' ? { color: theme.accent } : undefined} />
-                    <span>4. Adjust</span>
+                    <Layers
+                      className="w-3.5 h-3.5"
+                      style={
+                        !isExpanded && (inspectorTab === 'visual' || inspectorTab === 'position')
+                          ? { color: theme.accent }
+                          : undefined
+                      }
+                    />
+                    <span>Visual</span>
                     {activeOverridesCount > 0 && (
-                      <span className="text-[10px] font-mono tabular-nums text-cyan-300">
-                        · {activeOverridesCount}
-                      </span>
+                      <span
+                        className="w-1.5 h-1.5 rounded-full shrink-0"
+                        style={{ backgroundColor: theme.accent }}
+                        title={`${activeOverridesCount} position/scale adjustments active`}
+                      />
                     )}
                   </button>
 
                   <button
                     type="button"
+                    role="tab"
+                    aria-selected={!isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption')}
                     data-testid="tab-review"
                     onClick={() => {
                       setIsExpanded(false);
                       setInspectorTab('review');
                     }}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
                       hasContentQualityBlocker
-                        ? 'bg-rose-500/20 text-rose-200 border border-rose-500/55 shadow-sm'
+                        ? 'bg-rose-500/20 text-rose-200 border border-rose-500/45'
                         : !isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption')
-                        ? 'bg-white/15 text-white shadow-sm border border-white/15'
-                        : 'text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
+                        ? 'bg-white/12 text-white'
+                        : 'text-slate-400 hover:text-white hover:bg-white/[0.04]'
                     }`}
                   >
                     <CheckCircle2
                       className={`w-3.5 h-3.5 ${hasContentQualityBlocker ? 'text-rose-400' : ''}`}
-                      style={!hasContentQualityBlocker && !isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption') ? { color: theme.accent } : undefined}
+                      style={
+                        !hasContentQualityBlocker && !isExpanded && (inspectorTab === 'review' || inspectorTab === 'caption')
+                          ? { color: theme.accent }
+                          : undefined
+                      }
                     />
-                    <span>5. P. OK / Publish</span>
+                    <span>Publish</span>
                     {blockersCount > 0 ? (
                       <span
-                        className={`text-[11px] font-mono tabular-nums px-1.5 py-0.5 rounded-md ${
-                          hasContentQualityBlocker
-                            ? 'bg-rose-500/30 text-rose-200 border border-rose-400/50 font-bold'
-                            : 'text-amber-300'
+                        className={`text-[11px] font-mono tabular-nums ${
+                          hasContentQualityBlocker ? 'text-rose-200 font-bold' : 'text-amber-300'
                         }`}
                       >
                         · {blockersCount}
                       </span>
                     ) : (
-                      <span className="text-[11px] font-mono text-emerald-400">
-                        · Ready
-                      </span>
+                      <span className="text-[11px] font-mono text-emerald-400">· Ready</span>
                     )}
                   </button>
                 </>
               )}
             </div>
 
-            {/* Desktop Undo / Redo + Hold to Compare Before + Selected Layer Quick Link */}
+            {/* Quiet Contextual Right Utilities (No duplicate Undo/Redo) */}
             <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                data-testid="desktop-undo-btn"
-                disabled={historyPast.length === 0}
-                onClick={handleUndo}
-                className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/10 border border-white/10 text-[11px] font-mono text-slate-300 hover:text-white disabled:opacity-35 cursor-pointer"
-                title="Undo last edit"
-              >
-                <Undo2 className="w-3 h-3" />
-                <span>Undo</span>
-              </button>
-              <button
-                type="button"
-                data-testid="desktop-redo-btn"
-                disabled={historyFuture.length === 0}
-                onClick={handleRedo}
-                className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/10 border border-white/10 text-[11px] font-mono text-slate-300 hover:text-white disabled:opacity-35 cursor-pointer"
-                title="Redo edit"
-              >
-                <Redo2 className="w-3 h-3" />
-                <span>Redo</span>
-              </button>
+              {activePostFormat !== 'reel' && selectedElementId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInspectorTab('visual');
+                    setIsPositionSectionOpen(true);
+                  }}
+                  className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-[11px] font-medium text-cyan-300 hover:text-white transition-colors cursor-pointer whitespace-nowrap"
+                  title="Open Position & Scale controls for selected canvas element"
+                >
+                  <Sliders className="w-3 h-3" />
+                  <span>Adjust {selectedElementId}</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 data-testid="desktop-compare-before-btn"
@@ -2738,27 +2964,16 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 onPointerUp={() => setIsComparingBefore(false)}
                 onPointerLeave={() => setIsComparingBefore(false)}
                 onPointerCancel={() => setIsComparingBefore(false)}
-                className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-mono font-bold cursor-pointer select-none ${
+                className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors cursor-pointer select-none ${
                   isComparingBefore
-                    ? 'bg-amber-500/25 border-amber-400 text-amber-200'
-                    : 'bg-white/[0.04] hover:bg-white/10 border-white/10 text-slate-300 hover:text-white'
+                    ? 'bg-amber-500/20 text-amber-200'
+                    : 'text-slate-400 hover:text-white hover:bg-white/[0.06]'
                 }`}
-                title="Press and hold to compare with before edits"
+                title="Press and hold to compare with original before edits"
               >
-                <Eye className="w-3 h-3" />
-                <span>Compare Before</span>
+                <Eye className="w-3.5 h-3.5" />
+                <span>Compare</span>
               </button>
-
-              {activePostFormat !== 'reel' && selectedElementId && inspectorTab !== 'position' && (
-                <button
-                  type="button"
-                  onClick={() => setInspectorTab('position')}
-                  className="hidden sm:flex items-center gap-1.5 px-2 py-1 text-[11px] font-mono text-cyan-300 hover:text-white transition-colors cursor-pointer shrink-0"
-                  title="Adjust exact position and scale for selected element"
-                >
-                  <span>Layer · {selectedElementId}</span>
-                </button>
-              )}
             </div>
           </div>
 
@@ -2798,7 +3013,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 onDiversifyDeckVisuals={handleDiversifyDeckVisuals}
                 selectedElementId={selectedElementId}
                 onSelectElement={setSelectedElementId}
-                hookVariants={carousel.hookVariants}
+                hookVariants={visibleHookVariants}
                 onApplyHookVariant={handleApplyHookVariant}
                 onAutoFitSlide={handleAutoFitCurrentSlide}
                 onOpenPolishDrawer={onOpenPreviewDrawer ? () => onOpenPreviewDrawer('polish') : undefined}
@@ -2827,11 +3042,14 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 photoCopySuggestion={photoCopySuggestion}
                 onApplyPhotoCopySuggestion={handleApplyPhotoCopySuggestion}
                 onDismissPhotoCopySuggestion={() => setPhotoCopySuggestion(null)}
+                totalSlides={carousel.slides.length}
+                onApplyCoverStyle={handleApplyCoverStyle}
+                onOpenVisualTab={() => setInspectorTab('visual')}
               />
             )}
 
-            {/* TAB 2: DESIGN (8 Archetypes, Hub/Schematic Nodes, Code, Metrics & AI Image Studio) */}
-            {activePostFormat !== 'reel' && inspectorTab === 'visual' && (
+            {/* TAB 2: VISUAL (Active Visual Card, Grouped Visual Gallery, Essentials & Collapsible Position & Scale) */}
+            {activePostFormat !== 'reel' && (inspectorTab === 'visual' || inspectorTab === 'position') && (
               <div className="space-y-4">
                 <ArchetypeControls
                   currentSlide={currentSlide}
@@ -2843,6 +3061,9 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   onUpdateField={handleUpdateCurrentSlide}
                   onUpdateSlideFields={handleUpdateSlideFields}
                   onSmartMatchVisuals={handleSmartMatchVisuals}
+                  onToggleAutoLayout={handleToggleAutoLayout}
+                  onReimagineVisual={() => void handleReimagineVisual()}
+                  isReimaginingVisual={isReimaginingVisual}
                   onDiversifyDeckVisuals={handleDiversifyDeckVisuals}
                   onUpdateCarouselField={(field, value) =>
                     applyDeckUpdate((prev) => ({
@@ -2875,6 +3096,33 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   onGenerateFromPhoto={(file, dataUrl, mode) => {
                     void handleAnalyzePhotoCaption(dataUrl, file.type || 'image/jpeg', file.name, mode);
                   }}
+                  isPositionSectionOpen={isPositionSectionOpen || inspectorTab === 'position'}
+                  onTogglePositionSection={() => {
+                    if (inspectorTab === 'position') {
+                      setInspectorTab('visual');
+                      setIsPositionSectionOpen(false);
+                    } else {
+                      setIsPositionSectionOpen((prev) => !prev);
+                    }
+                  }}
+                  activeOverridesCount={activeOverridesCount}
+                  onApplyCoverStyle={handleApplyCoverStyle}
+                  positionSection={
+                    <ElementInspector
+                      slide={currentSlide}
+                      theme={theme}
+                      isOpen={true}
+                      headless={true}
+                      onToggleOpen={() => {}}
+                      selectedElementId={selectedElementId}
+                      onSelectElement={setSelectedElementId}
+                      onUpdateOverride={handleUpdateElementLayoutOverride}
+                      onResetOverrides={handleResetSlideLayoutOverrides}
+                      onApplyToAllSlides={handleApplyOverrideToAllSlides}
+                      onApplySlideLayoutToAllSlides={handleApplySlideLayoutToAllSlides}
+                      onUpdateSlideFields={handleUpdateSlideFields}
+                    />
+                  }
                 />
 
                 {imageStudioTargetIndex !== null && carousel.slides[imageStudioTargetIndex] && (
@@ -2908,24 +3156,6 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   </Suspense>
                 )}
               </div>
-            )}
-
-            {/* TAB 3: ADJUST (Direct Graphical Layer Offsets, Scale & Anti-Collision Nudge) */}
-            {activePostFormat !== 'reel' && inspectorTab === 'position' && (
-              <ElementInspector
-                slide={currentSlide}
-                theme={theme}
-                isOpen={true}
-                headless={true}
-                onToggleOpen={() => {}}
-                selectedElementId={selectedElementId}
-                onSelectElement={setSelectedElementId}
-                onUpdateOverride={handleUpdateElementLayoutOverride}
-                onResetOverrides={handleResetSlideLayoutOverrides}
-                onApplyToAllSlides={handleApplyOverrideToAllSlides}
-                onApplySlideLayoutToAllSlides={handleApplySlideLayoutToAllSlides}
-                onUpdateSlideFields={handleUpdateSlideFields}
-              />
             )}
 
             {/* TAB 4: PUBLISH (Unified Ready-to-Publish Checklist, Sources & Bilingual Social Caption) */}
@@ -3075,90 +3305,21 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                     <span className="shrink-0">{(carousel.caption || '').length} chars</span>
                   </div>
                 </div>
+
+                {onOpenPublishScheduleModal && (
+                  <div className="flex justify-end pt-1">
+                    <button
+                      type="button"
+                      onClick={() => onOpenPublishScheduleModal('single')}
+                      className="px-4 py-2 rounded-xl text-xs font-bold text-slate-950 transition-all cursor-pointer whitespace-nowrap shadow-sm hover:brightness-105"
+                      style={{ backgroundColor: theme.accent }}
+                    >
+                      Send to Publish Hub →
+                    </button>
+                  </div>
+                )}
               </div>
             )}
-          </div>
-
-          {/* Guided Step Progression Footer inside Inspector (Desktop lg:+) */}
-          <div className="hidden lg:flex px-4 py-2.5 bg-black/60 border-t border-white/10 items-center justify-between gap-3 shrink-0">
-            <div className="text-xs text-slate-400 flex items-center gap-1.5">
-              <span className="font-mono tabular-nums text-white font-semibold">
-                {inspectorTab === 'copy'
-                  ? 'Step 2 · Content'
-                  : inspectorTab === 'visual'
-                  ? 'Step 3 · Design'
-                  : inspectorTab === 'position'
-                  ? 'Step 4 · Adjust'
-                  : activePostFormat === 'reel'
-                  ? 'Step 3 · Publish'
-                  : 'Step 5 · Publish'}
-              </span>
-              <span aria-hidden="true" className="text-slate-600">·</span>
-              <span className="hidden sm:inline">
-                {inspectorTab === 'copy'
-                  ? 'Edit bilingual headlines, body & takeaways'
-                  : inspectorTab === 'visual'
-                  ? 'Choose slide archetype & diagram variant'
-                  : inspectorTab === 'position'
-                  ? 'Fine-tune element coordinates & scale'
-                  : 'Verify checks, copy caption & export bundle'}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              {inspectorTab !== 'copy' && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (inspectorTab === 'review' || inspectorTab === 'caption') {
-                      setInspectorTab(activePostFormat === 'reel' ? 'copy' : 'position');
-                    } else if (inspectorTab === 'position') {
-                      setInspectorTab('visual');
-                    } else {
-                      setInspectorTab('copy');
-                    }
-                  }}
-                  className="px-3 py-1.5 rounded-xl bg-white/[0.04] hover:bg-white/10 border border-white/10 text-xs font-semibold text-slate-300 hover:text-white transition-colors cursor-pointer whitespace-nowrap"
-                >
-                  ← Previous
-                </button>
-              )}
-
-              {inspectorTab !== 'review' && inspectorTab !== 'caption' ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (inspectorTab === 'copy') {
-                      setInspectorTab(activePostFormat === 'reel' ? 'review' : 'visual');
-                    } else if (inspectorTab === 'visual') {
-                      setInspectorTab('position');
-                    } else {
-                      setInspectorTab('review');
-                    }
-                  }}
-                  className="px-3.5 py-1.5 rounded-xl bg-white/[0.08] hover:bg-white/15 border border-white/15 text-xs font-bold text-white transition-colors cursor-pointer whitespace-nowrap"
-                >
-                  {inspectorTab === 'copy'
-                    ? activePostFormat === 'reel'
-                      ? 'Next: Publish →'
-                      : 'Next: Design →'
-                    : inspectorTab === 'visual'
-                    ? 'Next: Adjust →'
-                    : 'Next: Publish →'}
-                </button>
-              ) : (
-                onOpenPublishScheduleModal && (
-                  <button
-                    type="button"
-                    onClick={() => onOpenPublishScheduleModal('single')}
-                    className="px-3.5 py-1.5 rounded-xl text-xs font-extrabold text-slate-950 transition-all cursor-pointer whitespace-nowrap shadow-sm"
-                    style={{ backgroundColor: theme.accent }}
-                  >
-                    Send to Publish Hub →
-                  </button>
-                )
-              )}
-            </div>
           </div>
         </div>
       </div>

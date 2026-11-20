@@ -6,5 +6,8 @@ export * from './pacing.ts';
 export * from './enrichment.ts';
 export * from './universalExtractor.ts';
 export * from './singleSlideCondenser.ts';
+export * from './hookTier.ts';
+export * from './visualSpecBuilder.ts';
+export * from './autoLayoutEngine.ts';
 export * from './synthesizer.ts';
 

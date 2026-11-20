@@ -137,11 +137,11 @@ export const UnderCanvasDeliveryDock: React.FC<UnderCanvasDeliveryDockProps> = (
             1080×1920 · {activeReelConfig.duration.toFixed(1)}s
           </span>
         ) : (
-          <div className="flex items-center gap-1 bg-black/50 p-0.5 rounded-lg border border-white/15">
+          <div className="flex items-center gap-0.5 bg-black/40 p-0.5 rounded-lg border border-white/[0.08]">
             {(
               [
-                { id: 'tiktok-9:16', label: '9:16 TikTok' },
-                { id: 'ig-4:5', label: '4:5 IG' },
+                { id: 'tiktok-9:16', label: '9:16' },
+                { id: 'ig-4:5', label: '4:5' },
                 { id: 'ig-1:1', label: '1:1' },
               ] as const
             ).map((preset) => {
@@ -152,11 +152,12 @@ export const UnderCanvasDeliveryDock: React.FC<UnderCanvasDeliveryDockProps> = (
                   type="button"
                   data-testid={`dock-preset-${preset.id}`}
                   onClick={() => onSelectDimensionPreset(preset.id)}
-                  className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold transition-colors cursor-pointer whitespace-nowrap ${
+                  className={`px-2 py-0.5 rounded text-[11px] font-mono font-semibold transition-colors cursor-pointer whitespace-nowrap ${
                     active
-                      ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/40'
+                      ? 'bg-white/15 text-white'
                       : 'text-slate-400 hover:text-white'
                   }`}
+                  style={active ? { color: theme.accent } : undefined}
                 >
                   {preset.label}
                 </button>
@@ -169,43 +170,20 @@ export const UnderCanvasDeliveryDock: React.FC<UnderCanvasDeliveryDockProps> = (
       {/* Right: Consolidated Delivery Actions */}
       <div className="flex items-center gap-1.5 flex-wrap">
         {activePostFormat !== 'reel' && (
-          <>
-            <button
-              type="button"
-              onClick={() => {
-                downloadSingleSlidePng(
-                  carousel,
-                  currentSlideIndex,
-                  undefined,
-                  theme,
-                  carousel.visualOptions
-                );
-                onShowToast(
-                  `Downloaded Slide ${currentSlideIndex + 1} (${activeDimensionSpec.width}×${activeDimensionSpec.height}) JPG (Q92)`
-                );
-              }}
-              className="hidden sm:flex items-center gap-1 py-1.5 px-2.5 rounded-xl bg-white/[0.05] hover:bg-white/10 border border-white/10 text-xs font-semibold text-slate-200 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-              title={`Download Slide ${currentSlideIndex + 1} JPG Quality 92 (${activeDimensionSpec.label})`}
-            >
-              <Download className="w-3.5 h-3.5 text-cyan-400" />
-              <span>JPG</span>
-            </button>
-
-            <button
-              type="button"
-              data-testid="dock-copy-bilingual-caption-btn"
-              onClick={onCopyCaption}
-              className="hidden sm:flex items-center gap-1 py-1.5 px-2.5 rounded-xl bg-white/[0.05] hover:bg-white/10 border border-white/10 text-xs font-semibold text-slate-200 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-              title="Copy EN + AR caption and bilingual hashtags to clipboard"
-            >
-              {copiedType === 'caption' ? (
-                <Check className="w-3.5 h-3.5 text-emerald-400" />
-              ) : (
-                <Copy className="w-3.5 h-3.5 text-cyan-300" />
-              )}
-              <span>{copiedType === 'caption' ? 'Copied EN+AR' : 'Caption EN+AR'}</span>
-            </button>
-          </>
+          <button
+            type="button"
+            data-testid="dock-copy-bilingual-caption-btn"
+            onClick={onCopyCaption}
+            className="hidden sm:flex items-center gap-1.5 py-1.5 px-2.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/[0.08] text-xs font-medium text-slate-200 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            title="Copy EN + AR caption and bilingual hashtags to clipboard"
+          >
+            {copiedType === 'caption' ? (
+              <Check className="w-3.5 h-3.5 text-emerald-400" />
+            ) : (
+              <Copy className="w-3.5 h-3.5 text-slate-400" />
+            )}
+            <span>{copiedType === 'caption' ? 'Copied' : 'Caption'}</span>
+          </button>
         )}
 
         {activePostFormat !== 'reel' && isVideoSlide(currentSlide) && (
@@ -214,7 +192,7 @@ export const UnderCanvasDeliveryDock: React.FC<UnderCanvasDeliveryDockProps> = (
             data-testid="dock-export-video-mp4-btn"
             onClick={() => onExportSingleSlideVideoMp4(30)}
             disabled={isExportingVideo}
-            className="flex items-center gap-1.5 py-1.5 px-2.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-xs font-bold text-emerald-200 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
+            className="flex items-center gap-1.5 py-1.5 px-2.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-xs font-semibold text-emerald-200 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
             title="Export 1080×1440 MP4 video with white card frame, registration marks, and audio track"
           >
             {isExportingVideo ? (
@@ -438,16 +416,16 @@ export const UnderCanvasDeliveryDock: React.FC<UnderCanvasDeliveryDockProps> = (
                 `⚠️ ${blockersCount} item${blockersCount > 1 ? 's' : ''} need attention in Publish before exporting.`
               );
             }}
-            className={`py-1.5 px-3.5 rounded-xl font-bold text-xs uppercase tracking-wider border transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+            className={`py-1.5 px-3 rounded-xl font-semibold text-xs border transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
               hasContentQualityBlocker
                 ? 'bg-rose-500/20 border-rose-500/55 text-rose-200 hover:bg-rose-500/30'
                 : 'bg-amber-500/15 border-amber-500/40 text-amber-300 hover:bg-amber-500/25'
             }`}
             title="Click to view and resolve blockers in Publish checklist"
           >
-            <AlertTriangle className={`w-3.5 h-3.5 stroke-[2.5] ${hasContentQualityBlocker ? 'text-rose-400' : 'text-amber-400'}`} />
+            <AlertTriangle className={`w-3.5 h-3.5 stroke-[2.2] ${hasContentQualityBlocker ? 'text-rose-400' : 'text-amber-400'}`} />
             <span>
-              {blockersCount} Check{blockersCount > 1 ? 's' : ''} Needed →
+              {blockersCount} Check{blockersCount > 1 ? 's' : ''} Needed
             </span>
           </button>
         ) : activePostFormat === 'reel' ? (
@@ -455,11 +433,11 @@ export const UnderCanvasDeliveryDock: React.FC<UnderCanvasDeliveryDockProps> = (
             type="button"
             aria-label="Export Post Bundle"
             onClick={onOpenMotionExport}
-            className="py-1.5 px-3.5 rounded-xl font-bold text-xs uppercase tracking-wider text-slate-950 transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
+            className="py-1.5 px-3.5 rounded-xl font-bold text-xs text-slate-950 transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 hover:brightness-105"
             style={{ backgroundColor: theme.accent }}
             title="Render & download 1080×1920 Motion Reel video with procedural SFX"
           >
-            <Film className="w-3.5 h-3.5 stroke-[2.5]" />
+            <Film className="w-3.5 h-3.5 stroke-[2.2]" />
             <span>Export Video</span>
           </button>
         ) : (
@@ -468,7 +446,7 @@ export const UnderCanvasDeliveryDock: React.FC<UnderCanvasDeliveryDockProps> = (
             aria-label="Export Post Bundle"
             onClick={() => onExportZip('all')}
             disabled={isExportingZip}
-            className="py-1.5 px-3.5 rounded-xl font-bold text-xs uppercase tracking-wider text-slate-950 transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
+            className="py-1.5 px-3.5 rounded-xl font-bold text-xs text-slate-950 transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0 hover:brightness-105"
             style={{ backgroundColor: theme.accent }}
             title="Export 5-in-1 Ready to Share ZIP (TikTok 9:16, IG 4:5, IG 3:4, IG 1:1, IG Reels 9:16 + Ready-to-Paste Captions)"
           >
@@ -481,7 +459,7 @@ export const UnderCanvasDeliveryDock: React.FC<UnderCanvasDeliveryDockProps> = (
               </>
             ) : (
               <>
-                <Download className="w-3.5 h-3.5 stroke-[2.5]" />
+                <Download className="w-3.5 h-3.5 stroke-[2.2]" />
                 <span>Export ZIP</span>
               </>
             )}

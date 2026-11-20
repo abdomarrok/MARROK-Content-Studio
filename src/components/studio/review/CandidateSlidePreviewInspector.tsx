@@ -82,27 +82,6 @@ const ASPECT_RATIO_OPTIONS: Array<{
   { id: 'ig-1:1', label: '1:1 Square' },
 ];
 
-function getArchetypeBadgeStyle(type: SlideType): string {
-  switch (type) {
-    case 'hub':
-      return 'text-cyan-300 bg-cyan-500/15 border-cyan-400/30';
-    case 'subjectPair':
-      return 'text-cyan-300 bg-cyan-500/15 border-cyan-400/30';
-    case 'compare':
-      return 'text-amber-300 bg-amber-500/15 border-amber-400/30';
-    case 'code':
-      return 'text-purple-300 bg-purple-500/15 border-purple-400/30';
-    case 'metric':
-      return 'text-emerald-300 bg-emerald-500/15 border-emerald-400/30';
-    case 'number':
-      return 'text-blue-300 bg-blue-500/15 border-blue-400/30';
-    case 'cta':
-      return 'text-rose-300 bg-rose-500/15 border-rose-400/30';
-    default:
-      return 'text-slate-200 bg-white/10 border-white/15';
-  }
-}
-
 interface SlideThumbnailCanvasProps {
   deck: CarouselData;
   slideIndex: number;
@@ -193,15 +172,10 @@ export const CandidateSlideStoryboardStrip: React.FC<
   return (
     <div
       data-testid="candidate-storyboard-strip"
-      className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-1.5 pt-1"
+      className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-1.5 pt-1"
     >
       {slides.map((slide, sIdx) => {
         const isCurrent = isExpanded && activeSlideIdx === sIdx;
-        const badgeClass = getArchetypeBadgeStyle(slide.type);
-        const variantLabel =
-          slide.type === 'row' && slide.diagramVariant
-            ? ` · ${slide.diagramVariant}`
-            : '';
 
         return (
           <button
@@ -209,37 +183,36 @@ export const CandidateSlideStoryboardStrip: React.FC<
             type="button"
             data-testid={`storyboard-chip-s${sIdx + 1}`}
             onClick={() => onSelectSlide(sIdx)}
-            className={`text-left p-2 rounded-xl border transition-all cursor-pointer flex flex-col justify-between gap-1 min-w-0 ${
+            className={`text-left px-2.5 py-2 rounded-lg border transition-colors cursor-pointer flex flex-col justify-between gap-1 min-w-0 ${
               isCurrent
-                ? 'bg-cyan-500/15 border-cyan-400/60 shadow-xs'
-                : 'bg-black/40 hover:bg-white/[0.05] border-white/10 hover:border-white/25'
+                ? 'bg-cyan-500/12 border-cyan-400/55'
+                : 'bg-black/35 hover:bg-white/[0.04] border-white/10 hover:border-white/25'
             }`}
-            title={`Click to preview & edit Slide ${sIdx + 1}: ${slide.enTitle || ''}`}
+            title={`Inspect Slide ${sIdx + 1}: ${slide.enTitle || ''}`}
           >
-            <div className="flex items-center justify-between gap-1 w-full">
+            <div className="flex items-center justify-between gap-2 w-full">
               <span
-                className={`text-[10px] font-mono tabular-nums font-extrabold ${
-                  isCurrent ? 'text-cyan-200' : 'text-slate-300'
+                className={`text-[10px] font-mono tabular-nums font-bold ${
+                  isCurrent ? 'text-cyan-200' : 'text-slate-400'
                 }`}
               >
-                S{sIdx + 1}
+                Slide {sIdx + 1}
               </span>
-              <span
-                className={`px-1.5 py-0.2 rounded text-[9px] font-mono uppercase border truncate max-w-[90px] ${badgeClass}`}
-              >
-                {slide.type}
-                {variantLabel}
-              </span>
+              {slide.metricValue && sIdx === 0 && (
+                <span className="text-[10px] font-mono tabular-nums text-emerald-300 truncate max-w-[90px]">
+                  {slide.metricValue}
+                </span>
+              )}
             </div>
-            <div className="text-[11px] font-semibold text-slate-200 truncate w-full">
+            <div className="text-xs font-semibold text-slate-100 truncate w-full">
               {slide.enTitle || `Slide ${sIdx + 1}`}
             </div>
-            {slide.layoutRationale && (
+            {slide.arTitle && (
               <div
-                className="text-[10px] text-slate-400 truncate w-full"
-                title={slide.layoutRationale}
+                dir="rtl"
+                className="text-[11px] text-slate-400 font-arabic truncate w-full"
               >
-                {slide.layoutRationale}
+                {slide.arTitle}
               </div>
             )}
           </button>

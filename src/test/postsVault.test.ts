@@ -59,14 +59,14 @@ describe('Gemini Model Deprecation Upgrade & Vercel Persistence Vault', () => {
     expect(reason).not.toContain('{"error"');
   });
 
-  it('routes file fallback to os.tmpdir() on Vercel serverless to prevent EROFS errors', () => {
+  it('routes ephemeral fallback storage to os.tmpdir() to prevent EROFS errors without repo JSON files', () => {
     const vercelResolved = resolveStorageFilePath({ VERCEL: '1' });
     expect(vercelResolved.engine).toBe('vercel-tmp');
     expect(vercelResolved.filePath.startsWith(os.tmpdir())).toBe(true);
 
-    const localResolved = resolveStorageFilePath({});
-    expect(localResolved.engine).toBe('local-disk');
-    expect(localResolved.filePath).toContain(path.join('data', 'saved-posts.json'));
+    const defaultResolved = resolveStorageFilePath({});
+    expect(defaultResolved.engine).toBe('vercel-tmp');
+    expect(defaultResolved.filePath.startsWith(os.tmpdir())).toBe(true);
   });
 
   it('rejects invalid decks and validates & builds SavedPostRecord for valid posts (carousel and single-slide)', () => {
@@ -140,7 +140,7 @@ describe('Gemini Model Deprecation Upgrade & Vercel Persistence Vault', () => {
     expect(merged[0].postStatus).toBe('posted');
   });
 
-  it('hydrates bundled data/saved-posts.json on Vercel cold start when /tmp is empty', async () => {
+  it('returns an empty list [] on cold start when no posts have been saved yet (no phantom seed posts)', async () => {
     const tmpVercelFile = path.join(os.tmpdir(), 'marrok-saved-posts.json');
     try {
       await fs.unlink(tmpVercelFile);
@@ -150,8 +150,7 @@ describe('Gemini Model Deprecation Upgrade & Vercel Persistence Vault', () => {
 
     const coldStartLoaded = await loadStoredPosts({ VERCEL: '1' });
     expect(coldStartLoaded.storageEngine).toBe('vercel-tmp');
-    expect(coldStartLoaded.posts.length).toBeGreaterThanOrEqual(1);
-    expect(coldStartLoaded.posts.some((p) => p.title === 'Is Your Voice Still Yours?')).toBe(true);
+    expect(coldStartLoaded.posts).toEqual([]);
   });
 
   it('deduplicates repeated drafts with different UUIDs that share the same normalized title and format', () => {

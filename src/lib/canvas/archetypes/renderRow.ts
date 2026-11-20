@@ -1,4 +1,5 @@
 import { SlideData, ThemePalette, VisualSystemOptions } from '../../../types.ts';
+import { extractSlideText } from '../../text/slideText.ts';
 import {
   drawMultiNodeTopologyFlow,
   drawBlastRadiusIsolationGrid,
@@ -31,7 +32,7 @@ export async function drawRowSlide(
   options: VisualSystemOptions,
   _slideIndex: number = 1
 ): Promise<number> {
-  const slideText = `${slide.enTitle || ''} ${slide.enBody || ''} ${slide.arTitle || ''}`.toLowerCase();
+  const slideText = extractSlideText(slide, { lower: true });
   const variant = (slide.diagramVariant || '').toLowerCase();
 
   // 1. Explicit diagramVariant Routing

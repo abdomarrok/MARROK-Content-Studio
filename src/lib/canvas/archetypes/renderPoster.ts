@@ -22,9 +22,9 @@ export async function drawPosterSlide(
   videoElement?: HTMLVideoElement | null,
   spec?: CanvasDimensionSpec
 ): Promise<number> {
-  const topY = 200;
+  const topY = 240;
   const cardW = SAFE_CONTENT_WIDTH;
-  const cardH = 430;
+  const cardH = 490;
   const cardX = SAFE_MARGIN_LEFT;
 
   const hasVisualMedia = Boolean(slide.imageUrl || isVideoSlide(slide) || videoElement);
@@ -34,32 +34,40 @@ export async function drawPosterSlide(
     ? await drawImageSlide(ctx, slide, theme, options, brandName, videoElement, spec)
     : await drawRowSlide(ctx, slide, theme, options);
 
-  // If slide has a metricValue and is a schematic diagram (no image/video), draw a metric badge in the top right of the card
+  // If slide has a metricValue and is a schematic diagram (no image/video), draw a crisp measured metric pill
+  // tucked neatly in the top-right header bar of the schematic card so it never clips or overlaps the title
   if (slide.metricValue && !hasVisualMedia) {
     ctx.save();
-    const badgeW = 260;
-    const badgeH = 58;
-    const badgeX = cardX + cardW - badgeW - 16;
-    const badgeY = topY + 16;
+    const cleanMetric = slide.metricValue.trim().slice(0, 14);
+    const labelText = (slide.metricLabel || slide.metricDiff || '').trim().slice(0, 14);
+    ctx.font = '800 22px "JetBrains Mono", monospace';
+    const valWidth = typeof ctx.measureText === 'function' ? ctx.measureText(cleanMetric).width : cleanMetric.length * 14;
+    ctx.font = '600 13px "JetBrains Mono", sans-serif';
+    const lblWidth =
+      labelText && typeof ctx.measureText === 'function'
+        ? ctx.measureText(labelText).width
+        : labelText.length * 8;
+    const badgeW = Math.min(280, Math.max(124, Math.ceil(valWidth + (lblWidth > 0 ? lblWidth + 34 : 28))));
+    const badgeH = 38;
+    const badgeX = cardX + cardW - badgeW - 14;
+    const badgeY = topY + 10;
 
-    // Glowing metric backdrop
     ctx.shadowColor = theme.accent;
-    ctx.shadowBlur = 10;
-    drawRoundRect(ctx, badgeX, badgeY, badgeW, badgeH, 10, 'rgba(10, 15, 26, 0.88)', `${theme.accent}99`, 1.2);
+    ctx.shadowBlur = 8;
+    drawRoundRect(ctx, badgeX, badgeY, badgeW, badgeH, 8, 'rgba(10, 15, 26, 0.92)', `${theme.accent}AA`, 1.2);
     ctx.shadowBlur = 0;
 
-    // Value text
-    ctx.font = '800 26px "JetBrains Mono", monospace';
+    ctx.font = '800 22px "JetBrains Mono", monospace';
     ctx.fillStyle = theme.accent;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(slide.metricValue.slice(0, 8), badgeX + 16, badgeY + badgeH / 2);
+    ctx.fillText(cleanMetric, badgeX + 12, badgeY + badgeH / 2 + 1);
 
-    // Label / Diff text
-    const labelText = (slide.metricLabel || slide.metricDiff || 'BENCHMARK').slice(0, 16);
-    ctx.font = '600 15px "JetBrains Mono", sans-serif';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-    ctx.fillText(labelText, badgeX + 90, badgeY + badgeH / 2);
+    if (labelText && badgeW >= valWidth + lblWidth + 30) {
+      ctx.font = '600 13px "JetBrains Mono", sans-serif';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+      ctx.fillText(labelText, badgeX + 20 + valWidth, badgeY + badgeH / 2 + 1);
+    }
 
     ctx.restore();
   }
@@ -69,7 +77,7 @@ export async function drawPosterSlide(
 
 /**
  * Draws the 3 Bento Takeaway cards in the vertical space computed by layoutAwareness.
- * Meets mobile typography floor (>= 26px font) and safe-zone boundaries (x <= 945, y <= 1710).
+ * Enforces separate non-overlapping vertical bands for English (LTR top) and Arabic (RTL bottom).
  */
 export async function drawTakeawaysBlock(
   ctx: CanvasRenderingContext2D,
@@ -84,8 +92,8 @@ export async function drawTakeawaysBlock(
   const cardX = bounds.x !== undefined ? bounds.x : SAFE_MARGIN_LEFT + (bounds.dx || 0);
   const cardW = bounds.width !== undefined ? bounds.width : SAFE_CONTENT_WIDTH;
   const totalH = bounds.height;
-  const gap = count > 1 ? (totalH < 200 ? 10 : 12) : 0;
-  const rowH = Math.max(46, Math.floor((totalH - (count - 1) * gap) / count));
+  const gap = count > 1 ? (totalH < 240 ? 10 : 12) : 0;
+  const rowH = Math.max(66, Math.floor((totalH - (count - 1) * gap) / count));
 
   ctx.save();
 
@@ -101,14 +109,14 @@ export async function drawTakeawaysBlock(
       cardW,
       rowH,
       12,
-      'rgba(18, 24, 38, 0.72)',
-      `${theme.accent}40`,
+      'rgba(18, 24, 38, 0.78)',
+      `${theme.accent}45`,
       1.2
     );
 
     // Left Number / Icon Badge
-    const badgeSize = Math.min(44, Math.max(32, rowH - 16));
-    const badgeX = cardX + 14;
+    const badgeSize = Math.min(46, Math.max(34, rowH - 28));
+    const badgeX = cardX + 16;
     const badgeY = rowY + (rowH - badgeSize) / 2;
 
     drawRoundRect(
@@ -130,60 +138,78 @@ export async function drawTakeawaysBlock(
     if (iconImg) {
       safeDrawImage(ctx, iconImg, badgeX + 7, badgeY + 7, badgeSize - 14, badgeSize - 14);
     } else {
+      ctx.save();
       ctx.font = '800 18px "JetBrains Mono", monospace';
       ctx.fillStyle = theme.accent;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(`0${i + 1}`, badgeX + badgeSize / 2, badgeY + badgeSize / 2);
+      ctx.fillText(`0${i + 1}`, badgeX + badgeSize / 2, badgeY + badgeHOrSize(badgeSize) / 2);
+      ctx.restore();
     }
 
     // Text Zone between badge and right edge
-    const textStartX = badgeX + badgeSize + 16;
-    const textW = cardW - (badgeSize + 40);
-    const isCompactRow = rowH < 64;
+    const textStartX = badgeX + badgeSize + 18;
+    const textRightX = cardX + cardW - 18;
+    const textW = Math.max(180, textRightX - textStartX);
+    const isCompactRow = rowH < 82;
+    const hasArabic = Boolean((item.ar || '').trim());
 
-    // English Takeaway (Top line / Left)
-    const fitEn = fitTextInBox(
-      ctx,
-      item.en,
-      textW,
-      isCompactRow ? 22 : 26,
-      '"Plus Jakarta Sans", sans-serif',
-      '700',
-      { maxLines: 1, minFontSize: isCompactRow ? 18 : 24 }
-    );
+    // English Takeaway (Dedicated upper LTR band, or vertically centered if no Arabic)
+    if ((item.en || '').trim()) {
+      ctx.save();
+      const fitEn = fitTextInBox(
+        ctx,
+        item.en,
+        textW,
+        isCompactRow ? 21 : 25,
+        '"Plus Jakarta Sans", sans-serif',
+        '700',
+        { maxLines: 1, minFontSize: isCompactRow ? 17 : 22 }
+      );
 
-    ctx.font = `700 ${fitEn.fontSize}px "Plus Jakarta Sans", sans-serif`;
-    ctx.fillStyle = '#FFFFFF';
-    ctx.textAlign = 'left';
-    ctx.direction = 'ltr';
-    ctx.textBaseline = 'top';
-    ctx.fillText(fitEn.lines[0] || item.en, textStartX, rowY + (isCompactRow ? 7 : 12));
+      ctx.font = `700 ${fitEn.fontSize}px "Plus Jakarta Sans", sans-serif`;
+      ctx.fillStyle = '#FFFFFF';
+      ctx.textAlign = 'left';
+      ctx.direction = 'ltr';
+      ctx.textBaseline = 'middle';
+      const enCenterY = hasArabic ? rowY + Math.round(rowH * 0.3) : rowY + Math.round(rowH * 0.5);
+      ctx.fillText(fitEn.lines[0] || item.en, textStartX, enCenterY);
+      ctx.restore();
+    }
 
-    // Arabic Takeaway (Bottom line / RTL)
-    if (item.ar) {
+    // Arabic Takeaway (Dedicated lower RTL band, cleanly separated from English line above)
+    if (hasArabic) {
+      ctx.save();
       const fitAr = fitTextInBox(
         ctx,
         item.ar,
         textW,
-        isCompactRow ? 20 : 24,
+        isCompactRow ? 19 : 23,
         '"Cairo", sans-serif',
         '600',
-        { maxLines: 1, minFontSize: isCompactRow ? 17 : 22 }
+        { maxLines: 1, minFontSize: isCompactRow ? 16 : 21 }
       );
 
       ctx.font = `600 ${fitAr.fontSize}px "Cairo", sans-serif`;
       ctx.fillStyle = theme.accent;
       ctx.textAlign = 'right';
       ctx.direction = 'rtl';
-      ctx.textBaseline = 'bottom';
+      ctx.textBaseline = 'middle';
+      const arCenterY = (item.en || '').trim()
+        ? rowY + Math.round(rowH * 0.72)
+        : rowY + Math.round(rowH * 0.5);
       ctx.fillText(
         isolateEmbeddedLatinInArabic(fitAr.lines[0] || item.ar),
-        cardX + cardW - 16,
-        rowY + rowH - (isCompactRow ? 6 : 10)
+        textRightX,
+        arCenterY
       );
+      ctx.restore();
     }
   }
 
   ctx.restore();
+}
+
+function badgeHOrSize(size: number): number {
+  return size;
 }

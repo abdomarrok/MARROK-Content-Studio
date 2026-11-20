@@ -1,4 +1,3 @@
-import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_PALETTES, SlideData } from '../../types.ts';
@@ -31,7 +30,7 @@ describe('ArchetypeControls visual layout editors & smart content-aware defaults
     onOpenMediaSearch: vi.fn(),
   };
 
-  it('renders all 9 slide layout archetypes in the top switcher including Number', () => {
+  it('shows a calm Active Visual Card and opens the grouped Visual Gallery with all archetypes & Smart Visual modes', () => {
     const slide: SlideData = {
       type: 'number',
       stepNumber: '02',
@@ -42,15 +41,36 @@ describe('ArchetypeControls visual layout editors & smart content-aware defaults
 
     render(<ArchetypeControls {...baseProps} currentSlide={slide} currentSlideIndex={1} />);
 
-    expect(screen.getByRole('button', { name: /Poster/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Hub/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Mechanism/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Number/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Meme \/ Image|Diagram \/ AI/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Code Diff/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Metric/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Compare/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /CTA/i })).toBeInTheDocument();
+    // Essentials-first: Active Visual Card shows current layout without dumping 20+ buttons inline
+    expect(screen.getByTestId('active-visual-card')).toBeInTheDocument();
+    expect(screen.queryByTestId('visual-gallery-modal')).not.toBeInTheDocument();
+
+    // Open grouped Visual Gallery modal
+    fireEvent.click(screen.getByTestId('open-visual-gallery-btn'));
+    expect(screen.getByTestId('visual-gallery-modal')).toBeInTheDocument();
+
+    expect(screen.getByTestId('visual-gallery-item-poster')).toBeInTheDocument();
+    expect(screen.getByTestId('visual-gallery-item-hub')).toBeInTheDocument();
+    expect(screen.getByTestId('visual-gallery-item-row:topology')).toBeInTheDocument();
+    expect(screen.getByTestId('visual-gallery-item-number')).toBeInTheDocument();
+    expect(screen.getByTestId('visual-gallery-item-image')).toBeInTheDocument();
+    expect(screen.getByTestId('visual-gallery-item-code')).toBeInTheDocument();
+    expect(screen.getByTestId('visual-gallery-item-metric')).toBeInTheDocument();
+    expect(screen.getByTestId('visual-gallery-item-compare')).toBeInTheDocument();
+    expect(screen.getByTestId('visual-gallery-item-cta')).toBeInTheDocument();
+    expect(screen.getByTestId('visual-gallery-item-visual:bar-chart')).toBeInTheDocument();
+    expect(screen.getByTestId('visual-gallery-item-visual:svg')).toBeInTheDocument();
+
+    // Filter gallery via search input
+    fireEvent.change(screen.getByTestId('visual-gallery-search'), {
+      target: { value: 'timeline' },
+    });
+    expect(screen.getByTestId('visual-gallery-item-visual:timeline')).toBeInTheDocument();
+    expect(screen.queryByTestId('visual-gallery-item-code')).not.toBeInTheDocument();
+
+    // Close modal with Escape key
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByTestId('visual-gallery-modal')).not.toBeInTheDocument();
   });
 
   it('renders the dedicated Number slide visual editor and updates stepNumber and stepLabel', () => {
@@ -82,7 +102,7 @@ describe('ArchetypeControls visual layout editors & smart content-aware defaults
     expect(onUpdateField).toHaveBeenCalledWith('stepLabel', 'PHASE 02 // INGRESS');
   });
 
-  it('renders all 9 schematic variants in the Mechanism (row) editor', () => {
+  it('exposes all 9 schematic variants in the grouped Visual Gallery and collapses advanced diagram details by default', () => {
     const onUpdateField = vi.fn();
     const slide: SlideData = {
       type: 'row',
@@ -99,23 +119,30 @@ describe('ArchetypeControls visual layout editors & smart content-aware defaults
       />
     );
 
-    const expectedVariants = [
-      'Topology Flow',
-      'Layered Stack',
-      'Isolation Grid',
-      'Key Takeaway',
-      'Vector Scatter',
-      'HNSW Skip-Graph',
-      'IVF Clusters',
-      'Hot/Cold Split',
-      '3 Feature Cards',
+    // Progressive disclosure: connectors/footer collapsed until user expands Customize Details
+    expect(screen.queryByText('Connector 1 → 2')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('diagram-customize-details-toggle'));
+    expect(screen.getByText('Connector 1 → 2')).toBeInTheDocument();
+
+    // Open Visual Gallery and verify all 9 schematic variants are selectable in 1 click
+    fireEvent.click(screen.getByTestId('open-visual-gallery-btn'));
+    const expectedVariantIds = [
+      'row:topology',
+      'row:stack',
+      'row:isolation',
+      'row:takeaway',
+      'row:scatter',
+      'row:graph',
+      'row:clusters',
+      'row:split',
+      'row:features',
     ];
 
-    for (const label of expectedVariants) {
-      expect(screen.getByRole('button', { name: new RegExp(label, 'i') })).toBeInTheDocument();
+    for (const id of expectedVariantIds) {
+      expect(screen.getByTestId(`visual-gallery-item-${id}`)).toBeInTheDocument();
     }
 
-    fireEvent.click(screen.getByRole('button', { name: /Hot\/Cold Split/i }));
+    fireEvent.click(screen.getByTestId('visual-gallery-item-row:split'));
     expect(onUpdateField).toHaveBeenCalledWith('diagramVariant', 'split');
   });
 
@@ -189,9 +216,11 @@ describe('ArchetypeControls visual layout editors & smart content-aware defaults
     expect(resolved.diagramNodes[0].label).not.toBe('Client Ingress');
   });
 
-  it('triggers Smart Match button to assign the best archetype and update layout configuration', () => {
+  it('displays Auto status pill by default, locks on Manual gallery pick, and supports Auto toggle + Re-imagine', () => {
     const onSetSlideType = vi.fn();
     const onUpdateField = vi.fn();
+    const onUpdateSlideFields = vi.fn();
+    const onReimagineVisual = vi.fn();
     const compareSlide: SlideData = {
       type: 'row',
       enTitle: 'Hot RAM Cache vs Cold NVMe Tier.',
@@ -203,22 +232,67 @@ describe('ArchetypeControls visual layout editors & smart content-aware defaults
     expect(inferBestDiagramVariant(compareSlide)).toBe('split');
     expect(analyzeSlideTextForArchetype(compareSlide)).toBe('compare');
 
-    render(
+    const { rerender } = render(
       <ArchetypeControls
         {...baseProps}
         currentSlide={compareSlide}
         currentSlideIndex={2}
         onSetSlideType={onSetSlideType}
         onUpdateField={onUpdateField}
+        onUpdateSlideFields={onUpdateSlideFields}
+        onReimagineVisual={onReimagineVisual}
       />
     );
 
-    const smartMatchBtn = screen.getByRole('button', { name: /Smart Match/i });
-    fireEvent.click(smartMatchBtn);
+    // Smart Match button is retired; Auto pill + Re-imagine + Change Layout replace it
+    expect(screen.queryByRole('button', { name: /Smart Match/i })).not.toBeInTheDocument();
+    const autoBtn = screen.getByTestId('toggle-auto-layout-btn');
+    expect(autoBtn).toHaveTextContent('Auto');
+    expect(screen.getByTestId('active-visual-rationale')).toBeInTheDocument();
 
+    // Clicking Auto locks the layout manually
+    fireEvent.click(autoBtn);
+    expect(onUpdateField).toHaveBeenCalledWith('manualLayoutLocked', true);
+
+    // Clicking Re-imagine triggers AI Visual Director callback
+    fireEvent.click(screen.getByTestId('reimagine-visual-btn'));
+    expect(onReimagineVisual).toHaveBeenCalledTimes(1);
+
+    // Picking a visual manually from the gallery locks manualLayoutLocked=true
+    fireEvent.click(screen.getByTestId('open-visual-gallery-btn'));
+    fireEvent.click(screen.getByTestId('visual-gallery-item-compare'));
     expect(onSetSlideType).toHaveBeenCalledWith('compare');
-    expect(onUpdateField).toHaveBeenCalledWith('compareLeftTitle', 'HOT RAM CACHE');
-    expect(onUpdateField).toHaveBeenCalledWith('compareRightTitle', 'COLD NVME TIER');
+    expect(onUpdateField).toHaveBeenCalledWith('manualLayoutLocked', true);
+
+    // When slide is manually locked, toggling Manual back to Auto re-picks best-fit unlocked layout
+    const lockedSlide: SlideData = {
+      ...compareSlide,
+      manualLayoutLocked: true,
+    };
+    onUpdateSlideFields.mockClear();
+    rerender(
+      <ArchetypeControls
+        {...baseProps}
+        currentSlide={lockedSlide}
+        currentSlideIndex={2}
+        onSetSlideType={onSetSlideType}
+        onUpdateField={onUpdateField}
+        onUpdateSlideFields={onUpdateSlideFields}
+      />
+    );
+
+    const manualBtn = screen.getByTestId('toggle-auto-layout-btn');
+    expect(manualBtn).toHaveTextContent('Manual');
+    fireEvent.click(manualBtn);
+
+    expect(onUpdateSlideFields).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'compare',
+        manualLayoutLocked: false,
+        compareLeftTitle: 'HOT RAM CACHE',
+        compareRightTitle: 'COLD NVME TIER',
+      })
+    );
   });
 
   it('resolves all 5 social media export formats and folder names for multi-format ZIP bundles', () => {

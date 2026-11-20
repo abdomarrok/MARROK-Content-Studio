@@ -13,7 +13,6 @@ import {
 } from '../../api/db/postgres.ts';
 import {
   loadStoredPosts,
-  saveStoredPosts,
   upsertSingleStoredPost,
 } from '../../api/controllers/postsController.ts';
 import { DEFAULT_STARTER_DECK } from '../lib/presets.ts';

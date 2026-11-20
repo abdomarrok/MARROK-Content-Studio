@@ -1,6 +1,7 @@
 export * from './ViewportCanvas.tsx';
 export * from './SlideNavigator.tsx';
 export * from './InlineSlideEditor.tsx';
+export * from './CoverComposerPanel.tsx';
 export * from './ArchetypeControls.tsx';
 export * from './ExportBar.tsx';
 export * from './PublishChecklist.tsx';

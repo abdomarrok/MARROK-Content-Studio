@@ -1,6 +1,5 @@
-import type { DiagramNode, SlideData } from '../../types.ts';
+import type { SlideData } from '../../types.ts';
 import { autoFitTextToLimits, enforceHeadlineSpecRule, extractCleanSubject, isNonSemanticFileName } from '../text/headlines.ts';
-import { normalizePunctuation, stripMarkdown } from '../text/markdown.ts';
 import { sanitizeArabicSlideText } from '../text/arabicBiDi.ts';
 import { KNOWN_TECH_LOGOS } from '../techLogos.ts';
 import {
@@ -74,10 +73,6 @@ const ENTITY_STOP_WORDS = new Set([
 
 export function mentionsGoLanguage(text: string): boolean {
   return GO_LANGUAGE_PATTERN.test(text);
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function normalizeComparisonName(candidate: string): string {
@@ -2788,6 +2783,23 @@ function buildGeneralSystemsStory(rawSource: string, opts: StoryOptions): SlideD
         hookClaimCard: claimCard,
       } as SlideData);
 
+  const clauseSplits = rawSource
+    .split(/(?:,\s+(?:using|removing|to\s+store|to\s+eliminate|instead\s+of|without|causing|cutting|reducing)\s+|;\s+)/i)
+    .map((c) => c.trim())
+    .filter((c) => c.length >= 16);
+  const slide2SourceClause =
+    sentences[1] ||
+    clauseSplits[1] ||
+    (clauseSplits[0] && clauseSplits[0] !== firstSentence ? clauseSplits[0] : '') ||
+    firstSentence;
+  const slide2TitleRaw =
+    sentences[1]
+      ? sentences[1].split(',')[0].trim()
+      : clauseSplits[1] || `${quoted.satLabels[0] || cleanSubject} contention under load`;
+  const slide2BodyRaw =
+    sentences[1] ||
+    rawSource;
+
   const candidates: SlideData[] = [
     {
       type: coverHookType,
@@ -2811,7 +2823,7 @@ function buildGeneralSystemsStory(rawSource: string, opts: StoryOptions): SlideD
             hookClaimCard: claimCard,
           }),
       enTitle: enHook,
-      arTitle: `ما الذي يغيره ${arSubject} فعلياً؟`,
+      arTitle: `ما الذي يفرضه ${arSubject} عند التنفيذ؟`,
       enBody: '',
       arBody: '',
     },
@@ -2819,15 +2831,13 @@ function buildGeneralSystemsStory(rawSource: string, opts: StoryOptions): SlideD
       type: 'compare',
       storyRole: 'problem',
       compareLeftTitle: `WITHOUT ${quoted.satLabels[0] || 'STRUCTURE'}`,
-      compareLeftBody: `• Manual coordination across ${term1}\n• Unclear handoffs into ${term2}\n• Slow recovery when load shifts`,
+      compareLeftBody: `• Unbounded load across ${term1}\n• Contention handing off to ${term2}\n• Slow recovery when traffic spikes`,
       compareRightTitle: `WITH ${quoted.satLabels[1] || 'DESIGN'}`,
-      compareRightBody: `• Explicit ${term1} ownership\n• Focused ${term2} execution\n• Clear feedback across ${term3}`,
-      enTitle: enforceHeadlineSpecRule(`Where ${term1} breaks without clarity`, { isHook: false }),
-      arTitle: `لماذا يتعثر ${arSubject} عند غياب التصميم الواضح؟`,
-      enBody: sentences[1]
-        ? autoFitTextToLimits(sentences[1], 135)
-        : `Hidden friction around ${term1} quietly slows teams down long before metrics show an outage.`,
-      arBody: `الاحتكاك الصامت حول ${arSubject} يبطئ العمل يومياً قبل أن يظهر أي عطل كبير للمستخدمين.`,
+      compareRightBody: `• Explicit ${term1} boundaries\n• Direct ${term2} execution\n• Predictable ${term3} behavior`,
+      enTitle: enforceHeadlineSpecRule(slide2TitleRaw, { isHook: false, fallbackSubject: cleanSubject }),
+      arTitle: `أين يواجه ${arSubject} عنق الزجاجة الفعلي؟`,
+      enBody: autoFitTextToLimits(slide2SourceClause || slide2BodyRaw, 135),
+      arBody: `تكشف آلية ${arSubject} في ${term1} أن الاختناق يبدأ عند تداخل المهام مع ${term2}.`,
     },
     {
       type: 'row',

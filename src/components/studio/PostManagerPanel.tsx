@@ -14,26 +14,23 @@ import {
   Check,
   X,
   Plus,
-  Layers,
   List,
   CalendarDays,
-  Sparkles,
-  Loader2,
   Send,
   ShieldAlert,
   ChevronDown,
   ChevronUp,
+  ExternalLink,
+  Eye,
+  Quote,
 } from 'lucide-react';
 import type {
+  CarouselData,
+  MetricEvidenceItem,
   PublishTargetPlatform,
   SavedPostRecord,
   ThemePalette,
 } from '../../types.ts';
-import {
-  diversifySavedPostVisuals,
-  isBoilerplateOrLowSignalDeck,
-  resynthesizeSavedPostWithDeepAi,
-} from '../../lib/gather/gatherClient.ts';
 import {
   buildLocalScheduledIso,
   cleanupPublishedCloudinaryMedia,
@@ -50,8 +47,20 @@ import {
   WeeklyCadencePreset,
 } from '../../lib/publish/publishClient.ts';
 import { evaluateGathererCandidateQuality } from '../../lib/qaChecks.ts';
-import { explainArchetypeChoice } from '../../lib/synthesis/smartVisualDefaults.ts';
 import { saveValidPost, syncLocalVaultAfterManage } from '../../lib/storage/postsVaultClient.ts';
+import { suggestCalendarSlotForCard } from '../../lib/gather/inboxEngine.ts';
+import {
+  computeDraftReadiness,
+  DraftClaimEvidenceItem,
+  extractDraftClaimEvidence,
+  extractDraftSourceDisplay,
+  setAllDraftClaimsVerified,
+  toggleDraftClaimEvidence,
+} from '../../lib/publish/draftReviewEngine.ts';
+import {
+  DraftBilingualSlideStrip,
+  DraftSlideQuickInspector,
+} from './review/DraftSlideQuickInspector.tsx';
 
 interface PostManagerPanelProps {
   mode?: 'draft' | 'schedule' | 'all';
@@ -107,6 +116,7 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
   mode = 'all',
   savedPosts,
   activeCarouselId,
+  theme,
   onEditInStudio,
   onPublishPostNow,
   publishingPostId,
@@ -119,6 +129,9 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
   const [statusTab, setStatusTab] = useState<StatusFilterTab>(() =>
     mode === 'draft' ? 'draft' : mode === 'schedule' ? 'scheduled' : 'all'
   );
+  const [draftReadinessFilter, setDraftReadinessFilter] = useState<
+    'all' | 'needs_review' | 'ready'
+  >('all');
   const [viewMode, setViewMode] = useState<ManagerViewMode>('list');
   const [searchQuery, setSearchQuery] = useState('');
   const [calendarDaysCount, setCalendarDaysCount] = useState<7 | 14>(7);
@@ -135,18 +148,39 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
     }
   }, [mode]);
 
-  // Inline angle draft overrides + optimistic review checklist overrides + storyboard expand
+  // Inline Draft review state (angle drafts, optimistic checklist & per-claim verification, inline targets, live slide inspector)
   const [angleDraftById, setAngleDraftById] = useState<Record<string, string>>({});
+  const [angleSaveStateById, setAngleSaveStateById] = useState<
+    Record<string, 'saving' | 'saved'>
+  >({});
   const [reviewOverrideById, setReviewOverrideById] = useState<
     Record<string, { userReviewed?: boolean; verifiedNumbers?: boolean }>
   >({});
-  const [expandedStoryboardIds, setExpandedStoryboardIds] = useState<Record<string, boolean>>({});
+  const [claimsOverrideById, setClaimsOverrideById] = useState<
+    Record<string, DraftClaimEvidenceItem[]>
+  >({});
+  const [targetsOverrideById, setTargetsOverrideById] = useState<
+    Record<string, PublishTargetPlatform[]>
+  >({});
+  const [inspectorByPostId, setInspectorByPostId] = useState<
+    Record<string, { open: boolean; slideIdx: number }>
+  >({});
+  const [savingDeckPostId, setSavingDeckPostId] = useState<string | null>(null);
 
   const effectiveHumanReviewed = (post: SavedPostRecord): boolean =>
     reviewOverrideById[post.id]?.userReviewed ?? isPostHumanReviewed(post);
 
   const effectiveNumbersVerified = (post: SavedPostRecord): boolean =>
     reviewOverrideById[post.id]?.verifiedNumbers ?? isPostNumbersVerified(post);
+
+  const effectiveClaimsForPost = (post: SavedPostRecord): DraftClaimEvidenceItem[] =>
+    claimsOverrideById[post.id] ?? extractDraftClaimEvidence(post);
+
+  const effectiveTargetsForPost = (post: SavedPostRecord): PublishTargetPlatform[] =>
+    targetsOverrideById[post.id] ??
+    (post.publishTargets && post.publishTargets.length > 0
+      ? post.publishTargets
+      : ALL_PLATFORMS);
 
   // Per-post inline schedule editor state
   const [editingSchedulePostId, setEditingSchedulePostId] = useState<string | null>(null);
@@ -166,13 +200,12 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
   const [isBulkBusy, setIsBulkBusy] = useState(false);
 
   const [busyPostId, setBusyPostId] = useState<string | null>(null);
-  const [resynthesizingPostId, setResynthesizingPostId] = useState<string | null>(null);
-  const [isUpgradingAllBoilerplate, setIsUpgradingAllBoilerplate] = useState(false);
 
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
   useEffect(() => {
     const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       const nextNow = Date.now();
       setNowMs(nextNow);
       const hasNewlyDuePost = savedPosts.some((p) => {
@@ -240,9 +273,15 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
     [postsWithStage, reviewOverrideById]
   );
 
-  const boilerplatePosts = useMemo(
-    () => savedPosts.filter((p) => isBoilerplateOrLowSignalDeck(p.deck)),
-    [savedPosts]
+  const draftNeedsReviewCount = useMemo(
+    () =>
+      postsWithStage.filter(({ post, stage }) => {
+        if (stage !== 'draft' && stage !== 'attention') return false;
+        const hr = reviewOverrideById[post.id]?.userReviewed ?? isPostHumanReviewed(post);
+        const nv = reviewOverrideById[post.id]?.verifiedNumbers ?? isPostNumbersVerified(post);
+        return !(hr && nv);
+      }).length,
+    [postsWithStage, reviewOverrideById]
   );
 
   const calendarDays = useMemo(() => {
@@ -309,7 +348,11 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
       .filter(({ post, stage }) => {
         if (mode === 'draft') {
           if (stage !== 'draft' && stage !== 'attention') return false;
-          if (statusTab === 'attention' && stage !== 'attention') return false;
+          const isReady =
+            (reviewOverrideById[post.id]?.userReviewed ?? isPostHumanReviewed(post)) &&
+            (reviewOverrideById[post.id]?.verifiedNumbers ?? isPostNumbersVerified(post));
+          if (draftReadinessFilter === 'ready' && !isReady) return false;
+          if (draftReadinessFilter === 'needs_review' && isReady) return false;
         } else if (mode === 'schedule') {
           if (statusTab === 'scheduled' && stage !== 'scheduled') return false;
           if (statusTab === 'posted' && stage !== 'posted') return false;
@@ -334,11 +377,16 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
         }
         return Date.parse(b.post.updatedAt) - Date.parse(a.post.updatedAt);
       });
-  }, [postsWithStage, mode, statusTab, searchQuery]);
+  }, [postsWithStage, mode, statusTab, draftReadinessFilter, reviewOverrideById, searchQuery]);
 
   const handleToggleReviewChecklist = async (
     post: SavedPostRecord,
-    patch: { userReviewed?: boolean; verifiedNumbers?: boolean; marrokAngle?: string }
+    patch: {
+      userReviewed?: boolean;
+      verifiedNumbers?: boolean;
+      marrokAngle?: string;
+      metricEvidence?: MetricEvidenceItem[];
+    }
   ) => {
     const nextReviewed =
       patch.userReviewed !== undefined ? patch.userReviewed : effectiveHumanReviewed(post);
@@ -351,6 +399,16 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
         ? patch.marrokAngle
         : angleDraftById[post.id] ?? post.deck?.sourceMeta?.marrokAngle ?? '';
 
+    let nextMetricEvidence = patch.metricEvidence ?? post.deck?.sourceMeta?.metricEvidence;
+    if (patch.verifiedNumbers !== undefined && !patch.metricEvidence) {
+      const currentClaims = effectiveClaimsForPost(post);
+      if (currentClaims.length > 0) {
+        const synced = setAllDraftClaimsVerified(currentClaims, patch.verifiedNumbers);
+        setClaimsOverrideById((prev) => ({ ...prev, [post.id]: synced.nextClaims }));
+        nextMetricEvidence = synced.nextMetricEvidence;
+      }
+    }
+
     setReviewOverrideById((prev) => ({
       ...prev,
       [post.id]: {
@@ -358,6 +416,10 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
         verifiedNumbers: nextVerified,
       },
     }));
+
+    if (patch.marrokAngle !== undefined) {
+      setAngleSaveStateById((prev) => ({ ...prev, [post.id]: 'saving' }));
+    }
 
     const updatedPost: SavedPostRecord = {
       ...post,
@@ -369,6 +431,7 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
         sourceMeta: {
           ...post.deck?.sourceMeta,
           marrokAngle: nextAngle,
+          ...(nextMetricEvidence ? { metricEvidence: nextMetricEvidence } : {}),
           userReviewed: nextReviewed,
           humanApproved: nextReviewed,
           verifiedNumbers: nextVerified,
@@ -390,6 +453,9 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
         verifiedNumbers: nextVerified,
       });
       onRefreshVault();
+      if (patch.marrokAngle !== undefined) {
+        setAngleSaveStateById((prev) => ({ ...prev, [post.id]: 'saved' }));
+      }
       onShowToast(
         nextReviewed && nextVerified
           ? `✓ Verified & ready to publish or schedule: "${post.title.slice(0, 28)}"`
@@ -404,25 +470,116 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
     }
   };
 
-  const openScheduleEditor = (post: SavedPostRecord, defaultDateOverride?: string) => {
+  const handleToggleSingleClaim = async (
+    post: SavedPostRecord,
+    claimId: string,
+    nextVerified: boolean
+  ) => {
+    const currentClaims = effectiveClaimsForPost(post);
+    const { nextClaims, allClaimsVerified, nextMetricEvidence } = toggleDraftClaimEvidence(
+      currentClaims,
+      claimId,
+      nextVerified
+    );
+    setClaimsOverrideById((prev) => ({ ...prev, [post.id]: nextClaims }));
+    await handleToggleReviewChecklist(post, {
+      verifiedNumbers: allClaimsVerified,
+      metricEvidence: nextMetricEvidence,
+    });
+  };
+
+  const handleSaveDraftDeckEdits = async (
+    post: SavedPostRecord,
+    updatedDeck: CarouselData
+  ) => {
+    const nextTitle = updatedDeck.slides?.[0]?.enTitle?.trim() || post.title;
+    const humanReviewed = effectiveHumanReviewed(post);
+    const numbersVerified = effectiveNumbersVerified(post);
+    const updatedPost: SavedPostRecord = {
+      ...post,
+      title: nextTitle,
+      slideCount: updatedDeck.slides.length,
+      updatedAt: new Date().toISOString(),
+      deck: {
+        ...updatedDeck,
+        id: updatedDeck.id || post.id,
+        sourceMeta: {
+          ...updatedDeck.sourceMeta,
+          userReviewed: humanReviewed,
+          humanApproved: humanReviewed,
+          verifiedNumbers: numbersVerified,
+        },
+      },
+    };
+
+    // Re-extract claims from updated slide copy while preserving already-verified claim states
+    setClaimsOverrideById((prev) => {
+      const next = { ...prev };
+      delete next[post.id];
+      return next;
+    });
+
+    await syncLocalVaultAfterManage({ updatedPost });
+    onRefreshVault();
+
+    setSavingDeckPostId(post.id);
+    try {
+      await saveValidPost({
+        deck: updatedPost.deck,
+        postStatus: post.postStatus === 'posted' ? 'posted' : 'validated',
+        title: nextTitle,
+        allowOverride: true,
+        userReviewed: humanReviewed,
+        verifiedNumbers: numbersVerified,
+      });
+      onRefreshVault();
+      onShowToast(`✓ Saved slide edits for "${nextTitle.slice(0, 32)}"`);
+    } catch (err) {
+      onShowToast(
+        `⚠️ ${err instanceof Error ? err.message : 'Failed to save slide edits'}`
+      );
+    } finally {
+      setSavingDeckPostId(null);
+    }
+  };
+
+  const handleToggleDraftChannel = (
+    post: SavedPostRecord,
+    platform: PublishTargetPlatform
+  ) => {
+    const current = effectiveTargetsForPost(post);
+    const next = current.includes(platform)
+      ? current.length > 1
+        ? current.filter((p) => p !== platform)
+        : current
+      : [...current, platform];
+    setTargetsOverrideById((prev) => ({ ...prev, [post.id]: next }));
+    if (editingSchedulePostId === post.id) {
+      setEditTargets(next);
+    }
+  };
+
+  const openScheduleEditor = (
+    post: SavedPostRecord,
+    defaultDateOverride?: string,
+    defaultTimeOverride?: string
+  ) => {
     setEditingSchedulePostId(post.id);
     setConfirmDeletePostId(null);
     if (defaultDateOverride) {
       setEditDateStr(defaultDateOverride);
-      setEditTimeStr('18:00');
+      setEditTimeStr(defaultTimeOverride || '18:00');
     } else if (post.scheduledFor) {
       const parts = formatLocalDateTimeParts(post.scheduledFor);
       setEditDateStr(parts.datePart);
       setEditTimeStr(parts.timeShort);
     } else {
-      setEditDateStr(getLocalTodayDateStr());
-      setEditTimeStr(getDefaultUpcomingTimeStr());
+      const suggested = suggestCalendarSlotForCard(savedPosts, 0);
+      const suggestedParts = formatLocalDateTimeParts(suggested.iso);
+      setEditDateStr(suggestedParts.datePart || getLocalTodayDateStr());
+      setEditTimeStr(suggested.timeLabel || getDefaultUpcomingTimeStr());
     }
-    setEditTargets(
-      post.publishTargets && post.publishTargets.length > 0
-        ? post.publishTargets
-        : ALL_PLATFORMS
-    );
+    setEditTargets(effectiveTargetsForPost(post));
   };
 
   const toggleEditTarget = (platform: PublishTargetPlatform) => {
@@ -577,68 +734,6 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
     }
   };
 
-  const handleResynthesizePost = async (post: SavedPostRecord) => {
-    setBusyPostId(post.id);
-    setResynthesizingPostId(post.id);
-    try {
-      const upgraded = await resynthesizeSavedPostWithDeepAi(post);
-      onRefreshVault();
-      onRefreshStatus();
-      onShowToast(
-        `✨ Deep AI Re-Synthesized "${upgraded.title.slice(0, 32)}" with diverse graphics`
-      );
-    } catch (err) {
-      onShowToast(
-        `⚠️ ${err instanceof Error ? err.message : 'Failed to re-synthesize post'}`
-      );
-    } finally {
-      setBusyPostId(null);
-      setResynthesizingPostId(null);
-    }
-  };
-
-  const handleDiversifyPostVisuals = async (post: SavedPostRecord) => {
-    setBusyPostId(post.id);
-    try {
-      await diversifySavedPostVisuals(post);
-      onRefreshVault();
-      onShowToast(
-        `✓ Diversified Slides 2–7 across Compare, Code, Metric & Schematic diagrams for "${post.title.slice(0, 28)}"`
-      );
-    } catch (err) {
-      onShowToast(
-        `⚠️ ${err instanceof Error ? err.message : 'Failed to diversify post visuals'}`
-      );
-    } finally {
-      setBusyPostId(null);
-    }
-  };
-
-  const handleUpgradeAllBoilerplatePosts = async () => {
-    if (boilerplatePosts.length === 0) return;
-    setIsUpgradingAllBoilerplate(true);
-    let count = 0;
-    try {
-      for (const post of boilerplatePosts) {
-        setResynthesizingPostId(post.id);
-        await resynthesizeSavedPostWithDeepAi(post);
-        count += 1;
-      }
-      onRefreshVault();
-      onRefreshStatus();
-      onShowToast(
-        `✨ Upgraded ${count} post(s) with deep article scraping & diverse graphics`
-      );
-    } catch (err) {
-      onShowToast(
-        `⚠️ ${err instanceof Error ? err.message : 'Batch upgrade encountered an error'}`
-      );
-    } finally {
-      setResynthesizingPostId(null);
-      setIsUpgradingAllBoilerplate(false);
-    }
-  };
-
   const bulkSlots = useMemo(
     () =>
       computeWeeklyScheduleSlots(
@@ -784,19 +879,64 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
               </button>
             </div>
           ) : (
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="font-extrabold text-white">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="text-xs font-extrabold text-white whitespace-nowrap">
                 {mode === 'draft'
-                  ? `Draft Review Queue (${draftAndReviewCount})`
+                  ? `Draft Review Queue`
                   : `All Posts (${counts.all})`}
-              </span>
-              <span className="text-slate-400">
-                Verify claims &amp; numbers and confirm human review before scheduling or publishing.
-              </span>
+              </div>
+
+              {mode === 'draft' && (
+                <div
+                  role="tablist"
+                  aria-label="Draft readiness filter"
+                  className="flex items-center gap-1 bg-black/40 p-0.5 rounded-lg border border-white/10"
+                >
+                  {(
+                    [
+                      { id: 'all', label: 'All', count: draftAndReviewCount },
+                      {
+                        id: 'needs_review',
+                        label: 'Needs Review',
+                        count: draftNeedsReviewCount,
+                      },
+                      {
+                        id: 'ready',
+                        label: 'Ready to Ship',
+                        count: reviewedReadyDrafts.length,
+                      },
+                    ] as const
+                  ).map((f) => {
+                    const active = draftReadinessFilter === f.id;
+                    return (
+                      <button
+                        key={f.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        data-testid={`draft-filter-${f.id}`}
+                        onClick={() => setDraftReadinessFilter(f.id)}
+                        className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                          active
+                            ? f.id === 'ready'
+                              ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/40'
+                              : 'bg-white/12 text-white border border-white/20'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <span>{f.label}</span>
+                        <span className="ml-1 font-mono tabular-nums text-[11px] text-slate-400">
+                          {f.count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
-          {/* Search + Backup JSON Actions */}
+          {/* Search (Backup/Restore live in Vault drawer, kept only in legacy all mode) */}
           <div className="flex items-center gap-2 w-full sm:w-auto">
             {viewMode === 'list' && (
               <div className="relative flex-1 sm:w-56">
@@ -805,7 +945,7 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search posts..."
+                  placeholder={mode === 'draft' ? 'Search drafts...' : 'Search posts...'}
                   className="w-full pl-8 pr-7 py-1.5 rounded-lg bg-black/40 border border-white/15 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-400"
                 />
                 {searchQuery && (
@@ -820,7 +960,7 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
               </div>
             )}
 
-            {onExportVaultJson && (
+            {mode === 'all' && onExportVaultJson && (
               <button
                 type="button"
                 onClick={onExportVaultJson}
@@ -831,7 +971,7 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                 <span className="hidden md:inline">Backup</span>
               </button>
             )}
-            {onImportVaultJson && (
+            {mode === 'all' && onImportVaultJson && (
               <>
                 <input
                   ref={importInputRef}
@@ -1223,77 +1363,62 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
 
       {/* LIST VIEW (DRAFT REVIEW OR SCHEDULED/POSTED QUEUE) */}
       {viewMode === 'list' && (
-        <div className="rounded-xl border border-white/10 bg-[#0b1218]/90 p-3 sm:p-4 space-y-2.5">
-          {boilerplatePosts.length > 0 && mode === 'draft' && (
-            <div
-              data-testid="vault-boilerplate-upgrade-banner"
-              className="rounded-lg border border-amber-400/35 bg-amber-500/10 px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2.5"
-            >
-              <div className="flex items-center gap-2 text-xs text-amber-100">
-                <Sparkles className="w-4 h-4 text-amber-300 shrink-0" />
-                <span>
-                  <strong>{boilerplatePosts.length} draft(s)</strong> contain generic offline slides after Slide 1. Upgrade them with full article extraction &amp; diverse schematics.
-                </span>
-              </div>
-              <button
-                type="button"
-                disabled={isUpgradingAllBoilerplate}
-                onClick={() => void handleUpgradeAllBoilerplatePosts()}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-extrabold transition-colors cursor-pointer disabled:opacity-50"
-              >
-                {isUpgradingAllBoilerplate ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>Upgrading...</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>Deep Re-Synthesize All</span>
-                  </>
-                )}
-              </button>
-            </div>
-          )}
-
+        <div className="rounded-xl border border-white/10 bg-[#0b1218]/90 p-3 sm:p-4 space-y-3">
           {filteredPosts.length === 0 ? (
             <div className="py-10 text-center space-y-2 rounded-lg border border-dashed border-white/10 bg-black/20">
               <FileText className="w-7 h-7 text-slate-500 mx-auto" />
               <div className="text-sm font-bold text-slate-200">
                 {mode === 'draft'
-                  ? 'No unscheduled drafts awaiting review'
+                  ? draftReadinessFilter === 'ready'
+                    ? 'No verified drafts ready to ship yet'
+                    : draftReadinessFilter === 'needs_review'
+                    ? 'All drafts have been reviewed'
+                    : 'No unscheduled drafts awaiting review'
                   : mode === 'schedule'
                   ? 'No scheduled or posted items yet'
                   : 'No posts match this filter'}
               </div>
               <p className="text-xs text-slate-400 max-w-md mx-auto">
                 {mode === 'draft'
-                  ? 'Move candidates from Inbox or save a deck from Create Studio to review and verify them here.'
+                  ? 'Add candidates from Inbox or save a deck from Create Studio to fact-check and publish here.'
                   : 'Verify a draft in Draft Review, then click Schedule or Publish Now.'}
               </p>
             </div>
           ) : (
-            <div className="space-y-2.5">
-              {filteredPosts.map(({ post, stage }) => {
+            <div className="space-y-3">
+              {filteredPosts.map(({ post, stage }, cardIdx) => {
                 const isCurrentInStudio = activeCarouselId === post.id;
                 const isEditingSchedule = editingSchedulePostId === post.id;
                 const isConfirmingDelete = confirmDeletePostId === post.id;
                 const isPostBusy =
                   busyPostId === post.id ||
-                  resynthesizingPostId === post.id ||
-                  publishingPostId === post.id;
-                const isPostResynthesizing = resynthesizingPostId === post.id;
-                const hasBoilerplateOutline = isBoilerplateOrLowSignalDeck(post.deck);
+                  publishingPostId === post.id ||
+                  savingDeckPostId === post.id;
 
                 const humanReviewed = effectiveHumanReviewed(post);
                 const numbersVerified = effectiveNumbersVerified(post);
                 const currentAngle =
                   angleDraftById[post.id] ?? post.deck?.sourceMeta?.marrokAngle ?? '';
+                const angleSaveState = angleSaveStateById[post.id];
+
+                const claims = effectiveClaimsForPost(post);
+                const readiness = computeDraftReadiness({
+                  post,
+                  claims,
+                  humanReviewed,
+                  numbersVerified,
+                  marrokAngle: currentAngle,
+                });
+                const sourceInfo = extractDraftSourceDisplay(post, nowMs);
+                const suggestedSlot =
+                  stage === 'draft' || stage === 'attention'
+                    ? suggestCalendarSlotForCard(savedPosts, cardIdx)
+                    : null;
 
                 const gate = evaluateGathererCandidateQuality({
                   title: post.title,
                   draftTitle: post.deck?.slides?.[0]?.enTitle || post.title,
-                  summary: post.deck?.caption || '',
+                  summary: post.deck?.sourceMeta?.sourceSummary || post.deck?.caption || '',
                   marrokAngle: currentAngle || 'Product systems takeaway for engineering teams.',
                   deck: post.deck,
                 });
@@ -1312,15 +1437,16 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                   ? formatLocalDateTimeParts(effectivePostedIso)
                   : null;
 
-                const postTargets: PublishTargetPlatform[] =
-                  post.publishTargets && post.publishTargets.length > 0
-                    ? post.publishTargets
-                    : ALL_PLATFORMS;
+                const postTargets = effectiveTargetsForPost(post);
 
                 const postFormat =
                   post.deck?.postFormat || (post.slideCount === 1 ? 'single' : 'carousel');
-                const isStoryboardOpen = Boolean(expandedStoryboardIds[post.id]);
                 const slides = post.deck?.slides || [];
+                const leadArTitle = slides[0]?.arTitle?.trim() || '';
+                const inspectorState = inspectorByPostId[post.id] || {
+                  open: false,
+                  slideIdx: 0,
+                };
 
                 const targetDayLoad = (countsByDay.get(editDateStr) || 0) +
                   (post.scheduledFor &&
@@ -1332,18 +1458,20 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                   <div
                     key={post.id}
                     data-testid={`post-card-${post.id}`}
-                    className={`rounded-xl border p-3.5 transition-colors space-y-2.5 ${
+                    className={`rounded-xl border p-4 transition-colors space-y-3 ${
                       isCurrentInStudio
                         ? 'border-emerald-400/40 bg-emerald-500/[0.04]'
                         : stage === 'scheduled'
                         ? 'border-cyan-500/25 bg-cyan-500/[0.03]'
                         : stage === 'attention'
                         ? 'border-rose-500/30 bg-rose-500/[0.04]'
+                        : readiness.canShip && stage === 'draft'
+                        ? 'border-emerald-500/25 bg-white/[0.02]'
                         : 'border-white/10 bg-white/[0.02] hover:border-white/20'
                     }`}
                   >
-                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2.5">
-                      {/* Left: Title + Clean Unboxed Editorial Metadata Line */}
+                    {/* Header Row: Editorial Metadata + Bilingual Headline | Focused Action Bar */}
+                    <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
                       <div className="space-y-1 min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap text-[11px] font-mono tabular-nums text-slate-400">
                           {stage === 'scheduled' && (
@@ -1362,10 +1490,12 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                             </span>
                           )}
                           {stage === 'draft' && (
-                            <span className="font-bold text-slate-300">
-                              {humanReviewed && numbersVerified
-                                ? 'Verified Draft'
-                                : 'Draft · Review Required'}
+                            <span
+                              className={`font-bold ${
+                                readiness.canShip ? 'text-emerald-300' : 'text-amber-300'
+                              }`}
+                            >
+                              {readiness.canShip ? 'Ready to Ship' : 'Needs Review'}
                             </span>
                           )}
                           {stage === 'attention' && (
@@ -1376,17 +1506,43 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                           )}
 
                           <span aria-hidden="true">·</span>
-                          <span className="uppercase text-slate-300">
-                            {postFormat} · {post.slideCount}s
+                          <span className="capitalize text-slate-300">
+                            {postFormat} · {post.slideCount} slides
                           </span>
 
+                          {sourceInfo.domain && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              {sourceInfo.safeUrl ? (
+                                <a
+                                  href={sourceInfo.safeUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-cyan-300 hover:text-cyan-200 underline decoration-cyan-400/35 underline-offset-2"
+                                >
+                                  <span>{sourceInfo.domain}</span>
+                                  <ExternalLink className="w-2.5 h-2.5" />
+                                </a>
+                              ) : (
+                                <span className="text-slate-300">{sourceInfo.domain}</span>
+                              )}
+                            </>
+                          )}
+
                           <span aria-hidden="true">·</span>
-                          <span className="text-slate-300">
-                            {postTargets
-                              .map((plat) => PLATFORM_BADGES[plat]?.short)
-                              .filter(Boolean)
-                              .join(' · ')}
-                          </span>
+                          <span>{sourceInfo.updatedLabel}</span>
+
+                          {stage !== 'draft' && stage !== 'attention' && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="text-slate-300">
+                                {postTargets
+                                  .map((plat) => PLATFORM_BADGES[plat]?.short)
+                                  .filter(Boolean)
+                                  .join(' · ')}
+                              </span>
+                            </>
+                          )}
 
                           {post.cloudinaryPublicIds &&
                             post.cloudinaryPublicIds.length > 0 &&
@@ -1426,23 +1582,23 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                               </span>
                             </>
                           )}
-                          {hasBoilerplateOutline && (
-                            <>
-                              <span aria-hidden="true">·</span>
-                              <span className="inline-flex items-center gap-1 font-bold text-amber-300">
-                                <AlertTriangle className="w-3 h-3" />
-                                Generic Outline
-                              </span>
-                            </>
-                          )}
                         </div>
 
-                        <div className="text-sm font-bold text-white truncate" title={post.title}>
+                        <h3 className="text-sm sm:text-[15px] font-bold text-white leading-snug">
                           {post.title}
-                        </div>
+                        </h3>
+                        {leadArTitle && (stage === 'draft' || stage === 'attention') && (
+                          <div
+                            dir="rtl"
+                            lang="ar"
+                            className="text-xs text-slate-400 font-arabic leading-snug"
+                          >
+                            {leadArTitle}
+                          </div>
+                        )}
                       </div>
 
-                      {/* Right: Action Bar */}
+                      {/* Focused Action Bar: Publish Now · Schedule · Edit in Studio · Delete */}
                       <div className="flex items-center gap-1.5 flex-wrap shrink-0">
                         {onPublishPostNow && stage !== 'posted' && (
                           <button
@@ -1456,10 +1612,10 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                             onClick={() => void onPublishPostNow(post, postTargets)}
                             title={
                               stage !== 'scheduled' && !canDispatchOrSchedule
-                                ? 'Check both "Human Reviewed" and "Claims & Numbers Verified" before publishing'
+                                ? readiness.summaryLabel
                                 : 'Publish immediately via Buffer & Zernio'
                             }
-                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
                           >
                             <Send className="w-3 h-3" />
                             <span>
@@ -1480,10 +1636,10 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                             }
                             title={
                               stage !== 'scheduled' && !canDispatchOrSchedule
-                                ? 'Check both "Human Reviewed" and "Claims & Numbers Verified" before scheduling'
+                                ? readiness.summaryLabel
                                 : 'Schedule or pick future peak slot'
                             }
-                            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap ${
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap ${
                               isEditingSchedule
                                 ? 'border-cyan-400 bg-cyan-500/25 text-white'
                                 : 'border-cyan-400/30 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-200'
@@ -1496,46 +1652,15 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
 
                         <button
                           type="button"
+                          data-testid={`draft-edit-studio-${post.id}`}
                           disabled={isPostBusy}
                           onClick={() => onEditInStudio(post)}
-                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-white/15 bg-white/[0.04] hover:bg-white/[0.1] text-slate-200 text-xs font-bold transition-colors cursor-pointer whitespace-nowrap"
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-white/15 bg-white/[0.04] hover:bg-white/[0.1] text-slate-200 text-xs font-bold transition-colors cursor-pointer whitespace-nowrap"
+                          title="Open this draft in the unified Create Studio for full layout, theme, and AI editing"
                         >
                           <Edit3 className="w-3.5 h-3.5 text-emerald-400" />
                           <span>Edit in Studio</span>
                         </button>
-
-                        {stage !== 'posted' && (
-                          <button
-                            type="button"
-                            data-testid={`resynthesize-post-${post.id}`}
-                            disabled={isPostBusy}
-                            onClick={() => void handleResynthesizePost(post)}
-                            title="Re-synthesize deck with Full AI & diverse schematics"
-                            className="flex items-center gap-1 px-2 py-1.5 rounded-md border border-violet-400/30 bg-violet-500/10 hover:bg-violet-500/20 text-violet-200 text-xs font-semibold cursor-pointer whitespace-nowrap"
-                          >
-                            {isPostResynthesizing ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Sparkles className="w-3.5 h-3.5" />
-                            )}
-                            <span className="hidden xl:inline">
-                              {isPostResynthesizing ? 'Synthesizing...' : 'Deep AI'}
-                            </span>
-                          </button>
-                        )}
-
-                        {post.slideCount > 2 && stage === 'draft' && (
-                          <button
-                            type="button"
-                            data-testid={`diversify-post-${post.id}`}
-                            disabled={isPostBusy}
-                            onClick={() => void handleDiversifyPostVisuals(post)}
-                            title="Diversify Slides 2–7 layouts"
-                            className="flex items-center gap-1 px-2 py-1.5 rounded-md border border-white/10 bg-white/[0.03] hover:bg-white/[0.08] text-slate-300 text-xs font-semibold cursor-pointer whitespace-nowrap"
-                          >
-                            <Layers className="w-3.5 h-3.5 text-cyan-300" />
-                          </button>
-                        )}
 
                         {stage === 'scheduled' && (
                           <button
@@ -1578,6 +1703,7 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                               setEditingSchedulePostId(null);
                             }}
                             title="Delete from Vault"
+                            aria-label="Delete draft"
                             className="p-1.5 rounded-md border border-rose-500/25 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 transition-colors cursor-pointer"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -1586,27 +1712,39 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                       </div>
                     </div>
 
-                    {/* MANDATORY REVIEW SAFETY GATE + MARROK ANGLE + STORYBOARD IN DRAFT */}
+                    {/* DRAFT FACT-CHECK, CLAIMS EVIDENCE, REVIEW GATE & LIVE SLIDE QUICK-INSPECTOR */}
                     {(stage === 'draft' || stage === 'attention') && (
                       <div
                         data-testid={`draft-review-gate-${post.id}`}
-                        className="pt-2.5 border-t border-white/10 space-y-2.5"
+                        className="pt-3 border-t border-white/10 space-y-3"
                       >
-                        {/* Marrok Angle Editor */}
-                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-2.5 items-center">
-                          <div className="lg:col-span-7 flex items-center gap-2">
-                            <span className="text-[10px] font-mono uppercase text-cyan-300 font-bold shrink-0">
-                              Marrok Angle:
-                            </span>
+                        {/* 1. Marrok Angle Editor with char counter & save indicator */}
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                          <label
+                            htmlFor={`draft-angle-${post.id}`}
+                            className="text-[11px] font-semibold text-slate-300 shrink-0"
+                          >
+                            Marrok angle
+                          </label>
+                          <div className="flex-1 flex items-center gap-2 min-w-0">
                             <input
+                              id={`draft-angle-${post.id}`}
                               type="text"
                               value={currentAngle}
-                              onChange={(e) =>
+                              maxLength={180}
+                              onChange={(e) => {
                                 setAngleDraftById((prev) => ({
                                   ...prev,
                                   [post.id]: e.target.value,
-                                }))
-                              }
+                                }));
+                                if (angleSaveStateById[post.id]) {
+                                  setAngleSaveStateById((prev) => {
+                                    const next = { ...prev };
+                                    delete next[post.id];
+                                    return next;
+                                  });
+                                }
+                              }}
                               onBlur={() => {
                                 if (
                                   angleDraftById[post.id] !== undefined &&
@@ -1618,13 +1756,160 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                                   });
                                 }
                               }}
-                              placeholder="One line: what this means for your product / startups..."
-                              className="flex-1 px-2.5 py-1 rounded-md bg-black/50 border border-white/15 text-xs text-slate-100 focus:outline-none focus:border-cyan-400"
+                              placeholder="One line: what this means for engineering teams and startups..."
+                              className={`flex-1 min-w-0 px-2.5 py-1.5 rounded-md bg-black/50 border text-xs text-slate-100 focus:outline-none focus:border-cyan-400 ${
+                                !readiness.hasMarrokAngle
+                                  ? 'border-amber-400/35'
+                                  : 'border-white/15'
+                              }`}
                             />
+                            <span className="text-[11px] font-mono tabular-nums text-slate-500 shrink-0">
+                              {currentAngle.trim().length}/140
+                            </span>
+                            {angleSaveState === 'saving' && (
+                              <span className="text-[11px] font-mono text-cyan-300 shrink-0">
+                                Saving...
+                              </span>
+                            )}
+                            {angleSaveState === 'saved' && (
+                              <span className="text-[11px] font-mono text-emerald-300 shrink-0">
+                                Saved
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* 2. Extracted Claims & Numbers with Source Quotes & Per-Claim Checks */}
+                        <div
+                          data-testid={`draft-claims-section-${post.id}`}
+                          className="rounded-lg border border-white/10 bg-black/30 p-3 space-y-2"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-slate-200">
+                                Claims &amp; Numbers
+                              </span>
+                              <span className="text-[11px] font-mono tabular-nums text-slate-400">
+                                {claims.length > 0
+                                  ? `${readiness.verifiedClaimsCount}/${readiness.totalClaimsCount} verified`
+                                  : 'No numeric claims detected'}
+                              </span>
+                            </div>
+
+                            {sourceInfo.safeUrl && (
+                              <a
+                                href={sourceInfo.safeUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-[11px] font-mono text-cyan-300 hover:text-cyan-200"
+                              >
+                                <span>Open source ({sourceInfo.domain})</span>
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            )}
                           </div>
 
-                          {/* 2-Checkbox Mandatory Safety Verification Gate */}
-                          <div className="lg:col-span-5 flex flex-wrap items-center justify-end gap-3 text-xs">
+                          {claims.length > 0 ? (
+                            <div className="divide-y divide-white/[0.07]">
+                              {claims.map((claim) => (
+                                <div
+                                  key={claim.id}
+                                  data-testid={`draft-claim-row-${post.id}-${claim.id}`}
+                                  className="py-2 first:pt-1 last:pb-0 flex flex-col sm:flex-row sm:items-start justify-between gap-2 text-xs"
+                                >
+                                  <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                                    <button
+                                      type="button"
+                                      role="checkbox"
+                                      aria-checked={claim.verified}
+                                      data-testid={`draft-claim-toggle-${post.id}-${claim.id}`}
+                                      disabled={isPostBusy}
+                                      onClick={() =>
+                                        void handleToggleSingleClaim(
+                                          post,
+                                          claim.id,
+                                          !claim.verified
+                                        )
+                                      }
+                                      className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
+                                        claim.verified
+                                          ? 'bg-emerald-500 border-emerald-400 text-slate-950'
+                                          : 'border-white/30 bg-black/50 text-transparent hover:border-cyan-400'
+                                      }`}
+                                      title={
+                                        claim.verified
+                                          ? 'Mark claim unverified'
+                                          : 'Mark claim verified against source'
+                                      }
+                                    >
+                                      <Check className="w-3 h-3 stroke-[3]" />
+                                    </button>
+
+                                    <div className="min-w-0 flex-1 space-y-0.5">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="font-mono font-bold text-white tabular-nums">
+                                          {claim.label}
+                                        </span>
+                                        {claim.slideIndices.map((sIdx) => (
+                                          <button
+                                            key={sIdx}
+                                            type="button"
+                                            onClick={() =>
+                                              setInspectorByPostId((prev) => ({
+                                                ...prev,
+                                                [post.id]: { open: true, slideIdx: sIdx },
+                                              }))
+                                            }
+                                            className="text-[10px] font-mono tabular-nums text-cyan-300 hover:text-cyan-200 underline decoration-cyan-400/40 cursor-pointer"
+                                            title={`Jump to Slide ${sIdx + 1} preview`}
+                                          >
+                                            S{sIdx + 1}
+                                          </button>
+                                        ))}
+                                        <span
+                                          className={`text-[10px] font-mono ${
+                                            claim.verified ? 'text-emerald-300' : 'text-amber-300'
+                                          }`}
+                                        >
+                                          {claim.verified ? 'Verified' : 'Unverified'}
+                                        </span>
+                                      </div>
+
+                                      {claim.sourceQuote ? (
+                                        <p className="text-[11px] text-slate-400 leading-snug flex items-start gap-1.5">
+                                          <Quote className="w-3 h-3 text-slate-500 shrink-0 mt-0.5" />
+                                          <span>&ldquo;{claim.sourceQuote}&rdquo;</span>
+                                        </p>
+                                      ) : (
+                                        <p className="text-[11px] text-amber-300/90 leading-snug flex items-center gap-1">
+                                          <AlertTriangle className="w-3 h-3 shrink-0" />
+                                          <span>
+                                            No matching source quote found — verify manually against the original source.
+                                          </span>
+                                        </p>
+                                      )}
+
+                                      {claim.discrepancyMessage && (
+                                        <p className="text-[11px] text-rose-300 leading-snug flex items-center gap-1">
+                                          <ShieldAlert className="w-3 h-3 shrink-0" />
+                                          <span>{claim.discrepancyMessage}</span>
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-[11px] text-slate-400">
+                              No standalone metrics or benchmark numbers found in slides — review copy and confirm claims below.
+                            </p>
+                          )}
+                        </div>
+
+                        {/* 3. Mandatory Review Gate + Readiness Reason + Suggested Slot + Inline Channels */}
+                        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-2.5 pt-1 text-xs">
+                          <div className="flex flex-wrap items-center gap-4">
                             <label className="inline-flex items-center gap-1.5 cursor-pointer text-slate-200 font-semibold">
                               <input
                                 type="checkbox"
@@ -1656,6 +1941,83 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                               />
                               <span>Claims &amp; Numbers Verified</span>
                             </label>
+
+                            <span
+                              data-testid={`draft-readiness-status-${post.id}`}
+                              className={`inline-flex items-center gap-1 text-[11px] font-mono ${
+                                readiness.canShip ? 'text-emerald-300' : 'text-amber-300'
+                              }`}
+                            >
+                              {readiness.canShip ? (
+                                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                              ) : (
+                                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                              )}
+                              <span>{readiness.summaryLabel}</span>
+                            </span>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-3">
+                            {suggestedSlot && (
+                              <button
+                                type="button"
+                                data-testid={`draft-suggested-slot-${post.id}`}
+                                onClick={() => {
+                                  if (!canDispatchOrSchedule) {
+                                    onShowToast(
+                                      `⚠️ ${readiness.summaryLabel} before scheduling.`
+                                    );
+                                    return;
+                                  }
+                                  const parts = formatLocalDateTimeParts(suggestedSlot.iso);
+                                  openScheduleEditor(
+                                    post,
+                                    parts.datePart,
+                                    suggestedSlot.timeLabel
+                                  );
+                                }}
+                                className="inline-flex items-center gap-1 text-[11px] font-mono tabular-nums text-slate-300 hover:text-white cursor-pointer"
+                                title="Click to schedule into this next empty peak slot"
+                              >
+                                <Calendar className="w-3 h-3 text-emerald-400" />
+                                <span>Suggested:</span>
+                                <span
+                                  className={
+                                    suggestedSlot.isEmpty
+                                      ? 'text-emerald-300 font-semibold'
+                                      : 'text-slate-300'
+                                  }
+                                >
+                                  {suggestedSlot.label}
+                                </span>
+                              </button>
+                            )}
+
+                            {/* Inline Channel Toggles */}
+                            <div
+                              className="flex items-center gap-1"
+                              aria-label="Target channels"
+                            >
+                              {ALL_PLATFORMS.map((plat) => {
+                                const active = postTargets.includes(plat);
+                                return (
+                                  <button
+                                    key={plat}
+                                    type="button"
+                                    data-testid={`draft-channel-${post.id}-${plat}`}
+                                    onClick={() => handleToggleDraftChannel(post, plat)}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border transition-colors cursor-pointer ${
+                                      active
+                                        ? 'border-cyan-400/40 bg-cyan-500/15 text-cyan-200'
+                                        : 'border-white/10 bg-black/30 text-slate-500 hover:text-slate-300'
+                                    }`}
+                                    title={`Toggle ${PLATFORM_BADGES[plat].label}`}
+                                  >
+                                    {PLATFORM_BADGES[plat].short}
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </div>
                         </div>
 
@@ -1675,53 +2037,84 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
                           </div>
                         )}
 
-                        {/* Storyboard Layout & 1-Line Rationale Toggle */}
+                        {/* 4. Bilingual Slide Strip + Expandable Live Canvas Quick-Editor */}
                         {slides.length > 0 && (
-                          <div>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setExpandedStoryboardIds((prev) => ({
+                          <div className="space-y-2.5 pt-1">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                data-testid={`draft-toggle-inspector-${post.id}`}
+                                onClick={() =>
+                                  setInspectorByPostId((prev) => ({
+                                    ...prev,
+                                    [post.id]: {
+                                      open: !inspectorState.open,
+                                      slideIdx: inspectorState.slideIdx,
+                                    },
+                                  }))
+                                }
+                                className="inline-flex items-center gap-1.5 text-xs font-semibold text-cyan-300 hover:text-cyan-200 cursor-pointer"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>
+                                  {inspectorState.open
+                                    ? 'Hide Live Slide Preview'
+                                    : `Inspect & Quick-Edit ${slides.length} Slides`}
+                                </span>
+                                {inspectorState.open ? (
+                                  <ChevronUp className="w-3.5 h-3.5" />
+                                ) : (
+                                  <ChevronDown className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+
+                              {readiness.overflowSlideIndices.length > 0 && (
+                                <span className="text-[11px] font-mono text-amber-300 tabular-nums">
+                                  {readiness.overflowSlideIndices.length} slide(s) over character limit
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Always-scannable Bilingual EN/AR Slide Strip (zero internal rationale jargon) */}
+                            <DraftBilingualSlideStrip
+                              postId={post.id}
+                              slides={slides}
+                              overflowSlideIndices={readiness.overflowSlideIndices}
+                              activeSlideIdx={inspectorState.open ? inspectorState.slideIdx : null}
+                              onSelectSlide={(sIdx) =>
+                                setInspectorByPostId((prev) => ({
                                   ...prev,
-                                  [post.id]: !prev[post.id],
+                                  [post.id]: { open: true, slideIdx: sIdx },
                                 }))
                               }
-                              className="inline-flex items-center gap-1 text-[11px] font-mono text-cyan-300 hover:text-cyan-200 cursor-pointer"
-                            >
-                              {isStoryboardOpen ? (
-                                <ChevronUp className="w-3 h-3" />
-                              ) : (
-                                <ChevronDown className="w-3 h-3" />
-                              )}
-                              <span>
-                                {isStoryboardOpen
-                                  ? 'Hide Slide Storyboard & Layout Rationale'
-                                  : `View ${slides.length}-Slide Storyboard & Layout Rationale (S1: ${slides[0]?.type?.toUpperCase()})`}
-                              </span>
-                            </button>
+                            />
 
-                            {isStoryboardOpen && (
-                              <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-                                {slides.map((s, sIdx) => (
-                                  <div
-                                    key={sIdx}
-                                    className="p-2 rounded-md border border-white/10 bg-black/40 text-[11px] space-y-0.5"
-                                  >
-                                    <div className="flex items-center justify-between font-mono text-[10px]">
-                                      <span className="font-bold text-cyan-300">
-                                        S{sIdx + 1} · {s.type.toUpperCase()}
-                                      </span>
-                                    </div>
-                                    <div className="font-semibold text-white truncate">
-                                      {s.enTitle || `Slide ${sIdx + 1}`}
-                                    </div>
-                                    <div className="text-[10px] text-slate-400 leading-snug">
-                                      {s.layoutRationale ||
-                                        explainArchetypeChoice(s, sIdx, slides.length)}
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
+                            {/* Live Slide Canvas Preview & Inline Bilingual Quick-Edit Inspector */}
+                            {inspectorState.open && (
+                              <DraftSlideQuickInspector
+                                postId={post.id}
+                                deck={post.deck}
+                                fallbackTheme={theme}
+                                activeSlideIdx={inspectorState.slideIdx}
+                                overflowSlideIndices={readiness.overflowSlideIndices}
+                                isSaving={savingDeckPostId === post.id}
+                                onSetActiveSlideIdx={(idx) =>
+                                  setInspectorByPostId((prev) => ({
+                                    ...prev,
+                                    [post.id]: { open: true, slideIdx: idx },
+                                  }))
+                                }
+                                onSaveDeck={(updatedDeck) =>
+                                  handleSaveDraftDeckEdits(post, updatedDeck)
+                                }
+                                onEditInStudio={() => onEditInStudio(post)}
+                                onClose={() =>
+                                  setInspectorByPostId((prev) => ({
+                                    ...prev,
+                                    [post.id]: { ...inspectorState, open: false },
+                                  }))
+                                }
+                              />
                             )}
                           </div>
                         )}

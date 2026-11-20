@@ -233,4 +233,62 @@ describe('Netlify & Vercel API Routing + Strict CORS', () => {
     const radarBody = await authedRadar.json();
     expect(radarBody.ok).toBe(true);
   });
+
+  it('enforces auth fail-closed on POST /api/direct-visual and returns sibling-diverse, exclusion-aware layout direction', async () => {
+    const unauthRes = await fetch(`${baseUrl}/api/direct-visual`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        slide: { type: 'row', enTitle: 'Outage Postmortem Timeline', enBody: '14:02 UTC alert -> 14:15 UTC rollback' },
+        slideIndex: 2,
+        totalSlides: 6,
+      }),
+    });
+    expect(unauthRes.status).toBe(401);
+
+    const mockCtx = {} as any;
+    const origin = 'https://marrok-content.netlify.app';
+    const netlifyUnauth = await generateFn(
+      new Request(`${origin}/api/direct-visual`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: origin },
+        body: JSON.stringify({
+          slide: { type: 'row', enTitle: 'Latency Benchmark', enBody: 'Go hit 450 req/s vs Rust 980 req/s' },
+        }),
+      }),
+      mockCtx
+    );
+    expect(netlifyUnauth.status).toBe(401);
+
+    const authedRes = await fetch(`${baseUrl}/api/direct-visual`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: sessionCookie,
+      },
+      body: JSON.stringify({
+        slide: {
+          type: 'row',
+          enTitle: 'Hot Cache vs Disk Tiering',
+          enBody: 'Keeping embeddings in RAM (1.2ms) versus NVMe disk (18ms) slashes tail latency.',
+        },
+        slideIndex: 2,
+        totalSlides: 6,
+        category: 'SYSTEMS ARCHITECTURE',
+        postFormat: 'carousel',
+        siblingLayouts: ['S2:compare', 'S4:row:topology'],
+        excludeLayouts: ['row:topology', 'compare'],
+      }),
+    });
+    expect(authedRes.status).toBe(200);
+    expect(['ungrounded', 'offline']).toContain(authedRes.headers.get('x-marrok-engine'));
+
+    const payload = await authedRes.json();
+    expect(payload.chosenLayoutId).toBeTruthy();
+    expect(payload.chosenLayoutId).not.toBe('row:topology');
+    expect(payload.chosenLayoutId).not.toBe('compare');
+    expect(payload.slideUpdates).toBeTruthy();
+    expect(typeof payload.rationale).toBe('string');
+  });
 });
+

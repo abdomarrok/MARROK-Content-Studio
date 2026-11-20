@@ -1,6 +1,7 @@
 import type { SlideData, SlideType } from '../../types.ts';
 import { seedSingleSlideTakeaways } from './singleSlideCondenser.ts';
 import { explainArchetypeChoice, resolveSmartSlideVisuals } from './smartVisualDefaults.ts';
+import { deriveVisualSpecFromSlide } from './visualSpecBuilder.ts';
 
 /**
  * Instant Content-Aware Archetype Seeder:
@@ -15,9 +16,20 @@ export function seedSlideArchetypeData(
   forceRefresh: boolean = false
 ): SlideData {
   const isTypeChange = slide.type !== targetType;
+  const cleanedOverrides =
+    isTypeChange && targetType !== 'poster' && slide.layoutOverrides?.takeawaysBlock
+      ? (() => {
+          const rest = { ...slide.layoutOverrides };
+          delete rest.takeawaysBlock;
+          return Object.keys(rest).length > 0 ? rest : undefined;
+        })()
+      : slide.layoutOverrides;
+
   const updated: SlideData = {
     ...slide,
     type: targetType,
+    layoutOverrides: cleanedOverrides,
+    ...(isTypeChange && targetType !== 'poster' ? { takeaways: [] } : {}),
   };
 
   const smart = resolveSmartSlideVisuals(updated, slideIndex, forceRefresh || isTypeChange);
@@ -82,7 +94,11 @@ export function seedSlideArchetypeData(
         Boolean(updated.imageUrl || updated.videoUrl);
       if (isFullMemeOrMedia) {
         updated.takeaways = [];
-      } else if (!updated.takeaways || updated.takeaways.length === 0 || forceRefresh) {
+      } else if (
+        forceRefresh ||
+        updated.takeaways === undefined ||
+        (isTypeChange && updated.takeaways.length === 0)
+      ) {
         updated.takeaways = seedSingleSlideTakeaways(updated);
       }
       updated.diagramVariant = smart.diagramVariant;
@@ -122,6 +138,17 @@ export function seedSlideArchetypeData(
       updated.diagramNodes = updated.diagramNodes || smart.diagramNodes;
       updated.diagramEdges = updated.diagramEdges || smart.diagramEdges;
       updated.diagramFooter = updated.diagramFooter || smart.diagramFooter;
+      break;
+    }
+
+    case 'visual': {
+      if (!updated.visualSpec || forceRefresh) {
+        updated.visualSpec = deriveVisualSpecFromSlide(
+          updated,
+          updated.visualSpec?.kind,
+          slideIndex
+        );
+      }
       break;
     }
   }

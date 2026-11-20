@@ -58,11 +58,22 @@ export interface GraphicCardLayout {
   hidden: boolean;
 }
 
+export interface SwipeCueLayout {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  text: string;
+  fontSize: number;
+  hidden: boolean;
+}
+
 export interface ComputedSlideLayout {
   slideType: string;
   dimensionPreset: CanvasDimensionPreset;
   compositionPreset: SlideCompositionPreset;
   freeMoveLayout: boolean;
+  isSlide1Cover?: boolean;
   canvasWidth: number;
   canvasHeight: number;
   headerBadge: {
@@ -79,8 +90,11 @@ export interface ComputedSlideLayout {
   graphicCard?: GraphicCardLayout;
   titleBlock?: TextBlockLayout;
   arabicTitleBlock?: TextBlockLayout;
+  coverTeaserBlock?: TextBlockLayout;
+  arabicCoverTeaserBlock?: TextBlockLayout;
   bodyBlock?: TextBlockLayout;
   arabicBodyBlock?: TextBlockLayout;
+  swipeCueBox?: SwipeCueLayout;
   takeawaysBlock?: {
     x: number;
     y: number;
@@ -241,8 +255,11 @@ function cloneComputedLayout(layout: ComputedSlideLayout): ComputedSlideLayout {
     graphicCard: layout.graphicCard ? { ...layout.graphicCard } : undefined,
     titleBlock: cloneTextBlock(layout.titleBlock),
     arabicTitleBlock: cloneTextBlock(layout.arabicTitleBlock),
+    coverTeaserBlock: cloneTextBlock(layout.coverTeaserBlock),
+    arabicCoverTeaserBlock: cloneTextBlock(layout.arabicCoverTeaserBlock),
     bodyBlock: cloneTextBlock(layout.bodyBlock),
     arabicBodyBlock: cloneTextBlock(layout.arabicBodyBlock),
+    swipeCueBox: layout.swipeCueBox ? { ...layout.swipeCueBox } : undefined,
     takeawaysBlock: layout.takeawaysBlock ? { ...layout.takeawaysBlock } : undefined,
     ctaButton: layout.ctaButton ? { ...layout.ctaButton } : undefined,
     attributionCard: layout.attributionCard ? { ...layout.attributionCard } : undefined,
@@ -254,7 +271,8 @@ function buildSlideLayoutCacheKey(
   slide: SlideData,
   hasCtx: boolean,
   preset: CanvasDimensionPreset,
-  creatorHandle: string
+  creatorHandle: string,
+  isSlide1Cover: boolean
 ): string {
   const takeawaysKey = slide.takeaways
     ? slide.takeaways.map((t) => `${t.en || ''}:${t.ar || ''}:${t.icon || ''}`).join(';')
@@ -263,7 +281,11 @@ function buildSlideLayoutCacheKey(
   const compPreset = slide.compositionPreset || 'standard';
   const freeMove = slide.freeMoveLayout ? 1 : 0;
   const heroFrame = isFullMemeSlide(slide) ? 'full' : isHeroImageSlide(slide) ? 'hero' : 'std';
-  const ctaAndCreditKey = `${slide.ctaText || ''}|${slide.enCredit || ''}|${slide.arCredit || ''}|${slide.url || ''}|${creatorHandle}|${slide.hookKicker || ''}|${slide.storyRole || ''}|${slide.hookClaimCard ? `${slide.hookClaimCard.mode}:${slide.hookClaimCard.statement}` : ''}`;
+  const visualSpecKey = slide.visualSpec ? `${slide.visualSpec.kind}:${slide.visualSpec.title || ''}` : '';
+  const coverKey = isSlide1Cover
+    ? `1:${slide.coverStyle || ''}:${slide.coverTeaserEn || ''}:${slide.coverTeaserAr || ''}:${slide.showSwipeCue === false ? 0 : 1}:${slide.swipeCueText || ''}`
+    : '0';
+  const ctaAndCreditKey = `${slide.ctaText || ''}|${slide.enCredit || ''}|${slide.arCredit || ''}|${slide.url || ''}|${creatorHandle}|${slide.hookKicker || ''}|${slide.storyRole || ''}|${slide.hookClaimCard ? `${slide.hookClaimCard.mode}:${slide.hookClaimCard.statement}` : ''}|${visualSpecKey}|${coverKey}`;
   return `${hasCtx ? 1 : 0}|${preset}|${compPreset}|${freeMove}|${heroFrame}|${slide.type || ''}|${slide.enTitle || ''}|${slide.arTitle || ''}|${slide.enBody || ''}|${slide.arBody || ''}|${takeawaysKey}|${ctaAndCreditKey}|${overridesKey}`;
 }
 
@@ -292,7 +314,8 @@ function storeComputedLayout(key: string, layout: ComputedSlideLayout): Computed
  */
 export function computeSlideLayoutAwareness(
   slide: SlideData,
-  carousel?: CarouselData
+  carousel?: CarouselData,
+  slideIndex?: number
 ): ComputedSlideLayout {
   const ctx = getMeasureContext();
   const spec = getCanvasDimensionSpec(carousel?.dimensionPreset);
@@ -302,15 +325,34 @@ export function computeSlideLayoutAwareness(
     carousel?.channel ||
     carousel?.brand ||
     '';
-  const cacheKey = buildSlideLayoutCacheKey(slide, Boolean(ctx), spec.id, creatorHandle);
-  const cached = slideLayoutCache.get(cacheKey);
-  if (cached) {
-    return cloneComputedLayout(cached);
-  }
 
   const overrides = slide.layoutOverrides || {};
   const compositionPreset: SlideCompositionPreset = slide.compositionPreset || 'standard';
   const freeMove = Boolean(slide.freeMoveLayout);
+  const isFullMeme = isFullMemeSlide(slide);
+  const resolvedSlideIndex = slideIndex ?? (carousel?.slides ? carousel.slides.indexOf(slide) : -1);
+  const totalDeckSlides = carousel?.slides?.length ?? 1;
+  const isSingleOrMemeDeck =
+    carousel?.postFormat === 'single' || carousel?.postFormat === 'meme' || slide.type === 'poster';
+  const isMultiSlideSlide1 =
+    !isFullMeme &&
+    !slide.standaloneMeme &&
+    slide.type !== 'cta' &&
+    !isSingleOrMemeDeck &&
+    (carousel
+      ? totalDeckSlides > 1 &&
+        (resolvedSlideIndex === 0 ||
+          (resolvedSlideIndex === -1 && (Boolean(slide.coverStyle) || slide.storyRole === 'hook')))
+      : Boolean(slide.coverStyle) || slide.storyRole === 'hook');
+  const isSlide1Cover =
+    isMultiSlideSlide1 &&
+    (compositionPreset === 'headline-first' || Boolean(slide.coverStyle) || slide.storyRole === 'hook');
+
+  const cacheKey = buildSlideLayoutCacheKey(slide, Boolean(ctx), spec.id, creatorHandle, isSlide1Cover);
+  const cached = slideLayoutCache.get(cacheKey);
+  if (cached) {
+    return cloneComputedLayout(cached);
+  }
 
   const clampBoxDx = (baseLeft: number, width: number, desiredDx: number): number => {
     if (width >= spec.safeContentWidth) {
@@ -362,7 +404,6 @@ export function computeSlideLayoutAwareness(
     hidden: Boolean(headerOverride?.hidden),
   };
 
-  const isFullMeme = isFullMemeSlide(slide);
   const headerSafeFloorY = headerBadge.hidden
     ? spec.headerY
     : isFullMeme
@@ -441,9 +482,9 @@ export function computeSlideLayoutAwareness(
   const isHeroImage = isHeroImageSlide(slide);
   const hasTakeaways = !isHeroImage && !isFullMeme && Boolean(slide.takeaways && slide.takeaways.length > 0);
   const takeawayCount = hasTakeaways ? Math.min(3, slide.takeaways!.length) : 0;
-  const baseTakeawayRowH = (takeawayCount === 1 ? 84 : takeawayCount === 2 ? 80 : 76) * takeawaysScale;
+  const baseTakeawayRowH = (takeawayCount === 1 ? 104 : takeawayCount === 2 ? 100 : 96) * takeawaysScale;
   const takeawayRowH = isCompactAspect
-    ? Math.max(54, Math.round(baseTakeawayRowH * Math.max(0.78, spec.graphicScale)))
+    ? Math.max(70, Math.round(baseTakeawayRowH * Math.max(0.82, spec.graphicScale)))
     : Math.round(baseTakeawayRowH);
   const takeawayGap = isCompactAspect ? 10 : 12;
   const takeawaysTotalH = hasTakeaways ? takeawayCount * takeawayRowH + (takeawayCount - 1) * takeawayGap : 0;
@@ -467,13 +508,39 @@ export function computeSlideLayoutAwareness(
     ? Math.max(136, headerSafeFloorY + (isCompactAspect ? 18 : 28)) + cardH * gScale + (isCompactAspect ? 42 : 66)
     : Math.max(defaultCardY + cardH, tempEffectiveBottom);
 
-  const totalAvailableHeight = Math.max(
-    180,
-    spec.safeFooterCeilingY - baseTextCeilingY - gapGraphicToTitle - takeawayClearance
-  );
+  const rawCoverTeaserEn = isSlide1Cover ? (slide.coverTeaserEn || '').trim() : '';
+  const rawCoverTeaserAr = isSlide1Cover ? (slide.coverTeaserAr || '').trim() : '';
 
   const titleMinFloor = Math.max(MIN_TITLE_FONT_SIZE, spec.minTitleFontSize ?? MIN_TITLE_FONT_SIZE);
   const bodyMinFloor = Math.max(MIN_BODY_FONT_SIZE, spec.minBodyFontSize ?? MIN_BODY_FONT_SIZE);
+
+  // Reserve explicit clearance for Slide 1 bottom swipe prompt pill above spec.safeFooterCeilingY
+  let swipeCueBox: SwipeCueLayout | undefined;
+  if (isSlide1Cover && slide.showSwipeCue !== false) {
+    const swipeText = (slide.swipeCueText || '').trim() || 'Swipe to unpack';
+    const swipeFontSize = Math.max(bodyMinFloor, isCompactAspect ? 24 : 26);
+    const swipeHeight = isCompactAspect ? 46 : 52;
+    const estTextW = Math.round(swipeText.length * swipeFontSize * 0.56);
+    const swipeWidth = Math.min(spec.safeContentWidth, Math.max(260, estTextW + 88));
+    const swipeX = Math.round(spec.safeTextCenterX - swipeWidth / 2);
+    const swipeY = spec.safeFooterCeilingY - swipeHeight - 10;
+    swipeCueBox = {
+      x: swipeX,
+      y: swipeY,
+      width: swipeWidth,
+      height: swipeHeight,
+      text: swipeText,
+      fontSize: swipeFontSize,
+      hidden: false,
+    };
+  }
+  const effectiveFooterCeilingY =
+    swipeCueBox && !swipeCueBox.hidden ? swipeCueBox.y - 14 : spec.safeFooterCeilingY;
+
+  const totalAvailableHeight = Math.max(
+    180,
+    effectiveFooterCeilingY - baseTextCeilingY - gapGraphicToTitle - takeawayClearance
+  );
   const initialScaleBase = isCompactAspect ? Math.max(0.7, spec.graphicScale + 0.08) : 1.04;
   let textScale = hasTakeaways
     ? Math.min(0.9, initialScaleBase * 0.9)
@@ -524,11 +591,21 @@ export function computeSlideLayoutAwareness(
   const measureTextPass = (scale: number, cap: number) => {
     const baseBodyTarget = isCompactAspect ? (spec.height <= 1080 ? 34 : 38) : 44;
     const baseBodyMin = bodyMinFloor;
+    const headlineTargetEn = isSlide1Cover
+      ? (isCompactAspect ? (spec.height <= 1080 ? 68 : 74) : 84)
+      : (isCompactAspect ? 62 : 72);
+    const headlineTargetAr = isSlide1Cover
+      ? (isCompactAspect ? (spec.height <= 1080 ? 64 : 70) : 80)
+      : (isCompactAspect ? 62 : 72);
     // Equal size, weight, and spacing for English & Arabic, strictly >= 24px across every ratio
-    const enTitleTarget = Math.max(titleMinFloor, (isCompactAspect ? 62 : 72) * scale * titleScale);
-    const arTitleTarget = Math.max(titleMinFloor, (isCompactAspect ? 62 : 72) * scale * arTitleScale);
+    const enTitleTarget = Math.max(titleMinFloor, headlineTargetEn * scale * titleScale);
+    const arTitleTarget = Math.max(titleMinFloor, headlineTargetAr * scale * arTitleScale);
     const enBodyTarget = Math.max(bodyMinFloor, baseBodyTarget * scale * bodyScale);
     const arBodyTarget = Math.max(bodyMinFloor, baseBodyTarget * scale * arBodyScale);
+    const teaserTarget = Math.max(
+      bodyMinFloor,
+      (isCompactAspect ? (spec.height <= 1080 ? 28 : 30) : 34) * Math.max(0.86, scale)
+    );
 
     const enTitleMin = Math.max(titleMinFloor, Math.round((isCompactAspect ? (spec.height <= 1080 ? 28 : 32) : 38) * Math.min(1, titleScale)));
     const arTitleMin = Math.max(titleMinFloor, Math.round((isCompactAspect ? (spec.height <= 1080 ? 28 : 32) : 38) * Math.min(1, arTitleScale)));
@@ -537,13 +614,18 @@ export function computeSlideLayoutAwareness(
 
     let enTitle = { lines: rawEnTitle ? [rawEnTitle] : [], fontSize: enTitleTarget, lineHeight: enTitleTarget * 1.24 };
     let arTitle = { lines: rawArTitle ? [rawArTitle] : [], fontSize: arTitleTarget, lineHeight: arTitleTarget * 1.24 };
+    let enTeaser = { lines: rawCoverTeaserEn ? [rawCoverTeaserEn] : [], fontSize: teaserTarget, lineHeight: teaserTarget * 1.32 };
+    let arTeaser = { lines: rawCoverTeaserAr ? [rawCoverTeaserAr] : [], fontSize: teaserTarget, lineHeight: teaserTarget * 1.32 };
     let enBody = { lines: rawEnBody ? [rawEnBody] : [], fontSize: enBodyTarget, lineHeight: enBodyTarget * 1.44 };
     let arBody = { lines: rawArBody ? [rawArBody] : [], fontSize: arBodyTarget, lineHeight: arBodyTarget * 1.44 };
+
+    const titleMaxLines = isSlide1Cover || titleScale > 1.15 ? 3 : 2;
+    const arTitleMaxLines = isSlide1Cover || arTitleScale > 1.15 ? 3 : 2;
 
     if (ctx) {
       if (rawEnTitle) {
         enTitle = fitTextInBox(ctx, rawEnTitle, spec.safeTextWidthTitle, enTitleTarget, FONT_TITLE_EN, '800', {
-          maxLines: titleScale > 1.15 ? 3 : 2,
+          maxLines: titleMaxLines,
           minFontSize: enTitleMin,
           lineHeightFactor: 1.24,
           ellipsis: false,
@@ -551,9 +633,25 @@ export function computeSlideLayoutAwareness(
       }
       if (rawArTitle) {
         arTitle = fitTextInBox(ctx, rawArTitle, spec.safeTextWidthTitle, arTitleTarget, FONT_TITLE_AR, '800', {
-          maxLines: arTitleScale > 1.15 ? 3 : 2,
+          maxLines: arTitleMaxLines,
           minFontSize: arTitleMin,
           lineHeightFactor: 1.24,
+          ellipsis: false,
+        });
+      }
+      if (rawCoverTeaserEn) {
+        enTeaser = fitTextInBox(ctx, rawCoverTeaserEn, spec.safeTextWidthBody, teaserTarget, FONT_BODY_EN, '500', {
+          maxLines: 2,
+          minFontSize: bodyMinFloor,
+          lineHeightFactor: 1.32,
+          ellipsis: false,
+        });
+      }
+      if (rawCoverTeaserAr) {
+        arTeaser = fitTextInBox(ctx, rawCoverTeaserAr, spec.safeTextWidthBody, teaserTarget, FONT_BODY_AR, '500', {
+          maxLines: 2,
+          minFontSize: bodyMinFloor,
+          lineHeightFactor: 1.32,
           ellipsis: false,
         });
       }
@@ -575,10 +673,16 @@ export function computeSlideLayoutAwareness(
       }
     } else {
       if (rawEnTitle) {
-        enTitle = wrapHeadlessFallback(rawEnTitle, spec.safeTextWidthTitle, enTitleTarget, enTitleMin, 2, 1.24, false);
+        enTitle = wrapHeadlessFallback(rawEnTitle, spec.safeTextWidthTitle, enTitleTarget, enTitleMin, titleMaxLines, 1.24, false);
       }
       if (rawArTitle) {
-        arTitle = wrapHeadlessFallback(rawArTitle, spec.safeTextWidthTitle, arTitleTarget, arTitleMin, 2, 1.24, true);
+        arTitle = wrapHeadlessFallback(rawArTitle, spec.safeTextWidthTitle, arTitleTarget, arTitleMin, arTitleMaxLines, 1.24, true);
+      }
+      if (rawCoverTeaserEn) {
+        enTeaser = wrapHeadlessFallback(rawCoverTeaserEn, spec.safeTextWidthBody, teaserTarget, bodyMinFloor, 2, 1.32, false);
+      }
+      if (rawCoverTeaserAr) {
+        arTeaser = wrapHeadlessFallback(rawCoverTeaserAr, spec.safeTextWidthBody, teaserTarget, bodyMinFloor, 2, 1.32, true);
       }
       if (rawEnBody && !isHookNoBody) {
         enBody = wrapHeadlessFallback(rawEnBody, spec.safeTextWidthBody, enBodyTarget, enBodyMin, cap, 1.44, false);
@@ -591,39 +695,70 @@ export function computeSlideLayoutAwareness(
     const enTitleHeight =
       enTitle.lines.length > 0 ? (enTitle.lines.length - 1) * enTitle.lineHeight + enTitle.fontSize * 1.05 : 0;
     const arTitleHeight =
-      arTitle.lines.length > 0 ? (arTitle.lines.length - 1) * arTitle.lineHeight + arTitle.fontSize * 1.08 : 0;
+      arTitle.lines.length > 0 ? (arTitle.lines.length - 1) * arTitle.lineHeight + arTitle.fontSize * 1.16 : 0;
+    const enTeaserHeight =
+      enTeaser.lines.length > 0 ? (enTeaser.lines.length - 1) * enTeaser.lineHeight + enTeaser.fontSize * 1.05 : 0;
+    const arTeaserHeight =
+      arTeaser.lines.length > 0 ? (arTeaser.lines.length - 1) * arTeaser.lineHeight + arTeaser.fontSize * 1.14 : 0;
     const enBodyHeight =
       enBody.lines.length > 0 ? (enBody.lines.length - 1) * enBody.lineHeight + enBody.fontSize * 1.05 : 0;
     const arBodyHeight =
-      arBody.lines.length > 0 ? (arBody.lines.length - 1) * arBody.lineHeight + arBody.fontSize * 1.08 : 0;
+      arBody.lines.length > 0 ? (arBody.lines.length - 1) * arBody.lineHeight + arBody.fontSize * 1.14 : 0;
 
     const effEnTitleH = titleHidden ? 0 : enTitleHeight;
     const effArTitleH = arTitleHidden ? 0 : arTitleHeight;
+    const effEnTeaserH = isSlide1Cover && !titleHidden ? enTeaserHeight : 0;
+    const effArTeaserH = isSlide1Cover && !arTitleHidden ? arTeaserHeight : 0;
     const effEnBodyH = bodyHidden ? 0 : enBodyHeight;
     const effArBodyH = arBodyHidden ? 0 : arBodyHeight;
 
     const gapTitles = effEnTitleH > 0 && effArTitleH > 0 ? minGapTitles : 0;
+    const gapTitlesToTeaser =
+      (effEnTitleH > 0 || effArTitleH > 0) && (effEnTeaserH > 0 || effArTeaserH > 0)
+        ? isCompactAspect
+          ? 14
+          : 18
+        : 0;
+    const gapTeasers = effEnTeaserH > 0 && effArTeaserH > 0 ? (isCompactAspect ? 8 : 10) : 0;
     const gapTitlesToBody =
       (effEnTitleH > 0 || effArTitleH > 0) && (effEnBodyH > 0 || effArBodyH > 0) ? minGapTitleToBody : 0;
     const gapBodies = effEnBodyH > 0 && effArBodyH > 0 ? minGapBodies : 0;
 
     const totalStackHeight =
-      effEnTitleH + gapTitles + effArTitleH + gapTitlesToBody + effEnBodyH + gapBodies + effArBodyH;
+      effEnTitleH +
+      gapTitles +
+      effArTitleH +
+      gapTitlesToTeaser +
+      effEnTeaserH +
+      gapTeasers +
+      effArTeaserH +
+      gapTitlesToBody +
+      effEnBodyH +
+      gapBodies +
+      effArBodyH;
 
     return {
       enTitle,
       arTitle,
+      enTeaser,
+      arTeaser,
       enBody,
       arBody,
       gapTitles,
+      gapTitlesToTeaser,
+      gapTeasers,
       gapTitlesToBody,
       gapBodies,
       enTitleHeight,
       arTitleHeight,
+      enTeaserHeight,
+      arTeaserHeight,
       enBodyHeight,
       arBodyHeight,
       effEnTitleH,
       effArTitleH,
+      effEnTeaserH,
+      effArTeaserH,
       effEnBodyH,
       effArBodyH,
       totalStackHeight,
@@ -680,6 +815,8 @@ export function computeSlideLayoutAwareness(
   let graphicCard: GraphicCardLayout;
   let titleBlock: TextBlockLayout | undefined;
   let arabicTitleBlock: TextBlockLayout | undefined;
+  let coverTeaserBlock: TextBlockLayout | undefined;
+  let arabicCoverTeaserBlock: TextBlockLayout | undefined;
   let bodyBlock: TextBlockLayout | undefined;
   let arabicBodyBlock: TextBlockLayout | undefined;
   let takeawaysBlock: ComputedSlideLayout['takeawaysBlock'] | undefined;
@@ -695,22 +832,33 @@ export function computeSlideLayoutAwareness(
   const arBDx = clampTextDx(spec.safeTextWidthBody, arBodyOverride?.dx || 0, arBAlign);
 
   if (compositionPreset === 'headline-first') {
-    // Editorial Headline-First composition:
-    // 1) English & Arabic Headlines at top (below headerBadge)
-    // 2) Graphic Card in middle
-    // 3) English & Arabic Body + Takeaways below Graphic Card
-    const topStart = Math.max(136, headerSafeFloorY + (isCompactAspect ? 16 : 24));
+    // Editorial Headline-First composition (and Slide 1 Cover Hero):
+    // 1) Kicker Badge + Oversized English & Arabic Headlines at top (below headerBadge)
+    // 2) Short One-Line Context Teasers (on Slide 1 Cover Hero)
+    // 3) Focal Graphic Card in middle-lower pocket
+    // 4) English & Arabic Body + Takeaways below Graphic Card (inner slides / single posters)
+    const kickerOffset =
+      isSlide1Cover && hasKicker ? (isCompactAspect ? 46 : 58) : isCompactAspect ? 16 : 24;
+    const topStart = Math.max(136, headerSafeFloorY + kickerOffset);
     let gapHeadlineToCard = isCompactAspect ? 18 : 28;
     let gapCardToBody = isCompactAspect ? 20 : 30;
 
-    // Auto-scale graphicCard in headline-first mode if vertical stack exceeds safeFooterCeilingY
+    // Auto-scale graphicCard in headline-first mode if vertical stack exceeds effectiveFooterCeilingY
     if (!gHidden && !freeMove) {
-      const headlinesH = measured.effEnTitleH + measured.gapTitles + measured.effArTitleH;
+      const headlinesH =
+        measured.effEnTitleH +
+        measured.gapTitles +
+        measured.effArTitleH +
+        measured.gapTitlesToTeaser +
+        measured.effEnTeaserH +
+        measured.gapTeasers +
+        measured.effArTeaserH;
       const bodiesH = measured.effEnBodyH + measured.gapBodies + measured.effArBodyH;
-      const neededNoCard = topStart + headlinesH + gapHeadlineToCard + gapCardToBody + bodiesH + takeawayClearance;
-      const maxCardSpace = spec.safeFooterCeilingY - neededNoCard;
+      const postCardReserve = bodiesH > 0 ? gapCardToBody + bodiesH : 0;
+      const neededNoCard = topStart + headlinesH + gapHeadlineToCard + postCardReserve + takeawayClearance;
+      const maxCardSpace = effectiveFooterCeilingY - neededNoCard;
       if (cardH * gScale > maxCardSpace && cardH > 0) {
-        gScale = Math.max(0.42, Number((Math.max(130, maxCardSpace) / cardH).toFixed(3)));
+        gScale = Math.max(0.36, Number((Math.max(120, maxCardSpace) / cardH).toFixed(3)));
         if (cardH * gScale > maxCardSpace) {
           gapHeadlineToCard = 12;
           gapCardToBody = 14;
@@ -719,7 +867,7 @@ export function computeSlideLayoutAwareness(
     }
 
     const tDy = titleOverride?.dy || 0;
-    const actualTitleTop = freeMove ? topStart + tDy : Math.max(headerSafeFloorY + 8, topStart + tDy);
+    const actualTitleTop = freeMove ? topStart + tDy : Math.max(headerSafeFloorY + (hasKicker && isSlide1Cover ? 42 : 8), topStart + tDy);
     const actualTitleBottom = actualTitleTop + measured.enTitleHeight;
     if (measured.enTitle.lines.length > 0) {
       titleBlock = {
@@ -764,12 +912,55 @@ export function computeSlideLayoutAwareness(
       };
     }
 
-    const headlinesBottom =
+    let headlinesBottom =
       arabicTitleBlock && !arTitleHidden
         ? arabicTitleBlock.bottom
         : titleBlock && !titleHidden
         ? titleBlock.bottom
         : topStart;
+
+    if (isSlide1Cover && measured.enTeaser.lines.length > 0) {
+      const enTeaserTop = headlinesBottom + measured.gapTitlesToTeaser;
+      const enTeaserBottom = enTeaserTop + measured.enTeaserHeight;
+      coverTeaserBlock = {
+        lines: measured.enTeaser.lines,
+        fontSize: measured.enTeaser.fontSize,
+        lineHeight: measured.enTeaser.lineHeight,
+        top: enTeaserTop,
+        bottom: enTeaserBottom,
+        height: measured.enTeaserHeight,
+        firstBaselineY: enTeaserTop + measured.enTeaser.fontSize * 0.82,
+        dx: bDx,
+        dy: 0,
+        scale: 1,
+        opacity: 1,
+        align: tAlign,
+        hidden: titleHidden,
+      };
+      if (!titleHidden) headlinesBottom = enTeaserBottom;
+    }
+
+    if (isSlide1Cover && measured.arTeaser.lines.length > 0) {
+      const arTeaserTop =
+        headlinesBottom + (coverTeaserBlock && !coverTeaserBlock.hidden ? measured.gapTeasers : measured.gapTitlesToTeaser);
+      const arTeaserBottom = arTeaserTop + measured.arTeaserHeight;
+      arabicCoverTeaserBlock = {
+        lines: measured.arTeaser.lines,
+        fontSize: measured.arTeaser.fontSize,
+        lineHeight: measured.arTeaser.lineHeight,
+        top: arTeaserTop,
+        bottom: arTeaserBottom,
+        height: measured.arTeaserHeight,
+        firstBaselineY: arTeaserTop + measured.arTeaser.fontSize * 0.82,
+        dx: arBDx,
+        dy: 0,
+        scale: 1,
+        opacity: 1,
+        align: arTAlign,
+        hidden: arTitleHidden,
+      };
+      if (!arTitleHidden) headlinesBottom = arTeaserBottom;
+    }
 
     const scaledCardH = cardH * gScale;
     const minCardTop = headlinesBottom + gapHeadlineToCard;
@@ -1084,23 +1275,28 @@ export function computeSlideLayoutAwareness(
       }
     }
   } else if (compositionPreset === 'headline-first') {
-    // Headline-first ceiling compression pass
+    // Headline-first ceiling compression pass (honors effectiveFooterCeilingY so swipeCueBox stays clear)
     const getLowestHeadlineFirstY = () =>
       (takeawaysBlock && !takeawaysHidden ? takeawaysBlock.bottom : 0) ||
       (arabicBodyBlock && !arBodyHidden ? arabicBodyBlock.bottom : 0) ||
       (bodyBlock && !bodyHidden ? bodyBlock.bottom : 0) ||
       (!graphicCard.hidden ? graphicCard.effectiveBottom : 0) ||
+      (arabicCoverTeaserBlock && !arabicCoverTeaserBlock.hidden ? arabicCoverTeaserBlock.bottom : 0) ||
+      (coverTeaserBlock && !coverTeaserBlock.hidden ? coverTeaserBlock.bottom : 0) ||
       (arabicTitleBlock && !arTitleHidden ? arabicTitleBlock.bottom : 0) ||
       (titleBlock && !titleHidden ? titleBlock.bottom : 0) ||
       headerSafeFloorY;
 
-    let overflow = getLowestHeadlineFirstY() - spec.safeFooterCeilingY;
+    let overflow = getLowestHeadlineFirstY() - effectiveFooterCeilingY;
     if (overflow > 0 && titleBlock) {
-      const topSlack = Math.max(0, titleBlock.top - (headerSafeFloorY + 8));
+      const minTitleCeil = headerSafeFloorY + (hasKicker && isSlide1Cover ? 40 : 8);
+      const topSlack = Math.max(0, titleBlock.top - minTitleCeil);
       const shift = Math.min(overflow, topSlack);
       if (shift > 0) {
         shiftTextBlock(titleBlock, -shift);
         shiftTextBlock(arabicTitleBlock, -shift);
+        shiftTextBlock(coverTeaserBlock, -shift);
+        shiftTextBlock(arabicCoverTeaserBlock, -shift);
         graphicCard.y -= shift;
         graphicCard.effectiveTop -= shift;
         graphicCard.effectiveBottom -= shift;
@@ -1121,6 +1317,8 @@ export function computeSlideLayoutAwareness(
       if (arabicTitleBlock && !arTitleHidden && arabicTitleBlock.top > minArTitleTop) {
         const shift = Math.min(overflow, arabicTitleBlock.top - minArTitleTop);
         shiftTextBlock(arabicTitleBlock, -shift);
+        shiftTextBlock(coverTeaserBlock, -shift);
+        shiftTextBlock(arabicCoverTeaserBlock, -shift);
         graphicCard.y -= shift;
         graphicCard.effectiveTop -= shift;
         graphicCard.effectiveBottom -= shift;
@@ -1135,11 +1333,13 @@ export function computeSlideLayoutAwareness(
       }
 
       const headlinesBottom =
-        arabicTitleBlock && !arTitleHidden
+        (arabicCoverTeaserBlock && !arabicCoverTeaserBlock.hidden ? arabicCoverTeaserBlock.bottom : 0) ||
+        (coverTeaserBlock && !coverTeaserBlock.hidden ? coverTeaserBlock.bottom : 0) ||
+        (arabicTitleBlock && !arTitleHidden
           ? arabicTitleBlock.bottom
           : titleBlock && !titleHidden
           ? titleBlock.bottom
-          : headerSafeFloorY + 8;
+          : headerSafeFloorY + 8);
       const minCardTop = headlinesBottom + 14;
       if (overflow > 0 && !graphicCard.hidden && graphicCard.effectiveTop > minCardTop) {
         const shift = Math.min(overflow, graphicCard.effectiveTop - minCardTop);
@@ -1154,6 +1354,18 @@ export function computeSlideLayoutAwareness(
           takeawaysBlock.y -= shift;
         }
         overflow -= shift;
+      }
+      if (overflow > 0 && !graphicCard.hidden && graphicCard.height > 0 && isSlide1Cover) {
+        const availableCardH = Math.max(110, effectiveFooterCeilingY - graphicCard.effectiveTop);
+        if (graphicCard.effectiveBottom > effectiveFooterCeilingY && availableCardH < graphicCard.effectiveBottom - graphicCard.effectiveTop) {
+          const nextScale = Math.max(0.32, Number((availableCardH / graphicCard.height).toFixed(3)));
+          const newHalfH = (graphicCard.height * nextScale) / 2;
+          const newCenterY = graphicCard.effectiveTop + newHalfH;
+          graphicCard.scale = nextScale;
+          graphicCard.effectiveBottom = newCenterY + newHalfH;
+          graphicCard.y = newCenterY - graphicCard.height / 2;
+          overflow = getLowestHeadlineFirstY() - effectiveFooterCeilingY;
+        }
       }
       const postCardMin = graphicCard.hidden ? headlinesBottom + minGapTitleToBody : graphicCard.effectiveBottom + 16;
       if (overflow > 0 && bodyBlock && !bodyHidden && bodyBlock.top > postCardMin) {
@@ -1287,7 +1499,7 @@ export function computeSlideLayoutAwareness(
 
   // Final Unconditional Safe-Zone Boundary Guard across all modes
   if (!graphicCard.hidden) {
-    const maxSafeCardH = Math.max(120, spec.safeFooterCeilingY - headerSafeFloorY);
+    const maxSafeCardH = Math.max(120, effectiveFooterCeilingY - headerSafeFloorY);
     if (graphicCard.effectiveBottom - graphicCard.effectiveTop > maxSafeCardH && graphicCard.height > 0) {
       const clampedScale = Number((maxSafeCardH / graphicCard.height).toFixed(3));
       const cCenter = (graphicCard.effectiveTop + graphicCard.effectiveBottom) / 2;
@@ -1301,8 +1513,8 @@ export function computeSlideLayoutAwareness(
       graphicCard.effectiveTop += d;
       graphicCard.effectiveBottom += d;
     }
-    if (graphicCard.effectiveBottom > spec.safeFooterCeilingY) {
-      const d = graphicCard.effectiveBottom - spec.safeFooterCeilingY;
+    if (graphicCard.effectiveBottom > effectiveFooterCeilingY) {
+      const d = graphicCard.effectiveBottom - effectiveFooterCeilingY;
       graphicCard.y -= d;
       graphicCard.effectiveTop -= d;
       graphicCard.effectiveBottom -= d;
@@ -1315,8 +1527,8 @@ export function computeSlideLayoutAwareness(
       takeawaysBlock.bottom += d;
       takeawaysBlock.y += d;
     }
-    if (takeawaysBlock.bottom > spec.safeFooterCeilingY) {
-      const d = takeawaysBlock.bottom - spec.safeFooterCeilingY;
+    if (takeawaysBlock.bottom > effectiveFooterCeilingY) {
+      const d = takeawaysBlock.bottom - effectiveFooterCeilingY;
       takeawaysBlock.top -= d;
       takeawaysBlock.bottom -= d;
       takeawaysBlock.y -= d;
@@ -1405,13 +1617,56 @@ export function computeSlideLayoutAwareness(
         }
       }
     }
+
+    // Final non-overlapping guarantee between above blocks and takeawaysBlock
+    if (takeawaysBlock && !takeawaysBlock.hidden) {
+      const prevAnchorBottom =
+        visibleTextBlocks.length > 0
+          ? visibleTextBlocks[visibleTextBlocks.length - 1].bottom
+          : !graphicCard.hidden
+          ? graphicCard.effectiveBottom
+          : headerSafeFloorY;
+      const minTakeawaysTop = prevAnchorBottom + minGapBodies;
+      if (takeawaysBlock.top < minTakeawaysTop) {
+        const downSlack = Math.max(0, spec.safeFooterCeilingY - takeawaysBlock.bottom);
+        const shiftDown = Math.min(minTakeawaysTop - takeawaysBlock.top, downSlack);
+        if (shiftDown > 0) {
+          takeawaysBlock.top += shiftDown;
+          takeawaysBlock.bottom += shiftDown;
+          takeawaysBlock.y += shiftDown;
+        }
+        // If takeaways still touch prevAnchorBottom, pull text blocks up & shrink graphicCard to guarantee separation
+        const remainingOverlap = minTakeawaysTop - shiftDown - takeawaysBlock.top;
+        if (remainingOverlap > 0 && visibleTextBlocks.length > 0) {
+          let cap = takeawaysBlock.top - minGapBodies;
+          for (let idx = visibleTextBlocks.length - 1; idx >= 0; idx--) {
+            const blk = visibleTextBlocks[idx];
+            if (blk.bottom > cap) {
+              shiftTextBlock(blk, -(blk.bottom - cap));
+            }
+            cap = blk.top - 8;
+          }
+          if (!graphicCard.hidden && visibleTextBlocks[0].top < graphicCard.effectiveBottom + 8 && cardH > 0) {
+            const maxFitH = Math.max(84, visibleTextBlocks[0].top - 8 - headerSafeFloorY);
+            const nextScale = Math.max(0.25, Number((maxFitH / cardH).toFixed(3)));
+            const cy = headerSafeFloorY + (cardH * nextScale) / 2;
+            graphicCard.scale = nextScale;
+            graphicCard.effectiveTop = cy - (cardH * nextScale) / 2;
+            graphicCard.effectiveBottom = cy + (cardH * nextScale) / 2;
+            graphicCard.y = cy - cardH / 2;
+          }
+        }
+      }
+    }
   } else {
     if (!freeMove && compositionPreset === 'headline-first') {
-      const visibleBlocks = [titleBlock, arabicTitleBlock, bodyBlock, arabicBodyBlock].filter(
+      const visibleBlocks = [titleBlock, arabicTitleBlock, coverTeaserBlock, arabicCoverTeaserBlock, bodyBlock, arabicBodyBlock].filter(
         (b): b is TextBlockLayout => Boolean(b && !b.hidden)
       );
       let cap =
-        takeawaysBlock && !takeawaysBlock.hidden ? Math.min(spec.safeFooterCeilingY, takeawaysBlock.top - minGapBodies) : spec.safeFooterCeilingY;
+        takeawaysBlock && !takeawaysBlock.hidden
+          ? Math.min(effectiveFooterCeilingY, takeawaysBlock.top - minGapBodies)
+          : effectiveFooterCeilingY;
       for (let idx = visibleBlocks.length - 1; idx >= 0; idx--) {
         const blk = visibleBlocks[idx];
         if (blk.bottom > cap) {
@@ -1420,13 +1675,13 @@ export function computeSlideLayoutAwareness(
         cap = blk.top - 10;
       }
     }
-    for (const block of [titleBlock, arabicTitleBlock, bodyBlock, arabicBodyBlock]) {
+    for (const block of [titleBlock, arabicTitleBlock, coverTeaserBlock, arabicCoverTeaserBlock, bodyBlock, arabicBodyBlock]) {
       if (!block || block.hidden) continue;
       if (block.top < headerSafeFloorY) {
         shiftTextBlock(block, headerSafeFloorY - block.top);
       }
-      if (block.bottom > spec.safeFooterCeilingY) {
-        shiftTextBlock(block, -(block.bottom - spec.safeFooterCeilingY));
+      if (block.bottom > effectiveFooterCeilingY) {
+        shiftTextBlock(block, -(block.bottom - effectiveFooterCeilingY));
       }
     }
   }
@@ -1436,14 +1691,18 @@ export function computeSlideLayoutAwareness(
     dimensionPreset: spec.id,
     compositionPreset,
     freeMoveLayout: freeMove,
+    isSlide1Cover,
     canvasWidth: spec.width,
     canvasHeight: spec.height,
     headerBadge,
     graphicCard,
     titleBlock,
     arabicTitleBlock,
+    coverTeaserBlock,
+    arabicCoverTeaserBlock,
     bodyBlock,
     arabicBodyBlock,
+    swipeCueBox,
     takeawaysBlock,
     hasCollisionWarning: false,
   });
@@ -1737,10 +1996,10 @@ export function clampElementDrag(
   desiredDx: number,
   desiredDy: number,
   slide: SlideData,
-  carousel?: CarouselData
+  carousel?: CarouselData,
+  slideIndex?: number
 ): { dx: number; dy: number } {
   const spec = getCanvasDimensionSpec(carousel?.dimensionPreset);
-  const ceilingY = spec.safeFooterCeilingY;
 
   // Compute base layout without the dragged element's override to find anchor points and safe horizontal margins
   const baseSlide: SlideData = {
@@ -1755,7 +2014,11 @@ export function clampElementDrag(
     },
   };
 
-  const layout = computeSlideLayoutAwareness(baseSlide, carousel);
+  const layout = computeSlideLayoutAwareness(baseSlide, carousel, slideIndex);
+  const ceilingY =
+    layout.swipeCueBox && !layout.swipeCueBox.hidden
+      ? layout.swipeCueBox.y - 14
+      : spec.safeFooterCeilingY;
   const headerFloorY = layout.headerBadge.hidden
     ? spec.headerY
     : layout.headerBadge.y + layout.headerBadge.height;
@@ -1897,7 +2160,19 @@ export function clampElementDrag(
       layout.takeawaysBlock && !layout.takeawaysBlock.hidden ? layout.takeawaysBlock.height + MIN_GAP_BODIES : 0;
     maxDy = Math.round(Math.max(minDy, ceilingY - followingH - layout.arabicBodyBlock.bottom));
   } else if (elementId === 'takeawaysBlock' && layout.takeawaysBlock) {
-    minDy = -160;
+    const anchorAbove =
+      (layout.arabicBodyBlock && !layout.arabicBodyBlock.hidden
+        ? layout.arabicBodyBlock.bottom
+        : layout.bodyBlock && !layout.bodyBlock.hidden
+        ? layout.bodyBlock.bottom
+        : layout.arabicTitleBlock && !layout.arabicTitleBlock.hidden
+        ? layout.arabicTitleBlock.bottom
+        : layout.titleBlock && !layout.titleBlock.hidden
+        ? layout.titleBlock.bottom
+        : layout.graphicCard && !layout.graphicCard.hidden
+        ? layout.graphicCard.effectiveBottom
+        : headerFloorY) + MIN_GAP_BODIES;
+    minDy = Math.round(Math.min(0, anchorAbove - layout.takeawaysBlock.top));
     maxDy = Math.round(Math.max(0, ceilingY - layout.takeawaysBlock.bottom));
   } else if (elementId === 'ctaButton' && layout.ctaButton) {
     minDy = Math.round(headerFloorY - layout.ctaButton.y);

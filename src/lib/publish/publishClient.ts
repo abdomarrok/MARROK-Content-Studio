@@ -15,8 +15,6 @@ import { withClientAuthHeaders } from '../security/clientSessionToken.ts';
 
 export type WeeklyCadencePreset = 'mon-wed-fri' | 'tue-thu-sat' | 'weekdays' | 'daily';
 
-export type ChannelRoutingMode = 'hybrid-buffer-api' | 'all-metricool-csv';
-
 export interface PublishStatusResponse {
   cloudinaryConfigured: boolean;
   cloudinaryCloudName: string | null;
@@ -98,6 +96,8 @@ export interface ChannelDispatchResult {
 
 export interface DispatchPublishResponse {
   ok: boolean;
+  idempotentReplay?: boolean;
+  dispatchFingerprint?: string;
   mode: PublishScheduleMode;
   scheduledFor: string | null;
   cloudinaryCleaned: boolean;
@@ -441,6 +441,68 @@ export async function renderDeckSlidesToDataUrls(
 }
 
 /**
+ * Safely parses JSON from an API response, detecting HTML error pages (e.g. Nginx warmup/intercepted 502/503/504).
+ */
+export async function parseApiResponseJson<T>(res: Response, endpointContext: string): Promise<T> {
+  const contentType = (res.headers?.get?.('content-type') || '').toLowerCase();
+  let rawText = '';
+  if (typeof res.text === 'function') {
+    rawText = await res.text().catch(() => '');
+  }
+  const trimmed = rawText.trimStart().toLowerCase();
+  const isHtml =
+    contentType.includes('text/html') ||
+    trimmed.startsWith('<!doctype') ||
+    trimmed.startsWith('<html') ||
+    trimmed.startsWith('<head');
+
+  if (isHtml) {
+    if (
+      (res.url && res.url.includes('/upload-media')) ||
+      endpointContext.toLowerCase().includes('upload') ||
+      endpointContext.toLowerCase().includes('staging')
+    ) {
+      throw new Error(
+        'Cloudinary media staging is not configured or server proxy returned an HTML page. Configure CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in your environment variables to enable direct social publishing.'
+      );
+    }
+    throw new Error(
+      `${endpointContext} received an HTML response from the server proxy (HTTP ${res.status}). The service may be warming up or temporarily unavailable.`
+    );
+  }
+
+  let parsed: unknown = null;
+  if (rawText) {
+    try {
+      parsed = JSON.parse(rawText);
+    } catch (_e) {
+      throw new Error(
+        `${endpointContext} returned invalid non-JSON response (HTTP ${res.status}): ${rawText.slice(0, 120)}`
+      );
+    }
+  } else if (typeof res.json === 'function') {
+    try {
+      parsed = await res.json();
+    } catch (_e) {
+      parsed = {};
+    }
+  } else {
+    parsed = {};
+  }
+
+  if (!res.ok) {
+    const errObj = (parsed && typeof parsed === 'object' ? parsed : {}) as {
+      error?: string;
+      message?: string;
+    };
+    const msg = errObj.error || errObj.message || `${endpointContext} failed (${res.status})`;
+    throw new Error(msg);
+  }
+
+  return parsed as T;
+}
+
+/**
  * Renders a deck's slides and uploads them to Cloudinary (via /api/publish/upload-media).
  */
 export async function uploadDeckSlidesForPublishing(
@@ -482,33 +544,35 @@ export async function uploadDeckSlidesForPublishing(
           headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ postId, slides: chunk }),
         });
-        if (res.ok) {
-          lastChunkErr = null;
-          break;
-        }
-        const errData = (await res.json().catch(() => ({}))) as { error?: string };
-        lastChunkErr = new Error(
-          errData.error || `Media upload failed on slide ${startIdx} (${res.status})`
+        const data = await parseApiResponseJson<UploadPublishMediaResponse>(
+          res,
+          `Media upload for slide ${startIdx}`
         );
-        if (res.status < 500 && res.status !== 429) {
-          break;
-        }
+        allUrls.push(...(data.urls || []));
+        allPublicIds.push(...(data.publicIds || []));
+        if (data.provider) provider = data.provider;
+        lastChunkErr = null;
+        break;
       } catch (err) {
         lastChunkErr =
           err instanceof Error
             ? err
             : new Error(`Network error uploading slide ${startIdx}`);
+        const errMsg = lastChunkErr.message.toLowerCase();
+        if (
+          errMsg.includes('cloudinary') ||
+          errMsg.includes('html page') ||
+          errMsg.includes('staging') ||
+          (res && res.status < 500 && res.status !== 429)
+        ) {
+          break;
+        }
       }
     }
 
-    if (lastChunkErr || !res || !res.ok) {
-      throw lastChunkErr || new Error(`Media upload failed on slide ${startIdx}`);
+    if (lastChunkErr) {
+      throw lastChunkErr;
     }
-
-    const data = (await res.json()) as UploadPublishMediaResponse;
-    allUrls.push(...(data.urls || []));
-    allPublicIds.push(...(data.publicIds || []));
-    if (data.provider) provider = data.provider;
   }
 
   return {
@@ -529,10 +593,7 @@ export async function fetchPublishStatus(): Promise<PublishStatusResponse> {
     credentials: 'include',
     headers: withClientAuthHeaders({ Accept: 'application/json' }),
   });
-  if (!res.ok) {
-    throw new Error(`Failed to fetch publish status (${res.status})`);
-  }
-  return (await res.json()) as PublishStatusResponse;
+  return await parseApiResponseJson<PublishStatusResponse>(res, 'Fetch publish status');
 }
 
 /**
@@ -544,10 +605,7 @@ export async function fetchTikTokCommercialMusic(): Promise<TikTokMusicCatalogRe
     credentials: 'include',
     headers: withClientAuthHeaders({ Accept: 'application/json' }),
   });
-  if (!res.ok) {
-    throw new Error(`Failed to fetch TikTok music catalog (${res.status})`);
-  }
-  return (await res.json()) as TikTokMusicCatalogResponse;
+  return await parseApiResponseJson<TikTokMusicCatalogResponse>(res, 'Fetch TikTok music catalog');
 }
 
 /**
@@ -573,12 +631,7 @@ export async function dispatchPostPublish(
     body: JSON.stringify(payload),
   });
 
-  if (!res.ok) {
-    const errData = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(errData.error || `Publish dispatch failed (${res.status})`);
-  }
-
-  const data = (await res.json()) as DispatchPublishResponse;
+  const data = await parseApiResponseJson<DispatchPublishResponse>(res, 'Publish dispatch');
   if (data.post) {
     await syncLocalVaultAfterManage({ updatedPost: data.post });
   }
@@ -659,12 +712,7 @@ export async function managePublishedPost(
     body: JSON.stringify(payload),
   });
 
-  if (!res.ok) {
-    const errData = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(errData.error || `Post management action failed (${res.status})`);
-  }
-
-  const data = (await res.json()) as ManagePublishedPostResponse;
+  const data = await parseApiResponseJson<ManagePublishedPostResponse>(res, 'Post management action');
   await syncLocalVaultAfterManage({
     updatedPost: data.post,
     deletedId: data.deletedId,
@@ -693,11 +741,7 @@ export async function cleanupPublishedCloudinaryMedia(options?: {
     body: JSON.stringify(options || {}),
   });
 
-  if (!res.ok) {
-    throw new Error(`Cloudinary cleanup failed (${res.status})`);
-  }
-
-  return await res.json();
+  return await parseApiResponseJson(res, 'Cloudinary cleanup');
 }
 
 /**
@@ -836,31 +880,6 @@ export function resolveNextFutureSlotForTime(
     timeShort: cleanTime,
     rolledToTomorrow,
     isoDate: buildLocalScheduledIso(targetDate, cleanTime),
-  };
-}
-
-/**
- * Returns the very next upcoming future peak slot (`10:00`, `12:00`, or `18:00`).
- * If all 3 peak windows have passed today, returns Tomorrow at `10:00`.
- */
-export function getNextUpcomingPeakSlot(
-  now: Date = new Date()
-): { datePart: string; timeShort: PeakTimeSlot; readableLabel: string } {
-  const todayStr = getLocalTodayDateStr(now);
-  for (const slot of DAILY_PEAK_TIME_SLOTS) {
-    if (isLocalSlotInFuture(todayStr, slot, now)) {
-      return {
-        datePart: todayStr,
-        timeShort: slot,
-        readableLabel: `Today · ${slot}`,
-      };
-    }
-  }
-  const tomorrowStr = getLocalTomorrowDateStr(now);
-  return {
-    datePart: tomorrowStr,
-    timeShort: '10:00',
-    readableLabel: 'Tomorrow · 10:00',
   };
 }
 

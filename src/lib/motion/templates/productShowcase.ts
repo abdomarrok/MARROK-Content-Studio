@@ -262,7 +262,7 @@ export function drawProductShowcaseFrame(
             b.surfaceBorder || '#252838',
             '',
             '',
-            1
+            s
           );
 
           g.save();

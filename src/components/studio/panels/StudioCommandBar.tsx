@@ -234,7 +234,7 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
             type="text"
             value={promptInput}
             onChange={(e) => onPromptChange(e.target.value)}
-            placeholder="Enter topic, paste notes, or drop a screenshot (e.g. Zero-Trust Mesh, Redis 8)..."
+            placeholder="Describe a topic, paste notes, or drop a screenshot..."
             disabled={isGenerating}
             className="w-full min-w-0 bg-transparent px-1.5 sm:px-2 py-1 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none font-sans"
           />
@@ -257,25 +257,7 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
           )}
         </div>
 
-        {/* Quick Starter Chips (Desktop XL) */}
-        {!promptInput && !uploadedImage && !pipelineStatus && (
-          <div className="hidden xl:flex items-center gap-1 shrink-0">
-            {STARTER_TOPICS.slice(0, 2).map((topic) => (
-              <button
-                key={topic.name}
-                type="button"
-                onClick={() => onTriggerStarterTopic(topic)}
-                disabled={isGenerating}
-                className="px-2 py-0.5 rounded-lg text-[11px] bg-white/[0.03] hover:bg-white/[0.08] border border-white/5 text-slate-400 hover:text-white transition-colors cursor-pointer whitespace-nowrap"
-                title={topic.desc}
-              >
-                {topic.name}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Pipeline Status Indicator */}
+        {/* Pipeline Status Indicator (only while generating) */}
         {pipelineStatus && (
           <div
             className="hidden md:flex items-center gap-1.5 text-[11px] font-mono px-2 shrink-0"
@@ -290,19 +272,19 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
         <div
           role="group"
           aria-label="Post format selector"
-          className="hidden sm:flex items-center bg-black/60 p-0.5 rounded-xl border border-white/10 shrink-0"
+          className="hidden sm:flex items-center bg-black/50 p-0.5 rounded-xl border border-white/[0.08] shrink-0"
         >
           <button
             type="button"
             data-testid="format-toggle-carousel"
             onClick={() => onSwitchPostFormat('carousel')}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer whitespace-nowrap ${
               activePostFormat === 'carousel'
-                ? 'bg-white/15 text-white shadow-sm'
+                ? 'bg-white/12 text-white'
                 : 'text-slate-400 hover:text-white'
             }`}
             style={activePostFormat === 'carousel' ? { color: theme.accent } : undefined}
-            title="Multi-Slide Carousel (8 slides, 1080×1920)"
+            title="Multi-Slide Carousel (1080×1920)"
           >
             <Layers className="w-3 h-3" />
             <span>Carousel</span>
@@ -312,13 +294,13 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
             type="button"
             data-testid="format-toggle-single"
             onClick={() => onSwitchPostFormat('single')}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer whitespace-nowrap ${
               activePostFormat === 'single'
-                ? 'bg-white/15 text-white shadow-sm'
+                ? 'bg-white/12 text-white'
                 : 'text-slate-400 hover:text-white'
             }`}
             style={activePostFormat === 'single' ? { color: theme.accent } : undefined}
-            title="Standalone Single-Slide Post with Headlines, Body & Takeaways (1 slide, 1080×1920)"
+            title="Single-Slide Poster with Headlines, Body & Takeaways"
           >
             <ImageIcon className="w-3 h-3" />
             <span>Single Slide</span>
@@ -328,13 +310,13 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
             type="button"
             data-testid="format-toggle-meme"
             onClick={() => onSwitchPostFormat('meme')}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer whitespace-nowrap ${
               activePostFormat === 'meme'
-                ? 'bg-white/15 text-white shadow-sm'
+                ? 'bg-white/12 text-white'
                 : 'text-slate-400 hover:text-white'
             }`}
             style={activePostFormat === 'meme' ? { color: theme.accent } : undefined}
-            title="Dedicated Standalone Meme Post (Clean full-bleed white meme card, zero template text, auto-generated AI caption)"
+            title="Standalone Meme Post (Clean full-bleed card + AI caption)"
           >
             <Smile className="w-3 h-3" />
             <span>Meme</span>
@@ -344,37 +326,27 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
             type="button"
             data-testid="format-toggle-reel"
             onClick={() => onSwitchPostFormat('reel')}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer whitespace-nowrap ${
               activePostFormat === 'reel'
-                ? 'bg-white/15 text-white shadow-sm'
+                ? 'bg-white/12 text-white'
                 : 'text-slate-400 hover:text-white'
             }`}
             style={activePostFormat === 'reel' ? { color: theme.accent } : undefined}
-            title="Animated 9:16 Motion Reel Video (1080×1920 + Procedural SFX)"
+            title="Animated 9:16 Motion Reel Video"
           >
             <Film className="w-3 h-3" />
-            <span>Motion Reel</span>
+            <span>Reel</span>
           </button>
         </div>
 
-        {/* Engine Provenance Status (Unboxed Editorial Label) */}
-        <button
-          type="button"
-          onClick={onInspectEngine}
-          className={`hidden xl:inline-flex items-center gap-1 px-1.5 py-1 text-[10px] font-mono font-semibold hover:text-white transition-colors cursor-pointer shrink-0 ${engineBadge.cls}`}
-          title="Active synthesis engine & verification status (click to inspect in Publish tab)"
-        >
-          <span>{engineBadge.label}</span>
-        </button>
-
-        {/* Mobile Quick Meme Format Toggle / Upload Button */}
+        {/* Mobile Quick Meme Upload / Mode Button */}
         {activePostFormat === 'meme' ? (
           <button
             type="button"
             data-testid="top-bar-meme-upload-btn"
             onClick={() => fileInputRef.current?.click()}
             disabled={isGenerating}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 min-h-[34px] rounded-xl border border-emerald-400/50 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-100 hover:text-white text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 min-h-[34px] rounded-xl border border-emerald-400/40 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-100 hover:text-white text-xs font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0"
             title="Upload Meme Image into your clean Meme Post card"
           >
             <Upload className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
@@ -386,7 +358,7 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
             data-testid="top-bar-meme-mode-btn"
             onClick={() => onSwitchPostFormat('meme')}
             disabled={isGenerating}
-            className="sm:hidden flex items-center gap-1 px-2 py-1.5 min-h-[34px] rounded-xl border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] text-slate-200 hover:text-white text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0"
+            className="sm:hidden flex items-center gap-1 px-2 py-1.5 min-h-[34px] rounded-xl border border-white/12 bg-white/[0.04] hover:bg-white/[0.08] text-slate-200 hover:text-white text-xs font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0"
             title="Switch to Dedicated Meme Post Format"
           >
             <Smile className="w-3.5 h-3.5 text-cyan-300 shrink-0" />
@@ -394,18 +366,18 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
           </button>
         )}
 
-        {/* Expand Format & Source Ingestion Drawer Button */}
+        {/* Sources Drawer Button */}
         <button
           type="button"
           onClick={() => onSetIsExpanded((prev) => !prev)}
-          className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1.5 min-h-[34px] rounded-xl border text-xs font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 min-h-[34px] rounded-xl border text-xs font-medium transition-all cursor-pointer whitespace-nowrap shrink-0 ${
             isExpanded
-              ? 'border-cyan-400/50 bg-cyan-500/15 text-cyan-200'
-              : 'border-white/10 bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 hover:text-white'
+              ? 'border-white/25 bg-white/10 text-white'
+              : 'border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.07] text-slate-300 hover:text-white'
           }`}
-          title="Open Format & Multimodal Ingestion Drawer (Notes, YouTube Transcript, Screenshot OCR)"
+          title="Open Sources drawer (Notes, Topic Radar, YouTube, Screenshot OCR, Starter Topics)"
         >
-          <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+          <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400 shrink-0" />
           <span className="sm:hidden text-[11px] font-mono uppercase" style={{ color: theme.accent }}>
             {activePostFormat === 'single'
               ? '1-Slide'
@@ -415,11 +387,11 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
               ? 'Reel'
               : 'Deck'}
           </span>
-          <span className="hidden sm:inline">Sources & Notes</span>
+          <span className="hidden sm:inline">Sources</span>
           {isExpanded ? (
-            <ChevronUp className="w-3.5 h-3.5 shrink-0" />
+            <ChevronUp className="w-3.5 h-3.5 shrink-0 text-slate-400" />
           ) : (
-            <ChevronDown className="w-3.5 h-3.5 shrink-0" />
+            <ChevronDown className="w-3.5 h-3.5 shrink-0 text-slate-400" />
           )}
         </button>
 
@@ -427,7 +399,7 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
         <button
           type="submit"
           disabled={isGenerating}
-          className="flex items-center justify-center gap-1.5 px-3 sm:px-4 py-1.5 min-h-[34px] rounded-xl font-bold text-xs uppercase tracking-wider text-slate-950 transition-all shadow-md cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
+          className="flex items-center justify-center gap-1.5 px-3.5 py-1.5 min-h-[34px] rounded-xl font-bold text-xs text-slate-950 transition-all shadow-sm cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0 hover:brightness-105"
           style={{ backgroundColor: theme.accent }}
         >
           {isGenerating ? (

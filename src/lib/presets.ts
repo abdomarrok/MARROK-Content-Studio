@@ -201,15 +201,3 @@ $ scion commit -m "agent: optimize index"
     },
   ],
 };
-
-/**
- * Standard registry for backward-compatibility with App.tsx and starter loaders.
- */
-export const PRESET_CAROUSELS: Record<string, { name: string; category: string; description: string; data: CarouselData }> = {
-  scion: {
-    name: "Anthropic's Scion: Moving Beyond Git",
-    category: 'AI + ENGINEERING',
-    description: 'Anthropic built Scion to handle 25M CI checkouts/day and 100GB repos.',
-    data: DEFAULT_STARTER_DECK,
-  },
-};

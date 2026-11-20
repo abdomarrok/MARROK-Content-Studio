@@ -325,13 +325,11 @@ AI agents act on behalf of human principals but cannot safely share user passwor
     expect(compareSlide.compareRightTitle).toBeTruthy();
   });
 
-  it('detects legacy boilerplate decks and confirms all bundled Vault posts are boilerplate-free', async () => {
+  it('detects legacy boilerplate decks and confirms starter deck is boilerplate-free', async () => {
     const { isBoilerplateOrLowSignalDeck } = await import('../gather/gatherClient.ts');
-    const { BUNDLED_SAVED_POSTS } = await import('../storage/bundledSavedPosts.ts');
+    const { DEFAULT_STARTER_DECK } = await import('../presets.ts');
 
-    for (const post of BUNDLED_SAVED_POSTS) {
-      expect(isBoilerplateOrLowSignalDeck(post.deck)).toBe(false);
-    }
+    expect(isBoilerplateOrLowSignalDeck(DEFAULT_STARTER_DECK)).toBe(false);
 
     expect(
       isBoilerplateOrLowSignalDeck({

@@ -6,7 +6,6 @@ import {
   Copy,
   FileText,
   Download,
-  Sliders,
   Type,
   Layers,
   LayoutGrid,
@@ -26,7 +25,6 @@ import {
 import {
   downloadSingleSlidePng,
   getCanvasDimensionSpec,
-  CANVAS_DIMENSION_PRESET_LIST,
   type ExportBundleMode,
 } from '../../../lib/canvasExporter.ts';
 
@@ -97,7 +95,7 @@ export const MobileStudioBottomBar: React.FC<MobileStudioBottomBarProps> = ({
 
   return (
     <div className="lg:hidden fixed bottom-0 inset-x-0 z-30 h-[56px] bg-[#080d11]/95 border-t border-white/10 px-1.5 backdrop-blur-md flex items-center justify-between gap-1 shadow-2xl">
-      {/* Compact Single-Row 4-Tab Bar (Text, Design, Adjust, P. OK) — 100% visible without clipping */}
+      {/* Clean Single-Row 3-Tab Bar (Content, Visual, Publish) */}
       <div
         data-testid="mobile-scrollable-tab-bar"
         className="flex items-center gap-1 flex-1 min-w-0 py-1"
@@ -105,28 +103,21 @@ export const MobileStudioBottomBar: React.FC<MobileStudioBottomBarProps> = ({
         {[
           {
             id: 'copy' as const,
-            label: activePostFormat === 'reel' ? 'Motion' : 'Text',
+            label: activePostFormat === 'reel' ? 'Motion' : 'Content',
             icon: activePostFormat === 'reel' ? Film : Type,
             active: isSheetOpen && inspectorTab === 'copy',
             hidden: false,
           },
           {
             id: 'visual' as const,
-            label: 'Design',
+            label: 'Visual',
             icon: Layers,
-            active: isSheetOpen && inspectorTab === 'visual',
-            hidden: activePostFormat === 'reel',
-          },
-          {
-            id: 'position' as const,
-            label: 'Adjust',
-            icon: Sliders,
-            active: isSheetOpen && inspectorTab === 'position',
+            active: isSheetOpen && (inspectorTab === 'visual' || inspectorTab === 'position'),
             hidden: activePostFormat === 'reel',
           },
           {
             id: 'review' as const,
-            label: 'P. OK',
+            label: 'Publish',
             icon: CheckCircle2,
             active: isSheetOpen && (inspectorTab === 'review' || inspectorTab === 'caption'),
             hidden: false,

@@ -1,9 +1,101 @@
 export type ThemeMode = 'security' | 'engineering' | 'cyber' | 'violet' | 'blueprint' | 'monochrome' | 'emerald' | 'custom';
 
-// Dynamic category type accepting any detected or custom domain
-export type CategoryType = string;
+export type SlideType =
+  | 'hub'
+  | 'row'
+  | 'number'
+  | 'metric'
+  | 'code'
+  | 'compare'
+  | 'image'
+  | 'cta'
+  | 'poster'
+  | 'subjectPair'
+  | 'visual';
 
-export type SlideType = 'hub' | 'row' | 'number' | 'metric' | 'code' | 'compare' | 'image' | 'cta' | 'poster' | 'subjectPair';
+export type CoverStyle =
+  | 'headline-hero'
+  | 'metric-split'
+  | 'versus-hook'
+  | 'visual-teaser';
+
+export type VisualSpecKind =
+  | 'bar-chart'
+  | 'sequence'
+  | 'timeline'
+  | 'matrix'
+  | 'table'
+  | 'callout'
+  | 'svg';
+
+export interface VisualBarItem {
+  label: string;
+  value: number;
+  displayValue?: string;
+  tone?: 'accent' | 'muted' | 'alert';
+  isWinner?: boolean;
+}
+
+export interface VisualSequenceStep {
+  from: number;
+  to: number;
+  label: string;
+  tag?: string;
+  style?: 'solid' | 'dashed' | 'alert';
+}
+
+export interface VisualTimelineEvent {
+  time: string;
+  title: string;
+  detail?: string;
+  severity?: 'info' | 'warn' | 'incident' | 'resolved';
+}
+
+export interface VisualMatrixQuadrant {
+  title: string;
+  detail?: string;
+  highlight?: boolean;
+}
+
+export interface SlideVisualSpec {
+  kind: VisualSpecKind;
+  eyebrow?: string;
+  title?: string;
+  footnote?: string;
+  // bar-chart
+  orientation?: 'horizontal' | 'vertical';
+  unit?: string;
+  deltaBadge?: string;
+  bars?: VisualBarItem[];
+  // sequence
+  actors?: string[];
+  steps?: VisualSequenceStep[];
+  // timeline
+  events?: VisualTimelineEvent[];
+  // matrix (2x2 trade-off grid)
+  xAxisLow?: string;
+  xAxisHigh?: string;
+  yAxisLow?: string;
+  yAxisHigh?: string;
+  quadrants?: VisualMatrixQuadrant[];
+  // table
+  columns?: string[];
+  rows?: string[][];
+  highlightColumn?: number;
+  // callout (editorial quote or hero stat)
+  calloutStyle?: 'quote' | 'stat';
+  quote?: string;
+  statValue?: string;
+  statLabel?: string;
+  author?: string;
+  role?: string;
+  source?: string;
+  evidence?: string;
+  // svg (sandboxed theme-tokenized custom blueprint)
+  svgCode?: string;
+  viewBox?: string;
+  presetId?: string;
+}
 
 export interface SubjectPairConfig {
   beforeSystem: string;
@@ -119,6 +211,12 @@ export interface SlideData {
   arTitle?: string;
   enBody?: string;
   arBody?: string;
+  // Slide 1 Cover Hero properties (active on multi-slide Slide 1 covers)
+  coverStyle?: CoverStyle;
+  coverTeaserEn?: string;
+  coverTeaserAr?: string;
+  showSwipeCue?: boolean;
+  swipeCueText?: string;
   ctaText?: string;
   url?: string;
   enCredit?: string;
@@ -152,6 +250,8 @@ export interface SlideData {
     isNonLibrarySource?: boolean;
   };
   subjectPair?: SubjectPairConfig;
+  // Universal Visual Engine declarative specification (bar-chart, sequence, timeline, matrix, table, callout, svg)
+  visualSpec?: SlideVisualSpec;
 }
 
 export interface HubNodeReason {
@@ -198,8 +298,18 @@ export interface ElementLayoutOverride {
   hidden?: boolean;       // Whether the element is hidden on the slide
 }
 
+export type HookFramework =
+  | 'Contrarian'
+  | 'Specific Metric'
+  | 'Mistake Callout'
+  | 'Curiosity Gap';
+
 export interface HookVariant {
-  tag: string; // e.g., "Curiosity", "Hard Metrics", "Problem / Contrast"
+  tag: string; // e.g., "Contrarian", "Specific Metric", "Mistake Callout", "Curiosity Gap"
+  framework?: HookFramework;
+  score?: number;
+  selected?: boolean;
+  selectionReason?: string;
   enTitle: string;
   arTitle: string;
   enBody: string;
@@ -207,6 +317,9 @@ export interface HookVariant {
   centerIcon?: string;
   hookKicker?: string;
   coverArchetype?: SlideType;
+  coverStyle?: CoverStyle;
+  coverTeaserEn?: string;
+  coverTeaserAr?: string;
 }
 
 export interface CaptionVariant {
@@ -249,6 +362,79 @@ export interface TopicScoreBreakdown {
   riskScore: number;
   ageHours?: number;
   freshnessTag: 'fresh' | 'evergreen';
+  // 5-factor calibrated breakdown
+  relevance?: number;
+  novelty?: number;
+  verifiability?: number;
+  domainBalance?: number;
+  duplicatePenalty?: number;
+  learningAdjustment?: number;
+  rumorCapped?: boolean;
+  rumorReason?: string;
+}
+
+export type TriageSkipReason =
+  | 'off-topic'
+  | 'too-basic'
+  | 'already-covered'
+  | 'cant-verify'
+  | 'risky';
+
+export type TriageAction = 'draft' | 'skip' | 'snooze';
+
+export interface TriageDecisionRecord {
+  id: string;
+  topicId: string;
+  topicSignature?: string;
+  sourceDomain: string;
+  domainCategory: string;
+  action: TriageAction;
+  reason?: TriageSkipReason;
+  snoozeUntil?: string | null;
+  createdAt: string;
+}
+
+export interface MetricEvidenceItem {
+  id: string;
+  label: string;
+  sourceQuote: string;
+  sourceUrl?: string;
+  verified: boolean;
+}
+
+export interface ClusteredSourceItem {
+  sourceName: string;
+  sourceType: string;
+  domain: string;
+  url: string;
+  title?: string;
+}
+
+export interface FeedHealthStatus {
+  id: string;
+  name: string;
+  status: 'ok' | 'partial' | 'error';
+  itemCount: number;
+  lastScannedAt: string;
+  errorMessage?: string;
+}
+
+export interface SuggestedCalendarSlot {
+  iso: string;
+  dayLabel: string;
+  timeLabel: '10:00' | '12:00' | '18:00';
+  label: string;
+  isEmpty: boolean;
+}
+
+export interface CandidateRiskSignals {
+  origin: 'original' | 'repost';
+  originLabel: string;
+  claimsStatus: 'verified' | 'needs_review' | 'none';
+  isRumorOrUnsourced: boolean;
+  rumorReason?: string;
+  duplicateStatus: 'none' | 'duplicate';
+  matchedPostTitle?: string;
 }
 
 export interface PostSourceMeta {
@@ -269,12 +455,16 @@ export interface PostSourceMeta {
   userReviewed?: boolean;
   verifiedNumbers?: boolean;
   marrokAngle?: string;
+  sourceSummary?: string;
+  metricEvidence?: MetricEvidenceItem[];
   extractedSourceMetrics?: string[];
   numericDiscrepancies?: NumericEvidenceDiscrepancy[];
   qualityPassed?: boolean;
   groundingVerified?: boolean;
   humanApproved?: boolean;
   publishFailed?: boolean;
+  lastDispatchFingerprint?: string;
+  lastDispatchedAt?: string;
   viralityScore?: number;
   viralAngle?: string;
 }
@@ -381,6 +571,12 @@ export interface MotionReelData {
   showCadReticles?: boolean;
 }
 
+export interface PostFormatDraftSnapshot {
+  slides: SlideData[];
+  activeSlideIndex?: number;
+  updatedAt?: string;
+}
+
 export interface CarouselData {
   id?: string;
   postFormat?: PostFormat;
@@ -401,6 +597,7 @@ export interface CarouselData {
   captionVariants?: CaptionVariant[];
   hookVariants?: HookVariant[];
   slides: SlideData[];
+  formatDrafts?: Partial<Record<PostFormat, PostFormatDraftSnapshot>>;
   reelConfig?: MotionReelData;
   visualOptions?: VisualSystemOptions; // Phase 1-3 visual graphics system toggles
   syncDeckEnabled?: boolean;
@@ -435,8 +632,6 @@ export interface ThemePalette {
   showSparklines?: boolean;
   terminalScanlines?: boolean;
 }
-
-export type ThemeConfig = ThemePalette;
 
 export type SavedPostStatus = 'validated' | 'posted';
 
@@ -490,6 +685,8 @@ export interface SavedPostRecord {
   bufferPostIds?: string[];
   zernioPostIds?: string[];
   countedInMetricoolMonth?: string;
+  lastDispatchFingerprint?: string;
+  lastDispatchedAt?: string;
 }
 
 // Re-export immutable palette repositories for backwards compatibility

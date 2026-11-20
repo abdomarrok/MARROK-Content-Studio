@@ -421,11 +421,15 @@ describe('Slide 1 Verification: Robot Pick-and-Place vs Discord Cassandra to Scy
       expect(item.fontSizePx).toBeGreaterThanOrEqual(24);
     }
 
-    // Verify vertical balance in usable safe zone (206px to 1428px)
-    const discordLayout = computeSlideLayoutAwareness(discordSlide1, discordDeck);
+    // Verify Headline-first Cover Hero vertical balance in usable safe zone (206px to 1428px)
+    const discordLayout = computeSlideLayoutAwareness(discordSlide1, discordDeck, 0);
+    expect(discordLayout.isSlide1Cover).toBe(true);
+    expect(discordLayout.compositionPreset).toBe('headline-first');
     expect(discordLayout.graphicCard?.height).toBe(540);
-    expect(discordLayout.arabicTitleBlock?.bottom).toBeGreaterThan(1020);
-    expect(discordLayout.arabicTitleBlock?.bottom).toBeLessThanOrEqual(1428);
+    expect(discordLayout.titleBlock?.bottom).toBeLessThan(discordLayout.arabicTitleBlock?.top ?? 0);
+    expect(discordLayout.arabicTitleBlock?.bottom).toBeLessThan(discordLayout.graphicCard?.effectiveTop ?? 0);
+    expect(discordLayout.graphicCard?.effectiveBottom).toBeLessThanOrEqual(discordLayout.swipeCueBox?.y ?? 1428);
+    expect((discordLayout.swipeCueBox?.y ?? 0) + (discordLayout.swipeCueBox?.height ?? 0)).toBeLessThanOrEqual(1428);
 
     const discordQA = runQAChecks(discordDeck);
     expect(discordQA.canExport).toBe(true);

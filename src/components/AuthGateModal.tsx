@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
-import { Lock, LogIn, ShieldAlert } from 'lucide-react';
-import { setClientSessionToken } from '../lib/security/clientSessionToken.ts';
+import { Lock, LogIn, RefreshCw, ShieldAlert } from 'lucide-react';
+import { submitClientLogin } from '../lib/security/clientSessionToken.ts';
 
 export interface AuthGateModalProps {
   isOpen: boolean;
   authConfigured: boolean;
   accentColor: string;
   onAuthenticated: (username: string) => void;
+  onAuthConfiguredChange?: (configured: boolean) => void;
+  onRetryConfigCheck?: () => Promise<void> | void;
 }
 
 export const AuthGateModal: React.FC<AuthGateModalProps> = ({
@@ -14,13 +16,27 @@ export const AuthGateModal: React.FC<AuthGateModalProps> = ({
   authConfigured,
   accentColor,
   onAuthenticated,
+  onAuthConfiguredChange,
+  onRetryConfigCheck,
 }) => {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isRechecking, setIsRechecking] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   if (!isOpen) return null;
+
+  const handleRecheck = async () => {
+    if (!onRetryConfigCheck || isRechecking) return;
+    setIsRechecking(true);
+    setErrorMsg(null);
+    try {
+      await onRetryConfigCheck();
+    } finally {
+      setIsRechecking(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,30 +48,16 @@ export const AuthGateModal: React.FC<AuthGateModalProps> = ({
     setIsSubmitting(true);
     setErrorMsg(null);
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: username.trim(),
-          password,
-        }),
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        authenticated?: boolean;
-        username?: string;
-        token?: string;
-        error?: string;
-      };
-      if (!res.ok || !data.authenticated) {
-        setErrorMsg(data.error || `Sign-in failed (${res.status}).`);
+      const result = await submitClientLogin(username, password);
+      if (!result.authConfigured) {
+        onAuthConfiguredChange?.(false);
+      }
+      if (!result.ok) {
+        setErrorMsg(result.error || 'Sign-in failed.');
         return;
       }
-      if (data.token) {
-        setClientSessionToken(data.token);
-      }
       setPassword('');
-      onAuthenticated(data.username || username.trim());
+      onAuthenticated(result.username || username.trim());
     } catch {
       setErrorMsg('Network error contacting authentication gateway.');
     } finally {
@@ -89,13 +91,26 @@ export const AuthGateModal: React.FC<AuthGateModalProps> = ({
         </div>
 
         {!authConfigured && (
-          <div className="p-3 rounded-xl border border-amber-500/40 bg-amber-500/10 text-xs text-amber-200 flex items-start gap-2">
-            <ShieldAlert className="w-4 h-4 text-amber-300 shrink-0 mt-0.5" />
-            <span>
-              Server authentication secrets (<code className="font-mono">ADMIN_USERNAME</code>,{' '}
-              <code className="font-mono">ADMIN_PASSWORD_HASH</code>,{' '}
-              <code className="font-mono">SESSION_SECRET</code>) are not configured yet. API routes fail closed with HTTP 503.
-            </span>
+          <div className="p-3 rounded-xl border border-amber-500/40 bg-amber-500/10 text-xs text-amber-200 space-y-2">
+            <div className="flex items-start gap-2">
+              <ShieldAlert className="w-4 h-4 text-amber-300 shrink-0 mt-0.5" />
+              <span>
+                Server authentication secrets (<code className="font-mono">ADMIN_USERNAME</code>,{' '}
+                <code className="font-mono">ADMIN_PASSWORD_HASH</code>,{' '}
+                <code className="font-mono">SESSION_SECRET</code>) are not configured in the active environment yet. Add them in AI Studio Environment Variables and restart/reload.
+              </span>
+            </div>
+            {onRetryConfigCheck && (
+              <button
+                type="button"
+                onClick={handleRecheck}
+                disabled={isRechecking}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-amber-400/40 bg-amber-400/10 text-[11px] font-semibold text-amber-100 hover:bg-amber-400/20 disabled:opacity-50 cursor-pointer"
+              >
+                <RefreshCw className={`w-3 h-3 ${isRechecking ? 'animate-spin' : ''}`} />
+                <span>{isRechecking ? 'Checking...' : 'Re-check Server Config'}</span>
+              </button>
+            )}
           </div>
         )}
 

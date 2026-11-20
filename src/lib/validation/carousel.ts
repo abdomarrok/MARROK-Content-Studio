@@ -2,26 +2,36 @@ import type {
   CanvasDimensionPreset,
   CaptionVariant,
   CarouselData,
+  CoverStyle,
   DiagramNode,
   DiagramVariant,
   ElementLayoutOverride,
   ExtractedFact,
   GraphicalElementId,
   GroundingSource,
+  HookFramework,
   HookVariant,
   IconLabelPair,
   MotionReelData,
   NumericEvidenceDiscrepancy,
   PostFormat,
+  PostFormatDraftSnapshot,
   PostSourceMeta,
   SlideCompositionPreset,
   SlideData,
   SlideTakeawayItem,
   SlideType,
+  SlideVisualSpec,
   SubjectPairConfig,
   TextAlignment,
+  VisualBarItem,
+  VisualMatrixQuadrant,
+  VisualSequenceStep,
+  VisualSpecKind,
   VisualSystemOptions,
+  VisualTimelineEvent,
 } from '../../types.ts';
+import { MAX_SVG_BLUEPRINT_LENGTH, sanitizeSvgBlueprintMarkup } from '../canvas/svgBlueprint.ts';
 
 const POST_FORMATS: PostFormat[] = ['carousel', 'single', 'meme', 'reel'];
 
@@ -44,6 +54,24 @@ const SLIDE_TYPES: SlideType[] = [
   'cta',
   'poster',
   'subjectPair',
+  'visual',
+];
+
+const COVER_STYLES: CoverStyle[] = [
+  'headline-hero',
+  'metric-split',
+  'versus-hook',
+  'visual-teaser',
+];
+
+const VISUAL_SPEC_KINDS: VisualSpecKind[] = [
+  'bar-chart',
+  'sequence',
+  'timeline',
+  'matrix',
+  'table',
+  'callout',
+  'svg',
 ];
 
 const DIAGRAM_VARIANTS: DiagramVariant[] = [
@@ -287,6 +315,165 @@ function parseSubjectPair(value: unknown): SubjectPairConfig | undefined {
   return cfg;
 }
 
+function parseVisualSpec(value: unknown): SlideVisualSpec | undefined {
+  if (!isRecord(value)) return undefined;
+  const kind = readEnum(value.kind, VISUAL_SPEC_KINDS);
+  if (!kind) return undefined;
+
+  const spec: SlideVisualSpec = { kind };
+  const eyebrow = readString(value, 'eyebrow', 80);
+  const title = readString(value, 'title', 120);
+  const footnote = readString(value, 'footnote', 180);
+  if (eyebrow) spec.eyebrow = eyebrow;
+  if (title) spec.title = title;
+  if (footnote) spec.footnote = footnote;
+
+  const orientation = readEnum(value.orientation, ['horizontal', 'vertical'] as const);
+  const unit = readString(value, 'unit', 24);
+  const deltaBadge = readString(value, 'deltaBadge', 60);
+  if (orientation) spec.orientation = orientation;
+  if (unit !== undefined) spec.unit = unit;
+  if (deltaBadge) spec.deltaBadge = deltaBadge;
+
+  if (Array.isArray(value.bars)) {
+    const bars: VisualBarItem[] = [];
+    for (const raw of value.bars) {
+      if (!isRecord(raw)) continue;
+      const label = readString(raw, 'label', 60)?.trim();
+      const rawVal = readNumber(raw, 'value', -1_000_000_000, 1_000_000_000);
+      if (!label || rawVal === undefined) continue;
+      const bar: VisualBarItem = { label, value: rawVal };
+      const displayValue = readString(raw, 'displayValue', 40)?.trim();
+      const tone = readEnum(raw.tone, ['accent', 'muted', 'alert'] as const);
+      const isWinner = readBoolean(raw, 'isWinner');
+      if (displayValue) bar.displayValue = displayValue;
+      if (tone) bar.tone = tone;
+      if (isWinner !== undefined) bar.isWinner = isWinner;
+      bars.push(bar);
+      if (bars.length >= 6) break;
+    }
+    if (bars.length > 0) spec.bars = bars;
+  }
+
+  const actors = readStringArray(value.actors, 4, 40);
+  if (actors) spec.actors = actors;
+
+  if (Array.isArray(value.steps)) {
+    const steps: VisualSequenceStep[] = [];
+    for (const raw of value.steps) {
+      if (!isRecord(raw)) continue;
+      const from = readNumber(raw, 'from', 0, 3);
+      const to = readNumber(raw, 'to', 0, 3);
+      const label = readString(raw, 'label', 80)?.trim();
+      if (from === undefined || to === undefined || !label) continue;
+      const step: VisualSequenceStep = {
+        from: Math.floor(from),
+        to: Math.floor(to),
+        label,
+      };
+      const tag = readString(raw, 'tag', 32)?.trim();
+      const style = readEnum(raw.style, ['solid', 'dashed', 'alert'] as const);
+      if (tag) step.tag = tag;
+      if (style) step.style = style;
+      steps.push(step);
+      if (steps.length >= 6) break;
+    }
+    if (steps.length > 0) spec.steps = steps;
+  }
+
+  if (Array.isArray(value.events)) {
+    const events: VisualTimelineEvent[] = [];
+    for (const raw of value.events) {
+      if (!isRecord(raw)) continue;
+      const time = readString(raw, 'time', 32)?.trim() || `T+0${events.length}m`;
+      const evTitle = readString(raw, 'title', 90)?.trim();
+      if (!evTitle) continue;
+      const event: VisualTimelineEvent = { time, title: evTitle };
+      const detail = readString(raw, 'detail', 140)?.trim();
+      const severity = readEnum(raw.severity, ['info', 'warn', 'incident', 'resolved'] as const);
+      if (detail) event.detail = detail;
+      if (severity) event.severity = severity;
+      events.push(event);
+      if (events.length >= 5) break;
+    }
+    if (events.length > 0) spec.events = events;
+  }
+
+  const xAxisLow = readString(value, 'xAxisLow', 40);
+  const xAxisHigh = readString(value, 'xAxisHigh', 40);
+  const yAxisLow = readString(value, 'yAxisLow', 40);
+  const yAxisHigh = readString(value, 'yAxisHigh', 40);
+  if (xAxisLow) spec.xAxisLow = xAxisLow;
+  if (xAxisHigh) spec.xAxisHigh = xAxisHigh;
+  if (yAxisLow) spec.yAxisLow = yAxisLow;
+  if (yAxisHigh) spec.yAxisHigh = yAxisHigh;
+
+  if (Array.isArray(value.quadrants)) {
+    const quadrants: VisualMatrixQuadrant[] = [];
+    for (const raw of value.quadrants) {
+      if (!isRecord(raw)) continue;
+      const qTitle = readString(raw, 'title', 60)?.trim();
+      if (!qTitle) continue;
+      const quad: VisualMatrixQuadrant = { title: qTitle };
+      const detail = readString(raw, 'detail', 120)?.trim();
+      const highlight = readBoolean(raw, 'highlight');
+      if (detail) quad.detail = detail;
+      if (highlight !== undefined) quad.highlight = highlight;
+      quadrants.push(quad);
+      if (quadrants.length >= 4) break;
+    }
+    if (quadrants.length > 0) spec.quadrants = quadrants;
+  }
+
+  const columns = readStringArray(value.columns, 4, 40);
+  if (columns) spec.columns = columns;
+
+  if (Array.isArray(value.rows)) {
+    const rows: string[][] = [];
+    for (const rawRow of value.rows) {
+      if (!Array.isArray(rawRow)) continue;
+      const cells = rawRow
+        .filter((cell): cell is string => typeof cell === 'string')
+        .map((cell) => cell.trim().slice(0, 60))
+        .slice(0, 4);
+      if (cells.length > 0) rows.push(cells);
+      if (rows.length >= 5) break;
+    }
+    if (rows.length > 0) spec.rows = rows;
+  }
+  const highlightColumn = readNumber(value, 'highlightColumn', 0, 3);
+  if (highlightColumn !== undefined) spec.highlightColumn = Math.floor(highlightColumn);
+
+  const calloutStyle = readEnum(value.calloutStyle, ['quote', 'stat'] as const);
+  const quote = readString(value, 'quote', 320);
+  const statValue = readString(value, 'statValue', 40);
+  const statLabel = readString(value, 'statLabel', 100);
+  const author = readString(value, 'author', 100);
+  const role = readString(value, 'role', 100);
+  const source = readString(value, 'source', 140);
+  const evidence = readString(value, 'evidence', 180);
+  if (calloutStyle) spec.calloutStyle = calloutStyle;
+  if (quote) spec.quote = quote;
+  if (statValue) spec.statValue = statValue;
+  if (statLabel) spec.statLabel = statLabel;
+  if (author) spec.author = author;
+  if (role) spec.role = role;
+  if (source) spec.source = source;
+  if (evidence) spec.evidence = evidence;
+
+  const rawViewBox = readString(value, 'viewBox', 64);
+  const presetId = readString(value, 'presetId', 64);
+  const rawSvg = readString(value, 'svgCode', MAX_SVG_BLUEPRINT_LENGTH);
+  if (rawViewBox) spec.viewBox = rawViewBox;
+  if (presetId) spec.presetId = presetId;
+  if (rawSvg && rawSvg.trim().length > 0) {
+    const sanitized = sanitizeSvgBlueprintMarkup(rawSvg, rawViewBox);
+    spec.svgCode = sanitized.svg || rawSvg;
+  }
+
+  return spec;
+}
+
 function parseSlide(
   value: unknown,
   index: number,
@@ -333,6 +520,9 @@ function parseSlide(
     ['arTitle', 'arTitle', 500],
     ['enBody', 'enBody', 1200],
     ['arBody', 'arBody', 1200],
+    ['coverTeaserEn', 'coverTeaserEn', 160],
+    ['coverTeaserAr', 'coverTeaserAr', 180],
+    ['swipeCueText', 'swipeCueText', 60],
     ['ctaText', 'ctaText', 160],
     ['url', 'url', 500],
     ['enCredit', 'enCredit', 200],
@@ -359,6 +549,8 @@ function parseSlide(
   const imageBgStyle = readEnum(value.imageBgStyle, IMAGE_BG_STYLES);
   const brandWatermark = readEnum(value.brandWatermark, BRAND_WATERMARKS);
   const compositionPreset = readEnum(value.compositionPreset, COMPOSITION_PRESETS);
+  const coverStyle = readEnum(value.coverStyle, COVER_STYLES);
+  const showSwipeCue = readBoolean(value, 'showSwipeCue');
   const freeMoveLayout = readBoolean(value, 'freeMoveLayout');
   const videoMuted = readBoolean(value, 'videoMuted');
   const videoPlaying = readBoolean(value, 'videoPlaying');
@@ -370,6 +562,7 @@ function parseSlide(
   const takeaways = parseTakeaways(value.takeaways);
   const layoutOverrides = parseLayoutOverrides(value.layoutOverrides);
   const subjectPair = parseSubjectPair(value.subjectPair);
+  const visualSpec = parseVisualSpec(value.visualSpec);
 
   if (satIcons) slide.satIcons = satIcons;
   if (satLabels) slide.satLabels = satLabels;
@@ -384,6 +577,8 @@ function parseSlide(
   if (imageBgStyle) slide.imageBgStyle = imageBgStyle;
   if (brandWatermark) slide.brandWatermark = brandWatermark;
   if (compositionPreset) slide.compositionPreset = compositionPreset;
+  if (coverStyle) slide.coverStyle = coverStyle;
+  if (showSwipeCue !== undefined) slide.showSwipeCue = showSwipeCue;
   if (freeMoveLayout !== undefined) slide.freeMoveLayout = freeMoveLayout;
   if (videoMuted !== undefined) slide.videoMuted = videoMuted;
   if (videoPlaying !== undefined) slide.videoPlaying = videoPlaying;
@@ -395,6 +590,7 @@ function parseSlide(
   if (takeaways) slide.takeaways = takeaways;
   if (layoutOverrides) slide.layoutOverrides = layoutOverrides;
   if (subjectPair) slide.subjectPair = subjectPair;
+  if (visualSpec) slide.visualSpec = visualSpec;
 
   if (requireContent) {
     const hasText = [
@@ -416,7 +612,8 @@ function parseSlide(
       (slide.icons?.length ?? 0) > 0 ||
       (slide.takeaways?.length ?? 0) > 0;
     const hasSubjectPair = Boolean(slide.type === 'subjectPair' && slide.subjectPair);
-    if (!hasText && !hasNodes && !hasSubjectPair) return null;
+    const hasVisualSpec = Boolean(slide.type === 'visual' && slide.visualSpec);
+    if (!hasText && !hasNodes && !hasSubjectPair && !hasVisualSpec) return null;
   }
 
   return slide;
@@ -460,11 +657,16 @@ function parseSourceMeta(value: unknown): PostSourceMeta | undefined {
   const isSearchGrounded = readBoolean(value, 'isSearchGrounded');
   const isFallback = readBoolean(value, 'isFallback');
   const userReviewed = readBoolean(value, 'userReviewed');
+  const verifiedNumbers = readBoolean(value, 'verifiedNumbers');
+  const marrokAngle = readString(value, 'marrokAngle', 1000);
+  const sourceSummary = readString(value, 'sourceSummary', 2400);
   const extractedSourceMetrics = readStringArray(value.extractedSourceMetrics, 40, 120);
   const qualityPassed = readBoolean(value, 'qualityPassed');
   const groundingVerified = readBoolean(value, 'groundingVerified');
   const humanApproved = readBoolean(value, 'humanApproved');
   const publishFailed = readBoolean(value, 'publishFailed');
+  const lastDispatchFingerprint = readString(value, 'lastDispatchFingerprint', 120);
+  const lastDispatchedAt = readString(value, 'lastDispatchedAt', 100);
   const viralityScore = readNumber(value, 'viralityScore', 0, 100);
   const viralAngle = readString(value, 'viralAngle', 100);
 
@@ -483,11 +685,39 @@ function parseSourceMeta(value: unknown): PostSourceMeta | undefined {
   if (model) meta.model = model;
   if (status) meta.status = status;
   if (userReviewed !== undefined) meta.userReviewed = userReviewed;
+  if (verifiedNumbers !== undefined) meta.verifiedNumbers = verifiedNumbers;
+  if (marrokAngle) meta.marrokAngle = marrokAngle;
+  if (sourceSummary) meta.sourceSummary = sourceSummary;
   if (extractedSourceMetrics) meta.extractedSourceMetrics = extractedSourceMetrics;
+  if (Array.isArray(value.metricEvidence) && value.metricEvidence.length > 0) {
+    const parsedEvidence: NonNullable<PostSourceMeta['metricEvidence']> = [];
+    for (const item of value.metricEvidence) {
+      if (!isRecord(item)) continue;
+      const evId = readString(item, 'id', 120);
+      const label = readString(item, 'label', 120);
+      const sourceQuote = readString(item, 'sourceQuote', 400) ?? '';
+      const sourceUrl = readString(item, 'sourceUrl', 1000);
+      const verified = readBoolean(item, 'verified') ?? false;
+      if (evId && label) {
+        parsedEvidence.push({
+          id: evId,
+          label,
+          sourceQuote,
+          ...(sourceUrl ? { sourceUrl } : {}),
+          verified,
+        });
+      }
+    }
+    if (parsedEvidence.length > 0) {
+      meta.metricEvidence = parsedEvidence.slice(0, 16);
+    }
+  }
   if (qualityPassed !== undefined) meta.qualityPassed = qualityPassed;
   if (groundingVerified !== undefined) meta.groundingVerified = groundingVerified;
   if (humanApproved !== undefined) meta.humanApproved = humanApproved;
   if (publishFailed !== undefined) meta.publishFailed = publishFailed;
+  if (lastDispatchFingerprint) meta.lastDispatchFingerprint = lastDispatchFingerprint;
+  if (lastDispatchedAt) meta.lastDispatchedAt = lastDispatchedAt;
   if (viralityScore !== undefined) meta.viralityScore = viralityScore;
   if (viralAngle) meta.viralAngle = viralAngle;
   if (Array.isArray(value.numericDiscrepancies) && value.numericDiscrepancies.length > 0) {
@@ -532,6 +762,13 @@ function parseCaptionVariants(value: unknown): CaptionVariant[] | undefined {
   return variants.length > 0 ? variants.slice(0, 10) : undefined;
 }
 
+const HOOK_FRAMEWORKS: HookFramework[] = [
+  'Contrarian',
+  'Specific Metric',
+  'Mistake Callout',
+  'Curiosity Gap',
+];
+
 function parseHookVariants(value: unknown): HookVariant[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const variants: HookVariant[] = [];
@@ -540,16 +777,30 @@ function parseHookVariants(value: unknown): HookVariant[] | undefined {
     const tag = readString(item, 'tag', 100);
     const enTitle = readString(item, 'enTitle', 500);
     const arTitle = readString(item, 'arTitle', 500);
-    const enBody = readString(item, 'enBody', 1200);
-    const arBody = readString(item, 'arBody', 1200);
-    if (!tag || !enTitle || !arTitle || !enBody || !arBody) continue;
+    const enBody = readString(item, 'enBody', 1200) ?? '';
+    const arBody = readString(item, 'arBody', 1200) ?? '';
+    if (!tag || !enTitle || !arTitle) continue;
     const variant: HookVariant = { tag, enTitle, arTitle, enBody, arBody };
+    const framework = readEnum(item.framework, HOOK_FRAMEWORKS);
+    const score = readNumber(item, 'score', 0, 100);
+    const selected = readBoolean(item, 'selected');
+    const selectionReason = readString(item, 'selectionReason', 300);
     const centerIcon = readString(item, 'centerIcon', 500);
     const hookKicker = readString(item, 'hookKicker', 100);
     const coverArchetype = readEnum(item.coverArchetype, SLIDE_TYPES);
+    const coverStyle = readEnum(item.coverStyle, COVER_STYLES);
+    const coverTeaserEn = readString(item, 'coverTeaserEn', 160);
+    const coverTeaserAr = readString(item, 'coverTeaserAr', 180);
+    if (framework) variant.framework = framework;
+    if (score !== undefined) variant.score = score;
+    if (selected !== undefined) variant.selected = selected;
+    if (selectionReason) variant.selectionReason = selectionReason;
     if (centerIcon) variant.centerIcon = centerIcon;
     if (hookKicker) variant.hookKicker = hookKicker;
     if (coverArchetype) variant.coverArchetype = coverArchetype;
+    if (coverStyle) variant.coverStyle = coverStyle;
+    if (coverTeaserEn !== undefined) variant.coverTeaserEn = coverTeaserEn;
+    if (coverTeaserAr !== undefined) variant.coverTeaserAr = coverTeaserAr;
     variants.push(variant);
   }
   return variants.length > 0 ? variants.slice(0, 10) : undefined;
@@ -565,6 +816,35 @@ function parseVisualOptions(value: unknown): VisualSystemOptions | undefined {
   if (showSparklines !== undefined) options.showSparklines = showSparklines;
   if (terminalScanlines !== undefined) options.terminalScanlines = terminalScanlines;
   return Object.keys(options).length > 0 ? options : undefined;
+}
+
+function parseFormatDrafts(
+  value: unknown
+): Partial<Record<PostFormat, PostFormatDraftSnapshot>> | undefined {
+  if (!isRecord(value)) return undefined;
+  const result: Partial<Record<PostFormat, PostFormatDraftSnapshot>> = {};
+  for (const fmt of POST_FORMATS) {
+    const rawSnap = value[fmt];
+    if (!isRecord(rawSnap) || !Array.isArray(rawSnap.slides) || rawSnap.slides.length === 0) {
+      continue;
+    }
+    const parsedSlides: SlideData[] = [];
+    const maxSnapSlides = Math.min(rawSnap.slides.length, DEFAULT_MAX_SLIDES);
+    for (let i = 0; i < maxSnapSlides; i += 1) {
+      const parsed = parseSlide(rawSnap.slides[i], i, maxSnapSlides, false);
+      if (parsed) parsedSlides.push(parsed);
+    }
+    if (parsedSlides.length === 0) continue;
+    const snap: PostFormatDraftSnapshot = {
+      slides: parsedSlides,
+    };
+    const activeIdx = readNumber(rawSnap, 'activeSlideIndex', 0, parsedSlides.length - 1);
+    const updatedAt = readString(rawSnap, 'updatedAt', 64);
+    if (activeIdx !== undefined) snap.activeSlideIndex = Math.floor(activeIdx);
+    if (updatedAt) snap.updatedAt = updatedAt;
+    result[fmt] = snap;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 export interface ParseCarouselOptions {
@@ -642,6 +922,7 @@ export function parseCarouselData(
   const hookVariants = parseHookVariants(value.hookVariants);
   const visualOptions = parseVisualOptions(value.visualOptions);
   const reelConfig = parseMotionReelConfig(value.reelConfig);
+  const formatDrafts = parseFormatDrafts(value.formatDrafts);
 
   if (dimensionPreset) carousel.dimensionPreset = dimensionPreset;
   if (id) carousel.id = id;
@@ -659,6 +940,7 @@ export function parseCarouselData(
   if (hookVariants) carousel.hookVariants = hookVariants;
   if (visualOptions) carousel.visualOptions = visualOptions;
   if (reelConfig) carousel.reelConfig = reelConfig;
+  if (formatDrafts) carousel.formatDrafts = formatDrafts;
 
   return carousel;
 }

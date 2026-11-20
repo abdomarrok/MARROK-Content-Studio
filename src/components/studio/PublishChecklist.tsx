@@ -210,7 +210,6 @@ export const PublishChecklist: React.FC<PublishChecklistProps> = ({
   const hubNodeReasons = carousel.slides.flatMap((s, slideIdx) =>
     (s.hubNodeReasons || []).map((reason) => ({ ...reason, slideIdx }))
   );
-  const needsHumanReview = (isOfflineDraft || engineType !== 'grounded') && !isReviewed;
   const qaFailures = qaReport.results.filter(
     (r) => r.severity === 'fail' && r.id !== 'fallback-draft-blocker'
   );

@@ -1,10 +1,15 @@
 import type { CarouselData, DiagramNode, DiagramVariant, HookClaimCard, HubNodeReason, SlideData, SlideType, SubjectPairConfig } from '../../types.ts';
 import { TECH_ICONS_LIST } from '../techLogos.ts';
-import { getBundledIconMeta, isPlaceholderOrEmptyBrandValue, resolveRealTechSystem } from '../bundledTechSvgs.ts';
-import { CHAR_LIMITS, SINGLE_SLIDE_CHAR_LIMITS } from '../qaChecks.ts';
+import { isPlaceholderOrEmptyBrandValue, resolveRealTechSystem } from '../bundledTechSvgs.ts';
+import { CHAR_LIMITS, CONTENT_QUALITY_FILLER_LABELS, SINGLE_SLIDE_CHAR_LIMITS } from '../qaChecks.ts';
 import { autoFitTextToLimits, autoPolishHeadline } from '../text/headlines.ts';
 import { fixArabicPunctuation } from '../text/arabicBiDi.ts';
-import { repairAndDeRepeatSlideHeadlines } from '../text/sanitizer.ts';
+import { repairAndDeRepeatSlideHeadlines, sanitizeSlide } from '../text/sanitizer.ts';
+import {
+  deriveVisualSpecFromSlide,
+  detectStrongVisualSpecKind,
+  explainVisualSpecChoice,
+} from './visualSpecBuilder.ts';
 
 const STOP_WORDS = new Set([
   'the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'your', 'are', 'was', 'were',
@@ -61,8 +66,10 @@ const GENERIC_PLACEHOLDER_LABELS = new Set([
 
 export function isGenericPlaceholderValue(val?: string): boolean {
   if (!val || !val.trim()) return true;
-  const clean = val.trim().toLowerCase();
+  const trimmed = val.trim();
+  const clean = trimmed.toLowerCase();
   if (GENERIC_PLACEHOLDER_LABELS.has(clean)) return true;
+  if (CONTENT_QUALITY_FILLER_LABELS.has(trimmed.toUpperCase())) return true;
   if (/^component\s*0?\d+$/i.test(clean) || /^stage\s*0?\d+$/i.test(clean)) return true;
   return false;
 }
@@ -178,6 +185,7 @@ export function extractKeyPhrasesFromSlide(slide: SlideData): string[] {
     const candidate = words.slice(0, 2).join(' ');
     if (candidate.length < 3) return;
     if (STOP_WORDS.has(candidate.toLowerCase())) return;
+    if (CONTENT_QUALITY_FILLER_LABELS.has(candidate.toUpperCase())) return;
 
     const candidateRoots = words.slice(0, 2).map(normalizeRootToken).filter((r) => r.length >= 3);
     if (candidateRoots.length === 0) return;
@@ -249,6 +257,7 @@ const HUB_FILLER_TOKENS = new Set([
   'telemetry', 'stat', 'stats', 'metric', 'metrics', 'exposure', 'boundaries',
   'verification', 'observability', 'ingress', 'egress', 'engine', 'architecture',
   'core', 'system', 'systems', 'target', 'state', 'node', 'stage', 'layer',
+  'replacing', 'replace', 'explaining', 'building', 'making', 'running', 'working', 'doing',
   'الذي', 'التي', 'كيف', 'لماذا', 'فعليا', 'فعلياً', 'ماذا', 'الأنظمة', 'المعمارية',
 ]);
 
@@ -271,6 +280,7 @@ export function extractSourceQuotedHubNodes(
   if (!cleanSource) {
     return { satLabels: [], hubNodeReasons: [] };
   }
+  const hasLatinScript = /[A-Za-z]{3,}/.test(cleanSource) || /[A-Za-z]{3,}/.test(options?.titleText || '');
 
   const forbiddenEchoRoots = new Set<string>();
   const addForbiddenText = (txt?: string) => {
@@ -308,6 +318,8 @@ export function extractSourceQuotedHubNodes(
       .replace(/^[^A-Za-z0-9\u0600-\u06FF$]+|[^A-Za-z0-9\u0600-\u06FF%+$]+$/g, '')
       .trim();
     if (cleaned.length < 3) return;
+    // Never emit Arabic fragments into English deck orbital nodes
+    if (hasLatinScript && /[\u0600-\u06FF]/.test(cleaned)) return;
 
     const words = cleaned.split(/\s+/).filter(Boolean);
     if (words.length === 0 || words.length > 3) return;
@@ -323,11 +335,18 @@ export function extractSourceQuotedHubNodes(
       return;
     }
 
-    const labelWords = words.slice(0, 2);
+    let labelWords = words.slice(0, 2);
+    if (labelWords.length === 2 && labelWords.join(' ').length > 14) {
+      const shorterWord =
+        labelWords[1].length >= 4 && !HUB_FILLER_TOKENS.has(labelWords[1].toLowerCase())
+          ? labelWords[1]
+          : labelWords[0];
+      labelWords = [shorterWord];
+    }
     const label = labelWords
       .join(' ')
       .toUpperCase()
-      .slice(0, 18)
+      .slice(0, 14)
       .trim();
     if (label.length < 3) return;
 
@@ -436,7 +455,7 @@ export function extractSourceQuotedHubNodes(
     tryRegister(tok, 'source-term');
   }
 
-  // E. If still fewer than targetCount and title tokens exist cleanly, allow 2-word title noun compounds (never raw single title echo)
+  // E. If still fewer than targetCount, supplement from key phrases or crisp topic stages (never Arabic shards)
   if (candidates.length < targetCount) {
     const fallbackPhrases = extractKeyPhrasesFromSlide({
       type: 'hub',
@@ -446,6 +465,24 @@ export function extractSourceQuotedHubNodes(
     for (const p of fallbackPhrases) {
       if (candidates.length >= targetCount) break;
       tryRegister(p, 'source-term');
+    }
+  }
+
+  if (candidates.length < targetCount && hasLatinScript) {
+    const lowerAll = `${cleanSource} ${options?.titleText || ''} ${options?.category || ''}`.toLowerCase();
+    const domainNodes = /\b(?:agent|copilot|developer|coding|llm|model|ai|prompt|autonomous)\b/.test(lowerAll)
+      ? ['TOOL CALLS', 'SANDBOX', 'DIFF AUDIT', 'TEST SUITE', 'CI GATE', 'CONTEXT']
+      : /\b(?:security|auth|cve|sandbox|permission|zero[- ]?trust|token)\b/.test(lowerAll)
+      ? ['AUTH GATE', 'SANDBOX', 'POLICY', 'AUDIT LOG', 'SECRET', 'VERIFY']
+      : /\b(?:sql|postgres|redis|database|cache|replica|storage|wal)\b/.test(lowerAll)
+      ? ['READ POOL', 'WAL LOG', 'INDEX SCAN', 'CACHE TIER', 'SHARD', 'REPLICA']
+      : /\b(?:valuation|capital|revenue|market|debt|billion|financial|investor)\b/.test(lowerAll)
+      ? ['CAPEX', 'UNIT COST', 'CASHFLOW', 'GRID LOAD', 'RISK', 'MARGIN']
+      : ['INGEST', 'ROUTER', 'WORKER', 'STORAGE', 'POLICY', 'TELEMETRY'];
+
+    for (const dn of domainNodes) {
+      if (candidates.length >= targetCount) break;
+      tryRegister(dn, 'source-term');
     }
   }
 
@@ -768,8 +805,9 @@ export function detectSubjectPairFromText(
  */
 export function analyzeSlideTextForArchetype(
   slide: SlideData,
-  slideIndex: number = 0
-): 'metric' | 'compare' | 'code' | 'row' | 'number' | 'subjectPair' {
+  slideIndex: number = 0,
+  options?: { ignoreCurrentType?: boolean }
+): 'metric' | 'compare' | 'code' | 'row' | 'number' | 'subjectPair' | 'visual' {
   const title = (slide.enTitle || '').trim();
   const body = (slide.enBody || '').trim();
   const arTitle = (slide.arTitle || '').trim();
@@ -780,6 +818,23 @@ export function analyzeSlideTextForArchetype(
   const pair = detectSubjectPairFromText(fullText, slide);
   if (pair && slideIndex === 0) {
     return 'subjectPair';
+  }
+
+  // Respect explicit AI/user 'visual' slide unless caller requested fresh re-evaluation
+  if (!options?.ignoreCurrentType && slide.type === 'visual' && slide.visualSpec?.kind) {
+    return 'visual';
+  }
+  const strongVisualKind = detectStrongVisualSpecKind(slide, {
+    ignoreCurrentType: options?.ignoreCurrentType,
+  });
+  if (strongVisualKind && !(pair && slideIndex === 0)) {
+    const hasExplicitCodeSyntax =
+      /\b(?:SELECT\s+.+\s+FROM|EXPLAIN\s+ANALYZE|CREATE\s+INDEX|docker\s+run|kubectl\s+apply|async\s+fn|function\s+\w+|const\s+\w+\s*=|import\s+.+\s+from)\b/i.test(
+        fullText
+      );
+    if (!hasExplicitCodeSyntax) {
+      return 'visual';
+    }
   }
 
   let scores: Record<'metric' | 'compare' | 'code' | 'row' | 'number' | 'subjectPair', number> = {
@@ -1007,7 +1062,9 @@ export function deriveSlideCornerTag(
     return 'BOTTLENECK';
   }
   if (slideIndex === 0 || slide.storyRole === 'hook') {
-    return /\d/.test(fullText) ? 'BENCHMARK' : 'ARCHITECTURE';
+    const hasMeasuredBenchmark =
+      /\b\d+(?:\.\d+)?\s*(?:%|x|ms|μs|ns|s|GB|MB|TB|KB|GW|rps|req\/s|qps)\b|\$\s*\d/i.test(fullText);
+    return hasMeasuredBenchmark ? 'BENCHMARK' : 'ARCHITECTURE';
   }
   return 'ARCHITECTURE';
 }
@@ -1124,12 +1181,17 @@ export function resolveSmartSlideVisuals(
       .filter((t) => t.length >= 3)
   );
 
-  // Deduplicate any custom satLabels that repeat words or use generic filler or echo title/category
+  const hasEnglishTitle = /[A-Za-z]{3,}/.test(slide.enTitle || '');
+  // Deduplicate any custom satLabels that repeat words, leak Arabic script, truncate with "...", or use filler
   const cleanCustomSatLabels = (slide.satLabels || []).filter((raw) => {
     if (!raw || isGenericPlaceholderValue(raw)) return false;
-    const upper = raw.trim().toUpperCase();
-    const lowerLabel = raw.trim().toLowerCase();
+    const trimmed = raw.trim();
+    if (/\.\.\.|…$/.test(trimmed)) return false;
+    if (hasEnglishTitle && /[\u0600-\u06FF]/.test(trimmed)) return false;
+    const upper = trimmed.toUpperCase();
+    const lowerLabel = trimmed.toLowerCase();
     if (STOP_WORDS.has(lowerLabel)) return false;
+    if (CONTENT_QUALITY_FILLER_LABELS.has(upper)) return false;
     if (upper === 'TECH' || upper === 'TECH HUMOR' || upper === 'TELEMETRY STAT' || upper === 'EXPOSURE METRIC') {
       return false;
     }
@@ -1166,7 +1228,8 @@ export function resolveSmartSlideVisuals(
       return !(toks.length === 1 && titleAndCategoryEchoSet.has(toks[0]));
     });
 
-  const extractedHub = extractSourceQuotedHubNodes(fullText, {
+  const englishHubSource = `${slide.enTitle || ''} ${slide.enBody || ''}`.trim() || fullText;
+  const extractedHub = extractSourceQuotedHubNodes(englishHubSource, {
     titleText: slide.enTitle,
     category: slide.category || centerTag,
     targetCount: 5,
@@ -1209,7 +1272,7 @@ export function resolveSmartSlideVisuals(
     !forceRefresh &&
     slide.diagramNodes &&
     slide.diagramNodes.length >= 3 &&
-    !isGenericPlaceholderValue(slide.diagramNodes[0]?.label);
+    slide.diagramNodes.slice(0, 3).every((n) => !isGenericPlaceholderValue(n?.label));
 
   const variantMeta = (() => {
     switch (activeVariant) {
@@ -1475,12 +1538,19 @@ export function resolveSmartSlideVisuals(
     if (/cost|spend|bill|price|\$|تكلفة|إنفاق/i.test(fullText)) return 'CLOUD SPEND';
     if (/memory|ram|buffer|gc\b|ذاكرة/i.test(fullText)) return 'MEMORY FOOTPRINT';
     if (/token|key|signature|kb\b|bytes?|مفتاح/i.test(fullText)) return 'PAYLOAD SIZE';
-    const cleanPhrase = phrases.find((p) => !/\d/.test(p) && p.length >= 4) || phrases[0] || 'MEASURED RESULT';
+    const cleanPhrase =
+      phrases.find(
+        (p) =>
+          !/\d/.test(p) &&
+          p.length >= 4 &&
+          !CONTENT_QUALITY_FILLER_LABELS.has(p.trim().toUpperCase())
+      ) || 'MEASURED RESULT';
     return cleanPhrase.toUpperCase().slice(0, 24);
   })();
 
   const isNonsenseMetricLabel = (lbl?: string) =>
     !lbl ||
+    CONTENT_QUALITY_FILLER_LABELS.has(lbl.trim().toUpperCase()) ||
     /EXPOSURE\s+METRIC|TELEMETRY\s+STAT|SCALE\s+METRIC|PERFORMANCE\s+MULTIPLIER|^p99\s+latency$|\bTO\s+EXPOSURE\b/i.test(lbl);
 
   const metricLabel = !hasSourceNumber
@@ -1945,6 +2015,9 @@ export function explainArchetypeChoice(
   if (type === 'image') {
     return `Picked Media Card layout for ${quotedTermsStr} to frame visual asset within safe-zone chrome.`;
   }
+  if (type === 'visual') {
+    return explainVisualSpecChoice(slide);
+  }
 
   // Row schematic variants (Mechanism / Robotics / ML / Explainer)
   switch (slide.diagramVariant) {
@@ -2021,7 +2094,13 @@ export function diversifyDeckArchetypesAndVisuals(
       if (slide.type === 'code') usedCode = true;
       if (slide.type === 'metric') usedMetric = true;
       assignedTypes.push(slide.type);
-      assignedSignatures.push(slide.type === 'row' ? `row:${slide.diagramVariant || 'topology'}` : slide.type);
+      assignedSignatures.push(
+        slide.type === 'row'
+          ? `row:${slide.diagramVariant || 'topology'}`
+          : slide.type === 'visual'
+          ? `visual:${slide.visualSpec?.kind || 'bar-chart'}`
+          : slide.type
+      );
       return {
         ...slide,
         storyRole: slide.storyRole || storyRole,
@@ -2030,7 +2109,7 @@ export function diversifyDeckArchetypesAndVisuals(
       };
     }
 
-    // Slide 1 Cover: Always a Hook layout (subjectPair / metric / compare / row / code) — NEVER 'hub'
+    // Slide 1 Cover: Always a Hook layout (subjectPair / metric / compare / visual / row / code) — NEVER 'hub'
     if (idx === 0) {
       const hasValidSubjectPair = Boolean(
         detectSubjectPairFromText(`${slide.enTitle || ''} ${slide.enBody || ''} ${slide.arTitle || ''}`, slide)
@@ -2042,7 +2121,8 @@ export function diversifyDeckArchetypesAndVisuals(
         slide.type === 'code' ||
         slide.type === 'row' ||
         slide.type === 'poster' ||
-        slide.type === 'image';
+        slide.type === 'image' ||
+        slide.type === 'visual';
 
       const coverType: SlideType = explicitHookCover
         ? slide.type
@@ -2100,6 +2180,10 @@ export function diversifyDeckArchetypesAndVisuals(
           diagramNodes: smartCover.diagramNodes,
           diagramEdges: smartCover.diagramEdges,
           diagramFooter: smartCover.diagramFooter,
+          visualSpec:
+            coverType === 'visual'
+              ? slide.visualSpec || deriveVisualSpecFromSlide(slide, undefined, 0)
+              : slide.visualSpec,
         },
         false,
         slide.enBody
@@ -2112,7 +2196,11 @@ export function diversifyDeckArchetypesAndVisuals(
       );
       assignedTypes.push(nextCover.type);
       assignedSignatures.push(
-        nextCover.type === 'row' ? `row:${nextCover.diagramVariant || 'topology'}` : nextCover.type
+        nextCover.type === 'row'
+          ? `row:${nextCover.diagramVariant || 'topology'}`
+          : nextCover.type === 'visual'
+          ? `visual:${nextCover.visualSpec?.kind || 'bar-chart'}`
+          : nextCover.type
       );
       return nextCover;
     }
@@ -2238,6 +2326,25 @@ export function diversifyDeckArchetypesAndVisuals(
       true
     );
 
+    if (targetType === 'visual') {
+      const detectedKind = slide.visualSpec?.kind || detectStrongVisualSpecKind(slide) || undefined;
+      const resolvedSpec =
+        slide.visualSpec && slide.visualSpec.kind
+          ? slide.visualSpec
+          : deriveVisualSpecFromSlide(slide, detectedKind, idx);
+      const nextVisual: SlideData = {
+        ...slide,
+        type: 'visual',
+        storyRole,
+        visualSpec: resolvedSpec,
+      };
+      nextVisual.cornerTag = deriveSlideCornerTag(nextVisual, idx, slides.length);
+      nextVisual.layoutRationale = explainArchetypeChoice(nextVisual, idx, slides.length);
+      assignedTypes.push('visual');
+      assignedSignatures.push(`visual:${resolvedSpec.kind}`);
+      return nextVisual;
+    }
+
     if (targetType === 'subjectPair' && smart.subjectPair && slide1CoverType !== 'subjectPair') {
       const nextPair: SlideData = {
         ...slide,
@@ -2351,6 +2458,7 @@ export function autoFitSlideCopyToLimits(
   const limits = isSingle ? SINGLE_SLIDE_CHAR_LIMITS : CHAR_LIMITS;
   const isHook = slideIndex === 0 || slide.type === 'hub';
   const enTitleLimit = isHook ? limits.hookTitle : limits.enTitle;
+  const arTitleLimit = isHook ? limits.hookArTitle : limits.arTitle;
 
   const rawEnTitle = (slide.enTitle || '').trim();
   const rawArTitle = (slide.arTitle || '').trim();
@@ -2362,8 +2470,8 @@ export function autoFitSlideCopyToLimits(
       ? autoPolishHeadline(autoFitTextToLimits(rawEnTitle, enTitleLimit))
       : rawEnTitle;
   const fittedArTitle =
-    rawArTitle.length > limits.arTitle
-      ? fixArabicPunctuation(autoFitTextToLimits(rawArTitle, limits.arTitle))
+    rawArTitle.length > arTitleLimit
+      ? fixArabicPunctuation(autoFitTextToLimits(rawArTitle, arTitleLimit))
       : fixArabicPunctuation(rawArTitle);
   const fittedEnBody =
     rawEnBody.length > limits.enBody
@@ -2418,7 +2526,7 @@ export function autoSyncSlideGraphicsFromCopy(
     !slide.enBody &&
     slide.diagramNodes &&
     slide.diagramNodes.length >= 3 &&
-    !isGenericPlaceholderValue(slide.diagramNodes[0]?.label);
+    slide.diagramNodes.slice(0, 3).every((n) => !isGenericPlaceholderValue(n?.label));
   const smart = resolveSmartSlideVisuals(slide, slideIndex, !hasExistingValidNodes);
   const synced: SlideData = {
     ...slide,
@@ -2448,6 +2556,10 @@ export function autoSyncSlideGraphicsFromCopy(
     satLabels: smart.satLabels,
     hubNodeReasons: smart.hubNodeReasons,
     satIcons: smart.satIcons,
+    visualSpec:
+      slide.type === 'visual'
+        ? slide.visualSpec || deriveVisualSpecFromSlide(slide, undefined, slideIndex)
+        : slide.visualSpec,
   };
   synced.cornerTag = slide.cornerTag || deriveSlideCornerTag(synced, slideIndex, 8);
   synced.layoutRationale = slide.layoutRationale || explainArchetypeChoice(synced, slideIndex, 8);
@@ -2488,6 +2600,370 @@ export function autoFinalizeCarouselDeck(deck: CarouselData): CarouselData {
     brandUrl: 'marrok.org',
     syncDeckEnabled: deck.syncDeckEnabled ?? true,
     slides: finalizedSlides,
+  };
+}
+
+/**
+ * One-Tap Auto-Clean Content:
+ * Removes known template clichés, raw filenames, placeholder tokens, filler diagram/metric/hub labels,
+ * category echoes, and Slide 1 hook violations across the entire deck so Content Quality Gate passes cleanly.
+ */
+export function cleanCarouselContentQuality(
+  deck: CarouselData,
+  promptContext: string = ''
+): CarouselData {
+  const prevSlides = deck.slides || [];
+  const isMulti = deck.postFormat !== 'single' && prevSlides.length > 1;
+  const deckCorpus = [
+    promptContext,
+    deck.sourceMeta?.title || deck.category,
+    deck.caption,
+    ...prevSlides.map((s) => `${s.enTitle || ''} ${s.enBody || ''}`),
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const stripTemplatesAndPlaceholders = (value: string, options?: { isCta?: boolean }): string => {
+    let out = (value || '')
+      .replace(/\bA breakdown of technical mechanisms,?\s*benchmarks,?\s*and production architecture\.?/gi, 'Technical architecture and benchmark breakdown.')
+      .replace(/\ba breakdown of technical mechanisms behind\b/gi, '')
+      .replace(/\btechnical breakdown of\b/gi, '')
+      .replace(/\bcore mechanisms?\b/gi, 'architecture paths')
+      .replace(/\boperational boundaries\b/gi, 'deployment limits')
+      .replace(/\bThe core trade-?off\b/gi, 'Key design trade-off')
+      .replace(/\b(?:real\s+)?production\s+trade-?offs?\b/gi, 'runtime limits')
+      .replace(/\barchitectural\s+trade-?offs?\b/gi, 'design limits')
+      .replace(/\bWhen system frequency increases, legacy architectures become memory bottlenecks\.?/gi, 'Higher request rates expose shared memory contention in unsharded paths.')
+      .replace(/النقلة المعمارية لمنظومة/g, 'قراءة هندسية في')
+      .replace(/تحليل معماري لمنظومة/g, 'قراءة هندسية في')
+      .replace(/تحليل هندسي معمق/g, 'آلية العمل')
+      .replace(/الآليات الأساسية/g, 'مسارات التنفيذ')
+      .replace(/الحدود التشغيلية/g, 'حدود التشغيل الفعلية')
+      .replace(/المقايضة الجوهرية/g, 'الموازنة الهندسية')
+      .replace(/كيف تعمل منظومة\s+(.*?)\s+تحت الضغط/g, 'أداء $1 تحت الضغط')
+      .replace(/شارك في النقاش/g, 'شاركنا رأيك الهندسي')
+      .replace(/مقايضات الإنتاج|تنازلات الإنتاج|آليات النظام الأساسية/g, 'حدود التشغيل الفعلية')
+      .replace(/هذا العنصر يعرض|تفاصيل هندسية عامة|وصف تقني عام|نص عربي تجريبي/g, 'تفاصيل البنية والتشغيل في بيئة الإنتاج')
+      .replace(/\s*المعتمد\b/g, '')
+      .replace(/\b(?:IMG|DSC|PXL|Screenshot|Screen\s*Shot)[-_ \d]+\b/gi, ' ')
+      .replace(/\b\d+(?:png|jpg|jpeg|webp|svg)\b/gi, ' ')
+      .replace(/\.(?:png|jpe?g|webp|svg|gif)\b/gi, ' ')
+      .replace(/\[INSERT[^\]]*\]/gi, ' ')
+      .replace(/\b(?:CHANNEL NAME|YOUR BRAND|YOUR NAME|YOUR COMPANY|Lorem ipsum|PLACEHOLDER|TODO|TBD)\b/gi, ' ')
+      .replace(/\b(?:System|Company|Brand|Product|Tool)\s+[AB12]\b/gi, 'Runtime')
+      .replace(/\b(?:PIPELINE|DATASTREAM)\s+MIGRATION\b/gi, 'Workflow Update')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+
+    if (options?.isCta) {
+      out = out.replace(/^Join the discussion\b/i, 'Join the engineering review');
+    } else {
+      out = out.replace(/\bJoin the discussion\b/gi, 'Join the engineering review');
+    }
+    return out;
+  };
+
+  const categoryNorm = (deck.category || '').trim().toUpperCase();
+  const categoryTokens = new Set(
+    categoryNorm
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t.length >= 3)
+  );
+
+  const deckPhrases = extractKeyPhrasesFromSlide({
+    enTitle: promptContext || deck.sourceMeta?.title || '',
+    enBody: deckCorpus,
+  } as SlideData).filter(
+    (p) => !CONTENT_QUALITY_FILLER_LABELS.has(p.trim().toUpperCase()) && !isPlaceholderOrEmptyBrandValue(p)
+  );
+
+  const cleanedCaption = stripTemplatesAndPlaceholders(deck.caption || '');
+
+  const cleanedSlides = prevSlides.map((slide, idx) => {
+    if (slide.standaloneMeme || slide.imageFrameMode === 'full') {
+      return slide;
+    }
+
+    let enTitle = stripTemplatesAndPlaceholders(slide.enTitle || '');
+    let arTitle = stripTemplatesAndPlaceholders(slide.arTitle || '');
+    let enBody = isMulti && idx === 0 ? '' : stripTemplatesAndPlaceholders(slide.enBody || '');
+    let arBody = isMulti && idx === 0 ? '' : stripTemplatesAndPlaceholders(slide.arBody || '');
+    const ctaText = slide.ctaText
+      ? stripTemplatesAndPlaceholders(slide.ctaText, { isCta: true })
+      : slide.ctaText;
+
+    // Fix category-echo headlines (no numbers or questions and all tokens belong to category)
+    if (enTitle && categoryTokens.size > 0) {
+      const hTokens = enTitle
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((t) => t.length >= 3);
+      if (
+        hTokens.length > 0 &&
+        hTokens.length <= 4 &&
+        hTokens.every((t) => categoryTokens.has(t)) &&
+        !/\d|\?/.test(enTitle)
+      ) {
+        const bodyWords = enBody
+          .split(/\s+/)
+          .filter((w) => w.length >= 3 && !STOP_WORDS.has(w.toLowerCase()))
+          .slice(0, 3)
+          .join(' ');
+        enTitle = bodyWords ? `${enTitle}: ${bodyWords}` : `${enTitle} in Production`;
+      }
+    }
+
+    // Ensure arTitle / arBody do not contain >= 3 English words with zero Arabic characters
+    if (arTitle && !/[\u0600-\u06FF]/.test(arTitle) && arTitle.split(/\s+/).length >= 3) {
+      arTitle = `قراءة هندسية: ${arTitle}`;
+    }
+    if (arBody && !/[\u0600-\u06FF]/.test(arBody) && arBody.split(/\s+/).length >= 3) {
+      arBody = `ملخص تقني: ${arBody}`;
+    }
+
+    const hasBadDiagramNode = Boolean(
+      slide.diagramNodes?.some(
+        (n) =>
+          !n?.label ||
+          CONTENT_QUALITY_FILLER_LABELS.has(n.label.trim().toUpperCase()) ||
+          isPlaceholderOrEmptyBrandValue(n.label) ||
+          isGenericPlaceholderValue(n.label)
+      )
+    );
+
+    const hasBadMetricLabel = Boolean(
+      slide.metricLabel &&
+        (CONTENT_QUALITY_FILLER_LABELS.has(slide.metricLabel.trim().toUpperCase()) ||
+          isPlaceholderOrEmptyBrandValue(slide.metricLabel))
+    );
+
+    const hasBadCompare =
+      slide.type === 'compare' &&
+      (isPlaceholderOrEmptyBrandValue(slide.compareLeftTitle) ||
+        isPlaceholderOrEmptyBrandValue(slide.compareRightTitle));
+
+    let nextType = slide.type;
+    let nextSubjectPair = slide.subjectPair;
+    if (slide.type === 'subjectPair' || slide.subjectPair) {
+      const pair = slide.subjectPair;
+      const pairInvalid =
+        !pair ||
+        isPlaceholderOrEmptyBrandValue(pair.beforeSystem) ||
+        isPlaceholderOrEmptyBrandValue(pair.afterSystem) ||
+        (pair.flowLabel ? isPlaceholderOrEmptyBrandValue(pair.flowLabel) : false) ||
+        (pair.storyOwner ? isPlaceholderOrEmptyBrandValue(pair.storyOwner) : false);
+      if (pairInvalid) {
+        const redetected = detectSubjectPairFromText(`${enTitle} ${enBody} ${deckCorpus}`, slide);
+        if (redetected) {
+          nextSubjectPair = redetected;
+        } else {
+          nextSubjectPair = undefined;
+          if (nextType === 'subjectPair') {
+            nextType = 'row';
+          }
+        }
+      }
+    }
+
+    let updated: SlideData = {
+      ...slide,
+      type: nextType,
+      subjectPair: nextSubjectPair,
+      enTitle,
+      arTitle,
+      enBody,
+      arBody,
+      ctaText,
+      diagramNodes: hasBadDiagramNode ? undefined : slide.diagramNodes,
+      metricLabel: hasBadMetricLabel ? undefined : slide.metricLabel,
+      compareLeftTitle: hasBadCompare ? undefined : slide.compareLeftTitle,
+      compareRightTitle: hasBadCompare ? undefined : slide.compareRightTitle,
+    };
+
+    // Re-anchor satLabels if present or Hub/topology slide
+    const titleEchoTokens = new Set(
+      `${enTitle} ${updated.centerTag || ''}`
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((t) => t.length >= 3)
+    );
+    const hasBadSatLabels = Boolean(
+      updated.satLabels &&
+        updated.satLabels.some((lbl) => {
+          const trimmed = (lbl || '').trim();
+          const norm = trimmed.toUpperCase();
+          if (!norm) return true;
+          if (/\.\.\.|…$/.test(trimmed)) return true;
+          if (/[A-Za-z]{3,}/.test(enTitle) && /[\u0600-\u06FF]/.test(trimmed)) return true;
+          if (CONTENT_QUALITY_FILLER_LABELS.has(norm)) return true;
+          if (categoryNorm && norm === categoryNorm) return true;
+          const toks = norm.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3);
+          return toks.length === 1 && (categoryTokens.has(toks[0]) || titleEchoTokens.has(toks[0]));
+        })
+    );
+
+    if (
+      updated.type === 'hub' ||
+      updated.diagramVariant === 'topology' ||
+      hasBadSatLabels
+    ) {
+      const latinDeckContext = /[A-Za-z]{3,}/.test(enTitle)
+        ? deckCorpus.replace(/[\u0600-\u06FF]+/g, ' ')
+        : deckCorpus;
+      const hubExtracted = extractSourceQuotedHubNodes(
+        `${enTitle} ${enBody} ${latinDeckContext}`,
+        { titleText: enTitle, category: deck.category, targetCount: 5 }
+      );
+      if (hubExtracted.satLabels.length > 0) {
+        updated = {
+          ...updated,
+          satLabels: hubExtracted.satLabels,
+          hubNodeReasons: hubExtracted.hubNodeReasons,
+        };
+      } else {
+        updated = {
+          ...updated,
+          satLabels: undefined,
+          hubNodeReasons: undefined,
+        };
+      }
+    }
+
+    if (isMulti && idx === 0) {
+      updated = applyHookEngineToSlide1(updated, false, deckCorpus);
+      updated = {
+        ...updated,
+        storyRole: 'hook',
+        enBody: '',
+        arBody: '',
+      };
+    }
+
+    let synced = autoSyncSlideGraphicsFromCopy(updated, idx);
+
+    // Defensive post-sync pass: guarantee zero filler/echo/placeholder nodes remain
+    if (synced.diagramNodes && synced.diagramNodes.length > 0) {
+      const usedNodeKeys = new Set<string>();
+      const fallbackPool = [
+        ...deckPhrases,
+        'Signal Path',
+        'Policy Gate',
+        'Runtime Check',
+        'Worker Tier',
+        'Audit Trail',
+      ];
+      synced = {
+        ...synced,
+        diagramNodes: synced.diagramNodes.map((node, nIdx) => {
+          const rawLabel = (node.label || '').trim();
+          const upper = rawLabel.toUpperCase();
+          const isBad =
+            !rawLabel ||
+            CONTENT_QUALITY_FILLER_LABELS.has(upper) ||
+            isPlaceholderOrEmptyBrandValue(rawLabel) ||
+            usedNodeKeys.has(upper);
+          if (!isBad) {
+            usedNodeKeys.add(upper);
+            return node;
+          }
+          const replacement =
+            fallbackPool.find((cand) => {
+              const cu = cand.trim().toUpperCase();
+              return (
+                cu.length >= 3 &&
+                !CONTENT_QUALITY_FILLER_LABELS.has(cu) &&
+                !isPlaceholderOrEmptyBrandValue(cand) &&
+                !usedNodeKeys.has(cu)
+              );
+            }) || `Path 0${nIdx + 1}`;
+          usedNodeKeys.add(replacement.trim().toUpperCase());
+          return { ...node, label: replacement };
+        }),
+      };
+    }
+
+    if (
+      synced.metricLabel &&
+      (CONTENT_QUALITY_FILLER_LABELS.has(synced.metricLabel.trim().toUpperCase()) ||
+        isPlaceholderOrEmptyBrandValue(synced.metricLabel))
+    ) {
+      synced = {
+        ...synced,
+        metricLabel: 'MEASURED RESULT',
+      };
+    }
+
+    if (synced.satLabels && synced.satLabels.length > 0) {
+      const finalTitleTokens = new Set(
+        `${synced.enTitle || ''} ${synced.centerTag || ''}`
+          .toLowerCase()
+          .split(/[^a-z0-9]+/)
+          .filter((t) => t.length >= 3)
+      );
+      const validSatIndices: number[] = [];
+      synced.satLabels.forEach((lbl, sIdx) => {
+        const trimmed = (lbl || '').trim();
+        const norm = trimmed.toUpperCase();
+        if (!norm) return;
+        if (/\.\.\.|…$/.test(trimmed)) return;
+        if (/[A-Za-z]{3,}/.test(synced.enTitle || '') && /[\u0600-\u06FF]/.test(trimmed)) return;
+        if (CONTENT_QUALITY_FILLER_LABELS.has(norm)) return;
+        if (categoryNorm && norm === categoryNorm) return;
+        const toks = norm.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3);
+        if (toks.length === 1 && (categoryTokens.has(toks[0]) || finalTitleTokens.has(toks[0]))) return;
+        validSatIndices.push(sIdx);
+      });
+      if (validSatIndices.length !== synced.satLabels.length) {
+        const filteredLabels = validSatIndices.map((sIdx) => synced.satLabels![sIdx]);
+        const filteredReasons = synced.hubNodeReasons
+          ? validSatIndices
+              .map((sIdx) => synced.hubNodeReasons![sIdx])
+              .filter(Boolean)
+          : undefined;
+        synced = {
+          ...synced,
+          satLabels: filteredLabels.length > 0 ? filteredLabels : undefined,
+          hubNodeReasons:
+            filteredReasons && filteredReasons.length > 0 ? filteredReasons : undefined,
+        };
+      }
+    }
+
+    // Remove fabricated 'Engineering Technical Report' placeholder credit and stale DevOps cliché takeaways
+    if (synced.enCredit && /Engineering Technical Report/i.test(synced.enCredit)) {
+      synced = { ...synced, enCredit: deck.brandUrl || '' };
+    }
+    if (synced.takeaways && synced.takeaways.length > 0) {
+      const hasClicheTakeaway = synced.takeaways.some((t) =>
+        /Modular decoupled boundaries|Predictable sub-second latency|Zero-downtime deployment pipeline/i.test(t.en || '')
+      );
+      if (isMulti && synced.type !== 'poster') {
+        synced = { ...synced, takeaways: [] };
+      } else if (hasClicheTakeaway) {
+        synced = {
+          ...synced,
+          takeaways: synced.takeaways.filter(
+            (t) =>
+              !/Modular decoupled boundaries|Predictable sub-second latency|Zero-downtime deployment pipeline/i.test(t.en || '')
+          ),
+        };
+      }
+    }
+
+    return sanitizeSlide(synced, idx, prevSlides.length);
+  });
+
+  const cleanChannel =
+    deck.channel && /Engineering Technical Report/i.test(deck.channel)
+      ? deck.brandUrl || 'marrok.org'
+      : deck.channel;
+
+  return {
+    ...deck,
+    channel: cleanChannel,
+    caption: cleanedCaption,
+    slides: cleanedSlides,
   };
 }
 

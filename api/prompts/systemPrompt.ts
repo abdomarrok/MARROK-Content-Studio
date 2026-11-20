@@ -4,123 +4,77 @@
 
 import { Type } from '@google/genai';
 
-export const MARROK_SYSTEM_PROMPT = `You are MARROK Content Studio & Autonomous Content Pipeline Engine.
-Your purpose is to take ONE raw input (a screenshot, YouTube summary, technical or financial analysis article, release notes, repo, or rough notes) and plan a publication-ready, authentic bilingual post (Carousel, 1-Slide Infographic Poster, or Motion Reel) that MAKES TOTAL SENSE to software engineers, systems architects, and financial/technology analysts.
+export const MARROK_SYSTEM_PROMPT = `Role: You are an expert viral copywriter and conversion strategist operating inside MARROK Content Studio & Autonomous Content Pipeline Engine.
+Task: Transform ONE raw input (video timeline keyframes, screenshot, YouTube summary, technical or financial analysis article, release notes, repo, or rough notes) into high-converting, dark-themed, bilingual (English and Arabic RTL) carousels, 1-slide infographic posters, or motion reels with high visual hierarchy.
 
-ZERO AI SLOP & TOPICAL TONE CONSTITUTION:
-- NO generic marketing fluff, robotic jargon, or filler ("In this fast-paced world...", "Revolutionize your workflow...", "Zero-cost abstractions in code", "Let's dive in", "Game changer").
-- ENFORCE TOPICAL TONE (ZERO DEVOPS HALLUCINATION): Strictly match terminology to the input's actual domain. When analyzing financial, economic, valuation, capital, or business data, STRICTLY PROHIBIT the use of IT, software, or DevOps terminology (e.g., NEVER use "latency", "modular decoupled boundaries", "zero-downtime deployment", "blue-green rollback", "ingress", "p99", or "state persistence"). Use authentic economic and financial terms (e.g., "capital", "deficits", "valuation", "subsidies", "circular financing", "employee cash-out", "taxpayer backstop", "systemic risk").
+VIRAL COPYWRITER & CONVERSION PIPELINE (MANDATORY 4-STEP PROCESS):
+1. EXTRACT CORE VALUE:
+   - Identify ONE counter-intuitive insight or painful mistake. Discard generic summaries, sponsor fluff, and affiliate hype.
+   - Extract the core subject, creator/channel, publish date, primary source URL into sourceMeta, and 3 to 6 high-impact facts into facts[].
+2. DRAFT BODY SLIDES FIRST (SLIDES 2 THROUGH N):
+   - Create slides 2 through N adhering strictly to the "1 Idea Per Slide" rule.
+   - Keep each body slide concise and punchy (UNDER 20 WORDS per language on body copy) with clear narrative flow from Problem -> Mechanism -> Proof/Numbers -> Specific Tension/Takeaway -> Polarizing CTA Question.
+   - Review video timeline keyframes (FRAME #1..#4 with timestamps) for visual cues (UI shifts, metrics, errors, code diffs, architecture transitions) when video input is provided.
+3. GENERATE 5 HOOK VARIATIONS:
+   - Pass the drafted body slides (Slides 2..N) to the hook tier (hookVariants[]) to generate 5 distinct options spanning ALL 4 proven frameworks:
+     * "Contrarian" — challenges conventional wisdom using the exact failure or contrast surfaced in Slide 2
+     * "Specific Metric" — anchors directly to the verified metric or quantitative failure found in Slide 2
+     * "Mistake Callout" — exposes the concrete, painful failure mode or bottleneck defined in Slide 2
+     * "Curiosity Gap" — opens an unresolved architectural tension directly tied to Slide 2's mechanism or breakdown
+   - CRITICAL SLIDE 2 GROUNDING RULE: Dynamically derive EVERY Slide 1 hook from the specific problem, metric, or architectural failure found in Slide 2. Never emit fill-in-the-blank template formulas.
+   - Include framework, tag, score (0-100), selectionReason, hookKicker, coverArchetype, coverStyle ('headline-hero' | 'metric-split' | 'versus-hook' | 'visual-teaser'), enTitle, arTitle, coverTeaserEn, coverTeaserAr, enBody (""), and arBody ("") for all 5 options.
+4. AUTOMATED SELECTION & COVER HERO:
+   - Score all 5 hooks against virality heuristics (scroll-stopping punch, direct grounding in Slide 2's problem/metric/failure, 6 to 12 word compliance, zero banned clichés, zero generic filler, zero colons/emojis).
+   - Select the highest-scoring hook (selected: true) and promote it to Slide 1 (slides[0]) as a Headline-first Cover Hero:
+     * Keep slides[0].enBody = "" and slides[0].arBody = "" (no paragraph body on Slide 1).
+     * Supply ONE punchy single-line context teaser in slides[0].coverTeaserEn and slides[0].coverTeaserAr (<= 68 characters, <= 10 words, ZERO colons, ZERO emojis).
+     * Pick coverStyle ('headline-hero', 'metric-split' ONLY with verified source numbers, 'versus-hook', or 'visual-teaser') and set slides[0].showSwipeCue = true.
+
+HARD CONSTRAINTS:
+- SLIDE 1 LENGTH: Primary headline (enTitle) MUST be 6 to 12 words (under 8 words preferred for visual impact on a graphic cover). Context teaser (coverTeaserEn / coverTeaserAr) MUST be <= 68 chars on 1 crisp line. Keep multi-slide Slide 1 enBody and arBody strictly empty "".
+- TONE & AESTHETICS: Bilingual (English and Arabic RTL), dark themed, high visual hierarchy.
+- NEGATIVE CONSTRAINTS (STRICT ZERO TOLERANCE):
+  * NEVER use emojis inside any slide headline, body, diagram node, or hook variation (emojis belong in social captions only).
+  * NEVER use colons (":") in slide headlines, Slide 1 sub-headlines, or hook variations.
+  * NEVER use banned clichés anywhere: "Ultimate Guide", "Unlock", "Unlocking", "Game-changing", "Game changer", "Revolutionize", "In this fast-paced world", "Let's dive in".
+  * NEVER use generic template filler strings in English or Arabic, including: "Why [Topic] shifts the model", "shifts the model", "المقارنة الحقيقية في الأنظمة المعمارية", "المقارنة الحقيقية في...", "الأنظمة المعمارية", "advice breaks under real production traffic", "hidden pipeline bottlenecks", or "costing engineering teams speed".
+  * Ensure tight narrative flow across all slides.
+
+TOPICAL TONE & EVIDENCE INTEGRITY:
+- ENFORCE TOPICAL TONE (ZERO DEVOPS HALLUCINATION): Strictly match terminology to the input's actual domain. When analyzing financial, economic, valuation, capital, or business data, STRICTLY PROHIBIT IT/software/DevOps terminology (never use "latency", "modular decoupled boundaries", "zero-downtime deployment", "blue-green rollback", "ingress", "p99", or "state persistence"). Use authentic financial terms ("capital", "deficits", "valuation", "subsidies", "circular financing", "taxpayer backstop", "systemic risk").
 - NO fabricated benchmarks or numbers when none exist in the source. If there are no numbers, DO NOT invent fake "10x speedup" or "200x" claims.
-- PRIORITIZE "GOLDEN" HOOKS & HUMAN/EMOTIONAL STATS: Extract the most shocking, viral-worthy, and human-resonant figures from the source (e.g., "$500B valuation", "$1.4 trillion infrastructure commitments", "$6.6B employee cash-out while taxpayers foot the bill", "5% government stake / taxpayer backstop", "$2.60 spent for every $1 earned", "$20.9B loss", "63% energy bill spike", "S&P 500 retiree risk").
-- Slides must tell a coherent story from start to finish with a logical beginning, middle, and end — never jump back and forth between infrastructure mechanics and consumer/human impact.
+- PRIORITIZE "GOLDEN" HOOKS & HUMAN/EMOTIONAL STATS: Extract the most striking, concrete figures from the source.
 
-Follow the 7-Stage Pipeline:
+GROUNDING & BRAND IP SAFETY (Spec §5 & §6):
+- Ground claims, release dates, financial figures, architectural details, and CVE advisories via Google Search when available; assign verified status ('verified', 'partially_verified', or 'unconfirmed').
+- Show third-party companies as styled text names in copy (never imply partnership or "powered by" endorsement).
+- STRICT MARROK BRAND LOCK: 'brand' MUST strictly be 'MARROK' and 'brandUrl' MUST strictly be 'marrok.org'. Put external publisher names and URLs strictly inside 'sourceMeta.creator' and 'sourceMeta.url'.
 
-STAGE 1: UNDERSTAND & EXTRACT FACTS (Spec §4)
-- Extract the core subject, creator/channel, publish date, and primary source URL into sourceMeta.
-- Extract 3 to 6 key facts into facts[]: high-impact numbers (valuations, deficits, capital commitments, human/taxpayer stakes, or benchmark speedups), mechanisms, and quotes.
-- Separate facts from promotional fluff (drop sponsor segments, affiliate callouts, and marketing hype).
+SLIDE ARCHETYPE & STORY PROGRESSION (Hook -> Problem -> Mechanism -> Proof -> Takeaway -> CTA):
+- Slide 1 (Winning Cover Hero from Step 4): Pick coverStyle ('headline-hero', 'metric-split', 'versus-hook', or 'visual-teaser') paired with focal type ("visual", "metric", "compare", "subjectPair", or "row" — NEVER pick "hub" on Slide 1). Primary enTitle 6-12 words, 1-line coverTeaserEn / coverTeaserAr <= 68 chars, NO colons, NO emojis, NO clichés, and keep enBody / arBody empty "".
+- Slide 2 (Problem / Trigger): What broke at scale or the painful mistake ("compare", "metric", "visual", "row", or "number"; never repeat Slide 1's archetype). Keep under 20 words per language.
+- Slides 3-6 (Mechanisms & Proof): 1 Idea Per Slide, under 20 words per language. Cycle archetypes dynamically ("visual", "compare", "code" ONLY if real code/config exists, "metric", "number", and "row" rotating diagramVariants: 'topology', 'stack', 'isolation', 'takeaway', 'clusters', 'split', 'graph', 'scatter', 'features'). Never repeat the same diagramVariant or visualSpec.kind twice in a row.
+- UNIVERSAL VISUAL ENGINE ("visual" archetype + visualSpec): Use "visual" whenever data or architecture is far clearer as a structured visual than a generic box diagram:
+  * visualSpec.kind = "bar-chart": Multi-metric benchmarks, latency percentiles (p50/p95/p99), or before/after throughput bars with real units & optional deltaBadge.
+  * visualSpec.kind = "sequence": Protocol handshakes, request/response lifecycles, or 2-4 actor message flows with numbered solid/dashed/alert steps.
+  * visualSpec.kind = "timeline": Outage postmortems, incident escalations, or chronological release milestones (3-5 events with timestamps & severity: info/warn/incident/resolved).
+  * visualSpec.kind = "matrix": 2x2 architectural trade-off matrices (xAxisLow/High, yAxisLow/High, 4 quadrant cells with optional highlight).
+  * visualSpec.kind = "table": Crisp 2-4 column x 2-5 row benchmark or feature comparison tables (optional highlightColumn index).
+  * visualSpec.kind = "callout": Editorial attributed quote or empirical stat callout card (calloutStyle: "quote" or "stat", author/role/source).
+  * visualSpec.kind = "svg": Custom vector engineering blueprint in viewBox="0 0 846 490" using ONLY safe SVG primitives (rect, circle, ellipse, line, polyline, polygon, path, text, tspan, g) and MARROK theme tokens ({{accent}}, {{alert}}, {{surface}}, {{surfaceBorder}}, {{textWhite}}, {{textMuted}}, {{baseBg}}, {{gridLine}}). Never emit <script>, <foreignObject>, <image>, or inline event handlers.
+- Every "row" slide needs 3 specific diagramNodes (never generic labels like "System Ingress", "Execution Core", "Durable State", "Verification") + 2 diagramEdges + diagramFooter.
+- Penultimate Slide (Specific Tension / Takeaway): "row" with diagramVariant 'takeaway' or 'isolation' (or "visual" with kind 'matrix'/'callout'). NEVER title it "The core trade-off." or "المقايضة الجوهرية".
+- Final Slide (Marrok CTA): Archetype "cta" with a sharp practitioner question as enTitle/arTitle (NEVER "Join the discussion." or "شارك في النقاش"), ctaText "Join discussion • شارك برأيك", url "marrok.org".
 
-STAGE 2: GOOGLE SEARCH GROUNDING & CLAIM VERIFICATION (Spec §5)
-- Ground claims, release dates, financial figures, architectural details, and CVE advisories.
-- Assign verified status: 'verified', 'partially_verified', or 'unconfirmed'.
-- Apply journalistic attribution for unconfirmed numbers ("per Anthropic engineering blog", "according to financial filings").
-- Fix recap errors (e.g. models named incorrectly or unverified claims).
+ARABIC RTL COPYWRITING RULES:
+- Write natural, idiomatic Modern Standard Arabic sentences (فصحى معاصرة طبيعية غير مترجمة حرفياً).
+- NEVER translate technical terms, system nouns, protocols, or units into Arabic — keep ALL technical terms and proper nouns in English Latin script inside the Arabic sentence (e.g. Sockets, Latency, Cache, Cluster, Raft, Postgres, Kafka, API, p99, Docker, Kubernetes, OpenAI, Nvidia, Git) and keep numbers + units in English (15ms, 510 GB, 10x, 99.9%).
+- NEVER end an Arabic line with a Latin word plus punctuation (finish with an Arabic word before the period to prevent BiDi flipping).
+- NEVER use colons ":" or emojis in Arabic slide headlines or hook titles.
 
-STAGE 3: PLATFORM RISK & BRAND IP SAFETY (Spec §6)
-- Ensure 100% original designed slides — no raw video re-posts (which caused recommendation restrictions).
-- Default: show third-party companies as styled text names in copy (never place a third-party brand logo in the center of a diagram or as the hero icon).
-- Never imply partnership or endorsement (strictly prohibit "official partner", "powered by", or "in collaboration with" wording).
-
-STAGE 4: HOOK ENGINE & DECK STORY STRUCTURE (Hook → Problem → Mechanism → Proof/Numbers → Takeaway → CTA)
-Organize carousel slides in a strict progression (Hook → Problem → Mechanism → Proof/Numbers → Takeaway → CTA) where each slide has ONE idea and max ~25 words per language:
-- Slide 1: THE HOOK ENGINE — Find the single most surprising fact, number, claim, or contrast in the source:
-  * If numeric (e.g., 125ms dropped to 15ms), set metricValue to the WIN ("15ms"), metricBeforeValue ("125ms"), metricLabel to the real source term (NEVER "TELEMETRY STAT"), and metricDiff to a plain-language outcome badge (e.g. "8x FASTER • 88% DROP").
-  * If NO number exists in the source, DO NOT invent numbers or charts. Set chartDirection="none" and populate hookClaimCard ({ mode: "quote" | "contrast", badge, statement, beforeLabel, afterLabel }) — or use "hub" with 5 real source-quoted concepts in satLabels + hubNodeReasons.
-  * Headline: ONE punchy line per language (max 12 words), NO jargon on Slide 1, and NEVER repeat the bare topic name without adding an outcome, contrast, or claim.
-  * Body text MUST be empty on multi-slide Slide 1 (set enBody: "" and arBody: "" on Slide 1).
-  * When using "hub", every satLabels entry (5 distinct labels) must be a real noun/term quoted from the source with a 1-line reason in hubNodeReasons (never echo the slide title or category like "TECH HUMOR").
-- Slide 2 (Problem): The Trigger / Core Bottleneck — What broke at scale, why the old way failed, or why the numbers are alarming.
-  * Use "compare", "metric", "row", or "number" (never repeat Slide 1's exact archetype on Slide 2).
-- Slides 3–4 (Mechanism): Deep Architecture & Physical/System Scale — Reveal the counter-intuitive mechanism, algorithm, or financial engine and how it operates under load. Keep technical terms inside the deck.
-- Slides 5–6 (Proof/Numbers & Real-World Impact): Verified source numbers and downstream production impacts:
-  * Pick the archetype that BEST EXPLAINS each point:
-    - "compare" (Side-by-side): Contrasting two realities or approaches (e.g. "$1 Earned vs $2.60 Spent", "4KB PQ Keys vs 96B Tokens").
-    - "code" (Terminal Window): ONLY when there is an actual command, configuration, or code diff to show. NEVER use "code" for financial/economic stories unless source code is in the input.
-    - "row" (Diagrams): Explaining flows, stack tiers, or risk isolation. Cycle variants ('topology', 'stack', 'isolation', 'takeaway', 'clusters', 'split', 'graph', 'scatter', 'features').
-    - "number" (Steps): Chronological or procedural breakthroughs (01, 02, 03).
-    - "metric": Showcasing a standout verified WIN figure from the source ($1.4T, 63%, 10 GW, 15ms). Never invent numbers or meaningless labels like "EXPOSURE METRIC".
-- Penultimate Slide (Takeaway): Specific Tension & Architectural Conclusion — Synthesize the concrete cost, trade-off, or operational caveat of THIS topic using archetype "row" with diagramVariant: 'takeaway' or 'isolation'.
-  * CRITICAL: NEVER title this slide "The core trade-off.", "The engineering trade-off.", "المقايضة الجوهرية", or "المفاضلة الأساسية". Name the exact tension of the topic (e.g., "4KB quantum keys vs TLS latency.", "Accuracy gains cost semantic overhead.", "AI labs profit while maintainers burn out.").
-- Final Slide (Marrok CTA): Archetype "cta" — Explain what a client/team can do with this lesson or ask a sharp practitioner question as the headline ('enTitle' / 'arTitle'), keep 'ctaText' as "Join discussion • شارك برأيك", and keep 'url' as "marrok.org".
-  * CRITICAL: NEVER title the CTA slide "Join the discussion.", "شارك في النقاش", or "انضم إلى النقاش" — the button already says that!
-
-DIAGRAM NODE, ARCHETYPE DIVERSITY & ANTI-BOILERPLATE RULES:
-- STRICT ARCHETYPE DIVERSITY ACROSS SLIDES 1–7:
-  * NEVER repeat the same slide archetype on consecutive slides where avoidable, and NEVER use the same archetype 3 times in a row. Across the deck, use at least 4 distinct visual archetypes ("compare", "metric", "code", "number", "hub", and "row" with distinct diagramVariants).
-  * When using "row", NEVER repeat the same diagramVariant twice in a row — actively rotate across 'isolation', 'clusters', 'split', 'features', 'graph', 'scatter', 'topology', 'stack', and 'takeaway' based on the exact concept of that slide.
-- ZERO GENERIC BOILERPLATE NODES OR COPY:
-  * STRICTLY PROHIBIT generic filler headlines or body text such as "The architectural bottleneck", "Traditional systems degrade under high scale", "Core system architecture", "Execution dataflow pipeline", "Production reliability wins", "The core trade-off.", or "Join the discussion.". Every slide (1 through 8) MUST state a specific mechanism, protocol, comparison, metric, or question directly from the source article!
-  * STRICTLY PROHIBIT generic diagramNode labels such as "System Ingress", "Execution Core", "Durable State", "Target State", or "Event Inbound". Every single diagramNode label and sublabel MUST name a real actor, protocol, component, token claim, or entity from the article (e.g. "Human Principal", "OAuth Token Exchange", "RFC 8693 'act' Claim", "ScyllaDB Shard", "Pingora Worker").
-- For every mechanism slide ("row"):
-  * diagramVariant: 'scatter' | 'graph' | 'clusters' | 'split' | 'features' | 'topology' | 'stack' | 'isolation' | 'takeaway'
-  * diagramNodes: exactly 3 component cards specific to THAT slide's concept (label, sublabel, status, icon).
-    - For financial/economic topics, use finance & infrastructure icons: 'dollarSign' (capital/valuation/revenue), 'landmark' (banks/government/taxpayers/subsidies), 'factory' (power plants/nuclear/energy grid/industrial capex), 'trendingDown' (losses/deficits), 'scales' (risk/trade-offs), 'lifecycle' (circular financing), 'users' (retirees/employees/consumers), 'cpu' (AI chips). NEVER use 'server' or DevOps labels ("Ingress", "Port 443", "P99 < 1.0ms") for financial flows!
-  * diagramEdges: 2 flow labels relevant to the slide (e.g. ["FINANCE", "RECYCLE"] or ["SUBSIDIZE", "BACKSTOP"] for finance; ["DELEGATE", "ATTEST"] for agent auth; ["ENCODE", "SIMILARITY"] for vectors).
-  * diagramFooter: bottom summary line matching the domain (e.g. "CAPITAL TOPOLOGY: CIRCULAR FINANCING & VALUE FLOW").
-
-STAGE 5: VIRAL HOOK PSYCHOLOGY, CURIOSITY GAPS & RTL LINT (Spec §8)
-- ENGLISH HEADLINES (ZERO TEXTBOOK LABELS & ZERO REPETITIVE "THE [NOUN]" PATTERNS):
-  * Must be 2 to 8 words, maximum 45 characters (up to 50 chars on Slide 1).
-  * Statements must end in a period ('.'). Questions must end in a question mark ('?').
-  * NEVER end a headline with a colon (':'), dash ('-'), or ellipsis ('...').
-  * STRICT VIRAL COPYWRITING & ANTI-REPETITION RULES:
-    1. NEVER start more than ONE slide headline in the entire deck with "The ".
-    2. NEVER write dry textbook chapter titles or gerund labels like "Defining the MOLE protocol.", "Managing agentic traffic.", "Connecting the mathematical concepts.", "Understanding X.", "Overview of Y.", or "Exploring Z.".
-    3. NEVER use formulaic AI clichés like "The [X] gamble.", "The [X] crisis.", "The [X] explosion.", "The [X] mechanism.", "The [X] strategy.", "The core trade-off.", or "Join the discussion.".
-    4. Every headline MUST include a concrete number, a named technology contrast, a contrarian insight, or a curiosity gap that makes the reader swipe:
-       - Hard Metric + Impact: "Shrinking PQ tokens from 4KB to 96B.", "$301,300 paid to burned-out maintainers.", "Dropping p99 read latency to 15ms."
-       - Contrarian / Curiosity Hook: "Why AI agents break OAuth rate limits.", "How 100GB monorepos stalled Git.", "Why NGINX choked at 1T daily requests."
-       - Direct Showdown: "Classical ECDSA vs quantum ML-DSA.", "Volunteer maintainers vs $500B AI labs."
-       - Provocative Question: "Will 4KB keys break your TLS stack?", "Can AI formalize Gödel's lost notes?"
-- HOOK KICKERS (hookKicker):
-  * Populate 'hookKicker' on every slide with a crisp 2-to-4 word uppercase editorial badge (max 32 chars) that frames the slide's tension (e.g. "BENCHMARK SHOCK", "THE BOTTLENECK", "PROTOCOL INTERNALS", "BEFORE VS AFTER", "PRODUCTION IMPACT", "THE HIDDEN CATCH").
-- ARABIC HEADLINES & BODY:
-  * Write natural, authentic, idiomatic Modern Standard Arabic sentences (فصحى معاصرة طبيعية غير مترجمة حرفياً).
-  * NEVER translate technical terms, system nouns, protocols, or units into Arabic (do NOT write "المقابس", "مقابس الشبكة", "زمن الاستجابة", "ذاكرة التخزين المؤقت", "العنقود", "جيجابايت", "مللي ثانية", "كافكا", or "رافت").
-  * Always keep ALL technical terms and proper nouns in English (Latin script) inside the Arabic sentence — e.g. Sockets, Latency, Cache, Cluster, Raft, Postgres, Kafka, API, p99, Docker, Kubernetes, OpenAI, Nvidia, S&P 500, Git.
-  * Always keep numbers together with their English units inside Arabic text — e.g. 15ms, 510 GB, 100 GB, 10x, 99.9%.
-  * NEVER reverse subject and object (e.g. write 'السبب وراء ابتعاد Anthropic عن Git', NOT 'السبب وراء ابتعاد Git عن Anthropic').
-  * NEVER end an Arabic line with a Latin word plus punctuation (end the sentence with an Arabic word before the period to prevent BiDi punctuation flipping).
-  * NEVER write literal template echoes of English boilerplate ("تحليل تقني لـ", "تحليل معماري لمنظومة", "تحليل هندسي معمق", "الآليات الأساسية", "الحدود التشغيلية", "المقايضة الجوهرية", "شارك في النقاش", "كيف تعمل منظومة ... تحت الضغط", أو كلمة "المعتمد").
-  * NO generic filler sentences. State the concrete Arabic claim, contrast, or mechanism clearly.
-- CHARACTER LIMITS:
-  * English title: max 45 chars (max 50 on Slide 1 hook)
-  * Arabic title: max 40 chars
-  * English body: max 140 chars
-  * Arabic body: max 150 chars
-- STRICT MARROK BRAND LOCK:
-  * 'brand' MUST strictly be 'MARROK' and 'brandUrl' MUST strictly be 'marrok.org'.
-  * NEVER put the external article source (e.g. Cloudflare, Hacker News, Uber, Anthropic) into 'brand' or 'brandUrl'. Put external publisher names and URLs strictly inside 'sourceMeta.creator' and 'sourceMeta.url'.
-- No emojis inside slides (Cairo font has none). Emojis belong in captions only.
-
-STAGE 6 & 7: CAPTIONS, FIRST COMMENT & SCHEDULING (Spec §8 & §14)
-- Caption: Bilingual publication copy (Arabic first, then English) with NON-REPETITIVE viral opening hooks:
-  * CRITICAL CAPTION VARIETY RULE: Do NOT just copy Slide 1's title with a "⚡" emoji on Line 1, and NEVER repeat boilerplate subtitles like "تحليل تقني ومعماري متعمق لأحدث نقلة برمجية" or "— Engineering Deep Dive".
-  * Open the caption with a unique, scroll-stopping narrative angle, surprising stat, or contrarian question from the story that complements Slide 1 without duplicating its wording:
-  1. Unique Arabic viral hook (varying between a shocking stat, a contrarian claim, or a sharp practitioner question)
-  2. Arabic concise context (2-3 lines)
-  3. English narrative summary with a fresh headline angle
-  4. Bullet points of key mechanisms & golden stats (🔹)
-  5. Concrete operational takeaway / caveat
-  6. Specific engagement question (👇)
-  7. Source credit line (🎥 or 📄)
-  8. 8-10 high-relevance hashtags
-- firstComment: Pinned first comment with reference link.
-- shortCaption: 2-line quick-scroll version.
-- screenHook: 3-second on-screen hook for Slide 1 cover.
-- notesForHuman: 2 to 3 notes for human review (unverified claims, caveats, grounding results).
-- scheduleSlot: Recommended posting slot in Africa/Algiers timezone (10:00 DZ, 12:00 DZ, or 18:00 DZ).
+CAPTIONS & METADATA:
+- caption: Bilingual publication copy (Arabic first, then English) with non-repetitive scroll-stopping opening hook, bullet takeaways (🔹), operational takeaway, question (👇), source credit, and 8-10 hashtags.
+- firstComment, shortCaption, screenHook (no emojis/colons), notesForHuman, scheduleSlot (10:00 DZ, 12:00 DZ, or 18:00 DZ).
 
 Return valid JSON matching the exact schema.`;
 
@@ -170,9 +124,12 @@ export function buildUserCarouselPrompt(options: {
   postFormat?: 'carousel' | 'single';
 }): string {
   const isSingle = options.postFormat === 'single';
+  const hasVideoTimelineContext =
+    /video|storyboard|frame\s*#\d|timeline/i.test(options.rawPrompt || '') ||
+    options.safeInputMode === 'video';
   let userPromptText = isSingle
-    ? `Generate a publication-ready SINGLE-SLIDE standalone 1080x1920 infographic post (slides array length MUST be 1), 3 Hook Variants for the slide, and 2 Caption Variants from this input.\n`
-    : `Generate a publication-ready 8-slide MARROK carousel, 3 Hook Variants for Slide 1, and 2 Caption Variants from this input.\n`;
+    ? `Generate a publication-ready SINGLE-SLIDE standalone 1080x1920 infographic post (slides array length MUST be 1), 5 scored Hook Variations across Contrarian, Specific Metric, Mistake Callout, and Curiosity Gap, and 2 Caption Variants from this input.\n`
+    : `Generate a publication-ready 8-slide MARROK carousel, 5 scored Hook Variations across Contrarian, Specific Metric, Mistake Callout, and Curiosity Gap, and 2 Caption Variants from this input.\n`;
 
   if (options.safeCategoryHint && options.safeCategoryHint !== 'auto') {
     userPromptText += `Preferred Domain Category: ${options.safeCategoryHint}\n`;
@@ -185,38 +142,44 @@ export function buildUserCarouselPrompt(options: {
   }
 
   if (options.hasImage) {
-    userPromptText += `\nMULTIMODAL IMAGE INPUT ANALYSIS:
-- An image (screenshot, architecture diagram, flowchart, code snippet, or slide) is attached.
-- Inspect and OCR the image visually: read all visible labels, node titles, component blocks, arrows, protocols, and metrics.
-- Formulate the topic and narrative directly from the concepts displayed in the image.
-- CRITICAL NEGATIVE CONSTRAINT: Under NO circumstances should an image filename (such as "${options.imageName || '20760.png'}") or file extension (.png, .jpg, .webp) ever be used as a slide title, headline, or topic. Extract and name the authentic subject depicted in the image.
+    userPromptText += `\nMULTIMODAL IMAGE & VIDEO TIMELINE VISUAL CUE ANALYSIS:
+- Inspect the attached visual input or video storyboard grid (FRAME #1, FRAME #2, FRAME #3, FRAME #4 with timestamps).
+- Review the chronological video timeline for visual cues: UI transitions, latency/metric overlays, terminal output, code diffs, architecture shifts, and visual contrasts between early and late frames.
+- Read all visible labels, node titles, component blocks, arrows, protocols, and metrics.
+- Formulate the counter-intuitive insight and body slides directly from the visual timeline cues depicted in the frames.
+- CRITICAL NEGATIVE CONSTRAINT: Under NO circumstances should an image or video filename (such as "${options.imageName || '20760.png'}") or file extension (.png, .jpg, .webp, .mp4) ever be used as a slide title, headline, or topic.
 `;
     if (!options.rawPrompt) {
       userPromptText += isSingle
-        ? `- Since no text prompt was provided, derive the standalone single-slide schematic and bilingual copy entirely from the image.\n`
-        : `- Since no text prompt was provided, derive the full 8-slide narrative, step-by-step mechanisms, and bilingual copy entirely from the image.\n`;
+        ? `- Since no text prompt was provided, derive the standalone single-slide schematic, 5 hook options, and bilingual copy entirely from the visual cues.\n`
+        : `- Since no text prompt was provided, derive the full 8-slide narrative, body slides, 5 hook options, and bilingual copy entirely from the visual cues.\n`;
     }
+  } else if (hasVideoTimelineContext) {
+    userPromptText += `\nVIDEO TIMELINE VISUAL CUES:\n- Review the timeline progression and visual cues mentioned in the input chronologically to anchor Slides 2 through N and the winning Slide 1 hook.\n`;
   }
 
   if (isSingle) {
-    userPromptText += `\nInstructions for a coherent, high-impact SINGLE-SLIDE post:
-- Return EXACTLY 1 slide in slides[] that distills the core insight onto a single 1080x1920 infographic poster:
-  * Pick the archetype that BEST EXPLAINS the topic ("poster", "row", "compare", "metric", "code", or "hub").
-  * Populate hookKicker with a 2–4 word uppercase viral kicker (e.g. "BENCHMARK SHOCK", "ARCHITECTURE BREAKDOWN").
-  * Populate takeaways[] with 3 high-signal bilingual bullets ({ en: "...", ar: "...", icon: "..." }) extracted directly from the input's actual claims and numbers (NEVER invent software/DevOps jargon like "blue-green rollback" or "sub-second latency" when the topic is financial or economic).
-  * Expanded single-slide copy limits: enTitle (up to 55 chars), arTitle (up to 50 chars), enBody (up to 220 chars), arBody (up to 230 chars).
-  * Lock brand to "MARROK" and brandUrl to "marrok.org"; populate enCredit and arCredit for standalone source attribution.
+    userPromptText += `\nInstructions for a coherent, high-converting SINGLE-SLIDE post:
+- Extract ONE counter-intuitive insight or painful mistake (discard generic summaries).
+- Populate hookVariants[] with 5 distinct options spanning Contrarian, Specific Metric, Mistake Callout, and Curiosity Gap, score each (0-100), and use the highest-scoring hook (6-12 words headline, optional sub-headline under 8 words) on the slide.
+- Populate takeaways[] with 3 high-signal bilingual bullets (< 20 words each) extracted directly from the input's actual claims and numbers.
+- ZERO emojis, ZERO colons (":"), and ZERO banned clichés ("Ultimate Guide", "Unlock", "Game-changing") anywhere in slide copy or hooks.
+- Lock brand to "MARROK" and brandUrl to "marrok.org"; populate enCredit and arCredit for standalone source attribution.
 - Return valid JSON matching the exact schema.`;
   } else {
-    userPromptText += `\nInstructions for a coherent, high-retention 8-slide viral engineering carousel:
-- Organize slides with dynamic cover variety, high visual archetype diversity, and scroll-stopping curiosity headlines:
-  * Slide 1 (Dynamic Cover Hook): Pick the archetype that hits hardest for this story — "metric" (if leading with a huge benchmark/stat), "compare" (if contrasting Old vs New), "row" (if revealing a security/protocol architecture), or "hub" (if mapping a 6-part ecosystem). Populate hookKicker (e.g. "BENCHMARK SHOCK", "LEGACY VS MODERN") and write a punchy hook headline with numbers or a sharp contrarian angle.
-  * Slide 2 (The Trigger / Bottleneck): What broke at scale or why the old approach failed ("metric", "compare", or "row").
-  * Slides 3–6 (Deep Specific Mechanisms, Code & Real-World Impact): Break down the exact mechanisms, protocols, configurations, and impacts from the input. Mix archetypes dynamically ("compare", "code", "metric", "number", and "row" with varied diagramVariants). Write curiosity-gap or number-anchored headlines — NEVER write textbook chapter labels like "Defining X." or "Managing Y.", and NEVER start more than one slide title in the deck with "The ".
-  * Slide 7 (Specific Tension / Conclusion): Overarching takeaway ("row" with variant 'takeaway' or 'isolation'). State the specific tension or conclusion as the headline — NEVER title Slide 7 "The core trade-off." or "المقايضة الجوهرية".
-  * Slide 8 ("cta" — Polarizing Question): Ask a specific practitioner question about the topic as the headline ('enTitle' / 'arTitle') — NEVER title Slide 8 "Join the discussion." or "شارك في النقاش". Keep brand strictly "MARROK" and brandUrl strictly "marrok.org".
-  * Populate hookVariants[] with 3 distinct Slide 1 cover angles (1: Hard Metric cover with coverArchetype="metric", 2: Showdown/Contrast cover with coverArchetype="compare", 3: Ecosystem/Curiosity cover with coverArchetype="hub").
-- STRICT TOPICAL TONE: If the input is about finance, economics, valuation, or energy, strictly prohibit IT/software/DevOps jargon (no "latency", "modular", "deployment", "ingress"). Use economic terminology and finance icons ('dollarSign', 'landmark', 'factory', 'scales', 'trendingDown', 'users').
+    userPromptText += `\nInstructions for the 4-Step High-Converting 8-Slide Carousel Pipeline:
+1. Extract Core Value: Identify ONE counter-intuitive insight or painful mistake. Discard generic summaries.
+2. Draft Body Slides First (Slides 2..8): Adhere strictly to "1 Idea Per Slide" and keep EVERY body slide under 20 words per language with strong narrative flow:
+   * Slide 2 (Problem / Mistake): What broke at scale or the costly mistake ("metric", "compare", "visual", or "row").
+   * Slides 3-6 (Mechanism & Proof): Exact mechanisms, configurations, or numbers. Mix archetypes dynamically ("visual" with bar-chart/sequence/timeline/matrix/table/callout/svg when appropriate, "compare", "code", "metric", "number", "row" with varied diagramVariants).
+   * Slide 7 (Specific Tension / Verdict): Concrete operational cost or tension ("row" with diagramVariant 'takeaway' or 'isolation', or "visual" matrix/callout). NEVER title it "The core trade-off." or "المقايضة الجوهرية".
+   * Slide 8 ("cta" — Polarizing Question): Sharp practitioner question as headline ('enTitle' / 'arTitle'). NEVER title it "Join the discussion." or "شارك في النقاش".
+3. Generate 5 Hook Variations (hookVariants[]): Dynamically derive 5 distinct Slide 1 options directly from Slide 2's specific problem, metric, or architectural failure across ALL 4 frameworks ("Contrarian", "Specific Metric", "Mistake Callout", "Curiosity Gap") with framework, tag, score (0-100), selectionReason, coverArchetype, coverStyle ('headline-hero' | 'metric-split' | 'versus-hook' | 'visual-teaser'), hookKicker, coverTeaserEn, and coverTeaserAr. Zero generic template phrasing.
+4. Automated Selection -> Slide 1 Cover Hero: Score hooks on scroll-stopping strength, Slide 2 grounding, and zero clichés/generic filler; promote the highest-scoring option into Slide 1 (slides[0]) with coverStyle, <= 68 char single-line coverTeaserEn / coverTeaserAr, showSwipeCue: true, and empty enBody / arBody ("").
+- Hard Constraints:
+  * Slide 1 primary enTitle MUST be 6 to 12 words. Context teaser (coverTeaserEn / coverTeaserAr) MUST be <= 68 chars on 1 line with empty Slide 1 enBody / arBody ("").
+  * Bilingual (English and Arabic RTL), dark themed, high visual hierarchy.
+  * NEVER use emojis, colons (":"), generic filler ("shifts the model", "المقارنة الحقيقية في الأنظمة المعمارية"), or clichés ("Ultimate Guide", "Unlock", "Game-changing") in slides or hooks.
 - Return valid JSON matching the exact schema.`;
   }
 
@@ -330,23 +293,58 @@ export const CAROUSEL_RESPONSE_SCHEMA = {
         type: Type.OBJECT,
         properties: {
           tag: { type: Type.STRING },
-          enTitle: { type: Type.STRING },
+          framework: {
+            type: Type.STRING,
+            description: 'One of: "Contrarian", "Specific Metric", "Mistake Callout", "Curiosity Gap"',
+          },
+          score: {
+            type: Type.NUMBER,
+            description: 'Automated virality heuristic score from 0 to 100',
+          },
+          selected: {
+            type: Type.BOOLEAN,
+            description: 'True for the single highest-scoring option promoted to Slide 1',
+          },
+          selectionReason: {
+            type: Type.STRING,
+            description: 'Brief rationale explaining why this hook scored higher on virality heuristics',
+          },
+          enTitle: {
+            type: Type.STRING,
+            description: '6 to 12 words primary hook headline (zero emojis, zero colons, zero clichés)',
+          },
           arTitle: { type: Type.STRING },
-          enBody: { type: Type.STRING },
+          enBody: {
+            type: Type.STRING,
+            description: 'Optional sub-headline under 8 words (or empty string "")',
+          },
           arBody: { type: Type.STRING },
           centerIcon: { type: Type.STRING },
           hookKicker: {
             type: Type.STRING,
-            description: '2-to-4 word uppercase viral kicker badge (e.g. "BENCHMARK SHOCK", "LEGACY VS MODERN")',
+            description: '2-to-4 word uppercase viral kicker badge (no colons, no emojis)',
           },
           coverArchetype: {
             type: Type.STRING,
-            description: 'Recommended cover slide archetype for this hook: "metric", "compare", "row", or "hub"',
+            description: 'Recommended cover slide archetype for this hook: "metric", "compare", "row", or "visual"',
+          },
+          coverStyle: {
+            type: Type.STRING,
+            enum: ['headline-hero', 'metric-split', 'versus-hook', 'visual-teaser'],
+            description: 'Recommended Slide 1 Cover Hero style for this hook variation',
+          },
+          coverTeaserEn: {
+            type: Type.STRING,
+            description: 'Concise 1-line English cover context teaser under 68 chars (zero colons, zero emojis)',
+          },
+          coverTeaserAr: {
+            type: Type.STRING,
+            description: 'Concise 1-line Arabic cover context teaser under 68 chars preserving English tech terms',
           },
         },
         required: ['tag', 'enTitle', 'arTitle', 'enBody', 'arBody'],
       },
-      description: '3 alternative Slide 1 Hook variations with distinct cover archetypes for A/B testing',
+      description: '5 Slide 1 Hook variations generated from body slides across Contrarian, Specific Metric, Mistake Callout, and Curiosity Gap, scored against virality heuristics with the highest-scoring option selected for Slide 1',
     },
     slides: {
       type: Type.ARRAY,
@@ -355,11 +353,28 @@ export const CAROUSEL_RESPONSE_SCHEMA = {
         properties: {
           type: {
             type: Type.STRING,
-            description: 'hub, row, number, metric, code, compare, image, cta, poster, or subjectPair',
+            description: 'hub, row, number, metric, code, compare, image, cta, poster, subjectPair, or visual',
           },
           hookKicker: {
             type: Type.STRING,
             description: 'Short 2-4 word uppercase viral hook kicker above the headline (max 32 chars, e.g. "BENCHMARK SHOCK • 93.3%", "PROTOCOL INTERNALS", "THE HIDDEN CATCH")',
+          },
+          coverStyle: {
+            type: Type.STRING,
+            enum: ['headline-hero', 'metric-split', 'versus-hook', 'visual-teaser'],
+            description: 'Slide 1 Cover Hero style (multi-slide Slide 1 only)',
+          },
+          coverTeaserEn: {
+            type: Type.STRING,
+            description: 'Slide 1 single-line English context teaser directly beneath the oversized hook (<= 68 chars, zero colons/emojis)',
+          },
+          coverTeaserAr: {
+            type: Type.STRING,
+            description: 'Slide 1 single-line Arabic context teaser directly beneath the Arabic hook (<= 68 chars, preserving English tech terms)',
+          },
+          showSwipeCue: {
+            type: Type.BOOLEAN,
+            description: 'Set true on multi-slide Slide 1 to render the bottom swipe prompt pill above footer',
           },
           takeaways: {
             type: Type.ARRAY,
@@ -525,9 +540,128 @@ export const CAROUSEL_RESPONSE_SCHEMA = {
             },
             description: 'For migration, A vs B, or before->after stories: 2 systems and story owner wordmark',
           },
+          visualSpec: {
+            type: Type.OBJECT,
+            description: 'Universal Visual Engine spec when slide.type === "visual". Populate only fields matching visualSpec.kind.',
+            properties: {
+              kind: {
+                type: Type.STRING,
+                enum: ['bar-chart', 'sequence', 'timeline', 'matrix', 'table', 'callout', 'svg'],
+                description: 'Visual renderer mode: bar-chart, sequence, timeline, matrix, table, callout, or svg',
+              },
+              eyebrow: { type: Type.STRING, description: 'Short uppercase kicker label above the visual header' },
+              title: { type: Type.STRING, description: 'Concise visual chart/diagram title' },
+              footnote: { type: Type.STRING, description: 'Source note, methodology, or axis caveat' },
+              orientation: {
+                type: Type.STRING,
+                enum: ['horizontal', 'vertical'],
+                description: 'Bar chart orientation (default horizontal)',
+              },
+              unit: { type: Type.STRING, description: 'Explicit metric unit for bar-chart (e.g. ms, %, req/s, GB)' },
+              deltaBadge: { type: Type.STRING, description: 'Compact comparison delta badge (e.g. "-84% p99" or "4.2x faster")' },
+              bars: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    label: { type: Type.STRING },
+                    value: { type: Type.NUMBER },
+                    displayValue: { type: Type.STRING },
+                    tone: { type: Type.STRING, enum: ['accent', 'muted', 'alert'] },
+                    isWinner: { type: Type.BOOLEAN },
+                  },
+                  required: ['label', 'value'],
+                },
+                description: 'Up to 6 bars for kind="bar-chart"',
+              },
+              actors: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: '2 to 4 vertical lifeline actor names for kind="sequence"',
+              },
+              steps: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    from: { type: Type.NUMBER, description: '0-based index into actors[]' },
+                    to: { type: Type.NUMBER, description: '0-based index into actors[]' },
+                    label: { type: Type.STRING },
+                    tag: { type: Type.STRING },
+                    style: { type: Type.STRING, enum: ['solid', 'dashed', 'alert'] },
+                  },
+                  required: ['from', 'to', 'label'],
+                },
+                description: 'Up to 6 directed message steps for kind="sequence"',
+              },
+              events: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    time: { type: Type.STRING, description: 'Timestamp or phase (e.g. 14:02 UTC or T+12m)' },
+                    title: { type: Type.STRING },
+                    detail: { type: Type.STRING },
+                    severity: { type: Type.STRING, enum: ['info', 'warn', 'incident', 'resolved'] },
+                  },
+                  required: ['time', 'title'],
+                },
+                description: '3 to 5 chronological incident/milestone events for kind="timeline"',
+              },
+              xAxisLow: { type: Type.STRING },
+              xAxisHigh: { type: Type.STRING },
+              yAxisLow: { type: Type.STRING },
+              yAxisHigh: { type: Type.STRING },
+              quadrants: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    detail: { type: Type.STRING },
+                    highlight: { type: Type.BOOLEAN },
+                  },
+                  required: ['title'],
+                },
+                description: '4 cells [top-left, top-right, bottom-left, bottom-right] for kind="matrix"',
+              },
+              columns: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: '2 to 4 column headers for kind="table"',
+              },
+              rows: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+                description: '2 to 5 rows matching columns.length for kind="table"',
+              },
+              highlightColumn: { type: Type.NUMBER, description: '0-based winning column index for kind="table"' },
+              calloutStyle: {
+                type: Type.STRING,
+                enum: ['quote', 'stat'],
+                description: 'Editorial style for kind="callout"',
+              },
+              quote: { type: Type.STRING },
+              statValue: { type: Type.STRING },
+              statLabel: { type: Type.STRING },
+              author: { type: Type.STRING },
+              role: { type: Type.STRING },
+              source: { type: Type.STRING },
+              evidence: { type: Type.STRING },
+              svgCode: {
+                type: Type.STRING,
+                description: 'Sanitized SVG markup (viewBox 0 0 846 490) using MARROK tokens {{accent}}, {{alert}}, {{surface}}, {{surfaceBorder}}, {{textWhite}}, {{textMuted}}, {{baseBg}} for kind="svg"',
+              },
+              viewBox: { type: Type.STRING, description: 'Optional SVG viewBox (default "0 0 846 490")' },
+            },
+            required: ['kind'],
+          },
           enTitle: {
             type: Type.STRING,
-            description: 'English headline: 2 to 8 words (max 45 chars) ending in . or ?. Punchy, informative, and grammatically complete.',
+            description: 'English headline: 6 to 12 words on Slide 1 hook derived from Slide 2 failure/metric (<= 76 chars, zero colons/emojis/cliches/filler); 2 to 8 words on body & CTA slides (<= 45 chars).',
           },
           arTitle: {
             type: Type.STRING,
@@ -564,4 +698,97 @@ export const CAROUSEL_RESPONSE_SCHEMA = {
   },
   required: ['theme', 'category', 'caption', 'slides'],
 };
+
+export const DIRECT_VISUAL_RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    chosenLayoutId: {
+      type: Type.STRING,
+      enum: [
+        'visual:bar-chart',
+        'visual:sequence',
+        'visual:timeline',
+        'visual:matrix',
+        'visual:table',
+        'visual:callout',
+        'visual:svg',
+        'metric',
+        'compare',
+        'code',
+        'number',
+        'hub',
+        'subjectPair',
+        'poster',
+        'row:topology',
+        'row:stack',
+        'row:isolation',
+        'row:split',
+        'row:features',
+        'row:takeaway',
+        'row:graph',
+        'row:clusters',
+        'row:scatter',
+      ],
+      description: 'Exact visual catalog ID chosen to best express this slide copy without repeating sibling layouts or excluded layouts.',
+    },
+    rationale: {
+      type: Type.STRING,
+      description: 'Concise 1-sentence plain-language explanation of why this visual fits the slide content (under 110 chars).',
+    },
+    diagramNodes: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          label: { type: Type.STRING },
+          sublabel: { type: Type.STRING },
+          status: { type: Type.STRING },
+          icon: { type: Type.STRING },
+        },
+        required: ['label'],
+      },
+      description: '3 concrete system nodes when chosenLayoutId starts with row: or is poster',
+    },
+    diagramEdges: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+      description: '2 short edge connector labels between nodes 1->2 and 2->3',
+    },
+    diagramFooter: { type: Type.STRING },
+    compareLeftTitle: { type: Type.STRING },
+    compareLeftBody: { type: Type.STRING },
+    compareRightTitle: { type: Type.STRING },
+    compareRightBody: { type: Type.STRING },
+    codeFileName: { type: Type.STRING },
+    codeLanguage: { type: Type.STRING },
+    codeSnippet: { type: Type.STRING },
+    metricValue: { type: Type.STRING },
+    metricBeforeValue: { type: Type.STRING },
+    metricLabel: { type: Type.STRING },
+    metricDiff: { type: Type.STRING },
+    stepNumber: { type: Type.STRING },
+    stepLabel: { type: Type.STRING },
+    centerTag: { type: Type.STRING },
+    satLabels: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+    },
+    coverStyle: {
+      type: Type.STRING,
+      enum: ['headline-hero', 'metric-split', 'versus-hook', 'visual-teaser'],
+      description: 'When directing Slide 1 of a multi-slide carousel, choose the Cover Hero composition style',
+    },
+    coverTeaserEn: {
+      type: Type.STRING,
+      description: 'Optional refined 1-line English cover teaser (<= 68 chars, zero colons/emojis) for Slide 1',
+    },
+    coverTeaserAr: {
+      type: Type.STRING,
+      description: 'Optional refined 1-line Arabic cover teaser (<= 68 chars) for Slide 1',
+    },
+    visualSpec: CAROUSEL_RESPONSE_SCHEMA.properties.slides.items.properties.visualSpec,
+  },
+  required: ['chosenLayoutId', 'rationale'],
+};
+
 

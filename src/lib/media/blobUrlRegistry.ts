@@ -6,13 +6,6 @@ export function isBlobObjectUrl(url: unknown): url is string {
   return typeof url === 'string' && url.trim().toLowerCase().startsWith('blob:');
 }
 
-export function trackBlobUrl(url: unknown): string {
-  if (!isBlobObjectUrl(url)) return typeof url === 'string' ? url : '';
-  const normalized = url.trim();
-  activeBlobUrls.add(normalized);
-  return normalized;
-}
-
 export function revokeBlobUrl(url: unknown): void {
   if (!isBlobObjectUrl(url)) return;
   const normalized = url.trim();

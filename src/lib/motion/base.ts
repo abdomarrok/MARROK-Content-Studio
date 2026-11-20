@@ -10,10 +10,12 @@ import {
 import { MARROK_CHROME_SCRIPT } from './marrokSlideChrome.ts';
 import { resolveSmartTransition } from './transitions.ts';
 
+import { clamp } from './math.ts';
+
 export const MOTION_W = 1080;
 export const MOTION_H = 1920;
 
-export const clamp = (x: number, a = 0, b = 1): number => Math.min(b, Math.max(a, x));
+export { clamp };
 
 /**
  * Damped harmonic spring oscillator ported 1:1 from abdomarrok/motion-reel
@@ -100,30 +102,6 @@ export const FONT_OPTIONS = [
   'Playfair Display',
   'Source Serif 4',
 ];
-
-const STORAGE_KEY = 'motion-reel-brand';
-
-export function loadBrand(): MotionBrandConfig {
-  if (typeof window === 'undefined') return { ...DEFAULT_BRAND };
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      return { ...DEFAULT_BRAND, ...JSON.parse(stored) };
-    }
-  } catch (e) {
-    console.error('Failed to load brand from localStorage', e);
-  }
-  return { ...DEFAULT_BRAND };
-}
-
-export function saveBrand(brand: MotionBrandConfig): void {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(brand));
-  } catch (e) {
-    console.error('Failed to save brand to localStorage', e);
-  }
-}
 
 export function wrapHTML(config: MotionTemplateConfig, scenesCode: string, extraSetup = ''): string {
   const font = config.brand?.font || 'Cairo';
