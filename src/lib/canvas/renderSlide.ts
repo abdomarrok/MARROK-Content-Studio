@@ -26,6 +26,9 @@ import {
   drawVisualSlide,
   drawTakeawaysBlock,
 } from './archetypes/index.ts';
+import type { SlideRenderLayerPass } from './archetypes/renderImage.ts';
+
+export type { SlideRenderLayerPass };
 
 /**
  * Render a single MARROK slide to an offscreen or provided canvas at the active dimension preset
@@ -38,19 +41,26 @@ export async function renderSlideToCanvas(
   targetCanvas?: HTMLCanvasElement,
   customPalette?: ThemePalette,
   visualOptions?: VisualSystemOptions,
-  videoElement?: HTMLVideoElement | null
+  videoElement?: HTMLVideoElement | null,
+  renderPass: SlideRenderLayerPass = 'all'
 ): Promise<HTMLCanvasElement> {
-  // Ensure custom webfonts are loaded
-  if (typeof document !== 'undefined' && document.fonts) {
+  // Ensure custom webfonts are loaded (skip redundant await on video-only pass)
+  if (renderPass !== 'video' && typeof document !== 'undefined' && document.fonts) {
     await document.fonts.ready;
   }
 
   const spec = getCanvasDimensionSpec(carousel.dimensionPreset);
   const canvas = targetCanvas || document.createElement('canvas');
-  canvas.width = spec.width;
-  canvas.height = spec.height;
+  if (canvas.width !== spec.width || canvas.height !== spec.height) {
+    canvas.width = spec.width;
+    canvas.height = spec.height;
+  }
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Could not get 2D canvas context');
+
+  if (renderPass !== 'video') {
+    ctx.clearRect(0, 0, spec.width, spec.height);
+  }
 
   const rawSlide = carousel.slides[slideIndex];
   if (!rawSlide) throw new Error(`Slide at index ${slideIndex} not found`);
@@ -69,6 +79,19 @@ export async function renderSlideToCanvas(
     ? ''
     : slide.cornerTag || carousel.category || (themeMode === 'security' ? 'SECURITY' : 'ARCHITECTURE');
   const totalSlides = carousel.slides.length;
+  const drawBaseLayer =
+    renderPass === 'all' || renderPass === 'base' || renderPass === 'base-with-chrome';
+  const drawOverlayLayer =
+    renderPass === 'all' ||
+    renderPass === 'overlay' ||
+    renderPass === 'base-with-chrome' ||
+    renderPass === 'overlay-chrome-only';
+  const cardRenderPass: SlideRenderLayerPass =
+    renderPass === 'base-with-chrome'
+      ? 'base'
+      : renderPass === 'overlay-chrome-only'
+      ? 'overlay-chrome-only'
+      : renderPass;
 
   // Resolve visual system toggles
   const options: VisualSystemOptions = {
@@ -77,25 +100,27 @@ export async function renderSlideToCanvas(
     terminalScanlines: visualOptions?.terminalScanlines ?? carousel.visualOptions?.terminalScanlines ?? customPalette?.terminalScanlines ?? true,
   };
 
-  // 1. Solid Base Background
-  drawBaseBackground(ctx, theme, spec);
+  if (drawBaseLayer) {
+    // 1. Solid Base Background
+    drawBaseBackground(ctx, theme, spec);
 
-  // 2. Radial Gradient Glow
-  drawRadialGlow(ctx, theme, spec);
+    // 2. Radial Gradient Glow
+    drawRadialGlow(ctx, theme, spec);
 
-  // 3. Engineering Grid Lines
-  drawEngineeringGrid(ctx, theme, spec);
+    // 3. Engineering Grid Lines
+    drawEngineeringGrid(ctx, theme, spec);
 
-  // 3b. Canvas Background CAD Reticles
-  if (options.showCadReticles) {
-    drawCadReticles(ctx, theme, spec);
+    // 3b. Canvas Background CAD Reticles
+    if (options.showCadReticles) {
+      drawCadReticles(ctx, theme, spec);
+    }
   }
 
   // Pre-compute layout awareness once for the slide
   const layout = computeSlideLayoutAwareness(slide, carousel, slideIndex);
 
   // 4. Header: Top-Left Authentic MARROK Vector Badge + Brand Wordmark + Slide-Type Corner Tag
-  if (!layout.headerBadge.hidden) {
+  if (drawBaseLayer && !layout.headerBadge.hidden) {
     ctx.save();
     const hCx = layout.headerBadge.x + layout.headerBadge.width / 2;
     const hCy = layout.headerBadge.y + layout.headerBadge.height / 2;
@@ -120,9 +145,11 @@ export async function renderSlideToCanvas(
   const graphicOverride = slide.layoutOverrides?.graphicCard;
 
   if (slide.type === 'cta') {
-    ctx.save();
-    yGraphicEnd = await drawCtaSlide(ctx, slide, carousel, theme, options, themeMode);
-    ctx.restore();
+    if (renderPass === 'all' || renderPass === 'base') {
+      ctx.save();
+      yGraphicEnd = await drawCtaSlide(ctx, slide, carousel, theme, options, themeMode);
+      ctx.restore();
+    }
   } else if (!layout.graphicCard?.hidden) {
     ctx.save();
     const cx = isMemeSlide ? graphicTransform.cardX + graphicTransform.cardW / 2 : spec.safeTextCenterX;
@@ -152,29 +179,33 @@ export async function renderSlideToCanvas(
     }
 
     let rawGraphicEnd = 670;
-    if (slide.type === 'hub') {
+    if (slide.type === 'hub' && drawBaseLayer) {
       rawGraphicEnd = await drawHubSlide(ctx, slide, theme, options);
-    } else if (slide.type === 'row') {
+    } else if (slide.type === 'row' && drawBaseLayer) {
       rawGraphicEnd = await drawRowSlide(ctx, slide, theme, options, slideIndex);
-    } else if (slide.type === 'number') {
+    } else if (slide.type === 'number' && drawBaseLayer) {
       rawGraphicEnd = await drawNumberSlide(ctx, slide, theme, options, slideIndex);
-    } else if (slide.type === 'metric') {
+    } else if (slide.type === 'metric' && drawBaseLayer) {
       rawGraphicEnd = await drawMetricSlide(ctx, slide, theme, options);
-    } else if (slide.type === 'code') {
+    } else if (slide.type === 'code' && drawBaseLayer) {
       rawGraphicEnd = await drawCodeSlide(ctx, slide, theme, options);
-    } else if (slide.type === 'compare') {
+    } else if (slide.type === 'compare' && drawBaseLayer) {
       rawGraphicEnd = await drawCompareSlide(ctx, slide, theme, options);
     } else if (slide.type === 'image') {
-      rawGraphicEnd = await drawImageSlide(ctx, slide, theme, options, carousel.brand || 'MARROK', videoElement, spec);
+      rawGraphicEnd = await drawImageSlide(ctx, slide, theme, options, carousel.brand || 'MARROK', videoElement, spec, cardRenderPass);
     } else if (slide.type === 'poster') {
-      rawGraphicEnd = await drawPosterSlide(ctx, slide, theme, options, carousel.brand || 'MARROK', videoElement, spec);
-    } else if (slide.type === 'subjectPair') {
+      rawGraphicEnd = await drawPosterSlide(ctx, slide, theme, options, carousel.brand || 'MARROK', videoElement, spec, cardRenderPass);
+    } else if (slide.type === 'subjectPair' && drawBaseLayer) {
       rawGraphicEnd = await drawSubjectPairSlide(ctx, slide, theme, options, spec);
-    } else if (slide.type === 'visual') {
+    } else if (slide.type === 'visual' && drawBaseLayer) {
       rawGraphicEnd = await drawVisualSlide(ctx, slide, theme, options, slideIndex);
     }
     yGraphicEnd = Math.round(rawGraphicEnd * graphicTransform.scale + graphicTransform.translateY);
     ctx.restore();
+  }
+
+  if (!drawOverlayLayer) {
+    return canvas;
   }
 
   // 6. Non-Overlapping Layout-Aware Text Rendering (for hub, row, number, metric, code, compare, image, poster)

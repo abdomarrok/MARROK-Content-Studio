@@ -1980,7 +1980,9 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       });
       triggerBlobDownload(result.blob, result.filename);
       onShowToast(
-        `Exported ${result.width}×${result.height} @ ${result.fps}fps .${result.extension} video!`
+        result.warning
+          ? `Exported ${result.width}×${result.height} @ ${result.fps}fps .${result.extension} — Warning: ${result.warning}`
+          : `Exported ${result.width}×${result.height} @ ${result.fps}fps .${result.extension} video!`
       );
     } catch (err) {
       console.error('Single-slide video export failed:', err);

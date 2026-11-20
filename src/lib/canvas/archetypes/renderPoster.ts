@@ -4,7 +4,7 @@ import { CanvasDimensionSpec, SAFE_CONTENT_WIDTH, SAFE_MARGIN_LEFT, isVideoSlide
 import { fitTextInBox } from '../textLayout.ts';
 import { loadIconImage, safeDrawImage } from '../imageLoader.ts';
 import { drawRowSlide } from './renderRow.ts';
-import { drawImageSlide } from './renderImage.ts';
+import { drawImageSlide, SlideRenderLayerPass } from './renderImage.ts';
 import { isolateEmbeddedLatinInArabic } from '../../text/arabicBiDi.ts';
 
 /**
@@ -20,7 +20,8 @@ export async function drawPosterSlide(
   options: VisualSystemOptions,
   brandName: string = 'MARROK',
   videoElement?: HTMLVideoElement | null,
-  spec?: CanvasDimensionSpec
+  spec?: CanvasDimensionSpec,
+  renderPass: SlideRenderLayerPass = 'all'
 ): Promise<number> {
   const topY = 240;
   const cardW = SAFE_CONTENT_WIDTH;
@@ -31,7 +32,7 @@ export async function drawPosterSlide(
 
   // Render Hero Meme / Image / Video card if media is attached, otherwise render the schematic diagram card
   const graphicEnd = hasVisualMedia
-    ? await drawImageSlide(ctx, slide, theme, options, brandName, videoElement, spec)
+    ? await drawImageSlide(ctx, slide, theme, options, brandName, videoElement, spec, renderPass)
     : await drawRowSlide(ctx, slide, theme, options);
 
   // If slide has a metricValue and is a schematic diagram (no image/video), draw a crisp measured metric pill

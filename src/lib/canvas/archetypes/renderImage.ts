@@ -14,6 +14,151 @@ import {
 } from '../constants.ts';
 import { drawMarrokVectorBadge } from '../../icons.ts';
 
+export type SlideRenderLayerPass = 'all' | 'base' | 'base-with-chrome' | 'video' | 'overlay' | 'overlay-chrome-only';
+
+export interface VideoCardDrawGeometry {
+  cardX: number;
+  cardY: number;
+  cardW: number;
+  cardH: number;
+  radius: number;
+  clipX: number;
+  clipY: number;
+  clipW: number;
+  clipH: number;
+  innerRadius: number;
+  dx: number;
+  dy: number;
+  dw: number;
+  dh: number;
+}
+
+export function resolveVideoCardDrawGeometry(
+  slide: SlideData,
+  videoWidth: number,
+  videoHeight: number,
+  resolvedSpec: CanvasDimensionSpec
+): VideoCardDrawGeometry | null {
+  if (videoWidth <= 0 || videoHeight <= 0) return null;
+  const isFullMeme = isFullMemeSlide(slide);
+  const isHeroFrame = isHeroImageSlide(slide);
+  const isVideo = true;
+
+  const fullMemeBounds = isFullMeme
+    ? resolveSmartFullMemeCardBounds(resolvedSpec, {
+        ...slide,
+        imageAspectRatio: slide.imageAspectRatio,
+      })
+    : null;
+
+  const cardX = fullMemeBounds ? fullMemeBounds.cardX : SAFE_MARGIN_LEFT;
+  const cardY = fullMemeBounds
+    ? fullMemeBounds.cardY
+    : isHeroFrame || slide.type === 'poster'
+    ? 200
+    : 240;
+  const cardW = fullMemeBounds ? fullMemeBounds.cardW : SAFE_CONTENT_WIDTH;
+  const cardH = fullMemeBounds ? fullMemeBounds.cardH : isHeroFrame ? 820 : 430;
+  const radius = isFullMeme && !isVideo ? 26 : 32;
+
+  const pad = isFullMeme && !isVideo ? 6 : isVideo ? 16 : isHeroFrame ? 18 : 24;
+  const availW = cardW - pad * 2;
+  const availH = cardH - pad * 2;
+  const innerX = cardX + pad;
+  const innerY = cardY + pad;
+  const innerRadius = slide.videoBorderRadius ?? (isFullMeme && !isVideo ? 18 : 8);
+
+  const vidAspect = videoWidth / videoHeight;
+  const availAspect = availW / availH;
+  let dw = availW;
+  let dh = availH;
+  let dx = innerX;
+  let dy = innerY;
+
+  if (slide.imageFit === 'cover') {
+    if (vidAspect > availAspect) {
+      dh = availH;
+      dw = availH * vidAspect;
+      dx = innerX + (availW - dw) / 2;
+    } else {
+      dw = availW;
+      dh = availW / vidAspect;
+      dy = innerY + (availH - dh) / 2;
+    }
+  } else {
+    if (vidAspect > availAspect) {
+      dw = availW;
+      dh = availW / vidAspect;
+    } else {
+      dh = availH;
+      dw = availH * vidAspect;
+    }
+    dx = innerX + (availW - dw) / 2;
+    dy = innerY + (availH - dh) / 2;
+  }
+
+  const zoom = Math.max(0.5, Math.min(3.0, slide.imageZoom ?? 1));
+  const panX = Math.max(-100, Math.min(100, slide.imagePanX ?? 0));
+  const panY = Math.max(-100, Math.min(100, slide.imagePanY ?? 0));
+
+  dw = dw * zoom;
+  dh = dh * zoom;
+  dx = innerX + (availW - dw) / 2 + (panX / 100) * (availW * 0.45);
+  dy = innerY + (availH - dh) / 2 + (panY / 100) * (availH * 0.45);
+
+  const clipX = slide.imageFit === 'cover' ? innerX : Math.max(innerX, dx);
+  const clipY = slide.imageFit === 'cover' ? innerY : Math.max(innerY, dy);
+  const clipW = slide.imageFit === 'cover' ? availW : Math.min(availW, dw);
+  const clipH = slide.imageFit === 'cover' ? availH : Math.min(availH, dh);
+
+  return {
+    cardX,
+    cardY,
+    cardW,
+    cardH,
+    radius,
+    clipX,
+    clipY,
+    clipW,
+    clipH,
+    innerRadius,
+    dx,
+    dy,
+    dw,
+    dh,
+  };
+}
+
+export function drawVideoFrameClipped(
+  ctx: CanvasRenderingContext2D,
+  videoElement: HTMLVideoElement,
+  geom: VideoCardDrawGeometry
+): void {
+  ctx.save();
+  ctx.beginPath();
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(geom.cardX, geom.cardY, geom.cardW, geom.cardH, geom.radius);
+  } else {
+    ctx.rect(geom.cardX, geom.cardY, geom.cardW, geom.cardH);
+  }
+  ctx.clip();
+
+  ctx.beginPath();
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(geom.clipX, geom.clipY, geom.clipW, geom.clipH, geom.innerRadius);
+  } else {
+    ctx.rect(geom.clipX, geom.clipY, geom.clipW, geom.clipH);
+  }
+  ctx.clip();
+
+  try {
+    ctx.drawImage(videoElement, geom.dx, geom.dy, geom.dw, geom.dh);
+  } catch {
+    // ignore transient video frame readiness error
+  }
+  ctx.restore();
+}
+
 function inferSpecFromCanvas(ctx: CanvasRenderingContext2D, spec?: CanvasDimensionSpec): CanvasDimensionSpec {
   if (spec) return spec;
   const h = ctx.canvas?.height || 1920;
@@ -80,18 +225,22 @@ export async function drawImageSlide(
   _options: VisualSystemOptions,
   brandName: string = 'MARROK',
   videoElement?: HTMLVideoElement | null,
-  spec?: CanvasDimensionSpec
+  spec?: CanvasDimensionSpec,
+  renderPass: SlideRenderLayerPass = 'all'
 ): Promise<number> {
   const isFullMeme = isFullMemeSlide(slide);
   const isHeroFrame = isHeroImageSlide(slide);
   const isVideo = isVideoSlide(slide) || Boolean(videoElement);
   const resolvedSpec = inferSpecFromCanvas(ctx, spec);
+  const drawBaseLayer = renderPass === 'all' || renderPass === 'base' || renderPass === 'base-with-chrome';
+  const drawVideoLayer = renderPass === 'all' || renderPass === 'video';
+  const drawOverlayLayer = renderPass === 'all' || renderPass === 'overlay';
 
   // Pre-load image when present so Full Meme mode can smartly adapt card bounds to the image's natural aspect ratio
   let preloadedImg: HTMLImageElement | null = null;
   let filterMode: SlideData['imageFilter'] = 'clean';
   let isSvg = false;
-  if (slide.imageUrl && !isVideo) {
+  if (slide.imageUrl && !isVideo && renderPass === 'all') {
     const isUploadedOrPreset =
       isHeroFrame ||
       slide.imageUrl.startsWith('data:') ||
@@ -124,33 +273,50 @@ export async function drawImageSlide(
   const cardW = fullMemeBounds ? fullMemeBounds.cardW : SAFE_CONTENT_WIDTH;
   const cardH = fullMemeBounds ? fullMemeBounds.cardH : isHeroFrame ? 820 : 430;
   const radius = isFullMeme && !isVideo ? 26 : 32;
-
-  // 1. Soft ambient theme glow behind the card matching active post theme
-  ctx.save();
-  const glowGrad = ctx.createRadialGradient(
-    cardX + cardW / 2,
-    cardY + cardH / 2,
-    40,
-    cardX + cardW / 2,
-    cardY + cardH / 2,
-    cardW / 1.4
-  );
-  glowGrad.addColorStop(0, `${theme.accent}22`);
-  glowGrad.addColorStop(1, 'transparent');
-  ctx.fillStyle = glowGrad;
-  ctx.fillRect(cardX - 40, cardY - 40, cardW + 80, cardH + 80);
-  ctx.restore();
-
-  // 2. Card surface fill: supports 'white' matte for white-background memes & videos, 'obsidian', or active theme surface
   const bgStyle = slide.imageBgStyle || (isVideo || isFullMeme ? 'white' : 'theme');
-  const cardSurfaceFill =
-    bgStyle === 'white'
-      ? '#F8FAFC'
-      : bgStyle === 'obsidian'
-      ? '#05070B'
-      : theme.surface;
 
-  drawRoundRect(ctx, cardX, cardY, cardW, cardH, radius, cardSurfaceFill, theme.surfaceBorder, 2.5);
+  if (renderPass === 'video') {
+    if (videoElement && videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
+      const geom = resolveVideoCardDrawGeometry(
+        slide,
+        videoElement.videoWidth,
+        videoElement.videoHeight,
+        resolvedSpec
+      );
+      if (geom) {
+        drawVideoFrameClipped(ctx, videoElement, geom);
+      }
+    }
+    return cardY + cardH;
+  }
+
+  if (drawBaseLayer) {
+    // 1. Soft ambient theme glow behind the card matching active post theme
+    ctx.save();
+    const glowGrad = ctx.createRadialGradient(
+      cardX + cardW / 2,
+      cardY + cardH / 2,
+      40,
+      cardX + cardW / 2,
+      cardY + cardH / 2,
+      cardW / 1.4
+    );
+    glowGrad.addColorStop(0, `${theme.accent}22`);
+    glowGrad.addColorStop(1, 'transparent');
+    ctx.fillStyle = glowGrad;
+    ctx.fillRect(cardX - 40, cardY - 40, cardW + 80, cardH + 80);
+    ctx.restore();
+
+    // 2. Card surface fill: supports 'white' matte for white-background memes & videos, 'obsidian', or active theme surface
+    const cardSurfaceFill =
+      bgStyle === 'white'
+        ? '#F8FAFC'
+        : bgStyle === 'obsidian'
+        ? '#05070B'
+        : theme.surface;
+
+    drawRoundRect(ctx, cardX, cardY, cardW, cardH, radius, cardSurfaceFill, theme.surfaceBorder, 2.5);
+  }
 
   // 3. Clip inside card for blueprint grid and visual rendering
   ctx.save();
@@ -163,7 +329,7 @@ export async function drawImageSlide(
   ctx.clip();
 
   // Technical blueprint grid (subtle on dark backdrops, omitted on crisp white backdrop)
-  if (bgStyle !== 'white') {
+  if (drawBaseLayer && bgStyle !== 'white') {
     ctx.strokeStyle = `${theme.accent}0A`;
     ctx.lineWidth = 1;
     const gridStep = 32;
@@ -188,7 +354,7 @@ export async function drawImageSlide(
   const innerY = cardY + pad;
   const innerRadius = slide.videoBorderRadius ?? (isFullMeme && !isVideo ? 18 : 8);
 
-  if (videoElement && videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
+  if (drawVideoLayer && videoElement && videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
     // Draw live or seeked <video> frame inside the padded white card
     const vidAspect = videoElement.videoWidth / videoElement.videoHeight;
     const availAspect = availW / availH;
@@ -334,12 +500,34 @@ export async function drawImageSlide(
   }
 
   // Layer the 3 corner registration marks on video & schematic cards (omitted on Full Meme cards so the meme has clean edge-to-edge space)
-  if (!isFullMeme || isVideo) {
+  if (drawOverlayLayer && (!isFullMeme || isVideo)) {
     drawCardCornerRegistrationMarks(ctx, cardX, cardY, cardW, cardH, theme, bgStyle);
   }
 
   ctx.restore(); // End clipping
 
+  if (!drawOverlayLayer) {
+    return cardY + cardH;
+  }
+
+  drawImageCardOuterOverlays(ctx, slide, theme, brandName, cardX, cardY, cardW, cardH, isFullMeme, isHeroFrame, isVideo);
+
+  return cardY + cardH;
+}
+
+function drawImageCardOuterOverlays(
+  ctx: CanvasRenderingContext2D,
+  slide: SlideData,
+  theme: ThemePalette,
+  brandName: string,
+  cardX: number,
+  cardY: number,
+  cardW: number,
+  cardH: number,
+  isFullMeme: boolean,
+  isHeroFrame: boolean,
+  isVideo: boolean
+): void {
   // 4. Top border neon accent line
   ctx.save();
   ctx.beginPath();
@@ -422,7 +610,52 @@ export async function drawImageSlide(
     ctx.fill();
     ctx.restore();
   }
-
-  return cardY + cardH;
 }
+
+/**
+ * Draws the lightweight card foreground elements layered directly over the video frame
+ * (corner registration marks, top neon accent line, optional caption pill, and @MARROK badge).
+ * Drawing these directly over the opaque composited frame guarantees exact single-pass
+ * Skia alpha/shadow blending (0 pixel difference vs full renderSlideToCanvas).
+ */
+export function drawImageCardForegroundOverlay(
+  ctx: CanvasRenderingContext2D,
+  slide: SlideData,
+  theme: ThemePalette,
+  brandName: string,
+  geom: VideoCardDrawGeometry
+): void {
+  const isFullMeme = isFullMemeSlide(slide);
+  const isHeroFrame = isHeroImageSlide(slide);
+  const isVideo = true;
+  const bgStyle = slide.imageBgStyle || 'white';
+
+  if (!isFullMeme || isVideo) {
+    ctx.save();
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(geom.cardX, geom.cardY, geom.cardW, geom.cardH, geom.radius);
+    } else {
+      ctx.rect(geom.cardX, geom.cardY, geom.cardW, geom.cardH);
+    }
+    ctx.clip();
+    drawCardCornerRegistrationMarks(ctx, geom.cardX, geom.cardY, geom.cardW, geom.cardH, theme, bgStyle);
+    ctx.restore();
+  }
+
+  drawImageCardOuterOverlays(
+    ctx,
+    slide,
+    theme,
+    brandName,
+    geom.cardX,
+    geom.cardY,
+    geom.cardW,
+    geom.cardH,
+    isFullMeme,
+    isHeroFrame,
+    isVideo
+  );
+}
+
 
