@@ -8,14 +8,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   FileText,
-  Search,
-  Download,
-  Upload,
   Check,
-  X,
-  Plus,
-  List,
-  CalendarDays,
   Send,
   ShieldAlert,
   ChevronDown,
@@ -61,6 +54,9 @@ import {
   DraftBilingualSlideStrip,
   DraftSlideQuickInspector,
 } from './review/DraftSlideQuickInspector.tsx';
+import { PostManagerFilterBar } from './panels/PostManagerFilterBar.tsx';
+import { PostManagerCalendarView } from './panels/PostManagerCalendarView.tsx';
+import { PostManagerBulkScheduleView } from './panels/PostManagerBulkScheduleView.tsx';
 
 interface PostManagerPanelProps {
   mode?: 'draft' | 'schedule' | 'all';
@@ -819,553 +815,73 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
       className="flex-1 flex flex-col min-h-0 gap-3 overflow-y-auto"
       data-testid={mode === 'draft' ? 'draft-manager-panel' : 'schedule-manager-panel'}
     >
-      {/* Cadence Overload Warning Banner (>2 posts/day warning in Schedule or All view) */}
-      {(mode === 'schedule' || mode === 'all') && cadenceOverloadDays.length > 0 && (
-        <div
-          data-testid="cadence-overload-warning"
-          className="rounded-xl border border-amber-400/40 bg-amber-500/10 px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-100"
-        >
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-300 shrink-0" />
-            <span>
-              <strong className="font-bold">Cadence Warning (&gt;2 posts/day):</strong>{' '}
-              {cadenceOverloadDays
-                .map((d) => `${d.datePart} has ${d.count} posts`)
-                .join(' · ')}{' '}
-              — recommended cadence is 1–2 posts/day.
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Single Clean Control Bar */}
-      <div className="rounded-xl border border-white/10 bg-[#0b1218]/95 p-3 sm:p-4 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2.5">
-          {mode === 'schedule' ? (
-            <div className="flex flex-wrap items-center gap-1 bg-black/40 p-1 rounded-lg border border-white/10">
-              <button
-                type="button"
-                onClick={() => setViewMode('list')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
-                  viewMode === 'list'
-                    ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/40'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <List className="w-3.5 h-3.5" />
-                <span>Queue ({counts.scheduled})</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('calendar')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
-                  viewMode === 'calendar'
-                    ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-400/40'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <CalendarDays className="w-3.5 h-3.5" />
-                <span>Calendar (7/14d)</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (selectedBulkIds.length === 0) {
-                    setSelectedBulkIds(reviewedReadyDrafts.slice(0, 4).map((d) => d.id));
-                  }
-                  setViewMode('bulk');
-                }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
-                  viewMode === 'bulk'
-                    ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-400/40'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <Calendar className="w-3.5 h-3.5" />
-                <span>Bulk Schedule ({reviewedReadyDrafts.length} verified)</span>
-              </button>
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="text-xs font-extrabold text-white whitespace-nowrap">
-                {mode === 'draft'
-                  ? `Draft Review Queue`
-                  : `All Posts (${counts.all})`}
-              </div>
-
-              {mode === 'draft' && (
-                <div
-                  role="tablist"
-                  aria-label="Draft readiness filter"
-                  className="flex items-center gap-1 bg-black/40 p-0.5 rounded-lg border border-white/10"
-                >
-                  {(
-                    [
-                      { id: 'all', label: 'All', count: draftAndReviewCount },
-                      {
-                        id: 'needs_review',
-                        label: 'Needs Review',
-                        count: draftNeedsReviewCount,
-                      },
-                      {
-                        id: 'ready',
-                        label: 'Ready to Ship',
-                        count: reviewedReadyDrafts.length,
-                      },
-                    ] as const
-                  ).map((f) => {
-                    const active = draftReadinessFilter === f.id;
-                    return (
-                      <button
-                        key={f.id}
-                        type="button"
-                        role="tab"
-                        aria-selected={active}
-                        data-testid={`draft-filter-${f.id}`}
-                        onClick={() => setDraftReadinessFilter(f.id)}
-                        className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
-                          active
-                            ? f.id === 'ready'
-                              ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/40'
-                              : 'bg-white/12 text-white border border-white/20'
-                            : 'text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        <span>{f.label}</span>
-                        <span className="ml-1 font-mono tabular-nums text-[11px] text-slate-400">
-                          {f.count}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Search (Backup/Restore live in Vault drawer, kept only in legacy all mode) */}
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            {viewMode === 'list' && (
-              <div className="relative flex-1 sm:w-56">
-                <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={mode === 'draft' ? 'Search drafts...' : 'Search posts...'}
-                  className="w-full pl-8 pr-7 py-1.5 rounded-lg bg-black/40 border border-white/15 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-400"
-                />
-                {searchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-            )}
-
-            {mode === 'all' && onExportVaultJson && (
-              <button
-                type="button"
-                onClick={onExportVaultJson}
-                title="Export all posts as JSON backup"
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 bg-white/[0.03] hover:bg-white/[0.08] text-slate-300 text-xs font-semibold cursor-pointer shrink-0 whitespace-nowrap"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span className="hidden md:inline">Backup</span>
-              </button>
-            )}
-            {mode === 'all' && onImportVaultJson && (
-              <>
-                <input
-                  ref={importInputRef}
-                  type="file"
-                  accept="application/json,.json"
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      onImportVaultJson(file);
-                      e.target.value = '';
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={() => importInputRef.current?.click()}
-                  title="Import posts from JSON backup"
-                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 bg-white/[0.03] hover:bg-white/[0.08] text-slate-300 text-xs font-semibold cursor-pointer shrink-0 whitespace-nowrap"
-                >
-                  <Upload className="w-3.5 h-3.5" />
-                  <span className="hidden md:inline">Restore</span>
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Status Filter Strip (Schedule view or All view) */}
-        {viewMode === 'list' && mode !== 'draft' && (
-          <div className="flex items-center gap-1.5 overflow-x-auto pt-2 border-t border-white/[0.08]">
-            {(mode === 'schedule'
-              ? ([
-                  { id: 'scheduled', label: 'Scheduled', count: counts.scheduled },
-                  { id: 'posted', label: 'Posted', count: counts.posted },
-                  {
-                    id: 'all',
-                    label: 'All Scheduled & Posted',
-                    count: counts.scheduled + counts.posted,
-                  },
-                ] as const)
-              : ([
-                  { id: 'all', label: 'All', count: counts.all },
-                  { id: 'draft', label: 'Drafts', count: counts.draft },
-                  { id: 'scheduled', label: 'Scheduled', count: counts.scheduled },
-                  { id: 'posted', label: 'Posted', count: counts.posted },
-                  { id: 'attention', label: 'Needs Review', count: counts.attention },
-                ] as const)
-            ).map((tab) => {
-              const active = statusTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setStatusTab(tab.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold transition-colors cursor-pointer whitespace-nowrap border ${
-                    active
-                      ? tab.id === 'attention'
-                        ? 'bg-rose-500/20 text-rose-200 border-rose-400/40'
-                        : tab.id === 'scheduled'
-                        ? 'bg-cyan-500/20 text-cyan-200 border-cyan-400/40'
-                        : 'bg-emerald-500/20 text-emerald-200 border-emerald-400/40'
-                      : 'bg-black/20 text-slate-400 border-white/10 hover:text-white'
-                  }`}
-                >
-                  <span>{tab.label}</span>
-                  <span className="text-[11px] font-mono tabular-nums text-slate-300">
-                    · {tab.count}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      <PostManagerFilterBar
+        mode={mode}
+        viewMode={viewMode}
+        setViewMode={setViewMode}
+        statusTab={statusTab}
+        setStatusTab={setStatusTab}
+        counts={counts}
+        draftReadinessFilter={draftReadinessFilter}
+        setDraftReadinessFilter={setDraftReadinessFilter}
+        draftAndReviewCount={draftAndReviewCount}
+        draftNeedsReviewCount={draftNeedsReviewCount}
+        reviewedReadyDraftsCount={reviewedReadyDrafts.length}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        selectedBulkIdsCount={selectedBulkIds.length}
+        onExportVaultJson={onExportVaultJson}
+        onImportVaultJson={onImportVaultJson}
+        importInputRef={importInputRef}
+        cadenceOverloadDays={cadenceOverloadDays}
+        onSelectBulkMode={() => {
+          if (selectedBulkIds.length === 0) {
+            setSelectedBulkIds(reviewedReadyDrafts.slice(0, 4).map((d) => d.id));
+          }
+          setViewMode('bulk');
+        }}
+      />
 
       {/* CALENDAR VIEW */}
       {viewMode === 'calendar' && (
-        <div className="rounded-xl border border-white/10 bg-[#0b1218]/90 p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-              Schedule Calendar (Recommended 1–2 Posts / Day)
-            </span>
-            <div className="flex items-center gap-1 bg-black/40 p-0.5 rounded-lg border border-white/10">
-              <button
-                type="button"
-                onClick={() => setCalendarDaysCount(7)}
-                className={`px-2.5 py-1 rounded text-xs font-mono font-bold cursor-pointer ${
-                  calendarDaysCount === 7
-                    ? 'bg-cyan-500/20 text-cyan-300'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                7 Days
-              </button>
-              <button
-                type="button"
-                onClick={() => setCalendarDaysCount(14)}
-                className={`px-2.5 py-1 rounded text-xs font-mono font-bold cursor-pointer ${
-                  calendarDaysCount === 14
-                    ? 'bg-cyan-500/20 text-cyan-300'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                14 Days
-              </button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-2.5">
-            {calendarDays.map((day) => {
-              const overCap = day.items.length > 2;
-              return (
-                <div
-                  key={day.dateStr}
-                  className={`rounded-xl border p-3 flex flex-col justify-between min-h-[160px] transition-colors ${
-                    overCap
-                      ? 'border-amber-400/50 bg-amber-500/[0.06]'
-                      : day.isToday
-                      ? 'border-emerald-400/40 bg-emerald-500/[0.05]'
-                      : 'border-white/10 bg-black/30'
-                  }`}
-                >
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between gap-1 border-b border-white/5 pb-1.5">
-                      <span
-                        className={`text-xs font-bold ${
-                          day.isToday ? 'text-emerald-300' : 'text-white'
-                        }`}
-                      >
-                        {day.dayLabel}
-                      </span>
-                      <span className="text-[11px] font-mono text-slate-400 tabular-nums">
-                        {day.subLabel}
-                      </span>
-                    </div>
-
-                    {overCap && (
-                      <div className="text-[10px] font-mono font-bold text-amber-300">
-                        ⚠️ {day.items.length} posts (&gt;2/day cap)
-                      </div>
-                    )}
-
-                    {day.items.length === 0 ? (
-                      <div className="py-4 text-center text-[11px] text-slate-500">
-                        Open slot (10/12/18)
-                      </div>
-                    ) : (
-                      <div className="space-y-1.5">
-                        {day.items.map(({ post, stage, timeShort }) => (
-                          <div
-                            key={post.id}
-                            className={`rounded-lg border p-2 text-xs space-y-1 ${
-                              stage === 'scheduled'
-                                ? 'border-cyan-400/30 bg-cyan-500/10 text-cyan-100'
-                                : 'border-emerald-400/30 bg-emerald-500/10 text-emerald-100'
-                            }`}
-                          >
-                            <div className="flex items-center justify-between gap-1">
-                              <span className="font-mono font-bold text-[10px] tabular-nums">
-                                {timeShort}
-                              </span>
-                              <div className="flex items-center gap-1.5">
-                                <button
-                                  type="button"
-                                  title="Edit in Studio"
-                                  onClick={() => onEditInStudio(post)}
-                                  className="hover:text-white cursor-pointer"
-                                >
-                                  <Edit3 className="w-3 h-3" />
-                                </button>
-                                <button
-                                  type="button"
-                                  title="Reschedule"
-                                  onClick={() => {
-                                    setViewMode('list');
-                                    openScheduleEditor(post);
-                                  }}
-                                  className="hover:text-white cursor-pointer"
-                                >
-                                  <Clock className="w-3 h-3" />
-                                </button>
-                              </div>
-                            </div>
-                            <div className="font-semibold truncate" title={post.title}>
-                              {post.title}
-                            </div>
-                            {stage === 'scheduled' && (
-                              <div className="flex items-center gap-1 pt-0.5">
-                                {onPublishPostNow && (
-                                  <button
-                                    type="button"
-                                    disabled={publishingPostId === post.id || busyPostId === post.id}
-                                    onClick={() => void onPublishPostNow(post)}
-                                    className="flex-1 py-1 px-1.5 rounded bg-emerald-500/25 hover:bg-emerald-500/35 border border-emerald-400/40 text-emerald-200 text-[10px] font-bold cursor-pointer"
-                                  >
-                                    {publishingPostId === post.id ? '...' : 'Publish Now'}
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  disabled={busyPostId === post.id}
-                                  onClick={() => handleUnscheduleToDraft(post)}
-                                  className="py-1 px-1.5 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 text-[10px] font-bold cursor-pointer"
-                                  title="Move back to Draft"
-                                >
-                                  <RotateCcw className="w-2.5 h-2.5" />
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Quick "+ Schedule Verified Draft" */}
-                  <div className="pt-2 mt-2 border-t border-white/5">
-                    {assigningDateStr === day.dateStr ? (
-                      <div className="space-y-1">
-                        {reviewedReadyDrafts.length === 0 ? (
-                          <div className="text-[10px] text-amber-300">
-                            No reviewed &amp; claims-verified drafts ready
-                          </div>
-                        ) : (
-                          <select
-                            aria-label={`Assign verified draft to ${day.dateStr}`}
-                            defaultValue=""
-                            onChange={(e) => {
-                              const picked = reviewedReadyDrafts.find(
-                                (d) => d.id === e.target.value
-                              );
-                              if (picked) {
-                                void handleSaveReschedule(picked, day.dateStr, '18:00');
-                              }
-                            }}
-                            className="w-full px-2 py-1 rounded bg-black/80 border border-cyan-400/40 text-[11px] text-white focus:outline-none"
-                          >
-                            <option value="" disabled>
-                              Pick verified draft...
-                            </option>
-                            {reviewedReadyDrafts.map((d) => (
-                              <option key={d.id} value={d.id}>
-                                {d.title.slice(0, 32)}
-                              </option>
-                            ))}
-                          </select>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => setAssigningDateStr(null)}
-                          className="text-[10px] text-slate-400 hover:text-white cursor-pointer"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setAssigningDateStr(day.dateStr)}
-                        className="w-full flex items-center justify-center gap-1 py-1 rounded-md text-[11px] font-semibold text-slate-400 hover:text-cyan-300 hover:bg-white/[0.04] transition-colors cursor-pointer"
-                      >
-                        <Plus className="w-3 h-3" />
-                        <span>Assign Draft</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        <PostManagerCalendarView
+          calendarDaysCount={calendarDaysCount}
+          setCalendarDaysCount={setCalendarDaysCount}
+          calendarDays={calendarDays}
+          onEditInStudio={onEditInStudio}
+          onReschedule={(post) => {
+            setViewMode('list');
+            openScheduleEditor(post);
+          }}
+          onPublishPostNow={onPublishPostNow}
+          publishingPostId={publishingPostId}
+          busyPostId={busyPostId}
+          onUnscheduleToDraft={handleUnscheduleToDraft}
+          assigningDateStr={assigningDateStr}
+          setAssigningDateStr={setAssigningDateStr}
+          reviewedReadyDrafts={reviewedReadyDrafts}
+          onAssignDraft={(post, dateStr, timeStr) =>
+            handleSaveReschedule(post, dateStr, timeStr)
+          }
+        />
       )}
 
       {/* BULK SCHEDULE VIEW (Only Verified Drafts Allowed) */}
       {viewMode === 'bulk' && (
-        <div className="rounded-xl border border-white/10 bg-[#0b1218]/90 p-4 space-y-4">
-          <div className="text-xs text-slate-300">
-            Only Drafts with both <strong className="text-emerald-300">Human Reviewed</strong> and{' '}
-            <strong className="text-emerald-300">Claims &amp; Numbers Verified</strong> checked appear here (default safe cadence: 1 post/slot per day).
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                Start Date (Local)
-              </label>
-              <input
-                type="date"
-                value={bulkStartDate}
-                min={getLocalTodayDateStr()}
-                onChange={(e) => setBulkStartDate(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-black/50 border border-white/15 text-xs text-white focus:outline-none focus:border-cyan-400"
-              />
-            </div>
-            <div>
-              <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                Posting Cadence (Recommended 1–2/day)
-              </label>
-              <select
-                value={bulkCadence}
-                onChange={(e) => setBulkCadence(e.target.value as WeeklyCadencePreset)}
-                className="w-full px-3 py-2 rounded-lg bg-black/50 border border-white/15 text-xs text-white focus:outline-none focus:border-cyan-400"
-              >
-                <option value="daily">1× Daily (Safe Default)</option>
-                <option value="weekdays">Weekdays (Mon–Fri)</option>
-                <option value="mon-wed-fri">Mon / Wed / Fri</option>
-                <option value="tue-thu-sat">Tue / Thu / Sat</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                Peak Posting Time (24h)
-              </label>
-              <input
-                type="time"
-                value={bulkTimeStr}
-                onChange={(e) => setBulkTimeStr(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-black/50 border border-white/15 text-xs text-white focus:outline-none focus:border-cyan-400"
-              />
-            </div>
-          </div>
-
-          <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-            {reviewedReadyDrafts.length === 0 ? (
-              <div className="p-4 rounded-lg border border-dashed border-white/15 text-center text-xs text-slate-400">
-                No verified drafts yet. Open the <strong>Draft</strong> tab and check &ldquo;Human Reviewed&rdquo; + &ldquo;Claims &amp; Numbers Verified&rdquo;.
-              </div>
-            ) : (
-              reviewedReadyDrafts.map((post) => {
-                const checked = selectedBulkIds.includes(post.id);
-                const orderIdx = selectedBulkIds.indexOf(post.id);
-                const assignedSlot = orderIdx >= 0 ? bulkSlots[orderIdx] : null;
-                return (
-                  <div
-                    key={post.id}
-                    onClick={() =>
-                      setSelectedBulkIds((prev) =>
-                        prev.includes(post.id)
-                          ? prev.filter((id) => id !== post.id)
-                          : [...prev, post.id]
-                      )
-                    }
-                    className={`p-3 rounded-lg border flex items-center justify-between gap-3 cursor-pointer transition-colors ${
-                      checked
-                        ? 'border-cyan-400/40 bg-cyan-500/10'
-                        : 'border-white/10 bg-white/[0.02] hover:bg-white/[0.04]'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div
-                        className={`w-4 h-4 rounded flex items-center justify-center text-[10px] font-bold ${
-                          checked
-                            ? 'bg-cyan-400 text-slate-950'
-                            : 'border border-white/25 text-transparent'
-                        }`}
-                      >
-                        {checked ? orderIdx + 1 : ''}
-                      </div>
-                      <span className="text-xs font-bold text-white truncate">
-                        {post.title}
-                      </span>
-                    </div>
-                    {assignedSlot && (
-                      <span className="text-[11px] font-mono text-cyan-300 tabular-nums shrink-0">
-                        {assignedSlot.datePart} · {assignedSlot.timePart.slice(0, 5)}
-                      </span>
-                    )}
-                  </div>
-                );
-              })
-            )}
-          </div>
-
-          <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-white/10">
-            <button
-              type="button"
-              disabled={isBulkBusy || selectedBulkIds.length === 0}
-              onClick={handleApplyBulkSchedule}
-              className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold cursor-pointer disabled:opacity-40"
-            >
-              {isBulkBusy
-                ? 'Scheduling...'
-                : `Schedule ${selectedBulkIds.length} Verified Draft(s)`}
-            </button>
-          </div>
-        </div>
+        <PostManagerBulkScheduleView
+          bulkStartDate={bulkStartDate}
+          setBulkStartDate={setBulkStartDate}
+          bulkCadence={bulkCadence}
+          setBulkCadence={setBulkCadence}
+          bulkTimeStr={bulkTimeStr}
+          setBulkTimeStr={setBulkTimeStr}
+          reviewedReadyDrafts={reviewedReadyDrafts}
+          selectedBulkIds={selectedBulkIds}
+          setSelectedBulkIds={setSelectedBulkIds}
+          bulkSlots={bulkSlots}
+          isBulkBusy={isBulkBusy}
+          onApplyBulkSchedule={handleApplyBulkSchedule}
+        />
       )}
 
       {/* LIST VIEW (DRAFT REVIEW OR SCHEDULED/POSTED QUEUE) */}

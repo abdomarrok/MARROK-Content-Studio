@@ -18,7 +18,6 @@ import {
   Eye,
 } from 'lucide-react';
 import { withClientAuthHeaders } from '../lib/security/clientSessionToken.ts';
-import { type GatheredTopicItem } from '../lib/gather/gatherClient.ts';
 import {
   CarouselData,
   CoverStyle,
@@ -31,7 +30,6 @@ import {
   DiagramVariant,
   DEFAULT_PALETTES,
   GraphicalElementId,
-  ElementLayoutOverride,
   SavedPostStatus,
   MotionReelData,
   MotionTemplateId,
@@ -41,23 +39,13 @@ import {
 import { analyzePostHistoryCadence, normalizeThemeId } from '../lib/theme/cadenceEngine.ts';
 import {
   downloadSingleSlidePng,
-  copySlideToClipboard,
-  downloadAllSlidesZip,
   getCanvasDimensionSpec,
-  resolveExportTargetPresets,
-  exportSingleSlideVideoMp4,
   isVideoSlide,
-  isVideoFile,
-  extractVideoStoryboardDataUrl,
   analyzeVideoForSlideAndCaption,
-  buildCleanMemeCarouselDeck,
-  applySlideGraphicPhoto,
   analyzeImageForMemeAndCaption,
   formatBilingualExportCaptionWithHashtags,
-  type ExportBundleMode,
 } from '../lib/canvasExporter.ts';
 import {
-  trackAndReplaceBlobUrl,
   revokeAllTrackedBlobUrls,
 } from '../lib/media/blobUrlRegistry.ts';
 import { runAutonomousPipeline, enrichAndPaceCarousel } from '../lib/autonomousPipeline.ts';
@@ -84,17 +72,13 @@ import { requestAiVisualDirection } from '../lib/studio/visualDirectorClient.ts'
 import { applyPreExportAutoFixToDeck } from '../lib/studio/preExportAutoFix.ts';
 import {
   switchCarouselPostFormat,
-  snapshotFormatDraft,
   resolveEffectivePostFormat,
   filterRelevantHookVariants,
 } from '../lib/studio/formatWorkspace.ts';
-import { runQAChecks, CHAR_LIMITS, type PreExportCheckId } from '../lib/qaChecks.ts';
+import { runQAChecks, type PreExportCheckId } from '../lib/qaChecks.ts';
 import { runPlatformRiskChecks } from '../lib/riskChecks.ts';
-import { autoPolishHeadline, autoFitTextToLimits } from '../lib/text/headlines.ts';
-import { fixArabicPunctuation } from '../lib/text/arabicBiDi.ts';
 import {
   convertCarouselToMotionReel,
-  triggerBlobDownload,
 } from '../lib/motion/index.ts';
 import {
   ViewportCanvas,
@@ -107,7 +91,6 @@ import {
   ElementInspector,
   MotionReelViewport,
   MotionReelInspector,
-  compressImageClientSide,
   useStudioShortcutsAndClipboard,
 } from './studio/index.ts';
 
@@ -173,6 +156,10 @@ import { UnderCanvasDeliveryDock } from './studio/panels/UnderCanvasDeliveryDock
 import { MobileStudioBottomBar } from './studio/panels/MobileStudioBottomBar.tsx';
 import { useSlideNavigation } from '../hooks/useSlideNavigation.ts';
 import { useThemeCadence } from '../hooks/useThemeCadence.ts';
+import { useDeckHistory } from '../hooks/useDeckHistory.ts';
+import { useStudioLayoutActions } from '../hooks/useStudioLayoutActions.ts';
+import { useExportActions } from '../hooks/useExportActions.ts';
+import { useMediaIngestion } from '../hooks/useMediaIngestion.ts';
 import { StudioProvider } from '../context/StudioContext.tsx';
 
 export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
@@ -192,19 +179,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   savedPosts = [],
   onOpenPublishScheduleModal,
 }) => {
-  const [promptInput, setPromptInput] = useState('');
-  const [inputValidationError, setInputValidationError] = useState<string | null>(null);
-  const [categoryHint, setCategoryHint] = useState<string>('auto');
-
-  // Intelligent Feed Cadence Analysis for Live Context via custom hook
-  const { cadence: dockCadence } = useThemeCadence({
-    savedPosts,
-    activeThemeId: theme.id,
-    prompt: promptInput,
-    category: categoryHint,
-  });
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [pipelineStatus, setPipelineStatus] = useState<string | null>(null);
+  // Navigation Hook
   const {
     currentSlideIndex,
     currentSlideIndexRef,
@@ -214,36 +189,120 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     externalSlideIndex: activeSlideIndex,
     onSlideChange,
   });
+
+  // Undo / Redo & Compare-Before History Hook
+  const {
+    isComparingBefore,
+    setIsComparingBefore,
+    beforeEditsDeckRef,
+    deckRevisionRef,
+    canUndo,
+    canRedo,
+    applyDeckUpdate,
+    handleUndo,
+    handleRedo,
+  } = useDeckHistory({
+    carousel,
+    onUpdateCarousel,
+    onShowToast,
+  });
+
+  const activePostFormat: PostFormat = resolveEffectivePostFormat(carousel);
+
+  // Inspector & Viewport States
   const [showSafeZones, setShowSafeZones] = useState(false);
   const [stageOverlayMode, setStageOverlayMode] = useState<StageOverlayMode>('clean');
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [isMobileSheetOpen, setIsMobileSheetOpen] = useState(false);
-  const [copiedType, setCopiedType] = useState<'caption' | 'slide' | null>(null);
-  const [isExportingZip, setIsExportingZip] = useState(false);
-  const [exportProgress, setExportProgress] = useState<{ current: number; total: number } | null>(null);
-
-  // Right-Hand 3-Tab Inspector ('copy' | 'visual' | 'review'; legacy 'position'/'caption' route cleanly)
   const [inspectorTab, setInspectorTab] = useState<'copy' | 'visual' | 'position' | 'caption' | 'review'>('copy');
   const [isPositionSectionOpen, setIsPositionSectionOpen] = useState(false);
-
-  // Direct Graphical Control & Hit-Testing States
   const [selectedElementId, setSelectedElementId] = useState<GraphicalElementId | null>(null);
 
-  // Unified Smart Dock States
+  // Smart Dock Expansion & Tab
   const [isExpanded, setIsExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<'text' | 'radar' | 'youtube' | 'upload'>('text');
-  const [studioRadarTopics, setStudioRadarTopics] = useState<GatheredTopicItem[]>([]);
-  const [isStudioRadarLoading, setIsStudioRadarLoading] = useState(false);
-  const [studioCustomUrl, setStudioCustomUrl] = useState('');
-  const [isExtractingStudioUrl, setIsExtractingStudioUrl] = useState(false);
-  const [uploadedImage, setUploadedImage] = useState<{
-    base64: string;
-    mimeType: string;
-    name: string;
-    sizeKb: number;
-  } | null>(null);
-  const [isDragOver, setIsDragOver] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Photo analysis suggestion ref for media ingestion
+  const handleAnalyzePhotoCaptionRef = useRef<
+    (
+      imageDataUrlOverride?: string,
+      mimeTypeOverride?: string,
+      fileNameOverride?: string,
+      modeOverride?: 'meme' | 'graphic'
+    ) => Promise<void>
+  >(async () => {});
+
+  // Media Ingestion Hook
+  const {
+    promptInput,
+    setPromptInput,
+    categoryHint,
+    setCategoryHint,
+    inputValidationError,
+    setInputValidationError,
+    uploadedImage,
+    setUploadedImage,
+    isDragOver,
+    setIsDragOver,
+    studioRadarTopics,
+    setStudioRadarTopics,
+    isStudioRadarLoading,
+    setIsStudioRadarLoading,
+    studioCustomUrl,
+    setStudioCustomUrl,
+    isExtractingStudioUrl,
+    setIsExtractingStudioUrl,
+    fileInputRef,
+    handlePromptChange,
+    handleImageFile,
+    handleUploadMemePhotoFile,
+    handleUploadSlideGraphicFile,
+    handleSelectDemoImage,
+    handlePasteImageFromClipboard,
+    handleClearDock,
+  } = useMediaIngestion({
+    activePostFormat,
+    carousel,
+    currentSlideIndexRef,
+    applyDeckUpdate,
+    changeSlide,
+    onShowToast,
+    isExpanded,
+    setIsExpanded,
+    setActiveTab,
+    setInspectorTab,
+    onAnalyzePhotoCaption: (dataUrl, mime, name, mode) =>
+      handleAnalyzePhotoCaptionRef.current(dataUrl, mime, name, mode),
+  });
+
+  // Intelligent Feed Cadence Analysis for Live Context via custom hook
+  const { cadence: dockCadence } = useThemeCadence({
+    savedPosts,
+    activeThemeId: theme.id,
+    prompt: promptInput,
+    category: categoryHint,
+  });
+
+  // Layout Actions Hook
+  const {
+    handleUpdateElementLayoutOverride,
+    handleUpdateSlideFields,
+    handleUpdateCurrentSlide,
+    handleDeleteCanvasElement,
+    handleAutoFitCurrentSlide,
+    handleResetSlideLayoutOverrides,
+    handleApplyOverrideToAllSlides,
+    handleApplySlideLayoutToAllSlides,
+  } = useStudioLayoutActions({
+    carousel,
+    currentSlideIndex,
+    applyDeckUpdate,
+    onShowToast,
+    setSelectedElementId,
+  });
+
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [pipelineStatus, setPipelineStatus] = useState<string | null>(null);
 
   // Deep Customization States
   const [imageStudioTargetIndex, setImageStudioTargetIndex] = useState<number | null>(null);
@@ -261,14 +320,6 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   const isSheetOpen = isMobileSheetOpen || mobileStudioTab === 'editor';
   const sheetDragStartYRef = useRef<number | null>(null);
 
-  // Undo / Redo & Compare-Before History State
-  const [historyPast, setHistoryPast] = useState<CarouselData[]>([]);
-  const [historyFuture, setHistoryFuture] = useState<CarouselData[]>([]);
-  const [isComparingBefore, setIsComparingBefore] = useState(false);
-  const beforeEditsDeckRef = useRef<CarouselData>(carousel);
-  const hasHistoryPastRef = useRef(false);
-  hasHistoryPastRef.current = historyPast.length > 0;
-
   // Motion Reel Studio States
   const [selectedMotionSceneId, setSelectedMotionSceneId] = useState<string | null>(null);
   const [isMotionExportOpen, setIsMotionExportOpen] = useState(false);
@@ -276,7 +327,6 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   // Async lifecycle guards: only the latest generation/image request may commit.
   const generationAbortRef = useRef<AbortController | null>(null);
   const generationRunIdRef = useRef(0);
-  const deckRevisionRef = useRef(0);
   const isMountedRef = useRef(true);
 
   // Smart Auto-Layout & On-Demand AI Visual Director state
@@ -292,8 +342,6 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       revokeAllTrackedBlobUrls();
     };
   }, []);
-
-  const activePostFormat: PostFormat = resolveEffectivePostFormat(carousel);
 
   const visibleHookVariants = useMemo(
     () => filterRelevantHookVariants(carousel.hookVariants, carousel.slides, carousel.category),
@@ -376,185 +424,6 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     }
   }, [carousel.slides.length, imageStudioTargetIndex]);
 
-  const applyDeckUpdate = useCallback(
-    (updater: (prev: CarouselData) => CarouselData) => {
-      deckRevisionRef.current += 1;
-      onUpdateCarousel((prev) => {
-        const next = updater(prev);
-        if (next !== prev) {
-          if (!hasHistoryPastRef.current) {
-            beforeEditsDeckRef.current = prev;
-          }
-          setHistoryPast((h) => [...h.slice(-24), prev]);
-          setHistoryFuture([]);
-        }
-        return next;
-      });
-    },
-    [onUpdateCarousel]
-  );
-
-  const handleUndo = useCallback(() => {
-    if (historyPast.length === 0) return;
-    const previousDeck = historyPast[historyPast.length - 1];
-    setHistoryPast((h) => h.slice(0, -1));
-    setHistoryFuture((f) => [carousel, ...f.slice(0, 24)]);
-    deckRevisionRef.current += 1;
-    onUpdateCarousel(previousDeck);
-    onShowToast('Undid last change');
-  }, [historyPast, carousel, onUpdateCarousel, onShowToast]);
-
-  const handleRedo = useCallback(() => {
-    if (historyFuture.length === 0) return;
-    const nextDeck = historyFuture[0];
-    setHistoryFuture((f) => f.slice(1));
-    setHistoryPast((h) => [...h.slice(-24), carousel]);
-    deckRevisionRef.current += 1;
-    onUpdateCarousel(nextDeck);
-    onShowToast('Redid change');
-  }, [historyFuture, carousel, onUpdateCarousel, onShowToast]);
-
-  // Direct Graphical Layout Override Handlers
-  const isDefaultLayoutOverride = (override: ElementLayoutOverride | null | undefined): boolean =>
-    !override ||
-    ((override.dx === 0 || override.dx === undefined) &&
-      (override.dy === 0 || override.dy === undefined) &&
-      (override.scale === 1 || override.scale === undefined) &&
-      (override.opacity === 1 || override.opacity === undefined) &&
-      (override.align === 'center' || override.align === undefined) &&
-      !override.hidden);
-
-  const handleUpdateElementLayoutOverride = (
-    elementId: GraphicalElementId,
-    override: ElementLayoutOverride | null
-  ) => {
-    applyDeckUpdate((prev) => {
-      const targetIndex = Math.min(currentSlideIndex, prev.slides.length - 1);
-      if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
-      const current = prev.slides[targetIndex];
-      const existingOverrides = { ...(current.layoutOverrides || {}) };
-      if (isDefaultLayoutOverride(override)) {
-        delete existingOverrides[elementId];
-      } else if (override) {
-        existingOverrides[elementId] = override;
-      }
-      const newSlides = [...prev.slides];
-      newSlides[targetIndex] = {
-        ...current,
-        layoutOverrides: Object.keys(existingOverrides).length > 0 ? existingOverrides : undefined,
-      };
-      return { ...prev, slides: newSlides };
-    });
-  };
-
-  const handleUpdateSlideFields = (updates: Partial<SlideData>) => {
-    applyDeckUpdate((prev) => {
-      const targetIndex = Math.min(currentSlideIndex, prev.slides.length - 1);
-      if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
-      const newSlides = [...prev.slides];
-      newSlides[targetIndex] = sanitizeSlide(
-        {
-          ...newSlides[targetIndex],
-          ...updates,
-        },
-        targetIndex,
-        prev.slides.length
-      );
-      return {
-        ...prev,
-        slides: newSlides,
-        sourceMeta: prev.sourceMeta ? { ...prev.sourceMeta } : undefined,
-      };
-    });
-  };
-
-  const handleResetSlideLayoutOverrides = () => {
-    applyDeckUpdate((prev) => {
-      const targetIndex = Math.min(currentSlideIndex, prev.slides.length - 1);
-      if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
-      const newSlides = [...prev.slides];
-      newSlides[targetIndex] = {
-        ...newSlides[targetIndex],
-        layoutOverrides: undefined,
-        compositionPreset: 'standard',
-        freeMoveLayout: false,
-        imageZoom: undefined,
-        imagePanX: undefined,
-        imagePanY: undefined,
-      };
-      return { ...prev, slides: newSlides };
-    });
-    onShowToast('Reset all layout overrides on this slide');
-  };
-
-  const handleApplyOverrideToAllSlides = (
-    elementId: GraphicalElementId,
-    override: ElementLayoutOverride | null
-  ) => {
-    applyDeckUpdate((prev) => {
-      const newSlides = prev.slides.map((s) => {
-        if (s.manualLayoutLocked) return s;
-        const existingOverrides = { ...(s.layoutOverrides || {}) };
-        if (isDefaultLayoutOverride(override)) {
-          delete existingOverrides[elementId];
-        } else if (override) {
-          existingOverrides[elementId] = { ...override };
-        }
-        return {
-          ...s,
-          layoutOverrides: Object.keys(existingOverrides).length > 0 ? existingOverrides : undefined,
-        };
-      });
-      return { ...prev, slides: newSlides };
-    });
-    onShowToast(`Applied ${elementId} layout to unlocked slides`);
-  };
-
-  const handleApplySlideLayoutToAllSlides = () => {
-    let lockedSkipped = 0;
-    applyDeckUpdate((prev) => {
-      const targetIndex = Math.min(currentSlideIndex, prev.slides.length - 1);
-      const sourceSlide = prev.slides[targetIndex];
-      if (!sourceSlide) return prev;
-      const clonedOverrides = sourceSlide.layoutOverrides
-        ? structuredClone(sourceSlide.layoutOverrides)
-        : undefined;
-      const newSlides = prev.slides.map((s, idx) => {
-        if (idx === targetIndex) return s;
-        if (s.manualLayoutLocked) {
-          lockedSkipped += 1;
-          return s;
-        }
-        // Preserve CTA slide layout unless source is also CTA
-        if (s.type === 'cta' && sourceSlide.type !== 'cta') return s;
-        return {
-          ...s,
-          compositionPreset: sourceSlide.compositionPreset,
-          freeMoveLayout: sourceSlide.freeMoveLayout,
-          diagramVariant:
-            s.type === 'row' && sourceSlide.type === 'row' && sourceSlide.diagramVariant
-              ? sourceSlide.diagramVariant
-              : s.diagramVariant,
-          layoutOverrides: clonedOverrides ? structuredClone(clonedOverrides) : undefined,
-        };
-      });
-      return {
-        ...prev,
-        visualOptions: {
-          showCadReticles: prev.visualOptions?.showCadReticles ?? true,
-          showSparklines: prev.visualOptions?.showSparklines ?? true,
-          terminalScanlines: prev.visualOptions?.terminalScanlines ?? true,
-        },
-        slides: newSlides,
-      };
-    });
-    onShowToast(
-      lockedSkipped > 0
-        ? `Synced grid, node style, spacing & type scale (${lockedSkipped} Cascade-Locked slide(s) protected)`
-        : 'Synced grid, node style, spacing & type scale across deck'
-    );
-  };
-
   const handleDoubleClickCanvasElement = (elementId: GraphicalElementId) => {
     setSelectedElementId(elementId);
     setIsMobileSheetOpen(true);
@@ -577,286 +446,9 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     }, 80);
   };
 
-  // Smart Dock Text input with auto-expansion when pasting or typing long material (> 200 chars)
-  const handlePromptChange = (val: string) => {
-    setPromptInput(val);
-    if (inputValidationError) {
-      setInputValidationError(null);
-    }
-    if (val.length > 200 && !isExpanded) {
-      setIsExpanded(true);
-    }
-  };
-
-  // Image or Video Upload with client-side downscaling / storyboard frame extraction
-  const handleImageFile = useCallback(async (file: File) => {
-    setInputValidationError(null);
-    if (isVideoFile(file)) {
-      try {
-        const videoBlobUrl =
-          typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function'
-            ? URL.createObjectURL(file)
-            : '';
-        const storyboard = await extractVideoStoryboardDataUrl(file);
-        setUploadedImage({
-          base64: storyboard.dataUrl,
-          mimeType: storyboard.mimeType,
-          name: file.name,
-          sizeKb: Math.max(1, Math.round((storyboard.dataUrl.length * 0.75) / 1024)),
-        });
-        if (videoBlobUrl) {
-          applyDeckUpdate((prev) => {
-            const targetIndex = Math.min(currentSlideIndexRef.current, prev.slides.length - 1);
-            if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
-            const current = prev.slides[targetIndex];
-            trackAndReplaceBlobUrl(current.videoUrl, videoBlobUrl);
-            const targetType: SlideType =
-              current.type === 'poster' || prev.postFormat === 'single' || prev.slides.length === 1
-                ? 'poster'
-                : 'image';
-            const newSlides = [...prev.slides];
-            newSlides[targetIndex] = {
-              ...current,
-              type: targetType,
-              mediaType: 'video',
-              videoUrl: videoBlobUrl,
-              videoMimeType: file.type || 'video/mp4',
-              videoFileName: file.name,
-              videoDuration: storyboard.duration || current.videoDuration,
-              videoMuted: true,
-              videoPlaying: true,
-              videoBorderRadius: 8,
-              imageFrameMode: 'hero',
-              imageFit: current.imageFit || 'contain',
-              imageBgStyle: current.imageBgStyle || 'white',
-              brandWatermark: current.brandWatermark || 'bottom-right',
-            };
-            return {
-              ...prev,
-              dimensionPreset: prev.dimensionPreset || 'ig-3:4',
-              slides: newSlides,
-            };
-          });
-        }
-        setIsExpanded(true);
-        setActiveTab('upload');
-        onShowToast(`Attached video "${file.name}" & extracted keyframes for AI captioning`);
-      } catch (err) {
-        console.warn('Video frame extraction failed:', err);
-        onShowToast('Attached video file');
-      }
-      return;
-    }
-
-    if (!file.type.startsWith('image/')) {
-      onShowToast('Please select a valid image or video file (PNG, JPG, WebP, MP4, WebM, MOV).');
-      return;
-    }
-
-    const applyUploadedImageByMode = (
-      base64: string,
-      mimeType: string,
-      sizeKb: number,
-      forceMode?: 'meme' | 'graphic'
-    ) => {
-      setUploadedImage({
-        base64,
-        mimeType,
-        name: file.name,
-        sizeKb,
-      });
-
-      const resolvedMode: 'meme' | 'graphic' =
-        forceMode ||
-        (activePostFormat === 'meme' || Boolean(carousel.slides[currentSlideIndexRef.current]?.standaloneMeme)
-          ? 'meme'
-          : 'graphic');
-
-      if (resolvedMode === 'meme') {
-        applyDeckUpdate((prev) => {
-          const prevFormat = resolveEffectivePostFormat(prev);
-          const nextDrafts =
-            prevFormat !== 'meme'
-              ? snapshotFormatDraft(prev.formatDrafts, prevFormat, prev.slides, currentSlideIndexRef.current)
-              : prev.formatDrafts;
-          const memeDeck = buildCleanMemeCarouselDeck(prev, base64, file.name);
-          return {
-            ...memeDeck,
-            postFormat: 'meme',
-            formatDrafts: nextDrafts,
-            hookVariants: filterRelevantHookVariants(prev.hookVariants, memeDeck.slides, memeDeck.category),
-          };
-        });
-        changeSlide(0, 1);
-        setIsExpanded(false);
-        setInspectorTab('copy');
-        onShowToast('✨ Loaded clean Meme card — generating AI caption...');
-        void handleAnalyzePhotoCaption(base64, mimeType, file.name, 'meme');
-      } else {
-        // Normal Slide Graphic Photo Upload: replace ONLY the current slide's graphic slot!
-        applyDeckUpdate((prev) => {
-          const targetIndex = Math.min(currentSlideIndexRef.current, prev.slides.length - 1);
-          if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
-          const isSingleDeck = prev.postFormat === 'single' || prev.slides.length === 1;
-          const nextSlides = [...prev.slides];
-          nextSlides[targetIndex] = applySlideGraphicPhoto(
-            nextSlides[targetIndex],
-            base64,
-            isSingleDeck
-          );
-          return {
-            ...prev,
-            slides: nextSlides,
-          };
-        });
-        setIsExpanded(false);
-        setInspectorTab('copy');
-        onShowToast('Inserted photo into slide graphic slot (slide text & deck preserved)');
-        void handleAnalyzePhotoCaption(base64, mimeType, file.name, 'graphic');
-      }
-    };
-
-    try {
-      const { base64, mimeType, sizeKb } = await compressImageClientSide(file);
-      applyUploadedImageByMode(base64, mimeType, sizeKb);
-    } catch (err) {
-      console.warn('Image downscaling failed, using raw fallback:', err);
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = (reader.result as string) || '';
-        const mimeType = file.type || 'image/jpeg';
-        const sizeKb = Math.max(1, Math.round(file.size / 1024));
-        applyUploadedImageByMode(base64, mimeType, sizeKb);
-      };
-      reader.readAsDataURL(file);
-    }
-  }, [activePostFormat, carousel.slides, onShowToast]);
-
-  const handleUploadMemePhotoFile = useCallback(
-    async (file: File) => {
-      if (!file.type.startsWith('image/')) {
-        void handleImageFile(file);
-        return;
-      }
-      try {
-        const { base64, mimeType, sizeKb } = await compressImageClientSide(file);
-        setUploadedImage({ base64, mimeType, name: file.name, sizeKb });
-        applyDeckUpdate((prev) => {
-          const prevFormat = resolveEffectivePostFormat(prev);
-          const nextDrafts =
-            prevFormat !== 'meme'
-              ? snapshotFormatDraft(prev.formatDrafts, prevFormat, prev.slides, currentSlideIndexRef.current)
-              : prev.formatDrafts;
-          const memeDeck = buildCleanMemeCarouselDeck(prev, base64, file.name);
-          return {
-            ...memeDeck,
-            postFormat: 'meme',
-            formatDrafts: nextDrafts,
-            hookVariants: filterRelevantHookVariants(prev.hookVariants, memeDeck.slides, memeDeck.category),
-          };
-        });
-        changeSlide(0, 1);
-        setIsExpanded(false);
-        setInspectorTab('copy');
-        onShowToast('✨ Loaded clean Meme card — generating AI caption...');
-        void handleAnalyzePhotoCaption(base64, mimeType, file.name, 'meme');
-      } catch {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const base64 = (reader.result as string) || '';
-          applyDeckUpdate((prev) => buildCleanMemeCarouselDeck(prev, base64, file.name));
-          changeSlide(0, 1);
-          setIsExpanded(false);
-          void handleAnalyzePhotoCaption(base64, file.type || 'image/jpeg', file.name, 'meme');
-        };
-        reader.readAsDataURL(file);
-      }
-    },
-    [handleImageFile, onShowToast]
-  );
-
-  const handleUploadSlideGraphicFile = useCallback(
-    async (file: File) => {
-      if (!file.type.startsWith('image/')) {
-        void handleImageFile(file);
-        return;
-      }
-      try {
-        const { base64, mimeType, sizeKb } = await compressImageClientSide(file);
-        setUploadedImage({ base64, mimeType, name: file.name, sizeKb });
-        applyDeckUpdate((prev) => {
-          const targetIndex = Math.min(currentSlideIndexRef.current, prev.slides.length - 1);
-          if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
-          const isSingleDeck = prev.postFormat === 'single' || prev.slides.length === 1;
-          const nextSlides = [...prev.slides];
-          nextSlides[targetIndex] = applySlideGraphicPhoto(
-            nextSlides[targetIndex],
-            base64,
-            isSingleDeck
-          );
-          return { ...prev, slides: nextSlides };
-        });
-        setIsExpanded(false);
-        setInspectorTab('copy');
-        onShowToast('Inserted photo into slide graphic slot (slide text & deck preserved)');
-        void handleAnalyzePhotoCaption(base64, mimeType, file.name, 'graphic');
-      } catch {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const base64 = (reader.result as string) || '';
-          applyDeckUpdate((prev) => {
-            const targetIndex = Math.min(currentSlideIndexRef.current, prev.slides.length - 1);
-            if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
-            const isSingleDeck = prev.postFormat === 'single' || prev.slides.length === 1;
-            const nextSlides = [...prev.slides];
-            nextSlides[targetIndex] = applySlideGraphicPhoto(
-              nextSlides[targetIndex],
-              base64,
-              isSingleDeck
-            );
-            return { ...prev, slides: nextSlides };
-          });
-          void handleAnalyzePhotoCaption(base64, file.type || 'image/jpeg', file.name, 'graphic');
-        };
-        reader.readAsDataURL(file);
-      }
-    },
-    [handleImageFile, onShowToast]
-  );
-
-  const handleSelectDemoImage = async (imagePath: string, title: string) => {
-    try {
-      const res = await fetch(imagePath);
-      const blob = await res.blob();
-      const reader = new FileReader();
-      reader.onload = () => {
-        setUploadedImage({
-          base64: reader.result as string,
-          mimeType: blob.type || 'image/jpeg',
-          name: title,
-          sizeKb: Math.round(blob.size / 1024),
-        });
-        setIsExpanded(true);
-        setActiveTab('upload');
-        onShowToast(`Attached sample slide: ${title}`);
-      };
-      reader.readAsDataURL(blob);
-    } catch (err) {
-      console.warn('Could not load demo image:', err);
-    }
-  };
-
-  const handlePasteImageFromClipboard = useCallback(
-    (file: File) => {
-      handleImageFile(file);
-      onShowToast('📋 Screenshot attached directly from clipboard!');
-    },
-    [handleImageFile, onShowToast]
-  );
-
   const handleCollapseExpanded = useCallback(() => {
     setIsExpanded(false);
-  }, []);
+  }, [setIsExpanded]);
 
   useStudioShortcutsAndClipboard({
     slidesCount: carousel.slides.length,
@@ -866,14 +458,6 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     onPasteImageFile: handlePasteImageFromClipboard,
     onOpenContactSheet,
   });
-
-  const handleClearDock = () => {
-    setPromptInput('');
-    setInputValidationError(null);
-    setUploadedImage(null);
-    setCategoryHint('auto');
-    onShowToast('Cleared input dock');
-  };
 
   // Unified Autonomous Generation Handler
   const handleRunAutonomousPipeline = async (overridePrompt?: string) => {
@@ -1166,98 +750,6 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   const handleTriggerStarterTopic = (topic: typeof STARTER_TOPICS[number]) => {
     setPromptInput(topic.prompt);
     handleRunAutonomousPipeline(topic.prompt);
-  };
-
-  // Inline Slide Data Updater
-  const handleUpdateCurrentSlide = <K extends keyof SlideData>(field: K, value: SlideData[K]) => {
-    applyDeckUpdate((prev) => {
-      const targetIndex = Math.min(currentSlideIndex, prev.slides.length - 1);
-      if (targetIndex < 0) return prev;
-
-      const currentSlideSnapshot = prev.slides[targetIndex];
-      let nextOverrides = currentSlideSnapshot.layoutOverrides;
-      if (field === 'takeaways' && Array.isArray(value) && value.length === 0 && nextOverrides?.takeawaysBlock) {
-        const cleaned = { ...nextOverrides };
-        delete cleaned.takeawaysBlock;
-        nextOverrides = Object.keys(cleaned).length > 0 ? cleaned : undefined;
-      }
-
-      const newSlides = [...prev.slides];
-      newSlides[targetIndex] = sanitizeSlide(
-        {
-          ...currentSlideSnapshot,
-          [field]: value,
-          layoutOverrides: nextOverrides,
-        },
-        targetIndex,
-        prev.slides.length
-      );
-
-      return {
-        ...prev,
-        slides: newSlides,
-        sourceMeta: prev.sourceMeta ? { ...prev.sourceMeta } : undefined,
-      };
-    });
-  };
-
-  const handleDeleteCanvasElement = (elementId: GraphicalElementId) => {
-    if (elementId === 'takeawaysBlock') {
-      applyDeckUpdate((prev) => {
-        const targetIndex = Math.min(currentSlideIndex, prev.slides.length - 1);
-        if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
-        const current = prev.slides[targetIndex];
-        const nextOverrides = { ...(current.layoutOverrides || {}) };
-        delete nextOverrides.takeawaysBlock;
-        const newSlides = [...prev.slides];
-        newSlides[targetIndex] = {
-          ...current,
-          takeaways: [],
-          layoutOverrides: Object.keys(nextOverrides).length > 0 ? nextOverrides : undefined,
-        };
-        return { ...prev, slides: newSlides };
-      });
-      setSelectedElementId(null);
-      onShowToast('Removed Takeaways card from slide');
-      return;
-    }
-
-    const current = carousel.slides[currentSlideIndex];
-    const existing = current?.layoutOverrides?.[elementId] || {};
-    handleUpdateElementLayoutOverride(elementId, {
-      ...existing,
-      hidden: true,
-    });
-    setSelectedElementId(null);
-    onShowToast(`Removed ${elementId} from slide`);
-  };
-
-  // 1-Click Auto-Fit Slide Copy to Spec §8 Limits
-  const handleAutoFitCurrentSlide = () => {
-    applyDeckUpdate((prev) => {
-      const targetIndex = Math.min(currentSlideIndex, prev.slides.length - 1);
-      const slide = prev.slides[targetIndex];
-      if (!slide) return prev;
-      const isHook = targetIndex === 0 || slide.type === 'hub';
-      const enTitleLimit = isHook ? CHAR_LIMITS.hookTitle : CHAR_LIMITS.enTitle;
-      const arTitleLimit = isHook ? CHAR_LIMITS.hookArTitle : CHAR_LIMITS.arTitle;
-
-      const newSlides = [...prev.slides];
-      newSlides[targetIndex] = sanitizeSlide(
-        {
-          ...slide,
-          enTitle: autoFitTextToLimits(autoPolishHeadline(slide.enTitle || ''), enTitleLimit),
-          arTitle: autoFitTextToLimits(fixArabicPunctuation(slide.arTitle || ''), arTitleLimit),
-          enBody: autoFitTextToLimits(slide.enBody || '', CHAR_LIMITS.enBody),
-          arBody: autoFitTextToLimits(fixArabicPunctuation(slide.arBody || ''), CHAR_LIMITS.arBody),
-        },
-        targetIndex,
-        prev.slides.length
-      );
-
-      return { ...prev, slides: newSlides };
-    });
-    onShowToast(`Auto-fitted Slide ${currentSlideIndex + 1} copy to character limits`);
   };
 
   // Immediate Archetype Switcher: Auto-seeds required fields and locks layout manually
@@ -1879,122 +1371,34 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       ? { label: 'Offline Draft', cls: 'text-amber-400' }
       : { label: 'AI Synthesized', cls: 'text-cyan-400' };
 
-  // 1-Click Export ZIP with QA & Platform Safety Gate (Defaults to 5-in-1 Ready to Share Pack)
-  const handleExportZip = async (exportMode: ExportBundleMode = 'all') => {
-    if (isBlocked) {
-      setInspectorTab('review');
-      setMobileStudioTab('editor');
-      onShowToast(
-        `⚠️ Export blocked: ${blockersCount} item${blockersCount > 1 ? 's' : ''} need attention in Review checklist.`
-      );
-      return;
-    }
-
-    if (isOfflineDraft && !isReviewed) {
-      onShowToast('⚠️ Exporting unreviewed offline draft (Override active)...');
-    } else if (!qaReport.canExport || riskReport.status === 'WARN') {
-      onShowToast(`⚠️ Exporting with advisory warnings...`);
-    }
-    setIsExportingZip(true);
-    const targetPresets = resolveExportTargetPresets(exportMode, carousel.dimensionPreset);
-    const totalCount = carousel.slides.length * targetPresets.length;
-    setExportProgress({ current: 0, total: totalCount });
-    try {
-      const audit = {
-        isOverridden: overrideExportBlock,
-        reviewedDraftConfirmation: isReviewed,
-        confirmedRisk: overrideExportBlock ? confirmedRiskReason : null,
-        overriddenAt: overrideExportBlock ? new Date().toISOString() : null,
-      };
-      await downloadAllSlidesZip(
-        carousel,
-        theme,
-        (current, total) => {
-          setExportProgress({ current, total });
-        },
-        carousel.visualOptions,
-        audit,
-        exportMode
-      );
-      if (onSaveValidPost) {
-        try {
-          await onSaveValidPost('posted', overrideExportBlock);
-        } catch {
-          // Non-fatal if background post save fails during ZIP download
-        }
-      }
-      if (exportMode === 'all') {
-        onShowToast('5-in-1 Ready to Share Pack (TikTok 9:16, IG 4:5, IG 3:4, IG 1:1, IG Reels 9:16 + Captions) exported!');
-      } else if (exportMode === 'dual') {
-        onShowToast('Dual Pack (TikTok 9:16 + Instagram 4:5) & Metricool bundle exported into ZIP!');
-      } else {
-        const spec = getCanvasDimensionSpec(targetPresets[0]);
-        onShowToast(
-          `All ${spec.width}×${spec.height} (${spec.shortLabel}) JPG slides & Metricool bundle exported into ZIP!`
-        );
-      }
-    } catch (err) {
-      console.error('ZIP export failed:', err);
-      onShowToast('Failed to export ZIP file.');
-    } finally {
-      setIsExportingZip(false);
-      setExportProgress(null);
-    }
-  };
-
-  // Copy Single Slide
-  const handleCopySlide = async () => {
-    try {
-      await copySlideToClipboard(carousel, currentSlideIndex, theme, carousel.visualOptions);
-      setCopiedType('slide');
-      onShowToast(`Copied Slide ${currentSlideIndex + 1} to clipboard!`);
-      setTimeout(() => setCopiedType(null), 2000);
-    } catch {
-      onShowToast('Failed to copy slide.');
-    }
-  };
-
-  // Single-Slide Video MP4 Export State & Handler
-  const [isExportingVideo, setIsExportingVideo] = useState(false);
-  const [videoExportProgress, setVideoExportProgress] = useState(0);
-  const [videoExportStage, setVideoExportStage] = useState('');
-
-  const handleExportSingleSlideVideoMp4 = async (fps: 30 | 60 = 30) => {
-    const activeSlide = carousel.slides[currentSlideIndex] || carousel.slides[0];
-    if (!activeSlide || !isVideoSlide(activeSlide) || isExportingVideo) return;
-    setIsExportingVideo(true);
-    setVideoExportProgress(2);
-    setVideoExportStage('Initializing 1080×1440 MP4 video export...');
-    try {
-      const targetPreset = carousel.dimensionPreset || 'ig-3:4';
-      const result = await exportSingleSlideVideoMp4(carousel, currentSlideIndex, {
-        fps,
-        dimensionPreset: targetPreset,
-        theme,
-        visualOptions: carousel.visualOptions,
-        preserveAudio: !(activeSlide.videoMuted ?? false),
-        onProgress: (pct, stage) => {
-          setVideoExportProgress(pct);
-          setVideoExportStage(stage);
-        },
-      });
-      triggerBlobDownload(result.blob, result.filename);
-      onShowToast(
-        result.warning
-          ? `Exported ${result.width}×${result.height} @ ${result.fps}fps .${result.extension} — Warning: ${result.warning}`
-          : `Exported ${result.width}×${result.height} @ ${result.fps}fps .${result.extension} video!`
-      );
-    } catch (err) {
-      console.error('Single-slide video export failed:', err);
-      onShowToast(
-        err instanceof Error ? err.message : 'Failed to export single-slide MP4 video.'
-      );
-    } finally {
-      setIsExportingVideo(false);
-      setVideoExportProgress(0);
-      setVideoExportStage('');
-    }
-  };
+  const {
+    isExportingZip,
+    exportProgress,
+    copiedType,
+    setCopiedType,
+    isExportingVideo,
+    videoExportProgress,
+    videoExportStage,
+    handleExportZip,
+    handleCopySlide,
+    handleExportSingleSlideVideoMp4,
+  } = useExportActions({
+    carousel,
+    theme,
+    currentSlideIndex,
+    isBlocked,
+    blockersCount,
+    isOfflineDraft,
+    isReviewed,
+    overrideExportBlock,
+    confirmedRiskReason,
+    qaReport,
+    riskReport,
+    onSaveValidPost,
+    onShowToast,
+    setInspectorTab,
+    setMobileStudioTab,
+  });
 
   // Video-to-Slide-Text & Social Caption Generation State & Handler
   const [isGeneratingFromVideo, setIsGeneratingFromVideo] = useState(false);
@@ -2144,6 +1548,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       setPipelineStatus(null);
     }
   };
+  handleAnalyzePhotoCaptionRef.current = handleAnalyzePhotoCaption;
 
   const handleApplyPhotoCopySuggestion = () => {
     if (!photoCopySuggestion) return;
@@ -2709,7 +2114,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
               <div className="flex items-center gap-1 shrink-0">
                 <button
                   type="button"
-                  disabled={historyPast.length === 0}
+                  disabled={!canUndo}
                   onClick={handleUndo}
                   className="p-1 rounded-md bg-white/[0.04] text-slate-300 hover:text-white border border-white/10 disabled:opacity-35 cursor-pointer"
                   title="Undo last edit"
@@ -2718,7 +2123,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 </button>
                 <button
                   type="button"
-                  disabled={historyFuture.length === 0}
+                  disabled={!canRedo}
                   onClick={handleRedo}
                   className="p-1 rounded-md bg-white/[0.04] text-slate-300 hover:text-white border border-white/10 disabled:opacity-35 cursor-pointer"
                   title="Redo edit"
@@ -3384,8 +2789,8 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         onOpenMotionExport={() => setIsMotionExportOpen(true)}
         onOpenContactSheet={onOpenContactSheet}
         onOpenPublishScheduleModal={onOpenPublishScheduleModal}
-        canUndo={historyPast.length > 0}
-        canRedo={historyFuture.length > 0}
+        canUndo={canUndo}
+        canRedo={canRedo}
         onUndo={handleUndo}
         onRedo={handleRedo}
         isComparingBefore={isComparingBefore}

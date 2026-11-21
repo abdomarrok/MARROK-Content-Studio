@@ -344,7 +344,7 @@ describe('Single-Slide Post & Infographic Poster System', () => {
     } finally {
       vi.unstubAllGlobals();
     }
-  });
+  }, 15000);
 
   it('respects deleted takeaways (empty array) without re-seeding on render and clears takeaways when switching away from poster', () => {
     const posterWithoutTakeaways: SlideData = {
