@@ -24,9 +24,10 @@ import {
 import { SubjectPairArchetypeEditor } from './archetypes/SubjectPairArchetypeEditor.tsx';
 import { CoverComposerPanel } from './CoverComposerPanel.tsx';
 import {
-  CarouselData,
+  CarouselFieldUpdater,
   CoverStyle,
   SlideData,
+  SlideFieldUpdater,
   SlideType,
   DiagramVariant,
   ThemePalette,
@@ -53,13 +54,25 @@ import {
   repairTruncatedTextEllipsis,
 } from '../../lib/text/arabicBiDi.ts';
 
+function syncChangedSlideField<K extends keyof SlideData>(
+  key: K,
+  nextValues: Partial<SlideData>,
+  currentSlide: SlideData,
+  onUpdateField: SlideFieldUpdater
+): void {
+  const candidate = nextValues[key];
+  if (candidate !== undefined && candidate !== currentSlide[key]) {
+    onUpdateField(key, candidate as SlideData[K]);
+  }
+}
+
 interface InlineSlideEditorProps {
   currentSlide: SlideData;
   currentSlideIndex: number;
   theme: ThemePalette;
   isAdvancedCustomizerOpen: boolean;
   onToggleAdvancedCustomizer: () => void;
-  onUpdateField: (field: keyof SlideData, value: any) => void;
+  onUpdateField: SlideFieldUpdater;
   onSetSlideType?: (targetType: SlideType) => void;
   onSmartMatchVisuals?: () => void;
   onDiversifyDeckVisuals?: () => void;
@@ -75,7 +88,7 @@ interface InlineSlideEditorProps {
   isGeneratingFromVideo?: boolean;
   carouselCategory?: string;
   carouselCaption?: string;
-  onUpdateCarouselField?: (field: keyof CarouselData, value: any) => void;
+  onUpdateCarouselField?: CarouselFieldUpdater;
   onUploadMemeOrPhotoFile?: (file: File) => void;
   onUploadSlideGraphicFile?: (file: File) => void;
   onAnalyzePhotoCaption?: () => void;
@@ -192,7 +205,10 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
     }
   }, [selectedElementId]);
 
-  const handleEditTextWithReveal = (field: keyof SlideData, value: string) => {
+  const handleEditTextWithReveal = (
+    field: 'enTitle' | 'arTitle' | 'enBody' | 'arBody' | 'hookKicker',
+    value: string
+  ) => {
     if (isTextHiddenByFullFrame && value.trim().length > 0) {
       onUpdateField('imageFrameMode', 'hero');
     }
@@ -227,9 +243,7 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
         'satLabels',
       ];
       for (const gKey of graphicKeys) {
-        if (synced[gKey] !== undefined && synced[gKey] !== currentSlide[gKey]) {
-          onUpdateField(gKey, synced[gKey]);
-        }
+        syncChangedSlideField(gKey, synced, currentSlide, onUpdateField);
       }
     }
   };
@@ -253,9 +267,7 @@ export const InlineSlideEditor: React.FC<InlineSlideEditorProps> = ({
     }
     const seeded = seedSlideArchetypeData(currentSlide, targetType);
     (Object.keys(seeded) as Array<keyof SlideData>).forEach((key) => {
-      if (seeded[key] !== currentSlide[key]) {
-        onUpdateField(key, seeded[key]);
-      }
+      syncChangedSlideField(key, seeded, currentSlide, onUpdateField);
     });
     onUpdateField('manualLayoutLocked', true);
   };

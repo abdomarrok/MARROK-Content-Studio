@@ -1,13 +1,19 @@
 import React from 'react';
 import { ShieldCheck, Globe } from 'lucide-react';
-import { CarouselData, SlideData, ThemePalette } from '../../../types.ts';
+import {
+  CarouselData,
+  CarouselFieldUpdater,
+  SlideData,
+  SlideFieldUpdater,
+  ThemePalette,
+} from '../../../types.ts';
 
 export interface CtaArchetypeEditorProps {
   currentSlide: SlideData;
   carousel?: CarouselData;
   theme: ThemePalette;
-  onUpdateField: (field: keyof SlideData, value: any) => void;
-  onUpdateCarouselField?: (field: keyof CarouselData, value: any) => void;
+  onUpdateField: SlideFieldUpdater;
+  onUpdateCarouselField?: CarouselFieldUpdater;
 }
 
 export const CtaArchetypeEditor: React.FC<CtaArchetypeEditorProps> = ({

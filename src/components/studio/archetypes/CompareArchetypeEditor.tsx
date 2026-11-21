@@ -1,6 +1,6 @@
 import React from 'react';
 import { Columns } from 'lucide-react';
-import { SlideData } from '../../../types.ts';
+import { SlideData, SlideFieldUpdater } from '../../../types.ts';
 
 export interface CompareArchetypeEditorProps {
   currentSlide: SlideData;
@@ -10,7 +10,7 @@ export interface CompareArchetypeEditorProps {
     compareRightTitle: string;
     compareRightBody: string;
   };
-  onUpdateField: (field: keyof SlideData, value: any) => void;
+  onUpdateField: SlideFieldUpdater;
 }
 
 export const CompareArchetypeEditor: React.FC<CompareArchetypeEditorProps> = ({

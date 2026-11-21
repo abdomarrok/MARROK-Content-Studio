@@ -1,6 +1,6 @@
 import React from 'react';
 import { Sparkles, Tag, Layers, Plus, Trash2 } from 'lucide-react';
-import { SlideData, ThemePalette } from '../../../types.ts';
+import { SlideData, SlideFieldUpdater, ThemePalette } from '../../../types.ts';
 import { IconThumbnail, getIconDisplayName } from '../IconThumbnail.tsx';
 
 export interface HubArchetypeEditorProps {
@@ -12,7 +12,7 @@ export interface HubArchetypeEditorProps {
     satIcons: string[];
     satLabels: string[];
   };
-  onUpdateField: (field: keyof SlideData, value: any) => void;
+  onUpdateField: SlideFieldUpdater;
   onUpdateSatLabel: (index: number, value: string) => void;
   onUpdateSatIcon?: (index: number, iconName: string) => void;
   onUpdateCenterIcon?: (iconName: string) => void;

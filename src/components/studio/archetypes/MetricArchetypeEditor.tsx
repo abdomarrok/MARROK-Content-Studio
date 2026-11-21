@@ -1,6 +1,6 @@
 import React from 'react';
 import { Gauge } from 'lucide-react';
-import { SlideData, ThemePalette } from '../../../types.ts';
+import { SlideData, SlideFieldUpdater, ThemePalette } from '../../../types.ts';
 import { IconThumbnail, getIconDisplayName } from '../IconThumbnail.tsx';
 
 export interface MetricArchetypeEditorProps {
@@ -12,7 +12,7 @@ export interface MetricArchetypeEditorProps {
     metricLabel: string;
     metricDiff: string;
   };
-  onUpdateField: (field: keyof SlideData, value: any) => void;
+  onUpdateField: SlideFieldUpdater;
   onRequestIconPicker: (config: {
     title: string;
     currentIcon: string;

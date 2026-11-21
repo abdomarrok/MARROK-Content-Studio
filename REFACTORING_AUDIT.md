@@ -1,21 +1,45 @@
 # MARROK Studio — Technical Debt & Refactoring Audit
 
-**Auditor role:** Senior Refactoring Specialist
-**Scope:** `api/`, `src/`, `netlify/functions/`, build + type config
-**Method:** static scan of all 192 TS/TSX files (77,120 LOC), export-reference analysis, duplicate-symbol graph, async/loop analysis, render-path review, config review.
+**Last Verified Baseline:** 2026-11-21 (Node >=22, TypeScript `"strict": true`)
+**Scope:** `api/`, `src/`, `netlify/functions/`, `server.ts`
+
+## Status Update — Resolved vs. Open Items
+
+The sections below (`§0–§7`) reflect the original audit snapshot; since then, major structural improvements have been completed and verified:
+
+| Area | Resolved Status |
+|---|---|
+| **TypeScript `strict` Mode (`C1`, `M2`)** | **Resolved.** `"strict": true` enabled in `tsconfig.json`; dead compiler flags removed; `tsc --noEmit` passes with `0` errors. |
+| **Slide/Carousel Editor Type Safety (`H4`)** | **Resolved.** Exported generic `SlideFieldUpdater` and `CarouselFieldUpdater` in `src/types.ts` and replaced `any` callbacks across all 12 slide/archetype editor components plus `exporter.ts` and `postgres.ts` (remaining non-test `: any` / `as any` reduced to 9, `@ts-ignore` = 0). |
+| **Static 225 KB Seed in API Bundle (`C2`)** | **Resolved.** `bundledSavedPosts.ts` removed; `getBundledSeedPosts()` returns `[]`. |
+| **Deep Cloning (`D6`)** | **Resolved.** `JSON.parse(JSON.stringify(...))` replaced with `structuredClone` (`0` occurrences remaining). |
+| **Shared HTTP Client (`D1`, `D2`)** | **In Progress.** Created `src/lib/network/httpClient.ts` (`fetchJsonWithTimeout`, `HttpClientError`, `withRetry`) with unit tests and adopted in `postsController.ts` / `publishController.ts` read paths. |
+| **Publish Idempotency (`H3`)** | **Improved.** `computeDispatchFingerprint` (including `timezone` and `tiktokSettings`), per-post + per-fingerprint in-flight locks, and partial-failure recovery persistence (`bufferPostIds`/`zernioPostIds` + `publishFailed: true`) implemented in `api/controllers/publishController.ts`. Cross-instance DB outbox table remains future Phase 4 work. |
+| **Post Manager Timer (`E5`)** | **Improved.** Replaced 1 Hz ticker with 15s background-tab-aware interval in `PostManagerPanel.tsx` that skips `setNowMs` state updates unless a post changes lifecycle stage. |
+| **Auth Fail-Closed Validation** | **Hardened.** `isValidScryptHashFormat` added to `src/lib/security/sessionAuth.ts` so malformed `ADMIN_PASSWORD_HASH` values fail closed (`503`) rather than `401`. |
+| **Pure Logic Extraction (`E9`)** | **In Progress.** Extracted pure Pre-Export QA auto-fix transforms from `AutonomousStudio.tsx` into `src/lib/studio/preExportAutoFix.ts` + unit tests, and stabilized `applyDeckUpdate`/`updateCurrentSlide` callbacks. |
+
+### Open Modernization Roadmap (Remaining)
+1. Migrate remaining raw `fetch(` call sites (~62 across `src/` & `api/`) onto `src/lib/network/httpClient.ts`.
+2. Add ESLint 9 flat config + `eslint-plugin-react-hooks` + `noUnusedParameters` cleanup (20 existing unused params).
+3. Split `AutonomousStudio.tsx` (~3,400 lines) into focused state slices/hooks (`useDeckHistory`, `useMediaIngestion`, `useExportActions`) and split `StudioContext` into `DeckState` vs `Dispatch`/`UI` contexts.
+4. Add distributed rate limiting (Postgres/Upstash) in `api/config.ts` and cursor pagination on `GET /api/posts`.
+5. Decompose large pure engines (`universalExtractor.ts`, `smartVisualDefaults.ts`, `qaChecks.ts`, `layoutAwareness.ts`, `mediaController.ts`).
 
 ---
 
-## 0. Executive Summary
+## Original Audit Snapshot (Historical Reference)
 
-The codebase is **functionally strong but structurally heavy**. Correctness, security and provider failover are well engineered. The debt is concentrated in four places:
+**Method:** static scan of original 192 TS/TSX files (77,120 LOC).
+
+### Historical Metrics (Pre-Modernization)
 
 1. **No TypeScript `strict` mode** — the root cause behind most type-safety debt.
 2. **A few mega-files/mega-components** that absorb unrelated responsibilities.
 3. **No lint layer** — `npm run lint` is just `tsc --noEmit`, so no rule catches floating promises, unused vars, exhaustive deps, or `any`.
 4. **Ad-hoc HTTP handling** — 74 raw `await fetch(...)` call sites with re-implemented retry/timeout/error logic.
 
-### Metrics
+### Metrics (Historical)
 
 | Metric | Value |
 |---|---|

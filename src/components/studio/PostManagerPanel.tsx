@@ -207,7 +207,6 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
     const timer = setInterval(() => {
       if (typeof document !== 'undefined' && document.hidden) return;
       const nextNow = Date.now();
-      setNowMs(nextNow);
       const hasNewlyDuePost = savedPosts.some((p) => {
         if (!p.scheduledFor) return false;
         const ms = Date.parse(p.scheduledFor);
@@ -217,6 +216,14 @@ export const PostManagerPanel: React.FC<PostManagerPanelProps> = ({
         onRefreshStatus();
         onRefreshVault();
       }
+      setNowMs((prevNow) => {
+        const stageChanged = savedPosts.some(
+          (p) =>
+            derivePostLifecycleStage(p, prevNow) !==
+            derivePostLifecycleStage(p, nextNow)
+        );
+        return stageChanged ? nextNow : prevNow;
+      });
     }, 15_000);
     return () => clearInterval(timer);
   }, [savedPosts, onRefreshStatus, onRefreshVault]);

@@ -4,6 +4,7 @@ import os from 'node:os';
 import fs from 'node:fs/promises';
 import {
   signCloudinaryParams,
+  computeDispatchFingerprint,
   computeFreePlanQuotaStats,
   sweepExpiredCloudinaryAssets,
   handleGetPublishStatus,
@@ -815,6 +816,50 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
     expect(secondResponse?.ok).toBe(true);
     expect(secondResponse?.idempotentReplay).toBe(true);
     expect(secondResponse?.dispatchFingerprint).toBe(firstResponse?.dispatchFingerprint);
+  });
+
+  it('produces distinct dispatch fingerprints when timezone or tiktokSettings change', () => {
+    const base = {
+      postId: 'post_fp_1',
+      mode: 'customScheduled',
+      dueAt: '2026-12-01T18:00:00.000Z',
+      timezone: 'Africa/Algiers',
+      targets: ['instagram', 'tiktok'],
+      text: 'Hello world',
+      imageUrls: ['https://cdn.example.com/1.jpg'],
+      tiktokImageUrls: ['https://cdn.example.com/1_tt.jpg'],
+      tiktokSettings: {
+        privacyLevel: 'PUBLIC_TO_EVERYONE',
+        autoAddMusic: true,
+        musicSoundInfo: { musicSoundId: '7000018757057955842' },
+      },
+    };
+
+    const fp1 = computeDispatchFingerprint(base);
+    const fpReorderedKeys = computeDispatchFingerprint({
+      ...base,
+      targets: ['tiktok', 'instagram'],
+      tiktokSettings: {
+        musicSoundInfo: { musicSoundId: '7000018757057955842' },
+        autoAddMusic: true,
+        privacyLevel: 'PUBLIC_TO_EVERYONE',
+      },
+    });
+    const fpDiffTimezone = computeDispatchFingerprint({
+      ...base,
+      timezone: 'UTC',
+    });
+    const fpDiffMusic = computeDispatchFingerprint({
+      ...base,
+      tiktokSettings: {
+        ...base.tiktokSettings,
+        musicSoundInfo: { musicSoundId: '6999990790927845377' },
+      },
+    });
+
+    expect(fp1).toBe(fpReorderedKeys);
+    expect(fp1).not.toBe(fpDiffTimezone);
+    expect(fp1).not.toBe(fpDiffMusic);
   });
 
   it('safely parses JSON and detects HTML error / warmup pages without throwing unhandled SyntaxError', async () => {

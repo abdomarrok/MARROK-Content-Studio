@@ -69,10 +69,8 @@ import {
   analyzeSlideTextForArchetype,
   diversifyDeckArchetypesAndVisuals,
   autoSyncSlideGraphicsFromCopy,
-  autoFitSlideCopyToLimits,
   validateSourceSufficiency,
   InsufficientSourceError,
-  cleanCarouselContentQuality,
   evaluateAutoLayoutForSlideEdit,
   getSlideCatalogId,
   materializeLayoutForSlide,
@@ -83,6 +81,7 @@ import {
   deriveCoverTeaserForSlide,
 } from '../lib/synthesizer.ts';
 import { requestAiVisualDirection } from '../lib/studio/visualDirectorClient.ts';
+import { applyPreExportAutoFixToDeck } from '../lib/studio/preExportAutoFix.ts';
 import {
   switchCarouselPostFormat,
   snapshotFormatDraft,
@@ -92,11 +91,7 @@ import {
 import { runQAChecks, CHAR_LIMITS, type PreExportCheckId } from '../lib/qaChecks.ts';
 import { runPlatformRiskChecks } from '../lib/riskChecks.ts';
 import { autoPolishHeadline, autoFitTextToLimits } from '../lib/text/headlines.ts';
-import {
-  fixArabicPunctuation,
-  sanitizeArabicSlideText,
-  repairTruncatedTextEllipsis,
-} from '../lib/text/arabicBiDi.ts';
+import { fixArabicPunctuation } from '../lib/text/arabicBiDi.ts';
 import {
   convertCarouselToMotionReel,
   triggerBlobDownload,
@@ -271,6 +266,8 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   const [historyFuture, setHistoryFuture] = useState<CarouselData[]>([]);
   const [isComparingBefore, setIsComparingBefore] = useState(false);
   const beforeEditsDeckRef = useRef<CarouselData>(carousel);
+  const hasHistoryPastRef = useRef(false);
+  hasHistoryPastRef.current = historyPast.length > 0;
 
   // Motion Reel Studio States
   const [selectedMotionSceneId, setSelectedMotionSceneId] = useState<string | null>(null);
@@ -379,20 +376,23 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     }
   }, [carousel.slides.length, imageStudioTargetIndex]);
 
-  const applyDeckUpdate = (updater: (prev: CarouselData) => CarouselData) => {
-    deckRevisionRef.current += 1;
-    onUpdateCarousel((prev) => {
-      const next = updater(prev);
-      if (next !== prev) {
-        if (historyPast.length === 0) {
-          beforeEditsDeckRef.current = prev;
+  const applyDeckUpdate = useCallback(
+    (updater: (prev: CarouselData) => CarouselData) => {
+      deckRevisionRef.current += 1;
+      onUpdateCarousel((prev) => {
+        const next = updater(prev);
+        if (next !== prev) {
+          if (!hasHistoryPastRef.current) {
+            beforeEditsDeckRef.current = prev;
+          }
+          setHistoryPast((h) => [...h.slice(-24), prev]);
+          setHistoryFuture([]);
         }
-        setHistoryPast((h) => [...h.slice(-24), prev]);
-        setHistoryFuture([]);
-      }
-      return next;
-    });
-  };
+        return next;
+      });
+    },
+    [onUpdateCarousel]
+  );
 
   const handleUndo = useCallback(() => {
     if (historyPast.length === 0) return;
@@ -2198,220 +2198,20 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       return;
     }
 
-    if (checkId === 'unverifiedNumbers') {
-      if (!isReviewed) handleToggleReviewDraft();
-      applyDeckUpdate((prev) => ({
-        ...prev,
-        sourceMeta: {
-          ...prev.sourceMeta,
-          verifiedNumbers: true,
-        },
-        slides: prev.slides.map((s) => ({
-          ...s,
-          numbersVerified: true,
-        })),
-      }));
-      onShowToast('Marked all slide numbers as verified against source');
-      return;
+    if (checkId === 'unverifiedNumbers' && !isReviewed) {
+      handleToggleReviewDraft();
     }
 
-    if (checkId === 'missingSource') {
-      applyDeckUpdate((prev) => {
-        let urlHost = '';
-        if (prev.sourceMeta?.url) {
-          try {
-            urlHost = new URL(prev.sourceMeta.url).hostname.replace(/^www\./, '');
-          } catch {
-            urlHost = '';
-          }
-        }
-        const rawChannel = prev.channel?.trim() || '';
-        const cleanChannel = /Engineering Technical Report/i.test(rawChannel) ? '' : rawChannel;
-        const inferredSource =
-          prev.sourceMeta?.creator?.trim() ||
-          prev.sourceMeta?.channel?.trim() ||
-          urlHost ||
-          prev.sourceMeta?.title?.trim() ||
-          cleanChannel ||
-          prev.brandUrl?.trim() ||
-          prev.brand?.trim() ||
-          'marrok.org';
-        const nextSlides = prev.slides.map((s, idx) =>
-          idx === prev.slides.length - 1
-            ? {
-                ...s,
-                enCredit: `Source: ${inferredSource}`,
-                arCredit: `المصدر: ${inferredSource}`,
-              }
-            : s
-        );
-        return {
-          ...prev,
-          channel: inferredSource,
-          sourceMeta: {
-            ...prev.sourceMeta,
-            creator: inferredSource,
-            channel: inferredSource,
-          },
-          slides: nextSlides,
-        };
-      });
-      onShowToast('Set Source attribution across deck');
-      return;
-    }
-
-    if (checkId === 'brandLogoSafety') {
-      applyDeckUpdate((prev) => ({
-        ...prev,
-        officialBrandIcons: {},
-        slides: prev.slides.map((slide, idx) => {
-          const nextSubjectPair = slide.subjectPair
-            ? {
-                ...slide.subjectPair,
-                beforeAsText: true,
-                afterAsText: true,
-                beforeLogoKey: undefined,
-                afterLogoKey: undefined,
-                logoWidthPct: Math.min(slide.subjectPair.logoWidthPct ?? 11, 14),
-                isEdited: false,
-                isMerged: false,
-                isOverlapping: false,
-                usesMascot: false,
-              }
-            : undefined;
-          const synced = autoSyncSlideGraphicsFromCopy(
-            {
-              ...slide,
-              centerIcon: undefined,
-              satIcons: undefined,
-              brandLogoConfig: undefined,
-              subjectPair: nextSubjectPair,
-            },
-            idx
-          );
-          return synced;
-        }),
-      }));
-      onShowToast('Replaced third-party logos with styled text names & architecture icons');
-      return;
-    }
-
-    if (checkId === 'contentQuality') {
-      applyDeckUpdate((prev) => cleanCarouselContentQuality(prev, promptInput));
-      onShowToast('Auto-cleaned filler labels, template phrasing & source-anchored nodes');
-      return;
-    }
-
+    let resolvedToast = `Auto-fixed ${checkId} check across deck`;
     applyDeckUpdate((prev) => {
-      const isSingle = prev.postFormat === 'single' || prev.slides.length === 1;
-      const nextSlides = prev.slides.map((slide, idx) => {
-        if (targetSlideIdx !== undefined && idx !== targetSlideIdx) return slide;
-
-        if (checkId === 'duplicateLabels') {
-          return autoSyncSlideGraphicsFromCopy(
-            {
-              ...slide,
-              satLabels: undefined,
-              diagramNodes: undefined,
-            },
-            idx
-          );
-        }
-
-        if (checkId === 'chartDirection') {
-          const synced = autoSyncSlideGraphicsFromCopy(
-            {
-              ...slide,
-              chartDirection: 'down' as const,
-            },
-            idx
-          );
-          return {
-            ...synced,
-            chartDirection: 'down' as const,
-          };
-        }
-
-        if (checkId === 'safeZones') {
-          const nextOverrides = { ...(slide.layoutOverrides || {}) };
-          for (const [k, ov] of Object.entries(nextOverrides)) {
-            if (!ov) continue;
-            nextOverrides[k as GraphicalElementId] = {
-              ...ov,
-              dx: Math.min(45, Math.max(-45, ov.dx ?? 0)),
-              dy: Math.min(45, Math.max(-25, ov.dy ?? 0)),
-            };
-          }
-          return {
-            ...slide,
-            layoutOverrides: Object.keys(nextOverrides).length > 0 ? nextOverrides : undefined,
-          };
-        }
-
-        if (checkId === 'minFontSize') {
-          const nextOverrides = { ...(slide.layoutOverrides || {}) };
-          for (const [k, ov] of Object.entries(nextOverrides)) {
-            if (!ov) continue;
-            nextOverrides[k as GraphicalElementId] = {
-              ...ov,
-              scale: Math.max(1, ov.scale ?? 1),
-            };
-          }
-          return {
-            ...slide,
-            layoutOverrides: Object.keys(nextOverrides).length > 0 ? nextOverrides : undefined,
-          };
-        }
-
-        if (checkId === 'truncatedCopy') {
-          return sanitizeSlide(
-            {
-              ...slide,
-              enTitle: repairTruncatedTextEllipsis(slide.enTitle || ''),
-              arTitle: repairTruncatedTextEllipsis(slide.arTitle || ''),
-              enBody: repairTruncatedTextEllipsis(slide.enBody || ''),
-              arBody: repairTruncatedTextEllipsis(slide.arBody || ''),
-            },
-            idx,
-            prev.slides.length
-          );
-        }
-
-        if (checkId === 'bilingualConsistency') {
-          const fallbackArTitle =
-            (slide.arTitle || '').trim() ||
-            `تحليل معماري: ${(slide.enTitle || 'النظام الهندسي').replace(/[.?!]+$/, '')}`;
-          const fallbackArBody =
-            (slide.arBody || '').trim() ||
-            `آلية هندسية توضح تفاصيل ${(slide.enTitle || 'النظام').replace(/[.?!]+$/, '')} بدقة عالية.`;
-          const fallbackEnTitle = (slide.enTitle || '').trim() || 'Core System Mechanism.';
-          const fallbackEnBody =
-            (slide.enBody || '').trim() ||
-            'Engineered to enforce deterministic latency and horizontal scalability.';
-          return sanitizeSlide(
-            {
-              ...slide,
-              enTitle: fallbackEnTitle,
-              arTitle: sanitizeArabicSlideText(fallbackArTitle, { isTitle: true }),
-              enBody: fallbackEnBody,
-              arBody: fixArabicPunctuation(
-                sanitizeArabicSlideText(fallbackArBody, { isTitle: false })
-              ),
-            },
-            idx,
-            prev.slides.length
-          );
-        }
-
-        // Default: 'overflow' -> autoFitSlideCopyToLimits + sanitizeSlide
-        const fitted = autoFitSlideCopyToLimits(slide, idx, isSingle);
-        return sanitizeSlide(fitted, idx, prev.slides.length);
+      const result = applyPreExportAutoFixToDeck(prev, checkId, {
+        targetSlideIdx,
+        promptInput,
       });
-
-      return { ...prev, slides: nextSlides };
+      resolvedToast = result.toastMessage;
+      return result.nextDeck;
     });
-
-    onShowToast(`Auto-fixed ${checkId} check across deck`);
+    onShowToast(resolvedToast);
   };
 
   const currentSlide = carousel.slides[currentSlideIndex] || carousel.slides[0];
@@ -2596,6 +2396,19 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     }
   };
 
+  const updateCurrentSlideInContext = useCallback(
+    (updater: (slide: SlideData) => SlideData) => {
+      applyDeckUpdate((prev) => {
+        const targetIndex = Math.min(currentSlideIndexRef.current, prev.slides.length - 1);
+        if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
+        const nextSlides = [...prev.slides];
+        nextSlides[targetIndex] = updater(nextSlides[targetIndex]);
+        return { ...prev, slides: nextSlides };
+      });
+    },
+    [applyDeckUpdate, currentSlideIndexRef]
+  );
+
   const studioContextValue = React.useMemo(
     () => ({
       carousel,
@@ -2604,18 +2417,19 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       theme,
       activePostFormat,
       changeSlide,
-      updateCurrentSlide: (updater: (slide: SlideData) => SlideData) => {
-        applyDeckUpdate((prev) => {
-          const targetIndex = Math.min(currentSlideIndex, prev.slides.length - 1);
-          if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
-          const nextSlides = [...prev.slides];
-          nextSlides[targetIndex] = updater(nextSlides[targetIndex]);
-          return { ...prev, slides: nextSlides };
-        });
-      },
+      updateCurrentSlide: updateCurrentSlideInContext,
       updateCarousel: onUpdateCarousel,
     }),
-    [carousel, currentSlide, currentSlideIndex, theme, activePostFormat, changeSlide, onUpdateCarousel]
+    [
+      carousel,
+      currentSlide,
+      currentSlideIndex,
+      theme,
+      activePostFormat,
+      changeSlide,
+      updateCurrentSlideInContext,
+      onUpdateCarousel,
+    ]
   );
 
   return (

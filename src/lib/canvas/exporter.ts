@@ -150,8 +150,8 @@ export async function copySlideToClipboard(
         return;
       }
       try {
-        if (navigator.clipboard && typeof (window as any).ClipboardItem !== 'undefined') {
-          const item = new (window as any).ClipboardItem({ 'image/png': blob });
+        if (navigator.clipboard && typeof ClipboardItem !== 'undefined') {
+          const item = new ClipboardItem({ 'image/png': blob });
           await navigator.clipboard.write([item]);
           resolve();
         } else {

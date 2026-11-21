@@ -18,7 +18,9 @@ import {
 } from 'lucide-react';
 import {
   CarouselData,
+  CarouselFieldUpdater,
   SlideData,
+  SlideFieldUpdater,
   SlideType,
   ThemePalette,
 } from '../../../types.ts';
@@ -43,9 +45,9 @@ export interface ImageArchetypeEditorProps {
   theme: ThemePalette;
   totalSlides: number;
   onSetSlideType: (type: SlideType) => void;
-  onUpdateField: (field: keyof SlideData, value: any) => void;
+  onUpdateField: SlideFieldUpdater;
   onUpdateSlideFields?: (updates: Partial<SlideData>) => void;
-  onUpdateCarouselField?: (field: keyof CarouselData, value: any) => void;
+  onUpdateCarouselField?: CarouselFieldUpdater;
   onOpenAiImageStudio: () => void;
   onOpenMediaSearch: () => void;
   onExportVideoMp4?: (fps?: 30 | 60) => void;

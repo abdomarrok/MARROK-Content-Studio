@@ -11,8 +11,10 @@ import {
 } from 'lucide-react';
 import {
   CarouselData,
+  CarouselFieldUpdater,
   CoverStyle,
   SlideData,
+  SlideFieldUpdater,
   SlideType,
   ThemePalette,
   DiagramVariant,
@@ -61,14 +63,14 @@ export interface ArchetypeControlsProps {
   theme: ThemePalette;
   isAdvancedCustomizerOpen: boolean;
   onSetSlideType: (type: SlideType) => void;
-  onUpdateField: (field: keyof SlideData, value: any) => void;
+  onUpdateField: SlideFieldUpdater;
   onUpdateSlideFields?: (updates: Partial<SlideData>) => void;
   onSmartMatchVisuals?: (useRecommendedArchetype?: boolean) => void;
   onToggleAutoLayout?: () => void;
   onReimagineVisual?: () => void;
   isReimaginingVisual?: boolean;
   onDiversifyDeckVisuals?: () => void;
-  onUpdateCarouselField?: (field: keyof CarouselData, value: any) => void;
+  onUpdateCarouselField?: CarouselFieldUpdater;
   onUpdateSatLabel: (index: number, value: string) => void;
   onUpdateSatIcon?: (index: number, iconName: string) => void;
   onUpdateCenterIcon?: (iconName: string) => void;
@@ -185,6 +187,13 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
     activeDiagramVariant
   );
 
+  const applyPatchKey = <K extends keyof SlideData>(key: K, patch: Partial<SlideData>) => {
+    const val = patch[key];
+    if (val !== undefined) {
+      onUpdateField(key, val as SlideData[K]);
+    }
+  };
+
   const applyLayoutPatch = (patch: Partial<SlideData>) => {
     if (onUpdateSlideFields) {
       onUpdateSlideFields(patch);
@@ -195,7 +204,7 @@ export const ArchetypeControls: React.FC<ArchetypeControlsProps> = ({
     }
     (Object.keys(patch) as Array<keyof SlideData>).forEach((key) => {
       if (key === 'type') return;
-      onUpdateField(key, patch[key]);
+      applyPatchKey(key, patch);
     });
   };
 

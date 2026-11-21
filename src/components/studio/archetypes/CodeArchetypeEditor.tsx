@@ -1,6 +1,6 @@
 import React from 'react';
 import { Code } from 'lucide-react';
-import { SlideData } from '../../../types.ts';
+import { SlideData, SlideFieldUpdater } from '../../../types.ts';
 
 export interface CodeArchetypeEditorProps {
   currentSlide: SlideData;
@@ -9,7 +9,7 @@ export interface CodeArchetypeEditorProps {
     codeLanguage: string;
     codeSnippet: string;
   };
-  onUpdateField: (field: keyof SlideData, value: any) => void;
+  onUpdateField: SlideFieldUpdater;
 }
 
 export const CodeArchetypeEditor: React.FC<CodeArchetypeEditorProps> = ({

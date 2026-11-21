@@ -16,6 +16,7 @@ import {
   GraphicalElementId,
   HookVariant,
   SlideData,
+  SlideFieldUpdater,
   ThemePalette,
 } from '../../types.ts';
 import { CHAR_LIMITS } from '../../lib/qaChecks.ts';
@@ -39,7 +40,7 @@ export interface CoverComposerPanelProps {
   hookVariants?: HookVariant[];
   selectedElementId?: GraphicalElementId | null;
   onSelectElement?: (id: GraphicalElementId | null) => void;
-  onUpdateField: (field: keyof SlideData, value: any) => void;
+  onUpdateField: SlideFieldUpdater;
   onApplyCoverStyle: (style: CoverStyle) => void;
   onApplyHookVariant?: (variant: HookVariant) => void;
   onOpenVisualTab: () => void;

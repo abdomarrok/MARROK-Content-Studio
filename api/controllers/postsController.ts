@@ -11,6 +11,7 @@ import type {
 } from '../../src/types.ts';
 import { getServerConfig } from '../config.ts';
 import { readRuntimeEnv } from '../../src/lib/security/env.ts';
+import { fetchJsonWithTimeout, HttpClientError } from '../../src/lib/network/httpClient.ts';
 import { isAllowedProxyUrl, resolveAndValidateHost } from './proxyController.ts';
 import { parseCarouselData } from '../../src/lib/validation/carousel.ts';
 import { sanitizeFullCarousel } from '../../src/lib/textSanitizer.ts';
@@ -156,14 +157,15 @@ async function fetchRemoteVaultPosts(remoteOrigin: string): Promise<SavedPostRec
   try {
     const parsed = new URL(remoteOrigin);
     if (!(await resolveAndValidateHost(parsed.hostname))) return null;
-    const res = await fetch(`${remoteOrigin}/api/posts`, {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-      redirect: 'manual',
-      signal: AbortSignal.timeout(2500),
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { posts?: SavedPostRecord[] };
+    const data = await fetchJsonWithTimeout<{ posts?: SavedPostRecord[] }>(
+      `${remoteOrigin}/api/posts`,
+      {
+        method: 'GET',
+        redirect: 'manual',
+        timeoutMs: 2500,
+        contextLabel: 'Remote Vault sync',
+      }
+    );
     return Array.isArray(data?.posts) ? data.posts : null;
   } catch {
     return null;
@@ -213,19 +215,24 @@ export function resolveStorageFilePath(env: NodeJS.ProcessEnv = process.env): {
 async function readFromKv(url: string, token: string): Promise<SavedPostRecord[] | null> {
   try {
     const cleanUrl = url.replace(/\/+$/, '');
-    const res = await fetch(`${cleanUrl}/get/${ encodeURIComponent(KV_STORAGE_KEY) }`, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { result?: string | null };
+    const data = await fetchJsonWithTimeout<{ result?: string | null }>(
+      `${cleanUrl}/get/${encodeURIComponent(KV_STORAGE_KEY)}`,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        timeoutMs: 5000,
+        contextLabel: 'Cloud KV read',
+      }
+    );
     if (!data || !data.result) return [];
     const parsed = JSON.parse(data.result);
     return Array.isArray(parsed) ? parsed : [];
   } catch (err) {
+    if (err instanceof HttpClientError && err.status > 0) {
+      return null;
+    }
     console.warn('[PostsStore] Cloud KV read failed, falling back to file store:', err);
     return null;
   }

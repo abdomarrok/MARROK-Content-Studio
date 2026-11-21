@@ -217,9 +217,22 @@ export const DraftSlideQuickInspector: React.FC<DraftSlideQuickInspectorProps> =
   onClose,
 }) => {
   const mainCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const justSavedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMountedRef = useRef(true);
   const [localDeck, setLocalDeck] = useState<CarouselData>(deck);
   const [isDirty, setIsDirty] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (justSavedTimerRef.current) {
+        clearTimeout(justSavedTimerRef.current);
+        justSavedTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // Sync incoming Vault deck updates when not actively editing unsaved changes
   useEffect(() => {
@@ -311,9 +324,17 @@ export const DraftSlideQuickInspector: React.FC<DraftSlideQuickInspectorProps> =
 
   const persistNow = async (deckToSave: CarouselData = localDeck) => {
     await onSaveDeck(deckToSave);
+    if (!isMountedRef.current) return;
     setIsDirty(false);
     setJustSaved(true);
-    setTimeout(() => setJustSaved(false), 2200);
+    if (justSavedTimerRef.current) {
+      clearTimeout(justSavedTimerRef.current);
+    }
+    justSavedTimerRef.current = setTimeout(() => {
+      if (isMountedRef.current) {
+        setJustSaved(false);
+      }
+    }, 2200);
   };
 
   const handleAutoFitActiveSlide = () => {

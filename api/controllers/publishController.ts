@@ -19,6 +19,7 @@ import {
   isPostUnapprovedAutomatedDraft,
 } from '../../src/lib/publish/schedulePredicate.ts';
 import { stripLeadingDuplicateTikTokTitle } from '../../src/lib/publish/tiktokTitle.ts';
+import { fetchJsonWithTimeout } from '../../src/lib/network/httpClient.ts';
 
 const LOCAL_MEDIA_CACHE = new Map<string, { buffer: Buffer; createdAt: number }>();
 
@@ -879,20 +880,7 @@ export async function fetchZernioTikTokCommercialMusic(
     const url = `https://zernio.com/api/v1/accounts/${encodeURIComponent(
       accountId
     )}/tiktok/commercial-music?pageSize=25&sortBy=RANK&sortOrder=ASC`;
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${zernioApiKey}`,
-      },
-      signal: AbortSignal.timeout(8_000),
-    });
-
-    if (!res.ok) {
-      return cachedTikTokMusicCatalog?.tracks || FALLBACK_TIKTOK_COMMERCIAL_TRACKS;
-    }
-
-    const payload = (await res.json()) as {
+    const payload = await fetchJsonWithTimeout<{
       tracks?: Array<{
         id?: string;
         name?: string;
@@ -908,7 +896,14 @@ export async function fetchZernioTikTokCommercialMusic(
           previewUrl?: string;
         };
       }>;
-    };
+    }>(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${zernioApiKey}`,
+      },
+      timeoutMs: 8_000,
+      contextLabel: 'Zernio TikTok Commercial Music',
+    });
 
     const rawTracks = Array.isArray(payload.tracks) ? payload.tracks : [];
     const normalized: TikTokCommercialMusicTrack[] = rawTracks
@@ -1331,31 +1326,60 @@ async function dispatchToBufferGraphQl(params: {
  */
 const activeDispatchLocks = new Set<string>();
 
+function normalizeDeterministicValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(normalizeDeterministicValue);
+  }
+  if (value && typeof value === 'object') {
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      const val = (value as Record<string, unknown>)[key];
+      if (val !== undefined) {
+        sorted[key] = normalizeDeterministicValue(val);
+      }
+    }
+    return sorted;
+  }
+  return value;
+}
+
 export function computeDispatchFingerprint(input: {
   postId?: string;
   title?: string;
   mode: string;
   dueAt?: string;
+  timezone?: string;
   targets: string[];
   text: string;
   imageUrls: string[];
   tiktokImageUrls: string[];
+  tiktokSettings?: Record<string, unknown>;
 }): string {
   const normalizedTargets = [...input.targets].map((t) => String(t).toLowerCase()).sort();
   const payload = JSON.stringify({
     postId: String(input.postId || input.title || '').trim(),
     mode: String(input.mode || 'addToQueue'),
     dueAt: String(input.dueAt || '').trim(),
+    timezone: String(input.timezone || '').trim(),
     targets: normalizedTargets,
     text: String(input.text || '').trim(),
     imageUrls: (input.imageUrls || []).map((u) => String(u).trim()),
     tiktokImageUrls: (input.tiktokImageUrls || []).map((u) => String(u).trim()),
+    tiktokSettings:
+      input.tiktokSettings && typeof input.tiktokSettings === 'object'
+        ? normalizeDeterministicValue(input.tiktokSettings)
+        : null,
   });
   return crypto.createHash('sha256').update(payload).digest('hex').slice(0, 32);
 }
 
 export async function handleDispatchPublish(req: Request, res: Response) {
   let activeLockKey: string | null = null;
+  let activePostLockKey: string | null = null;
+  let partialTargetRecord: SavedPostRecord | undefined;
+  let partialExistingPosts: SavedPostRecord[] = [];
+  const partialBufferPostIds: string[] = [];
+  const partialZernioPostIds: string[] = [];
   try {
     const config = getServerConfig();
     const body = req.body || {};
@@ -1383,6 +1407,7 @@ export async function handleDispatchPublish(req: Request, res: Response) {
       : ['instagram'];
 
     const { posts: existingPosts } = await loadStoredPosts();
+    partialExistingPosts = existingPosts;
     const existingRecord = postId ? existingPosts.find((p) => p.id === postId) : undefined;
 
     // Review Safety Gate: never publish or schedule unreviewed / unverified drafts
@@ -1417,10 +1442,15 @@ export async function handleDispatchPublish(req: Request, res: Response) {
       title: title || existingRecord?.title || deck?.slides?.[0]?.enTitle,
       mode: String(mode),
       dueAt: typeof dueAt === 'string' ? dueAt : undefined,
+      timezone: typeof timezone === 'string' ? timezone : undefined,
       targets: validTargets,
       text: postText,
       imageUrls: Array.isArray(imageUrls) ? imageUrls : [],
       tiktokImageUrls: effectiveTikTokUrls,
+      tiktokSettings:
+        tiktokSettings && typeof tiktokSettings === 'object'
+          ? (tiktokSettings as Record<string, unknown>)
+          : undefined,
     });
 
     // Idempotent Replay Gate: if an identical dispatch payload already succeeded for this post
@@ -1473,7 +1503,12 @@ export async function handleDispatchPublish(req: Request, res: Response) {
       });
     }
 
-    if (activeDispatchLocks.has(dispatchFingerprint)) {
+    const candidatePostLock =
+      postId || existingRecord?.id ? `post:${String(postId || existingRecord?.id)}` : null;
+    if (
+      activeDispatchLocks.has(dispatchFingerprint) ||
+      (candidatePostLock && activeDispatchLocks.has(candidatePostLock))
+    ) {
       return res.status(409).json({
         error: 'An identical publish dispatch is already in progress for this post.',
         code: 'DISPATCH_IN_FLIGHT',
@@ -1481,6 +1516,10 @@ export async function handleDispatchPublish(req: Request, res: Response) {
     }
     activeDispatchLocks.add(dispatchFingerprint);
     activeLockKey = dispatchFingerprint;
+    if (candidatePostLock) {
+      activeDispatchLocks.add(candidatePostLock);
+      activePostLockKey = candidatePostLock;
+    }
 
     const isImmediate = mode === 'shareNow';
     const warnings: string[] = [];
@@ -1516,11 +1555,12 @@ export async function handleDispatchPublish(req: Request, res: Response) {
         targetRecord = validation.record;
       }
     }
+    partialTargetRecord = targetRecord;
 
     const nowIso = new Date().toISOString();
     const currentMonthKey = nowIso.slice(0, 7);
-    const bufferPostIds: string[] = [];
-    const zernioPostIds: string[] = [];
+    const bufferPostIds = partialBufferPostIds;
+    const zernioPostIds = partialZernioPostIds;
     const channelResults: Array<{
       service: PublishTargetPlatform;
       provider: 'buffer' | 'zernio' | 'metricool-csv';
@@ -1870,10 +1910,43 @@ export async function handleDispatchPublish(req: Request, res: Response) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Failed to dispatch post';
     console.error('[PublishController] Dispatch error:', msg);
+    if (
+      partialTargetRecord &&
+      (partialBufferPostIds.length > 0 || partialZernioPostIds.length > 0)
+    ) {
+      try {
+        const failedIso = new Date().toISOString();
+        const recoveredRecord: SavedPostRecord = {
+          ...partialTargetRecord,
+          postStatus: 'validated',
+          publishFailed: true,
+          updatedAt: failedIso,
+          bufferPostIds: Array.from(
+            new Set([...(partialTargetRecord.bufferPostIds || []), ...partialBufferPostIds])
+          ),
+          zernioPostIds: Array.from(
+            new Set([...(partialTargetRecord.zernioPostIds || []), ...partialZernioPostIds])
+          ),
+          deck: {
+            ...partialTargetRecord.deck,
+            sourceMeta: {
+              ...partialTargetRecord.deck?.sourceMeta,
+              publishFailed: true,
+            },
+          },
+        };
+        await upsertSingleStoredPost(recoveredRecord, partialExistingPosts);
+      } catch (persistErr) {
+        console.warn('[PublishController] Partial-dispatch recovery persistence failed:', persistErr);
+      }
+    }
     return res.status(500).json({ error: msg });
   } finally {
     if (activeLockKey) {
       activeDispatchLocks.delete(activeLockKey);
+    }
+    if (activePostLockKey) {
+      activeDispatchLocks.delete(activePostLockKey);
     }
   }
 }

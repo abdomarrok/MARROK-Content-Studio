@@ -1,11 +1,28 @@
 import pg from 'pg';
 import type {
+  PublishTargetPlatform,
   SavedPostRecord,
   SavedPostStatus,
   TriageAction,
   TriageDecisionRecord,
   TriageSkipReason,
 } from '../../src/types.ts';
+
+const VALID_PUBLISH_TARGETS = new Set<PublishTargetPlatform>([
+  'instagram',
+  'facebook',
+  'linkedin',
+  'tiktok',
+]);
+
+function parsePublishTargets(raw: unknown): PublishTargetPlatform[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const filtered = raw.filter(
+    (item): item is PublishTargetPlatform =>
+      typeof item === 'string' && VALID_PUBLISH_TARGETS.has(item as PublishTargetPlatform)
+  );
+  return filtered.length > 0 ? filtered : [];
+}
 import { readRuntimeEnv } from '../../src/lib/security/env.ts';
 
 const { Pool } = pg;
@@ -196,7 +213,7 @@ function rowToSavedPostRecord(row: Record<string, unknown>): SavedPostRecord {
         ? row.scheduled_for.toISOString()
         : String(row.scheduled_for)
       : undefined,
-    publishTargets: Array.isArray(row.publish_targets) ? (row.publish_targets as any) : undefined,
+    publishTargets: parsePublishTargets(row.publish_targets),
     hostedSlideUrls: Array.isArray(row.hosted_slide_urls) ? (row.hosted_slide_urls as string[]) : undefined,
     tiktokHostedSlideUrls: Array.isArray(row.tiktok_hosted_slide_urls)
       ? (row.tiktok_hosted_slide_urls as string[])

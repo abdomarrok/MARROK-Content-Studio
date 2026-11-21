@@ -38,7 +38,7 @@
 │  │    ├─ Tier 1: Gemini Key Pool (Primary -> Backup #2 -> Pool Keys)       │
 │  │    ├─ Tier 2: Zero-Key Free AI Backup (Pollinations OpenAI-compatible)  │
 │  │    └─ Tier 3: Deterministic Local Fallback (synthesizeCarousel)         │
-│  ├─ POST /api/refine-slide   -> api/controllers/refineSlideController.ts   │
+│  ├─ POST /api/refine-slide   -> api/controllers/generateController.ts      │
 │  ├─ POST /api/generate-image -> api/controllers/imageController.ts         │
 │  ├─ GET/POST/PATCH/DELETE /api/posts -> api/controllers/postsController.ts │
 │  │    ├─ Primary: Neon Serverless PostgreSQL (api/db/postgres.ts)          │
@@ -64,12 +64,15 @@
 | `api/index.ts` | Express router, Vercel rewrite path restoration (`x-matched-path`), CORS, rate limiting, security headers |
 | `api/config.ts` | Startup env validation, `getGeminiKeyPool(req)` multi-key rotation, Cloudinary, Buffer, Zernio & Neon PostgreSQL credentials config, rate limiter |
 | `api/db/postgres.ts` | Serverless PostgreSQL layer (`pg.Pool`, SSL enabled, connection pooler) storing posts in `saved_posts` with `JSONB` slide decks, relational indexing (`post_status`, `scheduled_for`, `updated_at`, `title_signature`), idempotent schema init, and atomic upserts (`ON CONFLICT (id) DO UPDATE`) eliminating duplicate drafts across multi-device sessions and serverless restarts |
-| `api/freeAiFallback.ts` | Zero-key Pollinations AI text (`openai`/`mistral`) and 9:16 `flux` image fallback when Gemini keys are exhausted |
-| `api/controllers/generateController.ts` | Bilingual deck synthesis (Carousel & 1-Slide), Google Search `groundingSupports` fact mapping, multi-key & free AI cascade |
-| `api/controllers/postsController.ts` | Content Vault persistence prioritizing Neon PostgreSQL (`neon-postgres`), with automatic seed migration and graceful fallbacks (`cloud-kv`, `local-disk`, `vercel-tmp`) |
-| `api/controllers/publishController.ts` | Signed SHA-1 Cloudinary upload (`uploadSlideToCloudinary`), automatic post-publish asset destruction (`destroyCloudinaryAsset`, `sweepExpiredCloudinaryAssets`), Buffer GraphQL API dispatch (`https://api.buffer.com`), Zernio REST API v1 dispatch (`https://zernio.com/api/v1/posts`), and TikTok Commercial Music catalog (`fetchZernioTikTokCommercialMusic`) |
+| `api/controllers/generateController.ts` | Bilingual deck synthesis (Carousel & 1-Slide), `/api/refine-slide`, Google Search `groundingSupports` fact mapping, multi-key Gemini rotation, and zero-key Pollinations AI text fallback |
+| `api/controllers/imageController.ts` | Gemini 9:16 image generation/editing with zero-key Pollinations Flux image fallback |
+| `api/controllers/postsController.ts` | Content Vault persistence prioritizing Neon PostgreSQL (`neon-postgres`), with graceful fallbacks (`cloud-kv`, `local-disk`, `vercel-tmp`) |
+| `api/controllers/publishController.ts` | Signed SHA-1 Cloudinary upload (`uploadSlideToCloudinary`), automatic post-publish asset destruction (`destroyCloudinaryAsset`, `sweepExpiredCloudinaryAssets`), Buffer GraphQL API dispatch (`https://api.buffer.com`), Zernio REST API v1 dispatch (`https://zernio.com/api/v1/posts`), SHA-256 `computeDispatchFingerprint` idempotency + per-post lock + partial-failure recovery persistence, and TikTok Commercial Music catalog (`fetchZernioTikTokCommercialMusic`) |
 | `api/controllers/proxyController.ts` | SSRF-hardened HTTPS image proxy with DNS resolution check, 2 MB cap, and SVG sanitization |
 | `api/controllers/mediaController.ts` | Subject-based tech icon & Wikimedia search (`/api/search-media`), automated technical trend radar (`/api/gather/radar` across HN, Lobsters, Reddit, Cloudflare RSS, custom RSS, and curated stories), SSRF-hardened web article reader extraction (`/api/gather/extract-url`), and direct Telegram Bot Webhook automation (`/api/gather/telegram-webhook`) |
+| `src/lib/security/sessionAuth.ts` | Fail-closed authentication gate (`503` when auth config or `scrypt$` hash format is invalid), scrypt verification, HMAC-SHA256 cookies (`__Host-marrok_session`), Bearer iframe tokens, and timing-safe webhook/secret checks |
+| `src/lib/network/httpClient.ts` | Isomorphic `fetchJsonWithTimeout` + HTML warmup/proxy detection + bounded `withRetry` (for idempotent read paths) built on `requestDeadline.ts` |
+| `src/lib/studio/preExportAutoFix.ts` | Pure deterministic deck transformation engine (`applyPreExportAutoFixToDeck`) powering one-tap Pre-Export QA fixes |
 | `src/components/studio/PublishingHubWorkspace.tsx` | Flattened Phase 2 Publish Hub (`Inbox · Draft · Schedule`), live Neon/Buffer/Zernio/Cloudinary/Telegram status strip, dual aspect-ratio staging (`4:5` + `9:16`), mandatory 2-flag safety gate, immediate `Publish Now`, and TikTok Background Sound selector |
 | `src/components/studio/PostManagerPanel.tsx` | Draft Review Queue & Schedule/Calendar Manager (`Queue`, `7/14-Day Calendar`, `Bulk Schedule`) enforcing `Human Reviewed` + `Claims & Numbers Verified` gates, `>2 posts/day` cadence overload warnings, inline rescheduling, and `Publish Now` dispatch |
 | `src/components/studio/WeeklyProgramReviewPanel.tsx` | Inbox container managing lazy trend radar scanning, on-demand 8-slide storyboard hydration (`hydrateCandidateDeckOnDemand`), editable `Marrok angle` validation, and safe Draft-only queueing |

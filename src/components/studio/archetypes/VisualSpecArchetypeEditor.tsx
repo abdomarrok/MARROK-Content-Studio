@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import type {
   SlideData,
+  SlideFieldUpdater,
   SlideVisualSpec,
   ThemePalette,
   VisualBarItem,
@@ -40,7 +41,7 @@ export interface VisualSpecArchetypeEditorProps {
   currentSlide: SlideData;
   currentSlideIndex: number;
   theme: ThemePalette;
-  onUpdateField: (field: keyof SlideData, value: any) => void;
+  onUpdateField: SlideFieldUpdater;
   hideModeSwitcher?: boolean;
 }
 

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Hash, RotateCcw } from 'lucide-react';
-import { SlideData, ThemePalette } from '../../../types.ts';
+import { SlideData, SlideFieldUpdater, ThemePalette } from '../../../types.ts';
 import { IconThumbnail, getIconDisplayName } from '../IconThumbnail.tsx';
 
 export interface NumberArchetypeEditorProps {
@@ -12,7 +12,7 @@ export interface NumberArchetypeEditorProps {
     stepLabel: string;
     centerIcon: string;
   };
-  onUpdateField: (field: keyof SlideData, value: any) => void;
+  onUpdateField: SlideFieldUpdater;
   onUpdateCenterIcon?: (iconName: string) => void;
   onRequestIconPicker: (config: {
     title: string;

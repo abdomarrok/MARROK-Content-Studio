@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ChevronDown, SlidersHorizontal } from 'lucide-react';
 import {
   SlideData,
+  SlideFieldUpdater,
   ThemePalette,
   DiagramVariant,
   DiagramNode,
@@ -31,7 +32,7 @@ export interface DiagramSchematicEditorProps {
     diagramFooter: string;
   };
   onSelectVariant: (variantId: DiagramVariant) => void;
-  onUpdateField: (field: keyof SlideData, value: any) => void;
+  onUpdateField: SlideFieldUpdater;
   onUpdateDiagramNode: (nodeIndex: number, field: keyof DiagramNode, value: string) => void;
   onUpdateDiagramEdge: (edgeIndex: number, value: string) => void;
   onRequestIconPicker: (config: {

@@ -616,6 +616,16 @@ export interface CarouselData {
   officialBrandIcons?: Record<string, boolean | { enabled: boolean; colorMode: 'official' | 'mono' }>;
 }
 
+export type SlideFieldUpdater = <K extends keyof SlideData>(
+  field: K,
+  value: SlideData[K]
+) => void;
+
+export type CarouselFieldUpdater = <K extends keyof CarouselData>(
+  field: K,
+  value: CarouselData[K]
+) => void;
+
 export interface VisualSystemOptions {
   showCadReticles?: boolean;   // Corner CAD crosshairs (+) and boundary ticks (default true)
   showSparklines?: boolean;    // Acceleration sparkline curve & gauge meter on metric slides (default true)
