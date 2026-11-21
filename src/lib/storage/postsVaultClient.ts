@@ -211,7 +211,7 @@ function isPreferredClientRecord(candidate: SavedPostRecord, current: SavedPostR
   return true;
 }
 
-function mergeRecords(
+export function mergeRecords(
   serverPosts: SavedPostRecord[],
   localPosts: SavedPostRecord[]
 ): SavedPostRecord[] {
@@ -266,15 +266,12 @@ function mergeRecords(
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 }
 
-function getRemoteVaultOrigin(): string | null {
-  if (typeof window === 'undefined') return null;
-  if (import.meta.env?.MODE === 'test') return null;
-  const configured = (import.meta.env?.VITE_REMOTE_VAULT_ORIGIN || '')
-    .trim()
-    .replace(/\/+$/, '');
-  if (!configured || !configured.startsWith('https://')) return null;
-  if (window.location.origin === configured) return null;
-  return configured;
+/**
+ * @deprecated Legacy cross-origin Vault sync is permanently retired in Phase 2.2.
+ * Returns null unconditionally to enforce single authoritative PostgreSQL storage.
+ */
+export function getRemoteVaultOrigin(): string | null {
+  return null;
 }
 
 export interface VaultLoadResult {
@@ -292,38 +289,13 @@ export interface VaultLoadResult {
 export async function loadVaultPosts(): Promise<VaultLoadResult> {
   let deletedIds = readDeletedIds();
   const localPosts = await readLocalVault();
-  const remoteOrigin = getRemoteVaultOrigin();
 
   try {
-    const [res, remoteRes] = await Promise.all([
-      fetch('/api/posts', {
-        method: 'GET',
-        credentials: 'include',
-        headers: withClientAuthHeaders({ Accept: 'application/json' }),
-      }),
-      remoteOrigin
-        ? fetch(`${remoteOrigin}/api/posts`, {
-            method: 'GET',
-            headers: { Accept: 'application/json' },
-          }).catch(() => null)
-        : Promise.resolve(null),
-    ]);
-
-    let remotePosts: SavedPostRecord[] = [];
-    if (remoteRes && remoteRes.ok) {
-      try {
-        const remoteData = (await remoteRes.json()) as {
-          posts?: SavedPostRecord[];
-          deletedIds?: string[];
-        };
-        deletedIds = mergeServerDeletedIds(remoteData.deletedIds);
-        remotePosts = (Array.isArray(remoteData.posts) ? remoteData.posts : []).filter(
-          (p) => !deletedIds.has(p.id)
-        );
-      } catch {
-        // Ignore remote parse error
-      }
-    }
+    const res = await fetch('/api/posts', {
+      method: 'GET',
+      credentials: 'include',
+      headers: withClientAuthHeaders({ Accept: 'application/json' }),
+    });
 
     if (!res.ok) {
       const { message, code } = await readApiErrorPayload(res, 'Failed to load Vault posts');
@@ -346,8 +318,7 @@ export async function loadVaultPosts(): Promise<VaultLoadResult> {
     const pendingOfflineDrafts = localPosts.filter(
       (p) => p.offlineDraft === true && !deletedIds.has(p.id)
     );
-    const mergedServerAndRemote = mergeRecords(remotePosts, serverPosts);
-    const merged = mergeRecords(mergedServerAndRemote, pendingOfflineDrafts).filter(
+    const merged = mergeRecords(serverPosts, pendingOfflineDrafts).filter(
       (p) => !deletedIds.has(p.id)
     );
 
@@ -361,16 +332,6 @@ export async function loadVaultPosts(): Promise<VaultLoadResult> {
         method: 'POST',
         credentials: 'include',
         headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ syncPosts: merged, deletedIds: deletedIdsArray }),
-      }).catch(() => {
-        // Non-blocking background sync
-      });
-    }
-
-    if (remoteOrigin && merged.length > remotePosts.length) {
-      fetch(`${remoteOrigin}/api/posts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ syncPosts: merged, deletedIds: deletedIdsArray }),
       }).catch(() => {
         // Non-blocking background sync
@@ -491,18 +452,6 @@ export async function saveValidPost(params: SaveValidPostParams): Promise<SavedP
     const updatedLocal = mergeRecords([savedPost], currentLocal);
     await writeLocalVault(updatedLocal);
 
-    const remoteOrigin = getRemoteVaultOrigin();
-    if (remoteOrigin) {
-      fetch(`${remoteOrigin}/api/posts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          syncPosts: updatedLocal,
-          deletedIds: Array.from(readDeletedIds()),
-        }),
-      }).catch(() => {});
-    }
-
     return savedPost;
   } catch (err) {
     if (err instanceof VaultApiError) {
@@ -564,7 +513,6 @@ export async function updateSavedPostStatus(
 ): Promise<SavedPostRecord> {
   const currentLocal = await readLocalVault();
   const existing = currentLocal.find((p) => p.id === id);
-  const remoteOrigin = getRemoteVaultOrigin();
 
   try {
     const res = await fetch(`/api/posts/${encodeURIComponent(id)}/status`, {
@@ -586,16 +534,6 @@ export async function updateSavedPostStatus(
     const updatedPost: SavedPostRecord = { ...data.post, offlineDraft: false };
     const updatedList = [updatedPost, ...currentLocal.filter((p) => p.id !== id)];
     await writeLocalVault(updatedList);
-    if (remoteOrigin) {
-      fetch(`${remoteOrigin}/api/posts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          syncPosts: updatedList,
-          deletedIds: Array.from(readDeletedIds()),
-        }),
-      }).catch(() => {});
-    }
     return updatedPost;
   } catch (err) {
     if (err instanceof VaultApiError) {
@@ -629,14 +567,6 @@ export async function updateSavedPostStatus(
     body: JSON.stringify({ syncPosts: updatedList, deletedIds: deletedIdsArray }),
   }).catch(() => {});
 
-  if (remoteOrigin) {
-    fetch(`${remoteOrigin}/api/posts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ syncPosts: updatedList, deletedIds: deletedIdsArray }),
-    }).catch(() => {});
-  }
-
   return updatedRecord;
 }
 
@@ -645,8 +575,6 @@ export async function updateSavedPostStatus(
  * Surfaces 400/401/403/503 errors directly instead of removing locally while unauthorized.
  */
 export async function deleteSavedPost(id: string): Promise<SavedPostRecord[]> {
-  const remoteOrigin = getRemoteVaultOrigin();
-
   try {
     const res = await fetch(`/api/posts/${encodeURIComponent(id)}`, {
       method: 'DELETE',
@@ -660,12 +588,6 @@ export async function deleteSavedPost(id: string): Promise<SavedPostRecord[]> {
         throw new VaultApiError(message, res.status, code);
       }
       throw new Error(message);
-    }
-
-    if (remoteOrigin) {
-      void fetch(`${remoteOrigin}/api/posts/${encodeURIComponent(id)}`, {
-        method: 'DELETE',
-      }).catch(() => null);
     }
   } catch (err) {
     if (err instanceof VaultApiError) {

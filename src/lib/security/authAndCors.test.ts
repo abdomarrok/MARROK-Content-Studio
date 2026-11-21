@@ -123,7 +123,6 @@ describe('Phase A1 & A2: Universal API Auth, Login Hardening, Strict CORS & Netl
       { method: 'DELETE', path: '/api/posts/post_123' },
       { method: 'GET', path: '/api/publish/status' },
       { method: 'GET', path: '/api/publish/tiktok-music' },
-      { method: 'GET', path: '/api/publish/media/asset_1' },
       { method: 'POST', path: '/api/publish/upload-media', body: {} },
       { method: 'POST', path: '/api/publish/dispatch', body: {} },
       { method: 'POST', path: '/api/publish/manage-post', body: {} },

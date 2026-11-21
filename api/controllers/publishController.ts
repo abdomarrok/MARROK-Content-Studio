@@ -52,8 +52,6 @@ import {
   type ClaimOutboxDispatchParams,
 } from '../../src/lib/publish/publishOutbox.ts';
 
-const LOCAL_MEDIA_CACHE = new Map<string, { buffer: Buffer; createdAt: number }>();
-
 /**
  * Default channel definitions matching the user's connected Buffer Free (3/3) and Metricool Free accounts.
  */
@@ -218,13 +216,6 @@ export async function destroyCloudinaryAsset(
 ): Promise<{ publicId: string; deleted: boolean; result: string }> {
   if (!isCloudinaryConfigured(config)) {
     return { publicId: fullPublicId, deleted: false, result: 'cloudinary_not_configured' };
-  }
-
-  // Also remove from local fallback cache if present
-  LOCAL_MEDIA_CACHE.delete(fullPublicId);
-
-  if (fullPublicId.startsWith('local_staging/')) {
-    return { publicId: fullPublicId, deleted: true, result: 'ok_local' };
   }
 
   const timestamp = Math.floor(Date.now() / 1000);
@@ -3497,19 +3488,4 @@ export async function handleManagePublishedPost(req: Request, res: Response) {
     console.error('[PublishController] Manage post error:', msg);
     return res.status(500).json({ error: msg });
   }
-}
-
-/**
- * GET /api/publish/media/:assetId
- * Serves local fallback JPEG assets if Cloudinary was unreachable.
- */
-export function handleServeStagedMedia(req: Request, res: Response) {
-  const rawId = String(req.params.assetId || '').replace(/\.jpg$/i, '');
-  const entry = LOCAL_MEDIA_CACHE.get(`local_staging/${rawId}`);
-  if (!entry) {
-    return res.status(404).send('Staged media asset not found or already cleaned up');
-  }
-  res.setHeader('Content-Type', 'image/jpeg');
-  res.setHeader('Cache-Control', 'public, max-age=3600');
-  return res.send(entry.buffer);
 }

@@ -944,7 +944,8 @@ export async function generateGatheredCandidatesInBackground(
     (t) =>
       !dismissedIds.has(t.id) &&
       !isCandidateSkipped(t.id, decisions) &&
-      !isCandidateSnoozed(t.id, decisions, nowMs)
+      !isCandidateSnoozed(t.id, decisions, nowMs) &&
+      decisions.find((d) => d.topicId === t.id)?.action !== 'draft'
   );
 
   // Cluster overlapping stories and apply calibrated 5-factor batch ranking
@@ -1305,6 +1306,14 @@ export async function acceptGatheredCandidatesToDrafts(
         scheduledFor: undefined,
       });
 
+      // Unify triage decision: persist action 'draft' to authoritative PostgreSQL inbox_triage_decisions
+      void logTriageDecision({
+        topicId: candidate.topic.id,
+        topicSignature: candidate.draftTitle,
+        sourceDomain: candidate.topic.sourceDomain || candidate.topic.sourceName || 'unknown',
+        domainCategory: candidate.topic.domainCategory || 'DISTRIBUTED SYSTEMS',
+        action: 'draft',
+      }).catch(() => {});
       dismissGatherTopicId(candidate.topic.id);
     } catch (err) {
       failedCandidates.push({

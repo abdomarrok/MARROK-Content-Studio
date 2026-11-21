@@ -37,7 +37,7 @@ describe('Phase A3–A7 Security Hardening: Remote Vault, Cloudinary Upload, RSS
     process.env = { ...savedEnv };
   });
 
-  it('A3: remote vault sync is disabled unless REMOTE_VAULT_ORIGIN is explicitly configured', () => {
+  it('A3: remote vault sync is permanently retired in Phase 2.2 and returns null unconditionally', () => {
     const cleanEnv = { NODE_ENV: 'production' } as NodeJS.ProcessEnv;
     expect(shouldSyncWithRemoteVault(cleanEnv)).toBeNull();
 
@@ -54,7 +54,7 @@ describe('Phase A3–A7 Security Hardening: Remote Vault, Cloudinary Upload, RSS
       ...cleanEnv,
       REMOTE_VAULT_ORIGIN: 'https://vault.marrok-content.netlify.app/',
     } as NodeJS.ProcessEnv;
-    expect(shouldSyncWithRemoteVault(withValidOrigin)).toBe('https://vault.marrok-content.netlify.app');
+    expect(shouldSyncWithRemoteVault(withValidOrigin)).toBeNull();
   });
 
   it('A4: rejects unconfigured Cloudinary uploads with explicit 503 and validates MIME and byte size', async () => {

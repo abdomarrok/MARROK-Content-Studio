@@ -284,13 +284,15 @@ export function getServerConfig(envOverride?: NodeJS.ProcessEnv): ServerConfig {
 }
 
 /**
- * Lightweight, zero-dependency per-IP sliding-window rate limiter middleware.
+ * Hybrid per-IP sliding-window rate limiter middleware.
+ * Uses atomic Upstash/KV REST commands when configured for distributed serverless protection,
+ * with fail-safe automatic fallback to process-local in-memory tracking.
  */
 export function createRateLimiter(options?: { windowMs?: number; maxRequests?: number }) {
   const windowMs = options?.windowMs ?? 60_000;
   const hits = new Map<string, number[]>();
 
-  return function rateLimitMiddleware(req: Request, res: Response, next: NextFunction) {
+  return async function rateLimitMiddleware(req: Request, res: Response, next: NextFunction) {
     const config = getServerConfig();
     const maxRequests = options?.maxRequests ?? config.rateLimitRpm;
 
@@ -301,6 +303,43 @@ export function createRateLimiter(options?: { windowMs?: number; maxRequests?: n
       req.socket?.remoteAddress ||
       'unknown';
 
+    // 1. Distributed rate limiting via Upstash Redis REST if configured
+    if (config.kvRestUrl && config.kvRestToken && clientIp !== 'unknown') {
+      try {
+        const windowSec = Math.max(1, Math.ceil(windowMs / 1000));
+        const bucket = Math.floor(Date.now() / windowMs);
+        const rateKey = `ratelimit:ip:${encodeURIComponent(clientIp)}:${bucket}`;
+        const cleanUrl = config.kvRestUrl.replace(/\/+$/, '');
+        const kvRes = await fetch(`${cleanUrl}/pipeline`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${config.kvRestToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify([
+            ['INCR', rateKey],
+            ['EXPIRE', rateKey, windowSec * 2],
+          ]),
+          signal: AbortSignal.timeout(1500),
+        });
+        if (kvRes.ok) {
+          const results = (await kvRes.json()) as Array<{ result?: number }>;
+          const currentHits = results?.[0]?.result ?? 1;
+          if (currentHits > maxRequests) {
+            res.setHeader('Retry-After', String(windowSec));
+            return res.status(429).json({
+              error: 'Rate limit exceeded. Please wait before making more requests.',
+              retryAfterSeconds: windowSec,
+            });
+          }
+          return next();
+        }
+      } catch {
+        // Fail-safe: Redis outage/timeout gracefully falls back to local in-memory sliding window
+      }
+    }
+
+    // 2. In-memory sliding-window fallback
     const now = Date.now();
     const cutoff = now - windowMs;
     const recent = (hits.get(clientIp) || []).filter((ts) => ts > cutoff);
@@ -309,6 +348,7 @@ export function createRateLimiter(options?: { windowMs?: number; maxRequests?: n
       res.setHeader('Retry-After', String(Math.ceil(windowMs / 1000)));
       return res.status(429).json({
         error: 'Rate limit exceeded. Please wait before making more generation requests.',
+        retryAfterSeconds: Math.ceil(windowMs / 1000),
       });
     }
 

@@ -33,7 +33,6 @@ import {
   handleDispatchPublish,
   handleRecoverPublishOutbox,
   handleManagePublishedPost,
-  handleServeStagedMedia,
 } from './controllers/publishController.ts';
 import { getServerConfig, createRateLimiter, securityHeadersMiddleware } from './config.ts';
 import { getPostgresPool } from './db/postgres.ts';
@@ -57,7 +56,9 @@ import {
   verifySessionCookieValue,
 } from '../src/lib/security/sessionAuth.ts';
 
-dotenv.config();
+if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
+  dotenv.config();
+}
 
 const serverConfig = getServerConfig();
 const app = express();
@@ -365,7 +366,6 @@ app.post(['/api/publish/cleanup-media', '/publish/cleanup-media'], handleCleanup
 app.post(['/api/publish/dispatch', '/publish/dispatch'], handleDispatchPublish);
 app.post(['/api/publish/recover', '/publish/recover'], handleRecoverPublishOutbox);
 app.post(['/api/publish/manage-post', '/publish/manage-post'], handleManagePublishedPost);
-app.get(['/api/publish/media/:assetId', '/publish/media/:assetId'], handleServeStagedMedia);
 
 export default app;
 export { app };

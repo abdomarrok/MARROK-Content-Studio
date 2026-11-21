@@ -1,7 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
 import type {
   CarouselData,
@@ -10,9 +9,6 @@ import type {
   SavedPostStorageEngine,
 } from '../../src/types.ts';
 import { getServerConfig } from '../config.ts';
-import { readRuntimeEnv } from '../../src/lib/security/env.ts';
-import { fetchJsonWithTimeout, HttpClientError } from '../../src/lib/network/httpClient.ts';
-import { isAllowedProxyUrl, resolveAndValidateHost } from './proxyController.ts';
 import { parseCarouselData } from '../../src/lib/validation/carousel.ts';
 import { sanitizeFullCarousel } from '../../src/lib/textSanitizer.ts';
 import { runQAChecks } from '../../src/lib/qaChecks.ts';
@@ -27,7 +23,6 @@ import {
   clearPostgresDeletedTombstone,
 } from '../db/postgres.ts';
 
-const KV_STORAGE_KEY = 'marrok:saved_posts:v1';
 const MAX_SAVED_POSTS = 100;
 
 export class VaultPersistenceUnavailableError extends Error {
@@ -189,50 +184,12 @@ export async function clearServerDeletedPostId(
   }
 }
 
-export function shouldSyncWithRemoteVault(
-  env: NodeJS.ProcessEnv = process.env
-): string | null {
-  const isTest = Boolean(env.POSTS_STORAGE_FILE || env.NODE_ENV === 'test' || env.VITEST);
-  if (isTest) return null;
-  const origin = (readRuntimeEnv('REMOTE_VAULT_ORIGIN', env) || '').trim().replace(/\/+$/, '');
-  if (!origin || !origin.startsWith('https://')) return null;
-  if (!isAllowedProxyUrl(origin, false)) return null;
-  return origin;
-}
-
-async function fetchRemoteVaultPosts(remoteOrigin: string): Promise<SavedPostRecord[] | null> {
-  try {
-    const parsed = new URL(remoteOrigin);
-    if (!(await resolveAndValidateHost(parsed.hostname))) return null;
-    const data = await fetchJsonWithTimeout<{ posts?: SavedPostRecord[] }>(
-      `${remoteOrigin}/api/posts`,
-      {
-        method: 'GET',
-        redirect: 'manual',
-        timeoutMs: 2500,
-        contextLabel: 'Remote Vault sync',
-      }
-    );
-    return Array.isArray(data?.posts) ? data.posts : null;
-  } catch {
-    return null;
-  }
-}
-
-async function pushPostsToRemoteVault(
-  remoteOrigin: string,
-  posts: SavedPostRecord[]
-): Promise<void> {
-  try {
-    await fetch(`${remoteOrigin}/api/posts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ syncPosts: posts }),
-      signal: AbortSignal.timeout(3500),
-    });
-  } catch {
-    // Non-fatal if offline
-  }
+/**
+ * @deprecated Legacy cross-origin Vault sync is permanently retired in Phase 2.2.
+ * Returns null unconditionally to enforce single authoritative PostgreSQL storage.
+ */
+export function shouldSyncWithRemoteVault(_env?: NodeJS.ProcessEnv): string | null {
+  return null;
 }
 
 export function getBundledSeedPosts(): SavedPostRecord[] {
@@ -257,51 +214,6 @@ export function resolveStorageFilePath(env: NodeJS.ProcessEnv = process.env): {
     filePath: path.join(os.tmpdir(), 'marrok-saved-posts.json'),
     engine: 'vercel-tmp',
   };
-}
-
-async function readFromKv(url: string, token: string): Promise<SavedPostRecord[] | null> {
-  try {
-    const cleanUrl = url.replace(/\/+$/, '');
-    const data = await fetchJsonWithTimeout<{ result?: string | null }>(
-      `${cleanUrl}/get/${encodeURIComponent(KV_STORAGE_KEY)}`,
-      {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        timeoutMs: 5000,
-        contextLabel: 'Cloud KV read',
-      }
-    );
-    if (!data || !data.result) return [];
-    const parsed = JSON.parse(data.result);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (err) {
-    if (err instanceof HttpClientError && err.status > 0) {
-      return null;
-    }
-    console.warn('[PostsStore] Cloud KV read failed, falling back to file store:', err);
-    return null;
-  }
-}
-
-async function writeToKv(url: string, token: string, posts: SavedPostRecord[]): Promise<boolean> {
-  try {
-    const cleanUrl = url.replace(/\/+$/, '');
-    const res = await fetch(cleanUrl, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(['SET', KV_STORAGE_KEY, JSON.stringify(posts)]),
-      signal: AbortSignal.timeout(5000),
-    });
-    return res.ok;
-  } catch (err) {
-    console.warn('[PostsStore] Cloud KV write failed, falling back to file store:', err);
-    return false;
-  }
 }
 
 async function readFromFileStore(env: NodeJS.ProcessEnv = process.env): Promise<{
@@ -342,7 +254,8 @@ async function writeToFileStore(
 
 /**
  * READ-PURE loader for GET endpoints (/api/posts, /api/publish/status).
- * Never mutates Postgres rows, never writes disk files, and never promotes scheduled posts on GET.
+ * Authoritative source is Neon Serverless PostgreSQL.
+ * Ephemeral file store is strictly for local dev/testing environments.
  */
 export async function loadStoredPosts(
   env: NodeJS.ProcessEnv = process.env,
@@ -356,7 +269,7 @@ export async function loadStoredPosts(
   const config = getServerConfig(env);
   const deletedIds = await loadServerDeletedPostIds(env);
 
-  // 1. Neon Serverless PostgreSQL Cloud Persistence (READ-PURE)
+  // 1. Authoritative Neon Serverless PostgreSQL Cloud Persistence (READ-PURE)
   if (config.databaseUrl) {
     try {
       const pool = getPostgresPool(config.databaseUrl);
@@ -388,8 +301,7 @@ export async function loadStoredPosts(
     }
   } else if (
     options.strictDatabase &&
-    isProductionServerlessVaultRuntime(env) &&
-    !(config.kvRestUrl && config.kvRestToken)
+    isProductionServerlessVaultRuntime(env)
   ) {
     throw new VaultPersistenceUnavailableError(
       'DATABASE_URL is required for durable Vault persistence in production serverless environments.',
@@ -397,38 +309,9 @@ export async function loadStoredPosts(
     );
   }
 
-  // 2. Vercel KV / Upstash Redis (READ-PURE)
-  if (config.kvRestUrl && config.kvRestToken) {
-    const kvPosts = await readFromKv(config.kvRestUrl, config.kvRestToken);
-    if (kvPosts !== null) {
-      const filteredKv = deduplicateSavedPosts(
-        kvPosts.filter((p) => !deletedIds.has(p.id))
-      );
-      return {
-        posts: filteredKv,
-        storageEngine: 'cloud-kv',
-        isCloudPersistent: true,
-        deletedIds: Array.from(deletedIds),
-      };
-    }
-  }
-
+  // 2. Ephemeral Local File Store (strictly for local dev & offline test runners)
   const { posts: rawLocalPosts, engine } = await readFromFileStore(env);
   const localPosts = deduplicateSavedPosts(rawLocalPosts.filter((p) => !deletedIds.has(p.id)));
-
-  const remoteOrigin = shouldSyncWithRemoteVault(env);
-  if (remoteOrigin) {
-    const remotePosts = await fetchRemoteVaultPosts(remoteOrigin);
-    if (remotePosts && remotePosts.length > 0) {
-      const merged = mergePostLists(localPosts, remotePosts, deletedIds);
-      return {
-        posts: merged,
-        storageEngine: engine,
-        isCloudPersistent: true,
-        deletedIds: Array.from(deletedIds),
-      };
-    }
-  }
 
   return {
     posts: localPosts,
@@ -439,8 +322,8 @@ export async function loadStoredPosts(
 }
 
 /**
- * Persists a single SavedPostRecord cleanly with a single-row UPSERT in Postgres
- * instead of rewriting all 100 Vault rows.
+ * Persists a single SavedPostRecord cleanly with a single-row UPSERT in Postgres.
+ * Fails closed in production serverless when PostgreSQL is unavailable.
  */
 export async function upsertSingleStoredPost(
   post: SavedPostRecord,
@@ -471,7 +354,7 @@ export async function upsertSingleStoredPost(
   }
 
   // Never silently claim durable write success onto ephemeral /tmp in production serverless
-  if (isProductionServerlessVaultRuntime(env) && !(config.kvRestUrl && config.kvRestToken)) {
+  if (isProductionServerlessVaultRuntime(env)) {
     throw new VaultPersistenceUnavailableError(
       'DATABASE_URL is required for durable Vault persistence in production serverless environments.'
     );
@@ -483,23 +366,7 @@ export async function upsertSingleStoredPost(
     MAX_SAVED_POSTS
   );
 
-  // Legacy KV compatibility (non-Postgres deployments only; scheduled for migration & removal)
-  if (config.kvRestUrl && config.kvRestToken) {
-    const ok = await writeToKv(config.kvRestUrl, config.kvRestToken, merged);
-    if (ok) return 'cloud-kv';
-    if (isProductionServerlessVaultRuntime(env)) {
-      throw new VaultPersistenceUnavailableError(
-        'Legacy KV write failed and ephemeral /tmp fallback is disabled in production serverless.'
-      );
-    }
-  }
-
-  const engine = await writeToFileStore(merged, env);
-  const remoteOrigin = shouldSyncWithRemoteVault(env);
-  if (remoteOrigin) {
-    void pushPostsToRemoteVault(remoteOrigin, merged);
-  }
-  return engine;
+  return await writeToFileStore(merged, env);
 }
 
 /**
@@ -527,7 +394,7 @@ export async function deleteSingleStoredPost(
     return 'neon-postgres';
   }
 
-  if (isProductionServerlessVaultRuntime(env) && !(config.kvRestUrl && config.kvRestToken)) {
+  if (isProductionServerlessVaultRuntime(env)) {
     throw new VaultPersistenceUnavailableError(
       'DATABASE_URL is required for durable Vault deletion in production serverless environments.'
     );
@@ -536,22 +403,7 @@ export async function deleteSingleStoredPost(
   const baseList = existingListHint ?? (await loadStoredPosts(env)).posts;
   const filtered = baseList.filter((p) => p.id !== cleanId);
 
-  if (config.kvRestUrl && config.kvRestToken) {
-    const ok = await writeToKv(config.kvRestUrl, config.kvRestToken, filtered);
-    if (ok) return 'cloud-kv';
-    if (isProductionServerlessVaultRuntime(env)) {
-      throw new VaultPersistenceUnavailableError(
-        'Legacy KV delete failed and ephemeral /tmp fallback is disabled in production serverless.'
-      );
-    }
-  }
-
-  const engine = await writeToFileStore(filtered, env);
-  const remoteOrigin = shouldSyncWithRemoteVault(env);
-  if (remoteOrigin && cleanId) {
-    void pushPostsToRemoteVault(remoteOrigin, filtered);
-  }
-  return engine;
+  return await writeToFileStore(filtered, env);
 }
 
 export async function saveStoredPosts(
@@ -585,31 +437,13 @@ export async function saveStoredPosts(
     }
   }
 
-  if (isProductionServerlessVaultRuntime(env) && !(config.kvRestUrl && config.kvRestToken)) {
+  if (isProductionServerlessVaultRuntime(env)) {
     throw new VaultPersistenceUnavailableError(
       'DATABASE_URL is required for durable Vault persistence in production serverless environments.'
     );
   }
 
-  // 2. Legacy KV compatibility (non-Postgres deployments only; scheduled for migration & removal)
-  if (config.kvRestUrl && config.kvRestToken) {
-    const ok = await writeToKv(config.kvRestUrl, config.kvRestToken, sorted);
-    if (ok) {
-      return 'cloud-kv';
-    }
-    if (isProductionServerlessVaultRuntime(env)) {
-      throw new VaultPersistenceUnavailableError(
-        'Legacy KV write failed and ephemeral /tmp fallback is disabled in production serverless.'
-      );
-    }
-  }
-
-  const engine = await writeToFileStore(sorted, env);
-  const remoteOrigin = shouldSyncWithRemoteVault(env);
-  if (remoteOrigin) {
-    void pushPostsToRemoteVault(remoteOrigin, sorted);
-  }
-  return engine;
+  return await writeToFileStore(sorted, env);
 }
 
 function normalizePostTitleSignature(post: SavedPostRecord): string {
@@ -943,7 +777,6 @@ export async function handleSavePost(req: Request, res: Response) {
         storageEngine,
         isCloudPersistent:
           storageEngine === 'neon-postgres' ||
-          storageEngine === 'cloud-kv' ||
           storageEngine === 'local-disk',
         deletedIds: Array.from(deletedIds),
       });
@@ -1055,17 +888,6 @@ export async function handleUpdatePostStatus(req: Request, res: Response) {
 export async function handleDeletePost(req: Request, res: Response) {
   try {
     const id = String(req.params.id || '').trim();
-    const remoteOrigin = shouldSyncWithRemoteVault();
-    if (remoteOrigin && id) {
-      try {
-        await fetch(`${remoteOrigin}/api/posts/${encodeURIComponent(id)}`, {
-          method: 'DELETE',
-          signal: AbortSignal.timeout(2500),
-        });
-      } catch {
-        // Non-fatal if remote is unreachable
-      }
-    }
     const { posts } = await loadStoredPosts(process.env, { strictDatabase: true });
     const storageEngine = await deleteSingleStoredPost(id, posts);
 

@@ -114,6 +114,12 @@ if (typeof HTMLImageElement !== 'undefined') {
   });
 }
 
+// Isolate tests from external live PostgreSQL database unless explicitly configured per-test
+delete process.env.DATABASE_URL;
+delete process.env.POSTGRES_URL;
+delete process.env.NETLIFY_DATABASE_URL;
+delete process.env.NETLIFY_DATABASE_URL_UNPOOLED;
+
 afterEach(() => {
   cleanup();
   localStorage.clear();

@@ -244,8 +244,11 @@ export async function revokeSessionToken(
         [verified.jti, verified.exp]
       );
       await pool.query(`DELETE FROM auth_revoked_sessions WHERE expires_at < NOW()`);
-    } catch {
-      // Non-fatal fallback to in-memory denylist
+    } catch (err) {
+      console.error('[SessionAuth] Failed to persist session revocation in PostgreSQL (fail-closed):', err);
+      throw new Error(
+        `Session revocation persistence failed: ${err instanceof Error ? err.message : 'database error'}`
+      );
     }
   }
 }
@@ -334,8 +337,17 @@ export async function verifySessionCookieValue(
         memoryRevokedJtis.set(payload.jti, payload.exp * 1000);
         return null;
       }
-    } catch {
-      // Table may not exist yet before first logout; ignore cleanly
+    } catch (err: unknown) {
+      const pgCode = (err as { code?: string })?.code;
+      if (pgCode === '42P01') {
+        // Table auth_revoked_sessions does not exist yet before first logout; benign
+      } else {
+        // Database connection failed or outage occurred.
+        // FAIL CLOSED: when authoritative database is configured, an outage must not allow
+        // potentially-revoked tokens to be accepted on another serverless instance.
+        console.error('[SessionAuth] Database error verifying session revocation (fail-closed):', err instanceof Error ? err.message : err);
+        return null;
+      }
     }
   }
 
@@ -371,8 +383,15 @@ export async function checkLoginLockout(
           };
         }
       }
-    } catch {
-      // Table may not exist yet
+    } catch (err: unknown) {
+      const pgCode = (err as { code?: string })?.code;
+      if (pgCode === '42P01') {
+        // Table does not exist yet before first lockout; benign
+      } else {
+        console.error('[SessionAuth] Database error checking login lockout (fail-closed):', err instanceof Error ? err.message : err);
+        // Fail closed: if database is down, prevent brute-force attacks across serverless instances
+        return { locked: true, retryAfterSeconds: 60 };
+      }
     }
   }
 
