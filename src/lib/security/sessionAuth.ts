@@ -456,7 +456,12 @@ export function isCronOrWebhookSecretAuthorized(
     return Boolean(expected && provided && constantTimeEqualText(provided, expected));
   }
 
-  if (cleanPath === '/api/publish/cleanup-media' || cleanPath === '/publish/cleanup-media') {
+  if (
+    cleanPath === '/api/publish/cleanup-media' ||
+    cleanPath === '/publish/cleanup-media' ||
+    cleanPath === '/api/publish/recover' ||
+    cleanPath === '/publish/recover'
+  ) {
     const expected = readRuntimeEnv('API_SHARED_SECRET', envOverride);
     const provided = headerValue('x-api-secret');
     return Boolean(expected && provided && constantTimeEqualText(provided, expected));

@@ -2314,6 +2314,31 @@ const ALLOWED_SKIP_REASONS = new Set<TriageSkipReason>([
   'risky',
 ]);
 
+export class TriagePersistenceUnavailableError extends Error {
+  status: number;
+  code: string;
+  constructor(
+    message = 'Durable triage persistence is unavailable.',
+    status = 503,
+    code = 'TRIAGE_PERSISTENCE_UNAVAILABLE'
+  ) {
+    super(message);
+    this.name = 'TriagePersistenceUnavailableError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+function isProductionServerlessTriageRuntime(env: NodeJS.ProcessEnv = process.env): boolean {
+  const nodeEnv = (env.NODE_ENV || '').trim().toLowerCase();
+  const isVitest = env.VITEST === 'true' || nodeEnv === 'test';
+  if (isVitest) return false;
+  return Boolean(
+    (env.VERCEL || env.VERCEL_ENV || env.NETLIFY || env.AWS_LAMBDA_FUNCTION_NAME) &&
+      nodeEnv === 'production'
+  );
+}
+
 function getTriageFallbackPath(): string {
   return process.env.TRIAGE_STORAGE_FILE || path.join(os.tmpdir(), 'marrok-inbox-triage.json');
 }
@@ -2332,7 +2357,7 @@ async function saveFallbackTriageDecisions(records: TriageDecisionRecord[]): Pro
   try {
     await fs.writeFile(getTriageFallbackPath(), JSON.stringify(records.slice(0, 300), null, 2), 'utf-8');
   } catch {
-    // Non-fatal in read-only environments
+    // Non-fatal in read-only local dev environments
   }
 }
 
@@ -2340,12 +2365,20 @@ export async function loadStoredTriageDecisions(limit = 250): Promise<TriageDeci
   const cfg = getServerConfig();
   if (cfg.databaseUrl) {
     const pool = getPostgresPool(cfg.databaseUrl);
-    if (pool) {
-      try {
-        return await queryPostgresTriageDecisions(pool, limit);
-      } catch (err) {
-        console.warn('[TriageStore] Postgres query failed, using fallback store:', err);
-      }
+    if (!pool) {
+      throw new TriagePersistenceUnavailableError(
+        'PostgreSQL pool is unavailable for triage reads.',
+        502
+      );
+    }
+    try {
+      return await queryPostgresTriageDecisions(pool, limit);
+    } catch (err) {
+      console.error('[TriageStore] Postgres query failed (fail-closed):', err);
+      throw new TriagePersistenceUnavailableError(
+        `Triage read failed in PostgreSQL: ${err instanceof Error ? err.message : 'database error'}`,
+        502
+      );
     }
   }
   return (await loadFallbackTriageDecisions()).slice(0, limit);
@@ -2357,14 +2390,23 @@ export async function saveStoredTriageDecision(
   const cfg = getServerConfig();
   if (cfg.databaseUrl) {
     const pool = getPostgresPool(cfg.databaseUrl);
-    if (pool) {
-      try {
-        const saved = await insertPostgresTriageDecision(pool, decision);
-        return { record: saved, storage: 'postgres' };
-      } catch (err) {
-        console.warn('[TriageStore] Postgres insert failed, using fallback store:', err);
-      }
+    if (!pool) {
+      throw new TriagePersistenceUnavailableError('PostgreSQL pool is unavailable for triage writes.');
     }
+    try {
+      const saved = await insertPostgresTriageDecision(pool, decision);
+      return { record: saved, storage: 'postgres' };
+    } catch (err) {
+      console.error('[TriageStore] Postgres insert failed (fail-closed):', err);
+      throw new TriagePersistenceUnavailableError(
+        `Durable triage save failed in PostgreSQL: ${err instanceof Error ? err.message : 'database error'}`
+      );
+    }
+  }
+  if (isProductionServerlessTriageRuntime()) {
+    throw new TriagePersistenceUnavailableError(
+      'DATABASE_URL is required for durable triage persistence in production serverless environments.'
+    );
   }
   const existing = await loadFallbackTriageDecisions();
   const next = [decision, ...existing.filter((d) => d.id !== decision.id)].slice(0, 300);
@@ -2376,13 +2418,22 @@ export async function removeStoredTriageDecision(id: string): Promise<boolean> {
   const cfg = getServerConfig();
   if (cfg.databaseUrl) {
     const pool = getPostgresPool(cfg.databaseUrl);
-    if (pool) {
-      try {
-        return await deletePostgresTriageDecision(pool, id);
-      } catch (err) {
-        console.warn('[TriageStore] Postgres delete failed, using fallback store:', err);
-      }
+    if (!pool) {
+      throw new TriagePersistenceUnavailableError('PostgreSQL pool is unavailable for triage deletes.');
     }
+    try {
+      return await deletePostgresTriageDecision(pool, id);
+    } catch (err) {
+      console.error('[TriageStore] Postgres delete failed (fail-closed):', err);
+      throw new TriagePersistenceUnavailableError(
+        `Durable triage delete failed in PostgreSQL: ${err instanceof Error ? err.message : 'database error'}`
+      );
+    }
+  }
+  if (isProductionServerlessTriageRuntime()) {
+    throw new TriagePersistenceUnavailableError(
+      'DATABASE_URL is required for durable triage deletion in production serverless environments.'
+    );
   }
   const existing = await loadFallbackTriageDecisions();
   const next = existing.filter((d) => d.id !== id);
@@ -2398,6 +2449,10 @@ export async function handleListTriageDecisions(_req: Request, res: Response): P
     const decisions = await loadStoredTriageDecisions(250);
     res.json({ ok: true, decisions });
   } catch (err) {
+    if (err instanceof TriagePersistenceUnavailableError) {
+      res.status(err.status).json({ error: err.message, code: err.code });
+      return;
+    }
     res.status(500).json({
       error: err instanceof Error ? err.message : 'Failed to load triage decisions',
     });
@@ -2458,6 +2513,10 @@ export async function handleRecordTriageDecision(req: Request, res: Response): P
     const saved = await saveStoredTriageDecision(decision);
     res.status(200).json({ ok: true, decision: saved.record, storage: saved.storage });
   } catch (err) {
+    if (err instanceof TriagePersistenceUnavailableError) {
+      res.status(err.status).json({ error: err.message, code: err.code });
+      return;
+    }
     res.status(500).json({
       error: err instanceof Error ? err.message : 'Failed to save triage decision',
     });
@@ -2477,6 +2536,10 @@ export async function handleDeleteTriageDecision(req: Request, res: Response): P
     const deleted = await removeStoredTriageDecision(id);
     res.status(200).json({ ok: true, deleted, id });
   } catch (err) {
+    if (err instanceof TriagePersistenceUnavailableError) {
+      res.status(err.status).json({ error: err.message, code: err.code });
+      return;
+    }
     res.status(500).json({
       error: err instanceof Error ? err.message : 'Failed to undo triage decision',
     });

@@ -683,7 +683,8 @@ export type PublishTargetState =
   | 'succeeded'
   | 'skipped_fallback'
   | 'failed_retryable'
-  | 'failed_permanent';
+  | 'failed_permanent'
+  | 'outcome_unknown';
 
 export type PublishFailureCategory =
   | 'transient_network'
@@ -703,6 +704,8 @@ export interface PublishOutboxOperation {
   remotePostId?: string;
   bufferPostId?: string;
   zernioPostId?: string;
+  idempotencyKey?: string;
+  externalId?: string;
   failureCategory?: PublishFailureCategory;
   retryable?: boolean;
   statusCode?: number;
@@ -746,6 +749,7 @@ export interface PublishOutboxRecord {
   maxAttempts: number;
   leaseOwner?: string | null;
   leaseExpiresAt?: string | null;
+  leaseGeneration?: number;
   nextRetryAt?: string | null;
   lastErrorCategory?: PublishFailureCategory | null;
   lastErrorMessage?: string | null;

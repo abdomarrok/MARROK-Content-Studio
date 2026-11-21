@@ -138,4 +138,81 @@ describe('Phase B2 — Honest Client IndexedDB Fallback & Error Surfacing', () =
     expect(rawLocal).toHaveLength(1);
     expect(rawLocal[0].id).toBe('post_protected_1');
   });
+
+  it('drops stale synced local cache entries absent from server while keeping and syncing only genuine offlineDraft records', async () => {
+    const nowIso = new Date().toISOString();
+    window.localStorage.setItem(
+      'marrok_posts_vault_fallback_v1',
+      JSON.stringify([
+        {
+          id: 'post_stale_cached_1',
+          title: 'Stale Cached Post',
+          category: 'SECURITY',
+          postStatus: 'validated',
+          createdAt: nowIso,
+          updatedAt: nowIso,
+          creatorHandle: 'MARROK',
+          slideCount: DEFAULT_STARTER_DECK.slides.length,
+          qaPassed: true,
+          offlineDraft: false,
+          deck: { ...DEFAULT_STARTER_DECK, id: 'post_stale_cached_1' },
+        },
+        {
+          id: 'post_genuine_offline_draft_1',
+          title: 'Genuine Offline Draft',
+          category: 'DISTRIBUTED SYSTEMS',
+          postStatus: 'validated',
+          createdAt: nowIso,
+          updatedAt: nowIso,
+          creatorHandle: 'MARROK',
+          slideCount: DEFAULT_STARTER_DECK.slides.length,
+          qaPassed: true,
+          offlineDraft: true,
+          deck: {
+            ...DEFAULT_STARTER_DECK,
+            id: 'post_genuine_offline_draft_1',
+            slides: DEFAULT_STARTER_DECK.slides.map((s, idx) =>
+              idx === 0 ? { ...s, enTitle: 'Unique Offline Draft Title' } : s
+            ),
+          },
+        },
+      ])
+    );
+
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            posts: [],
+            deletedIds: [],
+            storageEngine: 'neon-postgres',
+            isCloudPersistent: true,
+          }),
+          { status: 200 }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            posts: [],
+            deletedIds: [],
+            storageEngine: 'neon-postgres',
+            isCloudPersistent: true,
+          }),
+          { status: 200 }
+        )
+      );
+
+    const res = await loadVaultPosts();
+    expect(res.posts.map((p) => p.id)).toEqual(['post_genuine_offline_draft_1']);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const syncBody = JSON.parse(String(fetchSpy.mock.calls[1][1]?.body || '{}'));
+    expect(syncBody.syncPosts.map((p: any) => p.id)).toEqual(['post_genuine_offline_draft_1']);
+
+    const cachedAfter = JSON.parse(
+      window.localStorage.getItem('marrok_posts_vault_fallback_v1') || '[]'
+    );
+    expect(cachedAfter.map((p: any) => p.id)).toEqual(['post_genuine_offline_draft_1']);
+  });
 });

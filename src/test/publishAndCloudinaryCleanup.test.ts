@@ -1049,10 +1049,11 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
     };
 
     // 1. First run: Instagram succeeds (buf_ig_unique_1), TikTok fails 502 -> partially_completed
+    //    HTTP 502 must NOT trigger duplicate _nomusic POST retry (only 400/422 music track rejection does)
     const first = await invokeDispatch();
     expect(first.statusCode).toBe(200);
     expect(bufferCreateCalls).toBe(1);
-    expect(zernioPostCalls).toBe(2); // initial + music fallback retry inside dispatchToZernioApi
+    expect(zernioPostCalls).toBe(1);
     expect(first.jsonBody.outbox.state).toBe('partially_completed');
     expect(first.jsonBody.outbox.operations.instagram).toMatchObject({
       state: 'succeeded',
@@ -1217,8 +1218,8 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
     activeLeaseRecord.operations.linkedin = {
       service: 'linkedin',
       provider: 'buffer',
-      state: 'dispatching',
-      attemptCount: 1,
+      state: 'pending',
+      attemptCount: 0,
       updatedAt: new Date().toISOString(),
     };
     await checkpointLocalOutboxRecord(activeLeaseRecord);
@@ -1334,6 +1335,447 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
     expect(second.statusCode).toBe(422);
     expect(second.jsonBody.code).toBe('DISPATCH_PERMANENT_FAILURE');
     expect(fetchCalls).toBe(1);
+  });
+
+  it('quarantines Buffer AbortError timeouts as outcome_unknown without Zernio failover or blind retry', async () => {
+    process.env.BUFFER_API_KEY = 'buf_timeout_key';
+    process.env.ZERNIO_API_KEY = 'zernio_no_failover_key';
+
+    let bufferMutateCalls = 0;
+    let zernioPostCalls = 0;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: any) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (url === 'https://api.buffer.com') {
+        const parsed = JSON.parse(String(init?.body || '{}'));
+        if (String(parsed.query || '').includes('GetMarrokChannels')) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                account: {
+                  organizations: [
+                    { id: 'org_1', channels: [{ id: 'buf_ig_1', service: 'instagram' }] },
+                  ],
+                },
+              },
+            }),
+            { status: 200 }
+          );
+        }
+        bufferMutateCalls++;
+        const abortErr = new Error('The operation was aborted due to timeout');
+        abortErr.name = 'TimeoutError';
+        throw abortErr;
+      }
+      if (url === 'https://zernio.com/api/v1/accounts') {
+        return new Response(
+          JSON.stringify({
+            accounts: [{ _id: 'z_ig_1', platform: 'instagram', username: 'marrok', enabled: true }],
+          }),
+          { status: 200 }
+        );
+      }
+      if (url === 'https://zernio.com/api/v1/posts') {
+        zernioPostCalls++;
+        return new Response(JSON.stringify({ post: { _id: 'dup_zernio_bad' } }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+
+    const body = {
+      postId: 'post_buf_timeout_1',
+      deck: {
+        ...DEFAULT_STARTER_DECK,
+        id: 'post_buf_timeout_1',
+        sourceMeta: {
+          ...DEFAULT_STARTER_DECK.sourceMeta,
+          userReviewed: true,
+          humanApproved: true,
+          verifiedNumbers: true,
+        },
+      },
+      title: 'Buffer Timeout Test',
+      caption: 'Quarantine unknown Buffer timeout',
+      mode: 'shareNow',
+      targets: ['instagram'],
+      imageUrls: ['https://cdn.example.com/1.jpg'],
+    };
+
+    let jsonBody: any = null;
+    await handleDispatchPublish(
+      { body } as any,
+      {
+        status() {
+          return this;
+        },
+        json(payload: unknown) {
+          jsonBody = payload;
+          return this;
+        },
+      } as any
+    );
+
+    expect(bufferMutateCalls).toBe(1);
+    expect(zernioPostCalls).toBe(0); // Must NEVER fail over to Zernio on uncertain Buffer timeout!
+    expect(jsonBody.outbox.operations.instagram.state).toBe('outcome_unknown');
+    expect(jsonBody.outbox.operations.instagram.retryable).toBe(false);
+
+    // Automated recovery MUST quarantine Buffer outcome_unknown and never double-post
+    const recovery = await recoverAndRetryOutboxDispatches({
+      postId: 'post_buf_timeout_1',
+      ignoreBackoff: true,
+    });
+    expect(recovery.completedIds).toEqual([]);
+    expect(bufferMutateCalls).toBe(1);
+    expect(zernioPostCalls).toBe(0);
+  });
+
+  it('sends Idempotency-Key + externalId to Zernio and reconciles outcome_unknown via GET externalId without duplicate POST', async () => {
+    process.env.ZERNIO_API_KEY = 'zernio_recon_key';
+    let zernioPostCalls = 0;
+    let zernioReconcileGetCalls = 0;
+    let capturedHeaders: Record<string, string> = {};
+    let capturedBody: any = null;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: any) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (url === 'https://zernio.com/api/v1/accounts') {
+        return new Response(
+          JSON.stringify({
+            accounts: [{ _id: 'z_tt_1', platform: 'tiktok', username: 'marrok', enabled: true }],
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes('/tiktok/commercial-music')) {
+        return new Response(JSON.stringify({ tracks: [{ id: '700001', name: 'Track' }] }), {
+          status: 200,
+        });
+      }
+      if (url.startsWith('https://zernio.com/api/v1/posts?externalId=')) {
+        zernioReconcileGetCalls++;
+        return new Response(
+          JSON.stringify({
+            posts: [{ _id: 'zernio_created_before_timeout', externalId: capturedBody?.externalId }],
+          }),
+          { status: 200 }
+        );
+      }
+      if (url === 'https://zernio.com/api/v1/posts') {
+        zernioPostCalls++;
+        capturedHeaders = (init?.headers || {}) as Record<string, string>;
+        capturedBody = JSON.parse(String(init?.body || '{}'));
+        const timeoutErr = new Error('Zernio HTTP timeout after creating remote post');
+        timeoutErr.name = 'TimeoutError';
+        throw timeoutErr;
+      }
+      return new Response('{}', { status: 200 });
+    });
+
+    const body = {
+      postId: 'post_zernio_timeout_1',
+      deck: {
+        ...DEFAULT_STARTER_DECK,
+        id: 'post_zernio_timeout_1',
+        sourceMeta: {
+          ...DEFAULT_STARTER_DECK.sourceMeta,
+          userReviewed: true,
+          humanApproved: true,
+          verifiedNumbers: true,
+        },
+      },
+      title: 'Zernio Idempotent Reconcile',
+      caption: 'Testing Zernio externalId reconciliation.',
+      mode: 'shareNow',
+      targets: ['tiktok'],
+      imageUrls: ['https://cdn.example.com/tt1.jpg'],
+      tiktokImageUrls: ['https://cdn.example.com/tt1.jpg'],
+    };
+
+    let firstBody: any = null;
+    await handleDispatchPublish(
+      { body } as any,
+      {
+        status() {
+          return this;
+        },
+        json(payload: unknown) {
+          firstBody = payload;
+          return this;
+        },
+      } as any
+    );
+
+    expect(zernioPostCalls).toBe(1);
+    expect(capturedHeaders['Idempotency-Key']).toMatch(/^marrok_/);
+    expect(typeof capturedBody.externalId).toBe('string');
+    expect(firstBody.outbox.operations.tiktok.state).toBe('outcome_unknown');
+    expect(firstBody.outbox.operations.tiktok.retryable).toBe(true);
+    expect(firstBody.outbox.operations.tiktok.externalId).toBe(capturedBody.externalId);
+
+    // Recovery queries GET /v1/posts?externalId=... and resolves existing ID with ZERO extra POSTs!
+    const recovery = await recoverAndRetryOutboxDispatches({
+      postId: 'post_zernio_timeout_1',
+      ignoreBackoff: true,
+    });
+    expect(recovery.completedIds).toHaveLength(1);
+    expect(zernioReconcileGetCalls).toBe(1);
+    expect(zernioPostCalls).toBe(1);
+
+    let outboxRes: any = null;
+    await handleGetPublishOutbox(
+      { query: { postId: 'post_zernio_timeout_1' } } as any,
+      {
+        status() {
+          return this;
+        },
+        json(payload: unknown) {
+          outboxRes = payload;
+          return this;
+        },
+      } as any
+    );
+    expect(outboxRes.dispatches[0].state).toBe('completed');
+    expect(outboxRes.dispatches[0].operations.tiktok.zernioPostId).toBe('zernio_created_before_timeout');
+  });
+
+  it('preserves already-persisted Buffer remote IDs in outbox even when post record save fails mid-dispatch', async () => {
+    process.env.BUFFER_API_KEY = 'buf_save_fail_key';
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: any) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (url === 'https://api.buffer.com') {
+        const parsed = JSON.parse(String(init?.body || '{}'));
+        if (String(parsed.query || '').includes('GetMarrokChannels')) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                account: {
+                  organizations: [{ id: 'org_1', channels: [{ id: 'buf_ig_1', service: 'instagram' }] }],
+                },
+              },
+            }),
+            { status: 200 }
+          );
+        }
+        return new Response(
+          JSON.stringify({ data: { createPost: { post: { id: 'buf_survived_remote_id' } } } }),
+          { status: 200 }
+        );
+      }
+      return new Response('{}', { status: 200 });
+    });
+
+    // Seed initial post, then make Vault save fail on write inside handleDispatchPublish
+    const seedPost: SavedPostRecord = {
+      id: 'post_vault_save_fail',
+      title: 'Vault Save Failure Test',
+      category: 'AI',
+      postStatus: 'validated',
+      humanApproved: true,
+      verifiedNumbers: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      creatorHandle: '@MARROK',
+      slideCount: 1,
+      qaPassed: true,
+      deck: {
+        ...DEFAULT_STARTER_DECK,
+        id: 'post_vault_save_fail',
+        sourceMeta: {
+          ...DEFAULT_STARTER_DECK.sourceMeta,
+          userReviewed: true,
+          humanApproved: true,
+          verifiedNumbers: true,
+        },
+      },
+    };
+    await saveStoredPosts([seedPost]);
+
+    const realFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    vi.spyOn(fs, 'writeFile').mockImplementation(async (targetPath, data, opts) => {
+      const p = String(targetPath);
+      if (p === process.env.POSTS_STORAGE_FILE || p.endsWith('marrok-saved-posts.json')) {
+        throw new Error('Simulated atomic Vault save failure');
+      }
+      return realFs.writeFile(targetPath, data, opts);
+    });
+
+    let errStatus = 200;
+    let errBody: any = null;
+    await handleDispatchPublish(
+      {
+        body: {
+          postId: 'post_vault_save_fail',
+          title: 'Vault Save Failure Test',
+          caption: 'Remote ID must survive!',
+          mode: 'shareNow',
+          targets: ['instagram'],
+          imageUrls: ['https://cdn.example.com/1.jpg'],
+        },
+      } as any,
+      {
+        status(code: number) {
+          errStatus = code;
+          return this;
+        },
+        json(payload: unknown) {
+          errBody = payload;
+          return this;
+        },
+      } as any
+    );
+
+    expect(errStatus).toBe(500);
+    // CRITICAL INVARIANT: Catch block must NOT wipe succeeded operation or bufferPostId!
+    expect(errBody.outbox.operations.instagram.state).toBe('succeeded');
+    expect(errBody.outbox.operations.instagram.bufferPostId).toBe('buf_survived_remote_id');
+    expect(errBody.outbox.lastErrorCategory).toBe('local_persistence_error');
+  });
+
+  it('fails CLOSED returning 503 when DATABASE_URL is configured and PostgreSQL outbox is unreachable (no /tmp split-brain)', async () => {
+    const { setPostgresPoolForTesting, resetPostgresPoolForTesting } = await import('../../api/db/postgres.ts');
+    process.env.DATABASE_URL = 'postgresql://user:pass@unreachable.invalid:5432/neondb';
+    setPostgresPoolForTesting({
+      query: vi.fn().mockRejectedValue(new Error('PG connection refused')),
+      connect: vi.fn().mockRejectedValue(new Error('PG connection refused')),
+      on: vi.fn(),
+      end: vi.fn().mockResolvedValue(undefined),
+    } as any);
+
+    try {
+      let dispatchStatus = 200;
+      let dispatchBody: any = null;
+      await handleDispatchPublish(
+        {
+          body: {
+            postId: 'post_pg_fail_closed',
+            deck: {
+              ...DEFAULT_STARTER_DECK,
+              id: 'post_pg_fail_closed',
+              sourceMeta: {
+                ...DEFAULT_STARTER_DECK.sourceMeta,
+                userReviewed: true,
+                humanApproved: true,
+                verifiedNumbers: true,
+              },
+            },
+            title: 'Fail Closed Test',
+            mode: 'shareNow',
+            targets: ['instagram'],
+            imageUrls: ['https://cdn.example.com/1.jpg'],
+          },
+        } as any,
+        {
+          status(code: number) {
+            dispatchStatus = code;
+            return this;
+          },
+          json(payload: unknown) {
+            dispatchBody = payload;
+            return this;
+          },
+        } as any
+      );
+      expect(dispatchStatus).toBe(503);
+      expect(dispatchBody.code).toBe('OUTBOX_PERSISTENCE_UNAVAILABLE');
+
+      let recoverStatus = 200;
+      let recoverBody: any = null;
+      await handleRecoverPublishOutbox(
+        { body: {} } as any,
+        {
+          status(code: number) {
+            recoverStatus = code;
+            return this;
+          },
+          json(payload: unknown) {
+            recoverBody = payload;
+            return this;
+          },
+        } as any
+      );
+      expect(recoverStatus).toBe(503);
+      expect(recoverBody.code).toBe('OUTBOX_PERSISTENCE_UNAVAILABLE');
+    } finally {
+      delete process.env.DATABASE_URL;
+      resetPostgresPoolForTesting();
+    }
+  });
+
+  it('retains unconfirmed remote post IDs when provider delete fails during unschedule and blocks overdue promotion during active/partial outbox', async () => {
+    const { isEligibleOverduePromotion } = await import('../lib/publish/schedulePredicate.ts');
+    const pastIso = new Date(Date.now() - 3600_000).toISOString();
+    expect(
+      isEligibleOverduePromotion({
+        id: 'overdue_partial',
+        title: 'Partial',
+        category: 'AI',
+        postStatus: 'validated',
+        outboxState: 'partially_completed',
+        humanApproved: true,
+        createdAt: pastIso,
+        updatedAt: pastIso,
+        creatorHandle: '@MARROK',
+        slideCount: 1,
+        qaPassed: true,
+        scheduledFor: pastIso,
+        cloudinaryPublicIds: ['marrok_staging/p1'],
+        deck: DEFAULT_STARTER_DECK,
+      })
+    ).toBe(false);
+
+    process.env.BUFFER_API_KEY = 'buf_unschedule_partial_key';
+    process.env.ZERNIO_API_KEY = 'zernio_unschedule_partial_key';
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (url === 'https://api.buffer.com') {
+        return new Response(JSON.stringify({ errors: [{ message: 'Buffer delete failed' }] }), {
+          status: 500,
+        });
+      }
+      if (url.startsWith('https://zernio.com/api/v1/posts/')) {
+        return new Response('{}', { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+
+    await saveStoredPosts([
+      {
+        id: 'post_unsched_partial',
+        title: 'Unschedule Partial',
+        category: 'AI',
+        postStatus: 'validated',
+        createdAt: pastIso,
+        updatedAt: pastIso,
+        creatorHandle: '@MARROK',
+        slideCount: 1,
+        qaPassed: true,
+        scheduledFor: new Date(Date.now() + 7200_000).toISOString(),
+        bufferPostIds: ['buf_still_live_1'],
+        zernioPostIds: ['z_cancelled_1'],
+        deck: DEFAULT_STARTER_DECK,
+      },
+    ]);
+
+    let resBody: any = null;
+    await handleManagePublishedPost(
+      { body: { postId: 'post_unsched_partial', action: 'unschedule' } } as any,
+      {
+        status() {
+          return this;
+        },
+        json(payload: unknown) {
+          resBody = payload;
+          return this;
+        },
+      } as any
+    );
+
+    expect(resBody.ok).toBe(true);
+    expect(resBody.warnings.length).toBeGreaterThan(0);
+    // Buffer delete failed -> must retain buf_still_live_1; Zernio delete succeeded -> z_cancelled_1 cleared
+    expect(resBody.post.bufferPostIds).toEqual(['buf_still_live_1']);
+    expect(resBody.post.zernioPostIds).toBeUndefined();
   });
 });
 

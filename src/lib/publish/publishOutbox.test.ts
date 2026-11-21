@@ -1,15 +1,26 @@
 import { describe, it, expect } from 'vitest';
 import {
+  StaleOutboxLeaseError,
+  buildZernioIdempotencyIdentity,
   canRetryOutboxRecord,
+  cancelLocalOutboxDispatchesForPost,
+  checkpointLocalOutboxRecord,
+  claimLocalOutboxDispatch,
   classifyProviderFailure,
   collectOutboxRemoteIds,
   computeOutboxAggregateState,
+  computeRetryBackoffMs,
   createNewOutboxRecord,
   evaluateExistingOutboxClaim,
   finalizeOutboxRecord,
+  isZernioOperationReconcilable,
+  parseRetryAfterHeaderMs,
   reconcileInterruptedOperations,
   selectTargetsPendingExecution,
 } from './publishOutbox.ts';
+import os from 'node:os';
+import path from 'node:path';
+import fs from 'node:fs/promises';
 import type { PublishOutboxRecord } from '../../types.ts';
 
 describe('Durable Publishing Outbox State Machine & Failure Classification', () => {
@@ -44,8 +55,9 @@ describe('Durable Publishing Outbox State Machine & Failure Classification', () 
     });
   });
 
-  it('transitions interrupted in-flight operations to failed_retryable while preserving confirmed remote IDs', () => {
+  it('transitions interrupted in-flight operations to outcome_unknown while preserving confirmed remote IDs and marking only reconcilable Zernio ops retryable', () => {
     const nowIso = '2026-11-21T12:00:00.000Z';
+    const zernioIdem = buildZernioIdempotencyIdentity('fp_rec', 'tiktok');
     const reconciled = reconcileInterruptedOperations(
       {
         instagram: {
@@ -58,22 +70,36 @@ describe('Durable Publishing Outbox State Machine & Failure Classification', () 
           updatedAt: nowIso,
           completedAt: nowIso,
         },
+        facebook: {
+          service: 'facebook',
+          provider: 'buffer',
+          state: 'dispatching',
+          attemptCount: 1,
+          updatedAt: nowIso,
+        },
         tiktok: {
           service: 'tiktok',
           provider: 'zernio',
           state: 'dispatching',
           attemptCount: 1,
+          idempotencyKey: zernioIdem.idempotencyKey,
+          externalId: zernioIdem.externalId,
           updatedAt: nowIso,
         },
       },
-      ['instagram', 'tiktok', 'linkedin'],
+      ['instagram', 'facebook', 'tiktok', 'linkedin'],
       nowIso
     );
 
     expect(reconciled.instagram?.state).toBe('succeeded');
     expect(reconciled.instagram?.bufferPostId).toBe('buf_ig_1');
-    expect(reconciled.tiktok?.state).toBe('failed_retryable');
+    expect(reconciled.facebook?.state).toBe('outcome_unknown');
+    expect(reconciled.facebook?.retryable).toBe(false);
+    expect(reconciled.tiktok?.state).toBe('outcome_unknown');
+    expect(reconciled.tiktok?.retryable).toBe(true);
     expect(reconciled.tiktok?.failureCategory).toBe('timeout_interrupted');
+    expect(isZernioOperationReconcilable(reconciled.tiktok)).toBe(true);
+    expect(isZernioOperationReconcilable(reconciled.facebook)).toBe(false);
     expect(reconciled.linkedin?.state).toBe('pending');
   });
 
@@ -245,6 +271,108 @@ describe('Durable Publishing Outbox State Machine & Failure Classification', () 
         nowMs: startMs + 120_000,
       });
       expect(blockedClaim.status).toBe('permanent_or_exhausted');
+    }
+  });
+
+  it('parses Retry-After seconds/dates and applies bounded jitter to exponential backoff', () => {
+    const nowMs = Date.parse('2026-11-21T12:00:00.000Z');
+    expect(parseRetryAfterHeaderMs('45', nowMs)).toBe(45_000);
+    expect(parseRetryAfterHeaderMs('Sat, 21 Nov 2026 12:02:00 GMT', nowMs)).toBe(120_000);
+    expect(parseRetryAfterHeaderMs('invalid-date', nowMs)).toBeUndefined();
+
+    expect(computeRetryBackoffMs(1, 'upstream_5xx', { retryAfterMs: 90_000 })).toBe(90_000);
+    for (let i = 0; i < 10; i++) {
+      const jittered = computeRetryBackoffMs(1, 'rate_limited', { jitter: true });
+      expect(jittered).toBeGreaterThanOrEqual(51_000); // 60_000 * 0.85
+      expect(jittered).toBeLessThanOrEqual(69_000); // 60_000 * 1.15
+    }
+  });
+
+  it('rejects stale leaseGeneration checkpoints and cancelled-dispatch checkpoints with StaleOutboxLeaseError', async () => {
+    const tmpStorage = path.join(os.tmpdir(), `marrok-fencing-test-${Date.now()}.json`);
+    const env = { POSTS_STORAGE_FILE: tmpStorage } as NodeJS.ProcessEnv;
+
+    try {
+      const t0 = Date.parse('2026-11-21T12:00:00.000Z');
+      const payload = {
+        postId: 'post_fence_1',
+        caption: 'Fence test',
+        mode: 'shareNow' as const,
+        targets: ['instagram' as const],
+        imageUrls: ['https://cdn.example.com/1.jpg'],
+        tiktokImageUrls: [],
+        cloudinaryPublicIds: [],
+      };
+
+      const claimA = await claimLocalOutboxDispatch(
+        {
+          postId: 'post_fence_1',
+          dispatchFingerprint: 'fp_fence_1',
+          mode: 'shareNow',
+          targets: ['instagram'],
+          payload,
+          leaseOwner: 'worker_A',
+          leaseDurationMs: 30_000,
+          nowMs: t0,
+        },
+        env
+      );
+      expect(claimA.status).toBe('claimed');
+      if (claimA.status !== 'claimed') return;
+      expect(claimA.record.leaseGeneration).toBe(1);
+
+      // Even cancelExistingBeforeDispatch=true cannot steal an unexpired active lease for the same postId
+      const blockedSteal = await claimLocalOutboxDispatch(
+        {
+          postId: 'post_fence_1',
+          dispatchFingerprint: 'fp_fence_other',
+          mode: 'shareNow',
+          targets: ['instagram'],
+          payload,
+          leaseOwner: 'worker_B',
+          cancelExistingBeforeDispatch: true,
+          nowMs: t0 + 5_000,
+        },
+        env
+      );
+      expect(blockedSteal.status).toBe('in_flight');
+
+      // After expiry, worker_C claims generation 2
+      const claimC = await claimLocalOutboxDispatch(
+        {
+          postId: 'post_fence_1',
+          dispatchFingerprint: 'fp_fence_1',
+          mode: 'shareNow',
+          targets: ['instagram'],
+          payload,
+          leaseOwner: 'worker_C',
+          leaseDurationMs: 30_000,
+          nowMs: t0 + 40_000,
+        },
+        env
+      );
+      expect(claimC.status).toBe('claimed');
+      if (claimC.status !== 'claimed') return;
+      expect(claimC.record.leaseGeneration).toBe(2);
+
+      // Stale worker_A checkpoint (generation 1) MUST throw StaleOutboxLeaseError
+      await expect(
+        checkpointLocalOutboxRecord(
+          { ...claimA.record, state: 'failed_retryable' },
+          env
+        )
+      ).rejects.toBeInstanceOf(StaleOutboxLeaseError);
+
+      // Cancelling post increments generation and blocks worker_C checkpointing 'completed'
+      await cancelLocalOutboxDispatchesForPost('post_fence_1', env);
+      await expect(
+        checkpointLocalOutboxRecord(
+          { ...claimC.record, state: 'completed' },
+          env
+        )
+      ).rejects.toBeInstanceOf(StaleOutboxLeaseError);
+    } finally {
+      await fs.unlink(`${tmpStorage}.outbox.json`).catch(() => undefined);
     }
   });
 });

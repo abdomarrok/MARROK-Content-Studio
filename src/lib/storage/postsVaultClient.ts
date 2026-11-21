@@ -343,9 +343,11 @@ export async function loadVaultPosts(): Promise<VaultLoadResult> {
     const serverPosts = (Array.isArray(data.posts) ? data.posts : [])
       .filter((p) => !deletedIds.has(p.id))
       .map((p) => ({ ...p, offlineDraft: false }));
-    const filteredLocalPosts = localPosts.filter((p) => !deletedIds.has(p.id));
+    const pendingOfflineDrafts = localPosts.filter(
+      (p) => p.offlineDraft === true && !deletedIds.has(p.id)
+    );
     const mergedServerAndRemote = mergeRecords(remotePosts, serverPosts);
-    const merged = mergeRecords(mergedServerAndRemote, filteredLocalPosts).filter(
+    const merged = mergeRecords(mergedServerAndRemote, pendingOfflineDrafts).filter(
       (p) => !deletedIds.has(p.id)
     );
 
@@ -353,8 +355,8 @@ export async function loadVaultPosts(): Promise<VaultLoadResult> {
 
     const deletedIdsArray = Array.from(deletedIds);
 
-    // Sync any unsynced offline local drafts back up to the authenticated server when online
-    if (merged.length > serverPosts.length) {
+    // Sync ONLY genuine offline-created/edited drafts back up to the authoritative server
+    if (pendingOfflineDrafts.length > 0 && merged.length > serverPosts.length) {
       fetch('/api/posts', {
         method: 'POST',
         credentials: 'include',

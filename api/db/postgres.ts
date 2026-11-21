@@ -14,6 +14,7 @@ import type {
   TriageSkipReason,
 } from '../../src/types.ts';
 import {
+  StaleOutboxLeaseError,
   createNewOutboxRecord,
   evaluateExistingOutboxClaim,
   type ClaimOutboxDispatchOutcome,
@@ -164,6 +165,7 @@ export async function initPostgresSchema(pool: pg.Pool): Promise<void> {
       max_attempts INTEGER NOT NULL DEFAULT 3,
       lease_owner VARCHAR(128),
       lease_expires_at TIMESTAMPTZ,
+      lease_generation INTEGER NOT NULL DEFAULT 0,
       next_retry_at TIMESTAMPTZ,
       last_error_category VARCHAR(48),
       last_error_message TEXT,
@@ -175,6 +177,7 @@ export async function initPostgresSchema(pool: pg.Pool): Promise<void> {
     );
 
     ALTER TABLE saved_posts ADD COLUMN IF NOT EXISTS cloudinary_cleaned_at TIMESTAMPTZ;
+    ALTER TABLE publish_outbox ADD COLUMN IF NOT EXISTS lease_generation INTEGER NOT NULL DEFAULT 0;
 
     CREATE INDEX IF NOT EXISTS idx_saved_posts_status ON saved_posts(post_status);
     CREATE INDEX IF NOT EXISTS idx_saved_posts_scheduled_for ON saved_posts(scheduled_for);
@@ -186,6 +189,7 @@ export async function initPostgresSchema(pool: pg.Pool): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_publish_outbox_state ON publish_outbox(state);
     CREATE INDEX IF NOT EXISTS idx_publish_outbox_lease_expires ON publish_outbox(lease_expires_at);
     CREATE INDEX IF NOT EXISTS idx_publish_outbox_next_retry ON publish_outbox(next_retry_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_publish_outbox_active_post ON publish_outbox(post_id) WHERE state = 'dispatching';
   `;
 
   await pool.query(createTableSql);
@@ -737,6 +741,7 @@ function rowToOutboxRecord(row: Record<string, unknown>): PublishOutboxRecord {
         ? row.lease_expires_at.toISOString()
         : String(row.lease_expires_at)
       : null,
+    leaseGeneration: Number(row.lease_generation ?? 0),
     nextRetryAt: row.next_retry_at
       ? row.next_retry_at instanceof Date
         ? row.next_retry_at.toISOString()
@@ -777,39 +782,42 @@ export async function claimPostgresOutboxDispatch(
   const nowDate = new Date(params.nowMs ?? Date.now());
 
   const runClaim = async (queryFn: pg.Pool['query']): Promise<ClaimOutboxDispatchOutcome> => {
-    if (!params.cancelExistingBeforeDispatch) {
-      const activePostRes = await queryFn(
-        `SELECT * FROM publish_outbox
-         WHERE post_id = $1
-           AND dispatch_fingerprint <> $2
-           AND state = 'dispatching'
-           AND lease_expires_at > $3
-         LIMIT 1;`,
-        [params.postId, params.dispatchFingerprint, nowDate]
-      );
-      if (activePostRes.rows && activePostRes.rows.length > 0) {
-        return {
-          status: 'in_flight',
-          record: rowToOutboxRecord(activePostRes.rows[0] as Record<string, unknown>),
-        };
-      }
-    } else {
+    const activePostRes = await queryFn(
+      `SELECT * FROM publish_outbox
+       WHERE post_id = $1
+         AND dispatch_fingerprint <> $2
+         AND state = 'dispatching'
+         AND lease_expires_at > $3
+       LIMIT 1
+       FOR UPDATE;`,
+      [params.postId, params.dispatchFingerprint, nowDate]
+    );
+    if (activePostRes.rows && activePostRes.rows.length > 0) {
+      return {
+        status: 'in_flight',
+        record: rowToOutboxRecord(activePostRes.rows[0] as Record<string, unknown>),
+      };
+    }
+
+    if (params.cancelExistingBeforeDispatch) {
       await queryFn(
         `UPDATE publish_outbox
          SET state = 'cancelled',
              lease_owner = NULL,
              lease_expires_at = NULL,
+             lease_generation = lease_generation + 1,
              next_retry_at = NULL,
              updated_at = $2
          WHERE post_id = $1
            AND dispatch_fingerprint <> $3
-           AND state NOT IN ('completed', 'cancelled');`,
+           AND state NOT IN ('completed', 'cancelled')
+           AND NOT (state = 'dispatching' AND lease_expires_at > $2);`,
         [params.postId, nowDate, params.dispatchFingerprint]
       );
     }
 
     const existingRes = await queryFn(
-      'SELECT * FROM publish_outbox WHERE dispatch_fingerprint = $1 LIMIT 1;',
+      'SELECT * FROM publish_outbox WHERE dispatch_fingerprint = $1 LIMIT 1 FOR UPDATE;',
       [params.dispatchFingerprint]
     );
 
@@ -820,14 +828,14 @@ export async function claimPostgresOutboxDispatch(
           id, post_id, dispatch_fingerprint, state, mode, due_at, timezone,
           targets, attempt_count, max_attempts, lease_owner, lease_expires_at,
           next_retry_at, last_error_category, last_error_message, payload, operations,
-          created_at, updated_at, completed_at
+          created_at, updated_at, completed_at, lease_generation
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7,
           $8::jsonb, $9, $10, $11, $12,
           $13, $14, $15, $16::jsonb, $17::jsonb,
-          $18, $19, $20
+          $18, $19, $20, $21
         )
-        ON CONFLICT (dispatch_fingerprint) DO NOTHING
+        ON CONFLICT DO NOTHING
         RETURNING *;
       `;
       const insertRes = await queryFn(insertSql, [
@@ -851,6 +859,7 @@ export async function claimPostgresOutboxDispatch(
         new Date(created.createdAt),
         new Date(created.updatedAt),
         null,
+        created.leaseGeneration ?? 1,
       ]);
 
       if (insertRes.rows && insertRes.rows.length > 0) {
@@ -861,25 +870,50 @@ export async function claimPostgresOutboxDispatch(
         };
       }
 
-      // Race lost against concurrent serverless instance inserting the same fingerprint
+      // Lost unique-constraint race against concurrent serverless instance (same fingerprint OR active post_id)
       const racedRes = await queryFn(
         'SELECT * FROM publish_outbox WHERE dispatch_fingerprint = $1 LIMIT 1;',
         [params.dispatchFingerprint]
       );
       if (racedRes.rows && racedRes.rows.length > 0) {
         const racedRecord = rowToOutboxRecord(racedRes.rows[0] as Record<string, unknown>);
-        return evaluateExistingOutboxClaim(racedRecord, params);
+        if (racedRecord.state === 'completed') {
+          return { status: 'already_completed', record: racedRecord };
+        }
+        return { status: 'in_flight', record: racedRecord };
       }
-      return { status: 'claimed', record: created, recoveredFromInterrupt: false };
+
+      const activeRaceRes = await queryFn(
+        `SELECT * FROM publish_outbox
+         WHERE post_id = $1 AND state = 'dispatching'
+         LIMIT 1;`,
+        [params.postId]
+      );
+      if (activeRaceRes.rows && activeRaceRes.rows.length > 0) {
+        return {
+          status: 'in_flight',
+          record: rowToOutboxRecord(activeRaceRes.rows[0] as Record<string, unknown>),
+        };
+      }
+      return { status: 'in_flight', record: created };
     }
 
     const existingRecord = rowToOutboxRecord(existingRes.rows[0] as Record<string, unknown>);
     const outcome = evaluateExistingOutboxClaim(existingRecord, params);
     if (outcome.status !== 'claimed') {
+      if (
+        outcome.status === 'permanent_or_exhausted' &&
+        existingRecord.state === 'dispatching' &&
+        outcome.record.state !== 'dispatching'
+      ) {
+        // Persist finalized state so expired exhausted dispatching rows release active lease index
+        await checkpointPostgresOutboxRecord(pool, outcome.record).catch(() => undefined);
+      }
       return outcome;
     }
 
     const next = outcome.record;
+    const nextGeneration = next.leaseGeneration ?? (existingRecord.leaseGeneration ?? 0) + 1;
     const updateSql = `
       UPDATE publish_outbox
       SET id = $2,
@@ -898,11 +932,11 @@ export async function claimPostgresOutboxDispatch(
           payload = $15::jsonb,
           operations = $16::jsonb,
           updated_at = $17,
-          completed_at = $18
+          completed_at = $18,
+          lease_generation = $19
       WHERE dispatch_fingerprint = $1
         AND (
-          $19::boolean = true
-          OR state IN ('pending', 'partially_completed', 'failed_retryable', 'cancelled')
+          state IN ('pending', 'partially_completed', 'failed_retryable', 'cancelled')
           OR (state = 'dispatching' AND (lease_expires_at IS NULL OR lease_expires_at <= $20))
         )
       RETURNING *;
@@ -926,7 +960,7 @@ export async function claimPostgresOutboxDispatch(
       JSON.stringify(next.operations),
       new Date(next.updatedAt),
       next.completedAt ? new Date(next.completedAt) : null,
-      Boolean(params.cancelExistingBeforeDispatch),
+      nextGeneration,
       nowDate,
     ]);
 
@@ -975,6 +1009,11 @@ export async function checkpointPostgresOutboxRecord(
   record: PublishOutboxRecord
 ): Promise<PublishOutboxRecord> {
   await initPostgresSchema(pool);
+  const expectedGeneration =
+    typeof record.leaseGeneration === 'number' && Number.isFinite(record.leaseGeneration)
+      ? record.leaseGeneration
+      : null;
+
   const sql = `
     UPDATE publish_outbox
     SET state = $2,
@@ -989,6 +1028,8 @@ export async function checkpointPostgresOutboxRecord(
         updated_at = $11,
         completed_at = $12
     WHERE dispatch_fingerprint = $1
+      AND ($13::integer IS NULL OR lease_generation = $13)
+      AND (state <> 'cancelled' OR $2 = 'cancelled')
     RETURNING *;
   `;
   const result = await pool.query(sql, [
@@ -1004,20 +1045,47 @@ export async function checkpointPostgresOutboxRecord(
     JSON.stringify(record.operations),
     new Date(record.updatedAt || new Date().toISOString()),
     record.completedAt ? new Date(record.completedAt) : null,
+    expectedGeneration,
   ]);
   if (result.rows && result.rows.length > 0) {
     return rowToOutboxRecord(result.rows[0] as Record<string, unknown>);
   }
+
+  // Distinguish missing row from fencing/cancellation conflict
+  const currentRes = await pool.query(
+    'SELECT * FROM publish_outbox WHERE dispatch_fingerprint = $1 LIMIT 1;',
+    [record.dispatchFingerprint]
+  );
+  if (currentRes.rows && currentRes.rows.length > 0) {
+    const current = currentRes.rows[0] as Record<string, unknown>;
+    const currentGen = Number(current.lease_generation ?? 0);
+    if (String(current.state || '') === 'cancelled' && record.state !== 'cancelled') {
+      throw new StaleOutboxLeaseError(
+        'Outbox dispatch was cancelled while worker was in flight; rejecting state transition.'
+      );
+    }
+    throw new StaleOutboxLeaseError(
+      `Stale worker attempted checkpoint (stored generation ${currentGen} !== worker ${expectedGeneration}).`
+    );
+  }
+
   return record;
 }
 
 export async function queryPostgresOutboxDispatches(
   pool: pg.Pool,
-  options: { postId?: string; recoverableOnly?: boolean; nowMs?: number; limit?: number } = {}
+  options: {
+    postId?: string;
+    recoverableOnly?: boolean;
+    ignoreBackoff?: boolean;
+    nowMs?: number;
+    limit?: number;
+  } = {}
 ): Promise<PublishOutboxRecord[]> {
   await initPostgresSchema(pool);
   const safeLimit = Math.max(1, Math.min(200, Number(options.limit) || 100));
   const nowDate = new Date(options.nowMs ?? Date.now());
+  const ignoreBackoff = Boolean(options.ignoreBackoff);
 
   if (options.postId) {
     const res = await pool.query(
@@ -1027,10 +1095,12 @@ export async function queryPostgresOutboxDispatches(
     const rows = (res.rows || []).map((r) => rowToOutboxRecord(r as Record<string, unknown>));
     if (!options.recoverableOnly) return rows;
     return rows.filter((r) => {
+      if (r.attemptCount >= r.maxAttempts) return false;
       const leaseMs = r.leaseExpiresAt ? Date.parse(r.leaseExpiresAt) : NaN;
+      const nextRetryMs = r.nextRetryAt ? Date.parse(r.nextRetryAt) : NaN;
+      const backoffReady = ignoreBackoff || !Number.isFinite(nextRetryMs) || nextRetryMs <= nowDate.getTime();
       return (
-        r.state === 'partially_completed' ||
-        r.state === 'failed_retryable' ||
+        (backoffReady && (r.state === 'partially_completed' || r.state === 'failed_retryable')) ||
         (r.state === 'dispatching' && (!Number.isFinite(leaseMs) || leaseMs <= nowDate.getTime()))
       );
     });
@@ -1039,11 +1109,17 @@ export async function queryPostgresOutboxDispatches(
   if (options.recoverableOnly) {
     const res = await pool.query(
       `SELECT * FROM publish_outbox
-       WHERE state IN ('partially_completed', 'failed_retryable')
-          OR (state = 'dispatching' AND (lease_expires_at IS NULL OR lease_expires_at <= $1))
+       WHERE attempt_count < max_attempts
+         AND (
+           (
+             state IN ('partially_completed', 'failed_retryable')
+             AND ($3::boolean = true OR next_retry_at IS NULL OR next_retry_at <= $1)
+           )
+           OR (state = 'dispatching' AND (lease_expires_at IS NULL OR lease_expires_at <= $1))
+         )
        ORDER BY updated_at ASC
        LIMIT $2;`,
-      [nowDate, safeLimit]
+      [nowDate, safeLimit, ignoreBackoff]
     );
     return (res.rows || []).map((r) => rowToOutboxRecord(r as Record<string, unknown>));
   }
@@ -1065,6 +1141,7 @@ export async function cancelPostgresOutboxDispatchesForPost(
      SET state = 'cancelled',
          lease_owner = NULL,
          lease_expires_at = NULL,
+         lease_generation = lease_generation + 1,
          next_retry_at = NULL,
          updated_at = NOW()
      WHERE post_id = $1

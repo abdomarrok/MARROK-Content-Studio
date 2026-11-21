@@ -15,9 +15,48 @@ import type {
 
 export const DEFAULT_OUTBOX_MAX_ATTEMPTS = 3;
 export const DEFAULT_OUTBOX_LEASE_MS = 90_000;
+export const ZERNIO_IDEMPOTENCY_WINDOW_MS = 24 * 60 * 60_000;
 const BASE_TRANSIENT_BACKOFF_MS = 15_000;
 const BASE_RATE_LIMIT_BACKOFF_MS = 60_000;
 const MAX_RETRY_BACKOFF_MS = 15 * 60_000;
+
+export class StaleOutboxLeaseError extends Error {
+  constructor(message = 'Outbox lease ownership or generation is stale; aborting checkpoint.') {
+    super(message);
+    this.name = 'StaleOutboxLeaseError';
+  }
+}
+
+export class OutboxPersistenceUnavailableError extends Error {
+  constructor(message = 'Durable publishing outbox persistence is unavailable.') {
+    super(message);
+    this.name = 'OutboxPersistenceUnavailableError';
+  }
+}
+
+export function buildZernioIdempotencyIdentity(
+  dispatchFingerprint: string,
+  service: PublishTargetPlatform
+): { idempotencyKey: string; externalId: string } {
+  const cleanFp = String(dispatchFingerprint || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+  const cleanSvc = String(service || 'tiktok').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 16);
+  return {
+    idempotencyKey: `marrok_${cleanFp}_${cleanSvc}`,
+    externalId: `${cleanFp}:${cleanSvc}`,
+  };
+}
+
+export function isZernioOperationReconcilable(
+  op?: PublishOutboxOperation,
+  nowMs: number = Date.now()
+): boolean {
+  if (!op || op.provider !== 'zernio') return false;
+  if (!op.externalId && !op.idempotencyKey) return false;
+  // ExternalId lookup works even past 24h; keep idempotent POST replay strictly bounded to 24h
+  const updatedMs = op.updatedAt ? Date.parse(op.updatedAt) : NaN;
+  if (op.externalId) return true;
+  return Number.isFinite(updatedMs) && nowMs - updatedMs < ZERNIO_IDEMPOTENCY_WINDOW_MS;
+}
 
 export interface ProviderFailureClassification {
   category: PublishFailureCategory;
@@ -134,14 +173,42 @@ export function classifyProviderFailure(
   };
 }
 
+export function parseRetryAfterHeaderMs(
+  retryAfterHeader: string | null | undefined,
+  nowMs: number = Date.now()
+): number | undefined {
+  if (!retryAfterHeader || typeof retryAfterHeader !== 'string') return undefined;
+  const trimmed = retryAfterHeader.trim();
+  if (!trimmed) return undefined;
+  if (/^\d+$/.test(trimmed)) {
+    const sec = Number.parseInt(trimmed, 10);
+    return Number.isFinite(sec) && sec > 0 ? sec * 1000 : undefined;
+  }
+  const dateMs = Date.parse(trimmed);
+  if (Number.isFinite(dateMs) && dateMs > nowMs) {
+    return dateMs - nowMs;
+  }
+  return undefined;
+}
+
 export function computeRetryBackoffMs(
   attemptCount: number,
-  category?: PublishFailureCategory | null
+  category?: PublishFailureCategory | null,
+  options: { retryAfterMs?: number; jitter?: boolean } = {}
 ): number {
   const safeAttempt = Math.max(1, Math.floor(attemptCount || 1));
   const base =
     category === 'rate_limited' ? BASE_RATE_LIMIT_BACKOFF_MS : BASE_TRANSIENT_BACKOFF_MS;
-  return Math.min(MAX_RETRY_BACKOFF_MS, base * 2 ** (safeAttempt - 1));
+  let computed = Math.min(MAX_RETRY_BACKOFF_MS, base * 2 ** (safeAttempt - 1));
+  if (typeof options.retryAfterMs === 'number' && Number.isFinite(options.retryAfterMs) && options.retryAfterMs > 0) {
+    computed = Math.max(computed, Math.min(MAX_RETRY_BACKOFF_MS, options.retryAfterMs));
+  }
+  if (options.jitter) {
+    // +/- 15% bounded jitter to avoid synchronized cron retry waves
+    const factor = 0.85 + Math.random() * 0.3;
+    computed = Math.min(MAX_RETRY_BACKOFF_MS, Math.round(computed * factor));
+  }
+  return computed;
 }
 
 export function createInitialOutboxOperations(
@@ -171,8 +238,8 @@ export function isOperationConfirmedSuccess(op?: PublishOutboxOperation): boolea
 
 /**
  * Transitions any stale 'dispatching' target operations left behind by a crashed worker
- * into 'failed_retryable' ('timeout_interrupted') while preserving already-confirmed
- * remote post IDs so retries never create duplicate external posts.
+ * into 'outcome_unknown' while preserving already-confirmed remote post IDs and Zernio
+ * idempotency identities so recovery can reconcile instead of blindly duplicating posts.
  */
 export function reconcileInterruptedOperations(
   operations: Partial<Record<PublishTargetPlatform, PublishOutboxOperation>>,
@@ -191,14 +258,17 @@ export function reconcileInterruptedOperations(
         updatedAt: nowIso,
       };
     } else if (existing.state === 'dispatching') {
+      const reconcilable = isZernioOperationReconcilable(existing);
       next[service] = {
         ...existing,
-        state: 'failed_retryable',
+        state: 'outcome_unknown',
         failureCategory: 'timeout_interrupted',
-        retryable: true,
+        retryable: reconcilable,
         errorMessage:
           existing.errorMessage ||
-          'Worker lease expired before external provider response was persisted',
+          (reconcilable
+            ? 'Worker interrupted during Zernio dispatch; eligible for externalId reconciliation.'
+            : 'Worker lease expired before external provider response was persisted; manual verification required to avoid duplicate posts.'),
         updatedAt: nowIso,
       };
     }
@@ -223,15 +293,29 @@ export function computeOutboxAggregateState(
 
   const hasSucceeded = opList.some((op) => op.state === 'succeeded');
   const hasSkippedFallback = opList.some((op) => op.state === 'skipped_fallback');
-  const hasRetryableFailure = opList.some((op) => op.state === 'failed_retryable');
+  const hasRetryableFailure = opList.some(
+    (op) =>
+      op.state === 'failed_retryable' ||
+      (op.state === 'outcome_unknown' && isZernioOperationReconcilable(op))
+  );
+  const hasQuarantinedUnknown = opList.some(
+    (op) => op.state === 'outcome_unknown' && !isZernioOperationReconcilable(op)
+  );
   const hasPermanentFailure = opList.some((op) => op.state === 'failed_permanent');
   const hasPending = opList.some((op) => op.state === 'pending');
 
-  if (hasPending && !hasSucceeded && !hasSkippedFallback && !hasRetryableFailure && !hasPermanentFailure) {
+  if (
+    hasPending &&
+    !hasSucceeded &&
+    !hasSkippedFallback &&
+    !hasRetryableFailure &&
+    !hasPermanentFailure &&
+    !hasQuarantinedUnknown
+  ) {
     return 'pending';
   }
 
-  if (!hasRetryableFailure && !hasPermanentFailure && !hasPending) {
+  if (!hasRetryableFailure && !hasPermanentFailure && !hasPending && !hasQuarantinedUnknown) {
     return 'completed';
   }
 
@@ -253,21 +337,29 @@ export function selectTargetsPendingExecution(
 ): {
   toExecute: PublishTargetPlatform[];
   alreadySucceeded: PublishTargetPlatform[];
+  quarantinedUnknown: PublishTargetPlatform[];
 } {
   const targetList = requestedTargets && requestedTargets.length > 0 ? requestedTargets : record.targets;
   const toExecute: PublishTargetPlatform[] = [];
   const alreadySucceeded: PublishTargetPlatform[] = [];
+  const quarantinedUnknown: PublishTargetPlatform[] = [];
 
   for (const service of targetList) {
     const op = record.operations[service];
     if (!cancelExistingBeforeDispatch && isOperationConfirmedSuccess(op)) {
       alreadySucceeded.push(service);
+    } else if (
+      !cancelExistingBeforeDispatch &&
+      op?.state === 'outcome_unknown' &&
+      !isZernioOperationReconcilable(op)
+    ) {
+      quarantinedUnknown.push(service);
     } else {
       toExecute.push(service);
     }
   }
 
-  return { toExecute, alreadySucceeded };
+  return { toExecute, alreadySucceeded, quarantinedUnknown };
 }
 
 export function canRetryOutboxRecord(
@@ -281,7 +373,7 @@ export function canRetryOutboxRecord(
 
   const leaseExpiresMs = record.leaseExpiresAt ? Date.parse(record.leaseExpiresAt) : NaN;
   const isLeaseExpired =
-    record.state === 'dispatching' && Number.isFinite(leaseExpiresMs) && leaseExpiresMs <= nowMs;
+    record.state === 'dispatching' && (!Number.isFinite(leaseExpiresMs) || leaseExpiresMs <= nowMs);
 
   if (record.state === 'dispatching' && !isLeaseExpired) {
     return false;
@@ -302,7 +394,15 @@ export function canRetryOutboxRecord(
     const op = record.operations[service];
     if (!op) return true;
     if (op.state === 'pending' || op.state === 'failed_retryable') return true;
-    if (op.state === 'dispatching' && isLeaseExpired) return true;
+    if (op.state === 'outcome_unknown') {
+      return isZernioOperationReconcilable(op, nowMs);
+    }
+    if (op.state === 'dispatching' && isLeaseExpired) {
+      // Only automatically retryable if provider supports reconciliation (Zernio)
+      // OR wait: expired lease in 'dispatching' MUST be reclaimed once to transition Buffer ops
+      // cleanly into 'outcome_unknown' and release the dispatching lock!
+      return true;
+    }
     return false;
   });
 
@@ -330,7 +430,13 @@ export function collectOutboxRemoteIds(
 
 export function finalizeOutboxRecord(
   record: PublishOutboxRecord,
-  options: { nowMs?: number; overrideErrorCategory?: PublishFailureCategory; overrideErrorMessage?: string } = {}
+  options: {
+    nowMs?: number;
+    overrideErrorCategory?: PublishFailureCategory;
+    overrideErrorMessage?: string;
+    retryAfterMs?: number;
+    useJitter?: boolean;
+  } = {}
 ): PublishOutboxRecord {
   const nowMs = options.nowMs ?? Date.now();
   const nowIso = new Date(nowMs).toISOString();
@@ -346,11 +452,18 @@ export function finalizeOutboxRecord(
     .map((t) => reconciledOps[t])
     .filter(
       (op): op is PublishOutboxOperation =>
-        Boolean(op && (op.state === 'failed_retryable' || op.state === 'failed_permanent'))
+        Boolean(
+          op &&
+            (op.state === 'failed_retryable' ||
+              op.state === 'failed_permanent' ||
+              op.state === 'outcome_unknown')
+        )
     );
 
   const primaryErrorOp =
-    failedOps.find((op) => op.state === 'failed_retryable') || failedOps[0];
+    failedOps.find((op) => op.state === 'failed_retryable') ||
+    failedOps.find((op) => op.state === 'outcome_unknown') ||
+    failedOps[0];
 
   const lastErrorCategory =
     options.overrideErrorCategory ||
@@ -364,14 +477,25 @@ export function finalizeOutboxRecord(
           .join('; ')
       : null);
 
+  const hasAutoRetryableTarget = failedOps.some(
+    (op) =>
+      op.state === 'failed_retryable' ||
+      (op.state === 'outcome_unknown' && isZernioOperationReconcilable(op, nowMs))
+  );
+
   const canScheduleRetry =
     (nextState === 'failed_retryable' ||
-      (nextState === 'partially_completed' &&
-        failedOps.some((op) => op.state === 'failed_retryable'))) &&
+      (nextState === 'partially_completed' && hasAutoRetryableTarget)) &&
     record.attemptCount < record.maxAttempts;
 
   const nextRetryAt = canScheduleRetry
-    ? new Date(nowMs + computeRetryBackoffMs(record.attemptCount, lastErrorCategory)).toISOString()
+    ? new Date(
+        nowMs +
+          computeRetryBackoffMs(record.attemptCount, lastErrorCategory, {
+            retryAfterMs: options.retryAfterMs,
+            jitter: options.useJitter,
+          })
+      ).toISOString()
     : null;
 
   return {
@@ -403,7 +527,7 @@ export function toOutboxSummary(record: PublishOutboxRecord): PublishOutboxSumma
 }
 
 // ---------------------------------------------------------------------------
-// Local Disk Sidecar Fallback Store (when DATABASE_URL is unavailable)
+// Local Disk Sidecar Fallback Store (persistent single-node Express & test use)
 // ---------------------------------------------------------------------------
 
 export function resolveOutboxStorageFilePath(env: NodeJS.ProcessEnv = process.env): string {
@@ -463,6 +587,7 @@ export interface ClaimOutboxDispatchParams {
   leaseDurationMs?: number;
   maxAttempts?: number;
   cancelExistingBeforeDispatch?: boolean;
+  ignoreBackoff?: boolean;
   nowMs?: number;
 }
 
@@ -503,6 +628,7 @@ export function createNewOutboxRecord(params: ClaimOutboxDispatchParams): Publis
     maxAttempts: params.maxAttempts ?? DEFAULT_OUTBOX_MAX_ATTEMPTS,
     leaseOwner: params.leaseOwner,
     leaseExpiresAt,
+    leaseGeneration: 1,
     nextRetryAt: null,
     lastErrorCategory: null,
     lastErrorMessage: null,
@@ -522,6 +648,17 @@ export function evaluateExistingOutboxClaim(
   const nowIso = new Date(nowMs).toISOString();
   const leaseMs = params.leaseDurationMs ?? DEFAULT_OUTBOX_LEASE_MS;
   const leaseExpiresAt = new Date(nowMs + leaseMs).toISOString();
+  const nextGeneration = (existing.leaseGeneration ?? 0) + 1;
+
+  const existingLeaseMs = existing.leaseExpiresAt ? Date.parse(existing.leaseExpiresAt) : NaN;
+  const isActiveLease =
+    existing.state === 'dispatching' &&
+    Number.isFinite(existingLeaseMs) &&
+    existingLeaseMs > nowMs;
+
+  if (isActiveLease) {
+    return { status: 'in_flight', record: existing };
+  }
 
   if (params.cancelExistingBeforeDispatch) {
     const resetRecord: PublishOutboxRecord = {
@@ -536,6 +673,7 @@ export function evaluateExistingOutboxClaim(
       maxAttempts: params.maxAttempts ?? existing.maxAttempts ?? DEFAULT_OUTBOX_MAX_ATTEMPTS,
       leaseOwner: params.leaseOwner,
       leaseExpiresAt,
+      leaseGeneration: nextGeneration,
       nextRetryAt: null,
       lastErrorCategory: null,
       lastErrorMessage: null,
@@ -549,17 +687,6 @@ export function evaluateExistingOutboxClaim(
 
   if (existing.state === 'completed') {
     return { status: 'already_completed', record: existing };
-  }
-
-  const existingLeaseMs = existing.leaseExpiresAt ? Date.parse(existing.leaseExpiresAt) : NaN;
-  const isActiveLease =
-    existing.state === 'dispatching' &&
-    Number.isFinite(existingLeaseMs) &&
-    existingLeaseMs > nowMs &&
-    existing.leaseOwner !== params.leaseOwner;
-
-  if (isActiveLease) {
-    return { status: 'in_flight', record: existing };
   }
 
   const isExpiredInterrupt =
@@ -585,7 +712,11 @@ export function evaluateExistingOutboxClaim(
   const maxAttempts = params.maxAttempts ?? existing.maxAttempts ?? DEFAULT_OUTBOX_MAX_ATTEMPTS;
   const hasAnyRetryableOrPendingTarget = params.targets.some((t) => {
     const op = reconciledOps[t];
-    return !op || op.state === 'pending' || op.state === 'failed_retryable';
+    if (!op || op.state === 'pending' || op.state === 'failed_retryable') return true;
+    if (op.state === 'outcome_unknown') {
+      return isZernioOperationReconcilable(op, nowMs);
+    }
+    return false;
   });
 
   if (
@@ -593,7 +724,18 @@ export function evaluateExistingOutboxClaim(
     existing.attemptCount >= maxAttempts ||
     !hasAnyRetryableOrPendingTarget
   ) {
-    return { status: 'permanent_or_exhausted', record: existing };
+    return {
+      status: 'permanent_or_exhausted',
+      record: isExpiredInterrupt
+        ? finalizeOutboxRecord(
+            {
+              ...existing,
+              operations: reconciledOps,
+            },
+            { nowMs }
+          )
+        : existing,
+    };
   }
 
   const mergedTargets = Array.from(new Set([...existing.targets, ...params.targets]));
@@ -608,6 +750,7 @@ export function evaluateExistingOutboxClaim(
     maxAttempts,
     leaseOwner: params.leaseOwner,
     leaseExpiresAt,
+    leaseGeneration: nextGeneration,
     nextRetryAt: null,
     payload: params.payload,
     operations: reconciledOps,
@@ -634,13 +777,12 @@ export async function claimLocalOutboxDispatch(
     // Check if another active dispatch holds a non-expired lease for the same postId
     const conflictingActive = records.find((r) => {
       if (r.postId !== params.postId) return false;
-      if (r.dispatchFingerprint === params.dispatchFingerprint) return false;
       if (r.state !== 'dispatching') return false;
       const leaseMs = r.leaseExpiresAt ? Date.parse(r.leaseExpiresAt) : NaN;
       return Number.isFinite(leaseMs) && leaseMs > nowMs;
     });
 
-    if (conflictingActive && !params.cancelExistingBeforeDispatch) {
+    if (conflictingActive) {
       return { status: 'in_flight', record: conflictingActive };
     }
 
@@ -655,7 +797,13 @@ export async function claimLocalOutboxDispatch(
             created,
             ...records.map((r) =>
               r.postId === params.postId && r.state !== 'completed' && r.state !== 'cancelled'
-                ? { ...r, state: 'cancelled' as PublishDispatchState, leaseOwner: null, leaseExpiresAt: null }
+                ? {
+                    ...r,
+                    state: 'cancelled' as PublishDispatchState,
+                    leaseOwner: null,
+                    leaseExpiresAt: null,
+                    leaseGeneration: (r.leaseGeneration ?? 0) + 1,
+                  }
                 : r
             ),
           ]
@@ -664,8 +812,17 @@ export async function claimLocalOutboxDispatch(
       return { status: 'claimed', record: created, recoveredFromInterrupt: false };
     }
 
-    const outcome = evaluateExistingOutboxClaim(records[existingIdx], params);
+    const existing = records[existingIdx];
+    const outcome = evaluateExistingOutboxClaim(existing, params);
     if (outcome.status === 'claimed') {
+      const nextRecords = [...records];
+      nextRecords[existingIdx] = outcome.record;
+      await writeOutboxRecordsUnlocked(filePath, nextRecords);
+    } else if (
+      outcome.status === 'permanent_or_exhausted' &&
+      existing.state === 'dispatching' &&
+      outcome.record.state !== 'dispatching'
+    ) {
       const nextRecords = [...records];
       nextRecords[existingIdx] = outcome.record;
       await writeOutboxRecordsUnlocked(filePath, nextRecords);
@@ -688,6 +845,19 @@ export async function checkpointLocalOutboxRecord(
     if (idx === -1) {
       nextRecords.unshift(record);
     } else {
+      const existing = nextRecords[idx];
+      const existingGen = existing.leaseGeneration ?? 0;
+      const incomingGen = record.leaseGeneration ?? 0;
+      if (existingGen > incomingGen) {
+        throw new StaleOutboxLeaseError(
+          `Stale worker attempted checkpoint (stored generation ${existingGen} > worker ${incomingGen}).`
+        );
+      }
+      if (existing.state === 'cancelled' && record.state !== 'cancelled') {
+        throw new StaleOutboxLeaseError(
+          'Outbox dispatch was cancelled while worker was in flight; rejecting state transition.'
+        );
+      }
       nextRecords[idx] = record;
     }
     await writeOutboxRecordsUnlocked(filePath, nextRecords);
@@ -735,6 +905,7 @@ export async function cancelLocalOutboxDispatchesForPost(
           state: 'cancelled' as PublishDispatchState,
           leaseOwner: null,
           leaseExpiresAt: null,
+          leaseGeneration: (r.leaseGeneration ?? 0) + 1,
           nextRetryAt: null,
           updatedAt: nowIso,
         };

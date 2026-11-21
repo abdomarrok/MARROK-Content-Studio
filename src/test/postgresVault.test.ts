@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -16,7 +17,14 @@ import {
 import {
   loadStoredPosts,
   upsertSingleStoredPost,
+  saveStoredPosts,
+  handleSavePost,
+  VaultPersistenceUnavailableError,
 } from '../../api/controllers/postsController.ts';
+import {
+  saveStoredTriageDecision,
+  TriagePersistenceUnavailableError,
+} from '../../api/controllers/mediaController.ts';
 import { DEFAULT_STARTER_DECK } from '../lib/presets.ts';
 import type { SavedPostRecord } from '../types.ts';
 
@@ -43,10 +51,12 @@ describe('Neon PostgreSQL Vault Persistence & Safe Fallbacks', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS saved_posts');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS publish_outbox');
     expect(sql).toContain('ALTER TABLE saved_posts ADD COLUMN IF NOT EXISTS cloudinary_cleaned_at TIMESTAMPTZ');
+    expect(sql).toContain('ALTER TABLE publish_outbox ADD COLUMN IF NOT EXISTS lease_generation INTEGER NOT NULL DEFAULT 0');
     expect(sql).toContain('idx_saved_posts_status');
     expect(sql).toContain('idx_saved_posts_updated_at');
     expect(sql).toContain('idx_publish_outbox_post_id');
     expect(sql).toContain('idx_publish_outbox_lease_expires');
+    expect(sql).toContain('idx_publish_outbox_active_post');
 
     // Calling it again should be cached and not re-query
     await initPostgresSchema(mockPool);
@@ -534,6 +544,430 @@ describe('Neon PostgreSQL Vault Persistence & Safe Fallbacks', () => {
         nowMs: nowMs + 20_000,
       });
       expect(replay.status).toBe('already_completed');
+    }
+  });
+
+  it('rejects stale worker checkpoints, cancelled dispatches, and ON CONFLICT lost-race claims in Postgres outbox', async () => {
+    const { StaleOutboxLeaseError } = await import('../lib/publish/publishOutbox.ts');
+    const { cancelPostgresOutboxDispatchesForPost } = await import('../../api/db/postgres.ts');
+
+    const rows = new Map<string, Record<string, unknown>>();
+    let simulateLostInsertRace = false;
+
+    const executeSql = async (sql: string, values: unknown[] = []) => {
+      if (sql.includes('CREATE TABLE')) return { rows: [] };
+      if (sql.includes('FROM publish_outbox') && sql.includes('dispatch_fingerprint <>')) {
+        return { rows: [] };
+      }
+      if (sql.includes('SELECT * FROM publish_outbox WHERE dispatch_fingerprint = $1')) {
+        const row = rows.get(String(values[0]));
+        return { rows: row ? [row] : [] };
+      }
+      if (sql.includes('INSERT INTO publish_outbox')) {
+        const fp = String(values[2]);
+        if (simulateLostInsertRace) {
+          // Concurrent serverless instance inserted the row right before our INSERT
+          rows.set(fp, {
+            id: 'raced_winner_1',
+            post_id: values[1],
+            dispatch_fingerprint: fp,
+            state: 'dispatching',
+            mode: values[4],
+            due_at: values[5],
+            timezone: values[6],
+            targets: JSON.parse(String(values[7])),
+            attempt_count: 1,
+            max_attempts: values[9],
+            lease_owner: 'raced_winner_instance',
+            lease_expires_at: new Date(Date.now() + 90_000),
+            lease_generation: 1,
+            next_retry_at: null,
+            last_error_category: null,
+            last_error_message: null,
+            payload: JSON.parse(String(values[15])),
+            operations: JSON.parse(String(values[16])),
+            created_at: values[17],
+            updated_at: values[18],
+            completed_at: null,
+          });
+          return { rows: [] };
+        }
+        const row: Record<string, unknown> = {
+          id: values[0],
+          post_id: values[1],
+          dispatch_fingerprint: fp,
+          state: values[3],
+          mode: values[4],
+          due_at: values[5],
+          timezone: values[6],
+          targets: JSON.parse(String(values[7])),
+          attempt_count: values[8],
+          max_attempts: values[9],
+          lease_owner: values[10],
+          lease_expires_at: values[11],
+          lease_generation: values[20] ?? 1,
+          next_retry_at: values[12],
+          last_error_category: values[13],
+          last_error_message: values[14],
+          payload: JSON.parse(String(values[15])),
+          operations: JSON.parse(String(values[16])),
+          created_at: values[17],
+          updated_at: values[18],
+          completed_at: values[19],
+        };
+        rows.set(fp, row);
+        return { rows: [row] };
+      }
+      if (sql.includes('UPDATE publish_outbox') && sql.includes('SET state = \'cancelled\'')) {
+        const postId = String(values[0]);
+        for (const [k, r] of rows.entries()) {
+          if (r.post_id === postId && r.state !== 'completed' && r.state !== 'cancelled') {
+            rows.set(k, {
+              ...r,
+              state: 'cancelled',
+              lease_owner: null,
+              lease_expires_at: null,
+              lease_generation: Number(r.lease_generation ?? 0) + 1,
+            });
+          }
+        }
+        return { rows: [] };
+      }
+      if (sql.includes('UPDATE publish_outbox') && sql.includes('SET id = $2,')) {
+        const fp = String(values[0]);
+        const existing = rows.get(fp);
+        if (!existing) return { rows: [] };
+        const updated = {
+          ...existing,
+          id: values[1],
+          state: values[2],
+          attempt_count: values[7],
+          lease_owner: values[9],
+          lease_expires_at: values[10],
+          operations: JSON.parse(String(values[15])),
+          updated_at: values[16],
+          completed_at: values[17],
+          lease_generation: values[18],
+        };
+        rows.set(fp, updated);
+        return { rows: [updated] };
+      }
+      if (sql.includes('UPDATE publish_outbox') && sql.includes('SET state = $2,')) {
+        const fp = String(values[0]);
+        const expectedGen = values[12] as number | null;
+        const incomingState = String(values[1]);
+        const existing = rows.get(fp);
+        if (!existing) return { rows: [] };
+        if (expectedGen !== null && Number(existing.lease_generation ?? 0) !== expectedGen) {
+          return { rows: [] };
+        }
+        if (existing.state === 'cancelled' && incomingState !== 'cancelled') {
+          return { rows: [] };
+        }
+        const updated = {
+          ...existing,
+          state: incomingState,
+          lease_owner: values[4],
+          lease_expires_at: values[5],
+          operations: JSON.parse(String(values[9])),
+          updated_at: values[10],
+          completed_at: values[11],
+        };
+        rows.set(fp, updated);
+        return { rows: [updated] };
+      }
+      return { rows: [] };
+    };
+
+    const mockPool = {
+      query: vi.fn().mockImplementation(executeSql),
+      connect: vi.fn().mockResolvedValue({
+        query: vi.fn().mockImplementation(executeSql),
+        release: vi.fn(),
+      }),
+      on: vi.fn(),
+    } as any;
+
+    const basePayload = {
+      caption: 'Fencing test',
+      mode: 'shareNow' as const,
+      targets: ['instagram' as const],
+      imageUrls: ['https://cdn.example.com/1.jpg'],
+      tiktokImageUrls: [],
+      cloudinaryPublicIds: [],
+    };
+
+    // 1. ON CONFLICT DO NOTHING lost-race MUST return in_flight (even if raced row is dispatching)
+    simulateLostInsertRace = true;
+    const lostRace = await claimPostgresOutboxDispatch(mockPool, {
+      postId: 'post_race_1',
+      dispatchFingerprint: 'fp_race_1',
+      mode: 'shareNow',
+      targets: ['instagram'],
+      payload: basePayload,
+      leaseOwner: 'loser_worker',
+    });
+    expect(lostRace.status).toBe('in_flight');
+
+    // 2. Normal claim -> expire -> takeover increments lease_generation and fences stale worker
+    simulateLostInsertRace = false;
+    const t0 = Date.parse('2026-11-21T16:00:00.000Z');
+    const c1 = await claimPostgresOutboxDispatch(mockPool, {
+      postId: 'post_pg_fence_1',
+      dispatchFingerprint: 'fp_pg_fence_1',
+      mode: 'shareNow',
+      targets: ['instagram'],
+      payload: basePayload,
+      leaseOwner: 'pg_worker_1',
+      leaseDurationMs: 30_000,
+      nowMs: t0,
+    });
+    expect(c1.status).toBe('claimed');
+    if (c1.status !== 'claimed') return;
+    expect(c1.record.leaseGeneration).toBe(1);
+
+    const c2 = await claimPostgresOutboxDispatch(mockPool, {
+      postId: 'post_pg_fence_1',
+      dispatchFingerprint: 'fp_pg_fence_1',
+      mode: 'shareNow',
+      targets: ['instagram'],
+      payload: basePayload,
+      leaseOwner: 'pg_worker_2',
+      leaseDurationMs: 30_000,
+      nowMs: t0 + 45_000,
+    });
+    expect(c2.status).toBe('claimed');
+    if (c2.status !== 'claimed') return;
+    expect(c2.record.leaseGeneration).toBe(2);
+
+    // Stale worker 1 checkpoint throws StaleOutboxLeaseError
+    await expect(
+      checkpointPostgresOutboxRecord(mockPool, { ...c1.record, state: 'failed_retryable' })
+    ).rejects.toBeInstanceOf(StaleOutboxLeaseError);
+
+    // Cancelling post increments generation and blocks worker 2 checkpointing completion
+    await cancelPostgresOutboxDispatchesForPost(mockPool, 'post_pg_fence_1');
+    await expect(
+      checkpointPostgresOutboxRecord(mockPool, { ...c2.record, state: 'completed' })
+    ).rejects.toBeInstanceOf(StaleOutboxLeaseError);
+  });
+
+  it('fails closed on Postgres write errors (upsertSingleStoredPost, saveStoredPosts, handleSavePost) without falling back to KV or /tmp', async () => {
+    const tmpStorePath = path.join(
+      os.tmpdir(),
+      `marrok-vault-failclosed-${Date.now()}-${Math.random().toString(16).slice(2)}.json`
+    );
+    const failingPool = {
+      query: vi.fn().mockRejectedValue(new Error('Postgres write timeout')),
+      connect: vi.fn().mockRejectedValue(new Error('Postgres connect timeout')),
+      end: vi.fn().mockResolvedValue(undefined),
+      on: vi.fn(),
+    } as any;
+    setPostgresPoolForTesting(failingPool);
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const nowIso = new Date().toISOString();
+    const record: SavedPostRecord = {
+      id: 'post_fail_closed_1',
+      title: 'Fail Closed Check',
+      category: 'DISTRIBUTED SYSTEMS',
+      postStatus: 'validated',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      creatorHandle: 'MARROK',
+      slideCount: DEFAULT_STARTER_DECK.slides.length,
+      qaPassed: true,
+      deck: DEFAULT_STARTER_DECK,
+    };
+
+    const envWithPgAndKv: NodeJS.ProcessEnv = {
+      DATABASE_URL: 'postgresql://user:pass@neon.example.com:5432/marrok',
+      KV_REST_API_URL: 'https://kv.example.com',
+      KV_REST_API_TOKEN: 'kv-token',
+      POSTS_STORAGE_FILE: tmpStorePath,
+    };
+
+    await expect(upsertSingleStoredPost(record, [], envWithPgAndKv)).rejects.toBeInstanceOf(
+      VaultPersistenceUnavailableError
+    );
+    await expect(saveStoredPosts([record], envWithPgAndKv)).rejects.toBeInstanceOf(
+      VaultPersistenceUnavailableError
+    );
+
+    // Must not fall back to Upstash KV or write a shadow file to disk
+    expect(fetchSpy).not.toHaveBeenCalled();
+    await expect(fs.access(tmpStorePath)).rejects.toThrow();
+
+    // HTTP handler handleSavePost must return 502/503 JSON explicitly when DATABASE_URL fails
+    const prevDb = process.env.DATABASE_URL;
+    const prevStorage = process.env.POSTS_STORAGE_FILE;
+    process.env.DATABASE_URL = envWithPgAndKv.DATABASE_URL;
+    process.env.POSTS_STORAGE_FILE = tmpStorePath;
+    try {
+      const jsonFn = vi.fn();
+      const res = {
+        status: vi.fn().mockReturnValue({ json: jsonFn }),
+        json: jsonFn,
+      } as any;
+      await handleSavePost(
+        {
+          body: {
+            id: 'post_fail_closed_http',
+            deck: DEFAULT_STARTER_DECK,
+            allowOverride: true,
+          },
+        } as any,
+        res
+      );
+      expect(res.status).toHaveBeenCalledWith(502);
+      expect(jsonFn).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'VAULT_PERSISTENCE_UNAVAILABLE' })
+      );
+    } finally {
+      if (prevDb === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = prevDb;
+      if (prevStorage === undefined) delete process.env.POSTS_STORAGE_FILE;
+      else process.env.POSTS_STORAGE_FILE = prevStorage;
+      await fs.rm(tmpStorePath, { force: true }).catch(() => {});
+    }
+  });
+
+  it('does not write a shadow /tmp file when Neon PostgreSQL upsertSingleStoredPost succeeds', async () => {
+    const tmpShadowPath = path.join(
+      os.tmpdir(),
+      `marrok-no-shadow-${Date.now()}-${Math.random().toString(16).slice(2)}.json`
+    );
+    const nowIso = new Date().toISOString();
+    const mockRow = {
+      id: 'post_no_shadow_1',
+      title: 'No Shadow Write',
+      category: 'DISTRIBUTED SYSTEMS',
+      post_status: 'validated',
+      title_signature: 'no shadow write::carousel',
+      creator_handle: 'MARROK',
+      slide_count: DEFAULT_STARTER_DECK.slides.length,
+      qa_passed: true,
+      scheduled_for: null,
+      publish_targets: null,
+      hosted_slide_urls: null,
+      tiktok_hosted_slide_urls: null,
+      cloudinary_public_ids: null,
+      cloudinary_cleaned_at: null,
+      buffer_post_ids: null,
+      zernio_post_ids: null,
+      deck: DEFAULT_STARTER_DECK,
+      created_at: new Date(nowIso),
+      updated_at: new Date(nowIso),
+      posted_at: null,
+    };
+    const mockPool = {
+      query: vi.fn().mockImplementation(async (sql: string) => {
+        if (sql.includes('CREATE TABLE')) return { rows: [] };
+        if (sql.includes('INSERT INTO saved_posts')) return { rows: [mockRow] };
+        return { rows: [] };
+      }),
+      end: vi.fn().mockResolvedValue(undefined),
+      on: vi.fn(),
+    } as any;
+    setPostgresPoolForTesting(mockPool);
+
+    const engine = await upsertSingleStoredPost(
+      {
+        id: 'post_no_shadow_1',
+        title: 'No Shadow Write',
+        category: 'DISTRIBUTED SYSTEMS',
+        postStatus: 'validated',
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        creatorHandle: 'MARROK',
+        slideCount: DEFAULT_STARTER_DECK.slides.length,
+        qaPassed: true,
+        deck: DEFAULT_STARTER_DECK,
+      },
+      [],
+      {
+        DATABASE_URL: 'postgresql://user:pass@neon.example.com:5432/marrok',
+        POSTS_STORAGE_FILE: tmpShadowPath,
+      }
+    );
+
+    expect(engine).toBe('neon-postgres');
+    await expect(fs.access(tmpShadowPath)).rejects.toThrow();
+  });
+
+  it('rejects unconfigured Vault writes in production serverless with 503 instead of writing ephemeral /tmp', async () => {
+    const prevVitest = process.env.VITEST;
+    delete process.env.VITEST;
+    try {
+      const nowIso = new Date().toISOString();
+      const prodServerlessEnv: NodeJS.ProcessEnv = {
+        NODE_ENV: 'production',
+        VERCEL: '1',
+      };
+      await expect(
+        upsertSingleStoredPost(
+          {
+            id: 'post_serverless_unconfigured',
+            title: 'Unconfigured Prod',
+            category: 'SYSTEMS',
+            postStatus: 'validated',
+            createdAt: nowIso,
+            updatedAt: nowIso,
+            creatorHandle: 'MARROK',
+            slideCount: DEFAULT_STARTER_DECK.slides.length,
+            qaPassed: true,
+            deck: DEFAULT_STARTER_DECK,
+          },
+          [],
+          prodServerlessEnv
+        )
+      ).rejects.toMatchObject({
+        name: 'VaultPersistenceUnavailableError',
+        status: 503,
+      });
+    } finally {
+      if (prevVitest === undefined) delete process.env.VITEST;
+      else process.env.VITEST = prevVitest;
+    }
+  });
+
+  it('fails closed on Postgres error in saveStoredTriageDecision instead of silently falling back to /tmp', async () => {
+    const prevDb = process.env.DATABASE_URL;
+    const prevTriageFile = process.env.TRIAGE_STORAGE_FILE;
+    const tmpTriagePath = path.join(
+      os.tmpdir(),
+      `marrok-triage-failclosed-${Date.now()}-${Math.random().toString(16).slice(2)}.json`
+    );
+    process.env.DATABASE_URL = 'postgresql://user:pass@neon.example.com:5432/marrok';
+    process.env.TRIAGE_STORAGE_FILE = tmpTriagePath;
+
+    const failingPool = {
+      query: vi.fn().mockRejectedValue(new Error('Postgres triage write error')),
+      end: vi.fn().mockResolvedValue(undefined),
+      on: vi.fn(),
+    } as any;
+    setPostgresPoolForTesting(failingPool);
+
+    try {
+      await expect(
+        saveStoredTriageDecision({
+          id: 'tri_fail_1',
+          topicId: 'topic_fail_1',
+          sourceDomain: 'news.ycombinator.com',
+          domainCategory: 'DISTRIBUTED SYSTEMS',
+          action: 'skip',
+          reason: 'off-topic',
+          createdAt: new Date().toISOString(),
+        })
+      ).rejects.toBeInstanceOf(TriagePersistenceUnavailableError);
+
+      await expect(fs.access(tmpTriagePath)).rejects.toThrow();
+    } finally {
+      if (prevDb === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = prevDb;
+      if (prevTriageFile === undefined) delete process.env.TRIAGE_STORAGE_FILE;
+      else process.env.TRIAGE_STORAGE_FILE = prevTriageFile;
+      await fs.rm(tmpTriagePath, { force: true }).catch(() => {});
     }
   });
 });

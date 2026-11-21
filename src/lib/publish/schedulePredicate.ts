@@ -32,6 +32,14 @@ export function isEligibleOverduePromotion(
   const isScheduleDue = Number.isFinite(scheduledMs) && nowMs >= scheduledMs;
   if (!isScheduleDue) return false;
   if (post.publishFailed) return false;
+  if (
+    post.outboxState === 'dispatching' ||
+    post.outboxState === 'partially_completed' ||
+    post.outboxState === 'failed_retryable' ||
+    post.outboxState === 'failed_permanent'
+  ) {
+    return false;
+  }
   if (isPostUnapprovedAutomatedDraft(post)) return false;
   if (!hasPostDispatchedOrStagedMedia(post)) return false;
   return post.postStatus !== 'posted' || Boolean(post.scheduledFor);

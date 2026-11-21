@@ -46,8 +46,12 @@ export async function runScheduledPromotion(env: NodeJS.ProcessEnv = process.env
     };
   }
 
+  const deadlineMs = Date.now() + 20_000;
   const runTasks = async () => {
-    const outboxRecovery = await recoverAndRetryOutboxDispatches({ limit: 5 }).catch((err) => {
+    const outboxRecovery = await recoverAndRetryOutboxDispatches({
+      limit: 2,
+      deadlineMs,
+    }).catch((err) => {
       console.warn('[ScheduledPromote] Outbox recovery warning:', err);
       return {
         checkedCount: 0,
@@ -61,11 +65,14 @@ export async function runScheduledPromotion(env: NodeJS.ProcessEnv = process.env
     return { outboxRecovery, sweep };
   };
 
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error('Scheduled sweep exceeded 25s safety budget')), 25_000);
+    timer = setTimeout(() => reject(new Error('Scheduled sweep exceeded 25s safety budget')), 25_000);
   });
 
-  const { outboxRecovery, sweep } = await Promise.race([runTasks(), timeoutPromise]);
+  const { outboxRecovery, sweep } = await Promise.race([runTasks(), timeoutPromise]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 
   return {
     ok: true,

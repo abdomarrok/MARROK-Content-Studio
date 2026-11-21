@@ -127,6 +127,7 @@ describe('Phase A1 & A2: Universal API Auth, Login Hardening, Strict CORS & Netl
       { method: 'POST', path: '/api/publish/upload-media', body: {} },
       { method: 'POST', path: '/api/publish/dispatch', body: {} },
       { method: 'POST', path: '/api/publish/manage-post', body: {} },
+      { method: 'POST', path: '/api/publish/recover', body: {} },
       { method: 'POST', path: '/api/publish/cleanup-media', body: {} },
       { method: 'GET', path: '/api/gather/radar' },
       { method: 'POST', path: '/api/gather/extract-url', body: { url: 'https://example.com' } },
@@ -251,6 +252,16 @@ describe('Phase A1 & A2: Universal API Auth, Login Hardening, Strict CORS & Netl
       body: JSON.stringify({}),
     });
     expect(validCleanup.status).not.toBe(401);
+
+    const validRecover = await fetch(`${baseUrl}/api/publish/recover`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-secret': CRON_SECRET,
+      },
+      body: JSON.stringify({}),
+    });
+    expect(validRecover.status).not.toBe(401);
   });
 
   it('enforces strict CORS allowlist and rejects cross-origin writes from unauthorized origins', async () => {

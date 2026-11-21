@@ -30,6 +30,34 @@ import {
 const KV_STORAGE_KEY = 'marrok:saved_posts:v1';
 const MAX_SAVED_POSTS = 100;
 
+export class VaultPersistenceUnavailableError extends Error {
+  status: number;
+  code: string;
+  constructor(
+    message = 'Durable Vault persistence is unavailable.',
+    status = 503,
+    code = 'VAULT_PERSISTENCE_UNAVAILABLE'
+  ) {
+    super(message);
+    this.name = 'VaultPersistenceUnavailableError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+function isProductionServerlessVaultRuntime(env: NodeJS.ProcessEnv = process.env): boolean {
+  const nodeEnv = (env.NODE_ENV || '').trim().toLowerCase();
+  const isVitest = env.VITEST === 'true' || nodeEnv === 'test';
+  if (isVitest) return false;
+  const isServerless = Boolean(
+    env.VERCEL ||
+      env.VERCEL_ENV ||
+      env.NETLIFY ||
+      env.AWS_LAMBDA_FUNCTION_NAME
+  );
+  return isServerless && nodeEnv === 'production';
+}
+
 const serverDeletedIdsMemory = new Set<string>();
 
 function resolveDeletedIdsFilePath(env: NodeJS.ProcessEnv = process.env): string {
@@ -100,21 +128,30 @@ export async function recordServerDeletedPostId(
   const clean = String(id || '').trim();
   if (!clean) return;
   serverDeletedIdsMemory.add(clean);
-  const current = await loadServerDeletedPostIds(env);
-  current.add(clean);
-  await writeDeletedIdsToDisk(current, env);
 
   const config = getServerConfig(env);
   if (config.databaseUrl) {
     try {
       const pool = getPostgresPool(config.databaseUrl);
-      if (pool) {
-        await deletePostgresPost(pool, clean);
+      if (!pool) {
+        throw new VaultPersistenceUnavailableError(
+          'PostgreSQL pool is unavailable for post deletion.'
+        );
       }
+      await deletePostgresPost(pool, clean);
+      return;
     } catch (pgErr) {
-      console.warn('[PostsController] Failed to record tombstone in Postgres:', pgErr);
+      if (pgErr instanceof VaultPersistenceUnavailableError) throw pgErr;
+      console.error('[PostsController] Failed to record deletion tombstone in Postgres:', pgErr);
+      throw new VaultPersistenceUnavailableError(
+        `Durable Vault delete failed in PostgreSQL: ${pgErr instanceof Error ? pgErr.message : 'database error'}`
+      );
     }
   }
+
+  const current = await loadServerDeletedPostIds(env);
+  current.add(clean);
+  await writeDeletedIdsToDisk(current, env);
 }
 
 export async function clearServerDeletedPostId(
@@ -124,21 +161,31 @@ export async function clearServerDeletedPostId(
   const clean = String(id || '').trim();
   if (!clean) return;
   serverDeletedIdsMemory.delete(clean);
-  const current = await loadServerDeletedPostIds(env);
-  if (current.has(clean)) {
-    current.delete(clean);
-    await writeDeletedIdsToDisk(current, env);
-  }
+
   const config = getServerConfig(env);
   if (config.databaseUrl) {
     try {
       const pool = getPostgresPool(config.databaseUrl);
-      if (pool) {
-        await clearPostgresDeletedTombstone(pool, clean);
+      if (!pool) {
+        throw new VaultPersistenceUnavailableError(
+          'PostgreSQL pool is unavailable to clear deletion tombstone.'
+        );
       }
-    } catch {
-      // Ignore
+      await clearPostgresDeletedTombstone(pool, clean);
+      return;
+    } catch (pgErr) {
+      if (pgErr instanceof VaultPersistenceUnavailableError) throw pgErr;
+      console.warn('[PostsController] Failed to clear tombstone in Postgres:', pgErr);
+      throw new VaultPersistenceUnavailableError(
+        `Durable Vault tombstone update failed in PostgreSQL: ${pgErr instanceof Error ? pgErr.message : 'database error'}`
+      );
     }
+  }
+
+  const current = await loadServerDeletedPostIds(env);
+  if (current.has(clean)) {
+    current.delete(clean);
+    await writeDeletedIdsToDisk(current, env);
   }
 }
 
@@ -297,7 +344,10 @@ async function writeToFileStore(
  * READ-PURE loader for GET endpoints (/api/posts, /api/publish/status).
  * Never mutates Postgres rows, never writes disk files, and never promotes scheduled posts on GET.
  */
-export async function loadStoredPosts(env: NodeJS.ProcessEnv = process.env): Promise<{
+export async function loadStoredPosts(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { strictDatabase?: boolean } = {}
+): Promise<{
   posts: SavedPostRecord[];
   storageEngine: SavedPostStorageEngine;
   isCloudPersistent: boolean;
@@ -319,9 +369,32 @@ export async function loadStoredPosts(env: NodeJS.ProcessEnv = process.env): Pro
           deletedIds: Array.from(deletedIds),
         };
       }
+      if (options.strictDatabase) {
+        throw new VaultPersistenceUnavailableError(
+          'PostgreSQL pool is unavailable for Vault reads.',
+          502
+        );
+      }
     } catch (pgErr) {
+      if (pgErr instanceof VaultPersistenceUnavailableError) throw pgErr;
+      if (options.strictDatabase) {
+        console.error('[PostsStore] Neon PostgreSQL query failed (fail-closed):', pgErr);
+        throw new VaultPersistenceUnavailableError(
+          `Neon PostgreSQL read failed: ${pgErr instanceof Error ? pgErr.message : 'database error'}`,
+          502
+        );
+      }
       console.warn('[PostsStore] Neon PostgreSQL query failed, falling back to ephemeral store:', pgErr);
     }
+  } else if (
+    options.strictDatabase &&
+    isProductionServerlessVaultRuntime(env) &&
+    !(config.kvRestUrl && config.kvRestToken)
+  ) {
+    throw new VaultPersistenceUnavailableError(
+      'DATABASE_URL is required for durable Vault persistence in production serverless environments.',
+      503
+    );
   }
 
   // 2. Vercel KV / Upstash Redis (READ-PURE)
@@ -377,24 +450,31 @@ export async function upsertSingleStoredPost(
   const config = getServerConfig(env);
   const sig = normalizePostTitleSignature(post);
 
-  // 1. Neon Serverless PostgreSQL: 1 single-row INSERT ... ON CONFLICT DO UPDATE
+  // 1. Authoritative Neon Serverless PostgreSQL (single-row UPSERT; fail-closed on PG failure)
   if (config.databaseUrl) {
     try {
       const pool = getPostgresPool(config.databaseUrl);
-      if (pool) {
-        await upsertPostgresPost(pool, post, sig);
-        if (existingListHint) {
-          const next = deduplicateSavedPosts([
-            post,
-            ...existingListHint.filter((p) => p.id !== post.id),
-          ]);
-          void writeToFileStore(next, env);
-        }
-        return 'neon-postgres';
+      if (!pool) {
+        throw new VaultPersistenceUnavailableError(
+          'PostgreSQL pool is unavailable for post save.'
+        );
       }
+      await upsertPostgresPost(pool, post, sig);
+      return 'neon-postgres';
     } catch (pgErr) {
-      console.warn('[PostsStore] Neon PostgreSQL single-row upsert failed, falling back:', pgErr);
+      if (pgErr instanceof VaultPersistenceUnavailableError) throw pgErr;
+      console.error('[PostsStore] Neon PostgreSQL single-row upsert failed (fail-closed):', pgErr);
+      throw new VaultPersistenceUnavailableError(
+        `Durable Vault save failed in PostgreSQL: ${pgErr instanceof Error ? pgErr.message : 'database error'}`
+      );
     }
+  }
+
+  // Never silently claim durable write success onto ephemeral /tmp in production serverless
+  if (isProductionServerlessVaultRuntime(env) && !(config.kvRestUrl && config.kvRestToken)) {
+    throw new VaultPersistenceUnavailableError(
+      'DATABASE_URL is required for durable Vault persistence in production serverless environments.'
+    );
   }
 
   const baseList = existingListHint ?? (await loadStoredPosts(env)).posts;
@@ -403,9 +483,15 @@ export async function upsertSingleStoredPost(
     MAX_SAVED_POSTS
   );
 
+  // Legacy KV compatibility (non-Postgres deployments only; scheduled for migration & removal)
   if (config.kvRestUrl && config.kvRestToken) {
     const ok = await writeToKv(config.kvRestUrl, config.kvRestToken, merged);
     if (ok) return 'cloud-kv';
+    if (isProductionServerlessVaultRuntime(env)) {
+      throw new VaultPersistenceUnavailableError(
+        'Legacy KV write failed and ephemeral /tmp fallback is disabled in production serverless.'
+      );
+    }
   }
 
   const engine = await writeToFileStore(merged, env);
@@ -432,20 +518,19 @@ export async function deleteSingleStoredPost(
   }
 
   if (config.databaseUrl) {
-    try {
-      const pool = getPostgresPool(config.databaseUrl);
-      if (pool) {
-        if (existingListHint) {
-          void writeToFileStore(
-            existingListHint.filter((p) => p.id !== cleanId),
-            env
-          );
-        }
-        return 'neon-postgres';
-      }
-    } catch {
-      // Fallback below if Postgres unavailable
+    const pool = getPostgresPool(config.databaseUrl);
+    if (!pool) {
+      throw new VaultPersistenceUnavailableError(
+        'PostgreSQL pool is unavailable for post delete.'
+      );
     }
+    return 'neon-postgres';
+  }
+
+  if (isProductionServerlessVaultRuntime(env) && !(config.kvRestUrl && config.kvRestToken)) {
+    throw new VaultPersistenceUnavailableError(
+      'DATABASE_URL is required for durable Vault deletion in production serverless environments.'
+    );
   }
 
   const baseList = existingListHint ?? (await loadStoredPosts(env)).posts;
@@ -454,6 +539,11 @@ export async function deleteSingleStoredPost(
   if (config.kvRestUrl && config.kvRestToken) {
     const ok = await writeToKv(config.kvRestUrl, config.kvRestToken, filtered);
     if (ok) return 'cloud-kv';
+    if (isProductionServerlessVaultRuntime(env)) {
+      throw new VaultPersistenceUnavailableError(
+        'Legacy KV delete failed and ephemeral /tmp fallback is disabled in production serverless.'
+      );
+    }
   }
 
   const engine = await writeToFileStore(filtered, env);
@@ -475,25 +565,42 @@ export async function saveStoredPosts(
 
   const config = getServerConfig(env);
 
-  // 1. Neon Serverless PostgreSQL Cloud Persistence (Transactional UNNEST Batch)
+  // 1. Authoritative Neon Serverless PostgreSQL (Transactional UNNEST Batch; fail-closed on PG failure)
   if (config.databaseUrl) {
     try {
       const pool = getPostgresPool(config.databaseUrl);
-      if (pool) {
-        await upsertPostgresPostsBatch(pool, sorted, normalizePostTitleSignature);
-        void writeToFileStore(sorted, env);
-        return 'neon-postgres';
+      if (!pool) {
+        throw new VaultPersistenceUnavailableError(
+          'PostgreSQL pool is unavailable for batch save.'
+        );
       }
+      await upsertPostgresPostsBatch(pool, sorted, normalizePostTitleSignature);
+      return 'neon-postgres';
     } catch (pgErr) {
-      console.warn('[PostsStore] Neon PostgreSQL batch save failed, falling back to file store:', pgErr);
+      if (pgErr instanceof VaultPersistenceUnavailableError) throw pgErr;
+      console.error('[PostsStore] Neon PostgreSQL batch save failed (fail-closed):', pgErr);
+      throw new VaultPersistenceUnavailableError(
+        `Durable Vault batch save failed in PostgreSQL: ${pgErr instanceof Error ? pgErr.message : 'database error'}`
+      );
     }
   }
 
-  // 2. Vercel KV / Upstash Redis
+  if (isProductionServerlessVaultRuntime(env) && !(config.kvRestUrl && config.kvRestToken)) {
+    throw new VaultPersistenceUnavailableError(
+      'DATABASE_URL is required for durable Vault persistence in production serverless environments.'
+    );
+  }
+
+  // 2. Legacy KV compatibility (non-Postgres deployments only; scheduled for migration & removal)
   if (config.kvRestUrl && config.kvRestToken) {
     const ok = await writeToKv(config.kvRestUrl, config.kvRestToken, sorted);
     if (ok) {
       return 'cloud-kv';
+    }
+    if (isProductionServerlessVaultRuntime(env)) {
+      throw new VaultPersistenceUnavailableError(
+        'Legacy KV write failed and ephemeral /tmp fallback is disabled in production serverless.'
+      );
     }
   }
 
@@ -765,7 +872,10 @@ export function validateAndBuildPostRecord(
  */
 export async function handleListPosts(_req: Request, res: Response) {
   try {
-    const { posts, storageEngine, isCloudPersistent, deletedIds } = await loadStoredPosts();
+    const { posts, storageEngine, isCloudPersistent, deletedIds } = await loadStoredPosts(
+      process.env,
+      { strictDatabase: true }
+    );
     return res.json({
       posts,
       storageEngine,
@@ -773,6 +883,9 @@ export async function handleListPosts(_req: Request, res: Response) {
       deletedIds: deletedIds || [],
     });
   } catch (err) {
+    if (err instanceof VaultPersistenceUnavailableError) {
+      return res.status(err.status).json({ error: err.message, code: err.code });
+    }
     console.error('[PostsController] Failed to list posts:', err);
     return res.status(500).json({ error: 'Failed to load saved posts' });
   }
@@ -783,16 +896,24 @@ export async function handleListPosts(_req: Request, res: Response) {
  * Retrieves a single saved post by ID.
  */
 export async function handleGetPost(req: Request, res: Response) {
-  const id = String(req.params.id || '').trim();
-  if (!id) {
-    return res.status(400).json({ error: 'Post ID is required' });
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+      return res.status(400).json({ error: 'Post ID is required' });
+    }
+    const { posts, storageEngine } = await loadStoredPosts(process.env, { strictDatabase: true });
+    const found = posts.find((p) => p.id === id);
+    if (!found) {
+      return res.status(404).json({ error: 'Saved post not found' });
+    }
+    return res.json({ post: { ...found, storageEngine } });
+  } catch (err) {
+    if (err instanceof VaultPersistenceUnavailableError) {
+      return res.status(err.status).json({ error: err.message, code: err.code });
+    }
+    console.error('[PostsController] Failed to load post:', err);
+    return res.status(500).json({ error: 'Failed to load saved post' });
   }
-  const { posts, storageEngine } = await loadStoredPosts();
-  const found = posts.find((p) => p.id === id);
-  if (!found) {
-    return res.status(404).json({ error: 'Saved post not found' });
-  }
-  return res.json({ post: { ...found, storageEngine } });
 }
 
 /**
@@ -803,7 +924,7 @@ export async function handleSavePost(req: Request, res: Response) {
   try {
     const body = req.body || {};
 
-    // Mode 1: Batch reconciliation from client IndexedDB Vault (e.g. after Vercel cold start)
+    // Mode 1: Batch reconciliation from client IndexedDB Vault (offline drafts only)
     if (Array.isArray(body.syncPosts)) {
       const deletedIds = await loadServerDeletedPostIds();
       if (Array.isArray(body.deletedIds)) {
@@ -814,7 +935,7 @@ export async function handleSavePost(req: Request, res: Response) {
           }
         }
       }
-      const { posts: existing } = await loadStoredPosts();
+      const { posts: existing } = await loadStoredPosts(process.env, { strictDatabase: true });
       const merged = mergePostLists(existing, body.syncPosts as SavedPostRecord[], deletedIds);
       const storageEngine = await saveStoredPosts(merged);
       return res.json({
@@ -829,7 +950,7 @@ export async function handleSavePost(req: Request, res: Response) {
     }
 
     // Mode 2: Single post validation and save
-    const { posts: existing } = await loadStoredPosts();
+    const { posts: existing } = await loadStoredPosts(process.env, { strictDatabase: true });
     const incomingId =
       (typeof body.id === 'string' && body.id.trim()) ||
       (typeof body.deck?.id === 'string' && body.deck.id.trim()) ||
@@ -880,6 +1001,9 @@ export async function handleSavePost(req: Request, res: Response) {
       storageEngine,
     });
   } catch (err) {
+    if (err instanceof VaultPersistenceUnavailableError) {
+      return res.status(err.status).json({ error: err.message, code: err.code });
+    }
     console.error('[PostsController] Failed to save post:', err);
     return res.status(500).json({ error: 'Failed to save valid post' });
   }
@@ -895,7 +1019,7 @@ export async function handleUpdatePostStatus(req: Request, res: Response) {
     const postStatus: SavedPostStatus =
       req.body?.postStatus === 'posted' ? 'posted' : 'validated';
 
-    const { posts } = await loadStoredPosts();
+    const { posts } = await loadStoredPosts(process.env, { strictDatabase: true });
     const idx = posts.findIndex((p) => p.id === id);
     if (idx === -1) {
       return res.status(404).json({ error: 'Saved post not found' });
@@ -916,6 +1040,9 @@ export async function handleUpdatePostStatus(req: Request, res: Response) {
       storageEngine,
     });
   } catch (err) {
+    if (err instanceof VaultPersistenceUnavailableError) {
+      return res.status(err.status).json({ error: err.message, code: err.code });
+    }
     console.error('[PostsController] Failed to update post status:', err);
     return res.status(500).json({ error: 'Failed to update post status' });
   }
@@ -939,7 +1066,7 @@ export async function handleDeletePost(req: Request, res: Response) {
         // Non-fatal if remote is unreachable
       }
     }
-    const { posts } = await loadStoredPosts();
+    const { posts } = await loadStoredPosts(process.env, { strictDatabase: true });
     const storageEngine = await deleteSingleStoredPost(id, posts);
 
     return res.json({
@@ -947,6 +1074,9 @@ export async function handleDeletePost(req: Request, res: Response) {
       storageEngine,
     });
   } catch (err) {
+    if (err instanceof VaultPersistenceUnavailableError) {
+      return res.status(err.status).json({ error: err.message, code: err.code });
+    }
     console.error('[PostsController] Failed to delete post:', err);
     return res.status(500).json({ error: 'Failed to delete saved post' });
   }
