@@ -7,6 +7,7 @@ import {
   SESSION_COOKIE_NAME,
   createSignedSessionToken,
   hashPasswordScrypt,
+  isValidScryptHashFormat,
   resetAuthStateForTest,
   verifyPasswordConstantTime,
 } from './sessionAuth.ts';
@@ -89,6 +90,28 @@ describe('Phase A1 & A2: Universal API Auth, Login Hardening, Strict CORS & Netl
 
     const sessionCheck = await fetch(`${baseUrl}/api/auth/session`);
     expect(sessionCheck.status).toBe(503);
+  });
+
+  it('fails CLOSED returning 503 when ADMIN_PASSWORD_HASH has a malformed scrypt$ format', async () => {
+    const validHash = hashPasswordScrypt(ADMIN_PASS);
+    expect(isValidScryptHashFormat(validHash)).toBe(true);
+    expect(isValidScryptHashFormat('scrypt$truncated')).toBe(false);
+    expect(isValidScryptHashFormat(`scrypt$$${'a'.repeat(128)}`)).toBe(false);
+    expect(isValidScryptHashFormat(`scrypt$${'z'.repeat(32)}$${'a'.repeat(128)}`)).toBe(false);
+
+    process.env.ADMIN_PASSWORD_HASH = `scrypt$$${'a'.repeat(128)}`;
+
+    const sessionCheck = await fetch(`${baseUrl}/api/auth/session`);
+    expect(sessionCheck.status).toBe(503);
+    const sessionBody = (await sessionCheck.json()) as { authConfigured?: boolean };
+    expect(sessionBody.authConfigured).toBe(false);
+
+    const loginAttempt = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS }),
+    });
+    expect(loginAttempt.status).toBe(503);
   });
 
   it('rejects unauthenticated requests (401) across ALL protected /api/* routes (GET & POST/PATCH/DELETE)', async () => {

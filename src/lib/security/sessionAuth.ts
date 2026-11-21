@@ -67,27 +67,47 @@ export function hashPasswordScrypt(password: string, customSaltHex?: string): st
   return `scrypt$${salt.toString('hex')}$${derived.toString('hex')}`;
 }
 
+const HEX_PATTERN = /^[0-9a-f]+$/i;
+
+function parseValidScryptHashParts(
+  storedHash: string
+): { saltBuf: Buffer; expectedBuf: Buffer } | null {
+  const trimmed = (storedHash || '').trim();
+  const parts = trimmed.split('$');
+  if (parts.length !== 3 || parts[0].toLowerCase() !== 'scrypt') {
+    return null;
+  }
+  const [, saltHex, hashHex] = parts;
+  if (
+    saltHex.length < 16 ||
+    saltHex.length % 2 !== 0 ||
+    !HEX_PATTERN.test(saltHex) ||
+    hashHex.length !== 128 ||
+    !HEX_PATTERN.test(hashHex)
+  ) {
+    return null;
+  }
+  const saltBuf = Buffer.from(saltHex, 'hex');
+  const expectedBuf = Buffer.from(hashHex, 'hex');
+  if (saltBuf.length < 8 || expectedBuf.length !== 64) {
+    return null;
+  }
+  return { saltBuf, expectedBuf };
+}
+
+export function isValidScryptHashFormat(storedHash: string): boolean {
+  return parseValidScryptHashParts(storedHash) !== null;
+}
+
 /**
  * Verifies a plaintext password against a stored `scrypt$<saltHex>$<derivedHex>` hash
  * using Node native crypto.scryptSync and constant-time crypto.timingSafeEqual.
  */
 export function verifyPasswordConstantTime(password: string, storedHash: string): boolean {
-  const trimmed = (storedHash || '').trim();
-  const parts = trimmed.split('$').filter(Boolean);
-
-  let saltBuf = DUMMY_SALT;
-  let expectedBuf = DUMMY_DIGEST;
-  let validFormat = false;
-
-  if (parts.length === 3 && parts[0].toLowerCase() === 'scrypt') {
-    const saltCandidate = Buffer.from(parts[1], 'hex');
-    const hashCandidate = Buffer.from(parts[2], 'hex');
-    if (saltCandidate.length >= 8 && hashCandidate.length === 64) {
-      saltBuf = saltCandidate;
-      expectedBuf = hashCandidate;
-      validFormat = true;
-    }
-  }
+  const parsed = parseValidScryptHashParts(storedHash);
+  const saltBuf = parsed ? parsed.saltBuf : DUMMY_SALT;
+  const expectedBuf = parsed ? parsed.expectedBuf : DUMMY_DIGEST;
+  const validFormat = parsed !== null;
 
   const derived = crypto.scryptSync(String(password || ''), saltBuf, 64, {
     N: 16384,
@@ -105,7 +125,7 @@ export function getAuthConfigStatus(envOverride?: NodeJS.ProcessEnv): AuthConfig
 
   const missing: string[] = [];
   if (!username) missing.push('ADMIN_USERNAME');
-  if (!passwordHash || !passwordHash.startsWith('scrypt$')) missing.push('ADMIN_PASSWORD_HASH');
+  if (!isValidScryptHashFormat(passwordHash)) missing.push('ADMIN_PASSWORD_HASH');
   if (!sessionSecret || sessionSecret.length < 16) missing.push('SESSION_SECRET');
 
   const rawTtl = Number.parseInt(readRuntimeEnv('SESSION_TTL_SECONDS', envOverride) || '', 10);
