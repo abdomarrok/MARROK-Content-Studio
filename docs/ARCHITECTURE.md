@@ -47,6 +47,8 @@
 │  ├─ /api/publish/*           -> api/controllers/publishController.ts       │
 │  │    ├─ GET  /api/publish/status        (Live Channels + Auto-Sweep)      │
 │  │    ├─ GET  /api/publish/tiktok-music  (Zernio TikTok Commercial Music)  │
+│  │    ├─ GET  /api/publish/outbox        (Durable Outbox Inspection)       │
+│  │    ├─ POST /api/publish/recover       (Lease/Partial Dispatch Recovery) │
 │  │    ├─ POST /api/publish/upload-media  (Signed SHA-1 Cloudinary Staging) │
 │  │    ├─ POST /api/publish/dispatch      (Buffer GraphQL + Zernio REST v1) │
 │  │    ├─ POST /api/publish/manage-post   (Reschedule/Unschedule/Delete)    │
@@ -63,11 +65,11 @@
 |---|---|
 | `api/index.ts` | Express router, Vercel rewrite path restoration (`x-matched-path`), CORS, rate limiting, security headers |
 | `api/config.ts` | Startup env validation, `getGeminiKeyPool(req)` multi-key rotation, Cloudinary, Buffer, Zernio & Neon PostgreSQL credentials config, rate limiter |
-| `api/db/postgres.ts` | Serverless PostgreSQL layer (`pg.Pool`, SSL enabled, connection pooler) storing posts in `saved_posts` with `JSONB` slide decks, relational indexing (`post_status`, `scheduled_for`, `updated_at`, `title_signature`), idempotent schema init, and atomic upserts (`ON CONFLICT (id) DO UPDATE`) eliminating duplicate drafts across multi-device sessions and serverless restarts |
+| `api/db/postgres.ts` | Serverless PostgreSQL layer (`pg.Pool`, SSL enabled, connection pooler) storing posts in `saved_posts` (`JSONB` decks, relational indexes, atomic `ON CONFLICT (id) DO UPDATE`) and durable publishing state in `publish_outbox` (transactional cross-instance lease claiming, `dispatch_fingerprint` uniqueness, per-target remote IDs, and retry/recovery indexes) |
 | `api/controllers/generateController.ts` | Bilingual deck synthesis (Carousel & 1-Slide), `/api/refine-slide`, Google Search `groundingSupports` fact mapping, multi-key Gemini rotation, and zero-key Pollinations AI text fallback |
 | `api/controllers/imageController.ts` | Gemini 9:16 image generation/editing with zero-key Pollinations Flux image fallback |
 | `api/controllers/postsController.ts` | Content Vault persistence prioritizing Neon PostgreSQL (`neon-postgres`), with graceful fallbacks (`cloud-kv`, `local-disk`, `vercel-tmp`) |
-| `api/controllers/publishController.ts` | Signed SHA-1 Cloudinary upload (`uploadSlideToCloudinary`), automatic post-publish asset destruction (`destroyCloudinaryAsset`, `sweepExpiredCloudinaryAssets`), Buffer GraphQL API dispatch (`https://api.buffer.com`), Zernio REST API v1 dispatch (`https://zernio.com/api/v1/posts`), SHA-256 `computeDispatchFingerprint` idempotency + per-post lock + partial-failure recovery persistence, and TikTok Commercial Music catalog (`fetchZernioTikTokCommercialMusic`) |
+| `api/controllers/publishController.ts` | Signed SHA-1 Cloudinary upload (`uploadSlideToCloudinary`), automatic post-publish asset destruction (`destroyCloudinaryAsset`, `sweepExpiredCloudinaryAssets`), Buffer GraphQL (`https://api.buffer.com`), Zernio REST v1 (`https://zernio.com/api/v1/posts`), durable outbox claiming/checkpointing (`publish_outbox` + local-disk fallback) preventing cross-instance duplicate dispatches and recovering partial/interrupted runs (`/api/publish/outbox`, `/api/publish/recover`), and TikTok Commercial Music catalog |
 | `api/controllers/proxyController.ts` | SSRF-hardened HTTPS image proxy with DNS resolution check, 2 MB cap, and SVG sanitization |
 | `api/controllers/mediaController.ts` | Subject-based tech icon & Wikimedia search (`/api/search-media`), automated technical trend radar (`/api/gather/radar` across HN, Lobsters, Reddit, Cloudflare RSS, custom RSS, and curated stories), SSRF-hardened web article reader extraction (`/api/gather/extract-url`), and direct Telegram Bot Webhook automation (`/api/gather/telegram-webhook`) |
 | `src/lib/security/sessionAuth.ts` | Fail-closed authentication gate (`503` when auth config or `scrypt$` hash format is invalid), scrypt verification, HMAC-SHA256 cookies (`__Host-marrok_session`), Bearer iframe tokens, and timing-safe webhook/secret checks |
@@ -80,6 +82,7 @@
 | `src/lib/bundledTechSvgs.ts` | Offline bundled Simple Icons / Devicon SVG catalog (`56` verified icons + named product registry), `resolveRealTechSystem()` strict product resolver, `NON_PRODUCT_WORDS` denylist, and `isPlaceholderOrEmptyBrandValue()` validator |
 | `src/lib/synthesis/smartVisualDefaults.ts` | Strict `detectSubjectPairFromText()` migration/comparison detector, topic-aware `analyzeSlideTextForArchetype()` & `explainArchetypeChoice()`, and Slide 1 non-empty metric/hook enforcement |
 | `src/lib/publish/tiktokTitle.ts` | Pure standalone string utility (`stripLeadingDuplicateTikTokTitle`) decoupled from browser DOM/Canvas and IndexedDB to guarantee clean Vercel Node.js Serverless function bundling |
+| `src/lib/publish/publishOutbox.ts` | Pure Node/universal durable publishing state machine (`classifyProviderFailure`, `reconcileInterruptedOperations`, `computeOutboxAggregateState`, `evaluateExistingOutboxClaim`, retry backoff/limits) plus atomic serialized local-disk sidecar store when Postgres is offline |
 | `src/lib/publish/publishClient.ts` | Client SDK for `/api/publish/*` endpoints, dual aspect-ratio slide renderer (`uploadDeckSlidesForPublishing`), TikTok Commercial Music fetcher (`fetchTikTokCommercialMusic`), local-timezone schedule helpers, and metadata auto-derivation |
 | `src/lib/theme/cadenceEngine.ts` | Posted history color cadence analyzer (`analyzePostHistoryCadence`, `resolveHarmoniousPaletteWithoutRepetition`) preventing consecutive same-color posts |
 | `src/lib/canvas/constants.ts` | Platform dimension presets (`tiktok-9:16`, `ig-4:5`, `ig-3:4`, `ig-1:1`, `ig-9:16`), safe zones, `24px`/`22px` typography floors, and smart aspect-ratio-aware Full Meme bounds (`resolveSmartFullMemeCardBounds`, `FULL_MEME_CARD_W = 1008`, `pad = 6`) |

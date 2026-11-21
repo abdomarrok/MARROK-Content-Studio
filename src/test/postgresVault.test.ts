@@ -8,6 +8,8 @@ import {
   upsertPostgresPostsBatch,
   updatePostgresPostStatus,
   deletePostgresPost,
+  claimPostgresOutboxDispatch,
+  checkpointPostgresOutboxRecord,
   resetPostgresPoolForTesting,
   setPostgresPoolForTesting,
 } from '../../api/db/postgres.ts';
@@ -39,9 +41,12 @@ describe('Neon PostgreSQL Vault Persistence & Safe Fallbacks', () => {
     expect(mockQuery).toHaveBeenCalledTimes(1);
     const sql = mockQuery.mock.calls[0][0];
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS saved_posts');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS publish_outbox');
     expect(sql).toContain('ALTER TABLE saved_posts ADD COLUMN IF NOT EXISTS cloudinary_cleaned_at TIMESTAMPTZ');
     expect(sql).toContain('idx_saved_posts_status');
     expect(sql).toContain('idx_saved_posts_updated_at');
+    expect(sql).toContain('idx_publish_outbox_post_id');
+    expect(sql).toContain('idx_publish_outbox_lease_expires');
 
     // Calling it again should be cached and not re-query
     await initPostgresSchema(mockPool);
@@ -349,5 +354,186 @@ describe('Neon PostgreSQL Vault Persistence & Safe Fallbacks', () => {
       /\b(INSERT|UPDATE|DELETE)\b/i.test(s)
     );
     expect(writeCallsDuringGet).toEqual([]);
+  });
+
+  it('atomically claims, leases, and checkpoints publish_outbox records in PostgreSQL transactions', async () => {
+    const outboxRows = new Map<string, Record<string, unknown>>();
+    const clientQueries: string[] = [];
+
+    const executeSql = async (sql: string, values: unknown[] = []) => {
+      if (sql.includes('CREATE TABLE')) return { rows: [] };
+      if (sql.includes('FROM publish_outbox') && sql.includes('dispatch_fingerprint <>')) {
+        const postId = String(values[0]);
+        const fp = String(values[1]);
+        const now = values[2] as Date;
+        for (const r of outboxRows.values()) {
+          if (
+            r.post_id === postId &&
+            r.dispatch_fingerprint !== fp &&
+            r.state === 'dispatching' &&
+            r.lease_expires_at instanceof Date &&
+            r.lease_expires_at.getTime() > now.getTime()
+          ) {
+            return { rows: [r] };
+          }
+        }
+        return { rows: [] };
+      }
+      if (sql.includes('SELECT * FROM publish_outbox WHERE dispatch_fingerprint = $1')) {
+        const row = outboxRows.get(String(values[0]));
+        return { rows: row ? [row] : [] };
+      }
+      if (sql.includes('INSERT INTO publish_outbox')) {
+        const fp = String(values[2]);
+        if (outboxRows.has(fp)) return { rows: [] };
+        const row: Record<string, unknown> = {
+          id: values[0],
+          post_id: values[1],
+          dispatch_fingerprint: fp,
+          state: values[3],
+          mode: values[4],
+          due_at: values[5],
+          timezone: values[6],
+          targets: JSON.parse(String(values[7])),
+          attempt_count: values[8],
+          max_attempts: values[9],
+          lease_owner: values[10],
+          lease_expires_at: values[11],
+          next_retry_at: values[12],
+          last_error_category: values[13],
+          last_error_message: values[14],
+          payload: JSON.parse(String(values[15])),
+          operations: JSON.parse(String(values[16])),
+          created_at: values[17],
+          updated_at: values[18],
+          completed_at: values[19],
+        };
+        outboxRows.set(fp, row);
+        return { rows: [row] };
+      }
+      if (sql.includes('UPDATE publish_outbox') && sql.includes('SET state = $2,')) {
+        const fp = String(values[0]);
+        const existing = outboxRows.get(fp);
+        if (!existing) return { rows: [] };
+        const updated = {
+          ...existing,
+          state: values[1],
+          targets: JSON.parse(String(values[2])),
+          attempt_count: values[3],
+          lease_owner: values[4],
+          lease_expires_at: values[5],
+          next_retry_at: values[6],
+          last_error_category: values[7],
+          last_error_message: values[8],
+          operations: JSON.parse(String(values[9])),
+          updated_at: values[10],
+          completed_at: values[11],
+        };
+        outboxRows.set(fp, updated);
+        return { rows: [updated] };
+      }
+      return { rows: [] };
+    };
+
+    const release = vi.fn();
+    const mockPool = {
+      query: vi.fn().mockImplementation(executeSql),
+      connect: vi.fn().mockResolvedValue({
+        query: vi.fn().mockImplementation(async (sql: string, vals?: unknown[]) => {
+          clientQueries.push(sql.trim().split(/\s+/)[0]);
+          return executeSql(sql, vals);
+        }),
+        release,
+      }),
+      on: vi.fn(),
+    } as any;
+
+    const nowMs = Date.parse('2026-11-21T15:00:00.000Z');
+    const claim1 = await claimPostgresOutboxDispatch(mockPool, {
+      postId: 'post_pg_outbox_1',
+      dispatchFingerprint: 'fp_pg_1',
+      mode: 'shareNow',
+      targets: ['instagram', 'tiktok'],
+      payload: {
+        caption: 'PG Outbox Test',
+        mode: 'shareNow',
+        targets: ['instagram', 'tiktok'],
+        imageUrls: ['https://cdn.example.com/1.jpg'],
+        tiktokImageUrls: ['https://cdn.example.com/1_tt.jpg'],
+        cloudinaryPublicIds: ['s1'],
+      },
+      leaseOwner: 'lambda_1',
+      leaseDurationMs: 60_000,
+      nowMs,
+    });
+
+    expect(claim1.status).toBe('claimed');
+    expect(clientQueries).toContain('BEGIN');
+    expect(clientQueries).toContain('COMMIT');
+    expect(release).toHaveBeenCalledTimes(1);
+
+    // Concurrent second serverless instance trying to dispatch the same post_id must be rejected as in_flight
+    const concurrentOtherFp = await claimPostgresOutboxDispatch(mockPool, {
+      postId: 'post_pg_outbox_1',
+      dispatchFingerprint: 'fp_pg_different',
+      mode: 'shareNow',
+      targets: ['instagram'],
+      payload: {
+        caption: 'Different payload while active',
+        mode: 'shareNow',
+        targets: ['instagram'],
+        imageUrls: ['https://cdn.example.com/1.jpg'],
+        tiktokImageUrls: [],
+        cloudinaryPublicIds: [],
+      },
+      leaseOwner: 'lambda_2',
+      leaseDurationMs: 60_000,
+      nowMs: nowMs + 10_000,
+    });
+    expect(concurrentOtherFp.status).toBe('in_flight');
+
+    // Checkpoint completed state and confirm replay
+    if (claim1.status === 'claimed') {
+      await checkpointPostgresOutboxRecord(mockPool, {
+        ...claim1.record,
+        state: 'completed',
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        completedAt: new Date(nowMs + 5000).toISOString(),
+        operations: {
+          instagram: {
+            service: 'instagram',
+            provider: 'buffer',
+            state: 'succeeded',
+            attemptCount: 1,
+            remotePostId: 'buf_pg_1',
+            bufferPostId: 'buf_pg_1',
+            updatedAt: new Date(nowMs + 2000).toISOString(),
+            completedAt: new Date(nowMs + 2000).toISOString(),
+          },
+          tiktok: {
+            service: 'tiktok',
+            provider: 'zernio',
+            state: 'succeeded',
+            attemptCount: 1,
+            remotePostId: 'zernio_pg_1',
+            zernioPostId: 'zernio_pg_1',
+            updatedAt: new Date(nowMs + 4000).toISOString(),
+            completedAt: new Date(nowMs + 4000).toISOString(),
+          },
+        },
+      });
+
+      const replay = await claimPostgresOutboxDispatch(mockPool, {
+        postId: 'post_pg_outbox_1',
+        dispatchFingerprint: 'fp_pg_1',
+        mode: 'shareNow',
+        targets: ['instagram', 'tiktok'],
+        payload: claim1.record.payload,
+        leaseOwner: 'lambda_3',
+        nowMs: nowMs + 20_000,
+      });
+      expect(replay.status).toBe('already_completed');
+    }
   });
 });

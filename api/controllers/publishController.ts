@@ -2,11 +2,21 @@ import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
 import type {
   BufferChannelInfo,
+  PublishOutboxOperation,
+  PublishOutboxPayloadSnapshot,
+  PublishOutboxRecord,
   PublishScheduleMode,
   PublishTargetPlatform,
   SavedPostRecord,
 } from '../../src/types.ts';
 import { getServerConfig, type ServerConfig } from '../config.ts';
+import {
+  getPostgresPool,
+  claimPostgresOutboxDispatch,
+  checkpointPostgresOutboxRecord,
+  queryPostgresOutboxDispatches,
+  cancelPostgresOutboxDispatchesForPost,
+} from '../db/postgres.ts';
 import {
   deleteSingleStoredPost,
   loadStoredPosts,
@@ -20,6 +30,22 @@ import {
 } from '../../src/lib/publish/schedulePredicate.ts';
 import { stripLeadingDuplicateTikTokTitle } from '../../src/lib/publish/tiktokTitle.ts';
 import { fetchJsonWithTimeout } from '../../src/lib/network/httpClient.ts';
+import {
+  DEFAULT_OUTBOX_LEASE_MS,
+  DEFAULT_OUTBOX_MAX_ATTEMPTS,
+  canRetryOutboxRecord,
+  cancelLocalOutboxDispatchesForPost,
+  checkpointLocalOutboxRecord,
+  claimLocalOutboxDispatch,
+  classifyProviderFailure,
+  collectOutboxRemoteIds,
+  finalizeOutboxRecord,
+  isOperationConfirmedSuccess,
+  queryLocalOutboxDispatches,
+  toOutboxSummary,
+  type ClaimOutboxDispatchOutcome,
+  type ClaimOutboxDispatchParams,
+} from '../../src/lib/publish/publishOutbox.ts';
 
 const LOCAL_MEDIA_CACHE = new Map<string, { buffer: Buffer; createdAt: number }>();
 
@@ -981,6 +1007,16 @@ export async function handleGetTikTokCommercialMusic(_req: Request, res: Respons
  * Supports TikTok Photo Carousels (up to 35 JPEG slides with camelCase `autoAddMusic` + `musicSoundInfo`
  * and compliance flags) and Instagram Carousels.
  */
+interface ProviderDispatchCallResult {
+  ok: boolean;
+  bufferPostId?: string;
+  zernioPostId?: string;
+  message?: string;
+  statusCode?: number;
+  isTimeout?: boolean;
+  isNetworkError?: boolean;
+}
+
 async function dispatchToZernioApi(params: {
   zernioApiKey: string;
   accountId: string;
@@ -998,7 +1034,7 @@ async function dispatchToZernioApi(params: {
     title?: string;
     musicSoundId?: string;
   };
-}): Promise<{ ok: boolean; zernioPostId?: string; message?: string }> {
+}): Promise<ProviderDispatchCallResult> {
   const {
     zernioApiKey,
     accountId,
@@ -1122,6 +1158,7 @@ async function dispatchToZernioApi(params: {
       const errText = await res.text().catch(() => '');
       return {
         ok: false,
+        statusCode: res.status,
         message: `Zernio API HTTP ${res.status}${errText ? `: ${errText.slice(0, 140)}` : ''}`,
       };
     }
@@ -1149,9 +1186,15 @@ async function dispatchToZernioApi(params: {
       zernioPostId: createdId || `zernio_${Date.now()}`,
     };
   } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Zernio API network error';
+    const isTimeout =
+      (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')) ||
+      /timeout|timed out|aborted/i.test(msg);
     return {
       ok: false,
-      message: err instanceof Error ? err.message : 'Zernio API network error',
+      isTimeout,
+      isNetworkError: !isTimeout,
+      message: msg,
     };
   }
 }
@@ -1199,7 +1242,7 @@ async function dispatchToBufferGraphQl(params: {
   mode: PublishScheduleMode;
   dueAt?: string;
   imageUrls: string[];
-}): Promise<{ ok: boolean; bufferPostId?: string; message?: string }> {
+}): Promise<ProviderDispatchCallResult> {
   const { bufferApiKey, channelId, service, text, mode, dueAt, imageUrls } = params;
   const graphqlMode =
     mode === 'customScheduled'
@@ -1284,6 +1327,7 @@ async function dispatchToBufferGraphQl(params: {
       const errText = await res.text().catch(() => '');
       return {
         ok: false,
+        statusCode: res.status,
         message: `Buffer API HTTP ${res.status}${errText ? `: ${errText.slice(0, 120)}` : ''}`,
       };
     }
@@ -1302,17 +1346,26 @@ async function dispatchToBufferGraphQl(params: {
     if (createdId) {
       return { ok: true, bufferPostId: createdId };
     }
+    const mutationMessage = payload.data?.createPost?.message;
+    const graphqlErrorMessage = payload.errors?.[0]?.message;
     return {
       ok: false,
+      statusCode: mutationMessage && !graphqlErrorMessage ? 422 : undefined,
       message:
-        payload.data?.createPost?.message ||
-        payload.errors?.[0]?.message ||
+        mutationMessage ||
+        graphqlErrorMessage ||
         'Buffer GraphQL mutation returned no post ID',
     };
   } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Buffer API network error';
+    const isTimeout =
+      (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')) ||
+      /timeout|timed out|aborted/i.test(msg);
     return {
       ok: false,
-      message: err instanceof Error ? err.message : 'Buffer API network error',
+      isTimeout,
+      isNetworkError: !isTimeout,
+      message: msg,
     };
   }
 }
@@ -1325,6 +1378,85 @@ async function dispatchToBufferGraphQl(params: {
  * and Metricool CSV imports never encounter a 404.
  */
 const activeDispatchLocks = new Set<string>();
+
+async function claimOutboxDispatchDurable(
+  params: ClaimOutboxDispatchParams,
+  config: ServerConfig = getServerConfig()
+): Promise<ClaimOutboxDispatchOutcome> {
+  if (config.databaseUrl) {
+    try {
+      const pool = getPostgresPool(config.databaseUrl);
+      if (pool) {
+        return await claimPostgresOutboxDispatch(pool, params);
+      }
+    } catch (pgErr) {
+      console.warn('[PublishOutbox] Postgres claim failed, falling back to local outbox:', pgErr);
+    }
+  }
+  return claimLocalOutboxDispatch(params);
+}
+
+async function checkpointOutboxRecordDurable(
+  record: PublishOutboxRecord,
+  config: ServerConfig = getServerConfig()
+): Promise<PublishOutboxRecord> {
+  if (config.databaseUrl) {
+    try {
+      const pool = getPostgresPool(config.databaseUrl);
+      if (pool) {
+        return await checkpointPostgresOutboxRecord(pool, record);
+      }
+    } catch (pgErr) {
+      console.warn('[PublishOutbox] Postgres checkpoint failed, falling back to local outbox:', pgErr);
+    }
+  }
+  return checkpointLocalOutboxRecord(record);
+}
+
+async function queryOutboxDispatchesDurable(
+  options: { postId?: string; recoverableOnly?: boolean; nowMs?: number; limit?: number } = {},
+  config: ServerConfig = getServerConfig()
+): Promise<PublishOutboxRecord[]> {
+  if (config.databaseUrl) {
+    try {
+      const pool = getPostgresPool(config.databaseUrl);
+      if (pool) {
+        return await queryPostgresOutboxDispatches(pool, options);
+      }
+    } catch (pgErr) {
+      console.warn('[PublishOutbox] Postgres query failed, falling back to local outbox:', pgErr);
+    }
+  }
+  return queryLocalOutboxDispatches(options);
+}
+
+async function cancelOutboxDispatchesForPostDurable(
+  postId: string,
+  config: ServerConfig = getServerConfig()
+): Promise<void> {
+  if (config.databaseUrl) {
+    try {
+      const pool = getPostgresPool(config.databaseUrl);
+      if (pool) {
+        await cancelPostgresOutboxDispatchesForPost(pool, postId);
+        return;
+      }
+    } catch (pgErr) {
+      console.warn('[PublishOutbox] Postgres cancel failed, falling back to local outbox:', pgErr);
+    }
+  }
+  await cancelLocalOutboxDispatchesForPost(postId);
+}
+
+interface ChannelExecutionResultItem {
+  service: PublishTargetPlatform;
+  provider: 'buffer' | 'zernio' | 'metricool-csv';
+  ok: boolean;
+  bufferPostId?: string;
+  zernioPostId?: string;
+  message?: string;
+  reusedFromOutbox?: boolean;
+}
 
 function normalizeDeterministicValue(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -1373,15 +1505,652 @@ export function computeDispatchFingerprint(input: {
   return crypto.createHash('sha256').update(payload).digest('hex').slice(0, 32);
 }
 
+function buildChannelResultsFromOutboxRecord(
+  outbox: PublishOutboxRecord,
+  isReplay = false
+): ChannelExecutionResultItem[] {
+  return outbox.targets.map((service) => {
+    const op = outbox.operations[service];
+    if (!op) {
+      return {
+        service,
+        provider: service === 'tiktok' ? 'zernio' : 'buffer',
+        ok: true,
+        message: isReplay ? 'Idempotent replay — already dispatched' : undefined,
+      };
+    }
+    const ok = op.state === 'succeeded' || op.state === 'skipped_fallback';
+    return {
+      service,
+      provider: op.provider,
+      ok,
+      ...(op.bufferPostId ? { bufferPostId: op.bufferPostId } : {}),
+      ...(op.zernioPostId ? { zernioPostId: op.zernioPostId } : {}),
+      ...(op.errorMessage
+        ? { message: op.errorMessage }
+        : isReplay
+        ? { message: 'Idempotent replay — already dispatched with identical payload' }
+        : {}),
+      ...(isReplay ? { reusedFromOutbox: true } : {}),
+    };
+  });
+}
+
+async function executeOutboxDispatchTargets(params: {
+  outboxRecord: PublishOutboxRecord;
+  existingRecord?: SavedPostRecord;
+  existingPosts: SavedPostRecord[];
+  cancelExistingBeforeDispatch: boolean;
+  config: ServerConfig;
+}): Promise<{
+  finalizedOutbox: PublishOutboxRecord;
+  savedRecord: SavedPostRecord | null;
+  nextPosts: SavedPostRecord[];
+  channelResults: ChannelExecutionResultItem[];
+  bufferPostIds: string[];
+  zernioPostIds: string[];
+  bufferFailedCount: number;
+  warnings: string[];
+}> {
+  let workingOutbox = params.outboxRecord;
+  const payload = workingOutbox.payload;
+  const validTargets = workingOutbox.targets;
+  const isImmediate = workingOutbox.mode === 'shareNow';
+  const mode = workingOutbox.mode;
+  const dueAt = workingOutbox.dueAt;
+  const timezone = workingOutbox.timezone;
+  const postText = payload.caption || '';
+  const imageUrls = payload.imageUrls || [];
+  const effectiveTikTokUrls =
+    payload.tiktokImageUrls && payload.tiktokImageUrls.length > 0
+      ? payload.tiktokImageUrls
+      : imageUrls;
+  const cloudinaryPublicIds = payload.cloudinaryPublicIds || [];
+  const mergeRemoteIds = Boolean(payload.mergeRemoteIds);
+  const tiktokSettings = payload.tiktokSettings;
+  const config = params.config;
+
+  const warnings: string[] = [];
+  const channelResults: ChannelExecutionResultItem[] = [];
+  const hasLocalOnlyUrls = imageUrls.some(
+    (u) => typeof u === 'string' && /localhost|127\.0\.0\.1/.test(u)
+  );
+  if (hasLocalOnlyUrls) {
+    warnings.push(
+      'Slide images were staged locally because Cloudinary credentials are not configured; external cloud APIs (Buffer/Zernio/Metricool) require public HTTPS image URLs.'
+    );
+  }
+
+  const targetsNeedingRemoteApi = validTargets.filter((service) => {
+    if (params.cancelExistingBeforeDispatch) return true;
+    const op = workingOutbox.operations[service];
+    return !isOperationConfirmedSuccess(op);
+  });
+
+  const zernioMap =
+    targetsNeedingRemoteApi.length > 0 && config.zernioApiKey
+      ? await resolveZernioAccountMap(config.zernioApiKey)
+      : new Map<PublishTargetPlatform, { accountId: string; username?: string }>();
+  const bufferMap =
+    targetsNeedingRemoteApi.length > 0 && config.bufferApiKey
+      ? await resolveBufferChannelMap(config.bufferApiKey)
+      : new Map<PublishTargetPlatform, string>();
+
+  const checkpointTarget = async (
+    service: PublishTargetPlatform,
+    op: PublishOutboxOperation
+  ) => {
+    workingOutbox = {
+      ...workingOutbox,
+      operations: {
+        ...workingOutbox.operations,
+        [service]: op,
+      },
+      updatedAt: op.updatedAt,
+    };
+    workingOutbox = await checkpointOutboxRecordDurable(workingOutbox, config);
+  };
+
+  // 1. Instagram, Facebook, LinkedIn (Buffer primary -> Zernio failover -> Metricool CSV fallback)
+  const metaLinkedInTargets = validTargets.filter((t) => t !== 'tiktok');
+  for (const service of metaLinkedInTargets) {
+    const existingOp = workingOutbox.operations[service];
+    if (!params.cancelExistingBeforeDispatch && isOperationConfirmedSuccess(existingOp) && existingOp) {
+      channelResults.push({
+        service,
+        provider: existingOp.provider,
+        ok: true,
+        ...(existingOp.bufferPostId ? { bufferPostId: existingOp.bufferPostId } : {}),
+        ...(existingOp.zernioPostId ? { zernioPostId: existingOp.zernioPostId } : {}),
+        reusedFromOutbox: true,
+      });
+      continue;
+    }
+
+    const prevAttempt = existingOp?.attemptCount || 0;
+    const startIso = new Date().toISOString();
+    const bufferChannelId = bufferMap.get(service);
+    const zernioAccount = zernioMap.get(service);
+
+    if (config.bufferApiKey && bufferChannelId && imageUrls.length > 0) {
+      await checkpointTarget(service, {
+        service,
+        provider: 'buffer',
+        state: 'dispatching',
+        attemptCount: prevAttempt + 1,
+        updatedAt: startIso,
+      });
+
+      const result = await dispatchToBufferGraphQl({
+        bufferApiKey: config.bufferApiKey,
+        channelId: bufferChannelId,
+        service,
+        text: postText,
+        mode,
+        dueAt,
+        imageUrls,
+      });
+
+      const doneIso = new Date().toISOString();
+      if (result.ok && result.bufferPostId) {
+        await checkpointTarget(service, {
+          service,
+          provider: 'buffer',
+          state: 'succeeded',
+          attemptCount: prevAttempt + 1,
+          remotePostId: result.bufferPostId,
+          bufferPostId: result.bufferPostId,
+          updatedAt: doneIso,
+          completedAt: doneIso,
+        });
+        channelResults.push({
+          service,
+          provider: 'buffer',
+          ok: true,
+          bufferPostId: result.bufferPostId,
+        });
+        continue;
+      }
+
+      if (config.zernioApiKey && zernioAccount) {
+        const zernioFallback = await dispatchToZernioApi({
+          zernioApiKey: config.zernioApiKey,
+          accountId: zernioAccount.accountId,
+          service,
+          text: postText,
+          mode,
+          dueAt,
+          timezone,
+          imageUrls,
+        });
+        const zDoneIso = new Date().toISOString();
+        if (zernioFallback.ok && zernioFallback.zernioPostId) {
+          await checkpointTarget(service, {
+            service,
+            provider: 'zernio',
+            state: 'succeeded',
+            attemptCount: prevAttempt + 1,
+            remotePostId: zernioFallback.zernioPostId,
+            zernioPostId: zernioFallback.zernioPostId,
+            updatedAt: zDoneIso,
+            completedAt: zDoneIso,
+          });
+          channelResults.push({
+            service,
+            provider: 'zernio',
+            ok: true,
+            zernioPostId: zernioFallback.zernioPostId,
+          });
+          continue;
+        }
+      }
+
+      const classified = classifyProviderFailure({
+        statusCode: result.statusCode,
+        message: result.message,
+        isTimeout: result.isTimeout,
+        isNetworkError: result.isNetworkError,
+      });
+      await checkpointTarget(service, {
+        service,
+        provider: 'buffer',
+        state: classified.retryable ? 'failed_retryable' : 'failed_permanent',
+        attemptCount: prevAttempt + 1,
+        failureCategory: classified.category,
+        retryable: classified.retryable,
+        statusCode: result.statusCode,
+        errorMessage: result.message || 'Buffer dispatch failed',
+        updatedAt: doneIso,
+      });
+      warnings.push(`${service}: ${result.message || 'Buffer dispatch failed'}`);
+      channelResults.push({
+        service,
+        provider: 'buffer',
+        ok: false,
+        message: result.message || 'Buffer dispatch failed',
+      });
+      continue;
+    }
+
+    if (config.zernioApiKey && zernioAccount && imageUrls.length > 0) {
+      await checkpointTarget(service, {
+        service,
+        provider: 'zernio',
+        state: 'dispatching',
+        attemptCount: prevAttempt + 1,
+        updatedAt: startIso,
+      });
+
+      const zResult = await dispatchToZernioApi({
+        zernioApiKey: config.zernioApiKey,
+        accountId: zernioAccount.accountId,
+        service,
+        text: postText,
+        mode,
+        dueAt,
+        timezone,
+        imageUrls,
+      });
+      const doneIso = new Date().toISOString();
+      if (zResult.ok && zResult.zernioPostId) {
+        await checkpointTarget(service, {
+          service,
+          provider: 'zernio',
+          state: 'succeeded',
+          attemptCount: prevAttempt + 1,
+          remotePostId: zResult.zernioPostId,
+          zernioPostId: zResult.zernioPostId,
+          updatedAt: doneIso,
+          completedAt: doneIso,
+        });
+        channelResults.push({
+          service,
+          provider: 'zernio',
+          ok: true,
+          zernioPostId: zResult.zernioPostId,
+        });
+      } else {
+        const classified = classifyProviderFailure({
+          statusCode: zResult.statusCode,
+          message: zResult.message,
+          isTimeout: zResult.isTimeout,
+          isNetworkError: zResult.isNetworkError,
+        });
+        await checkpointTarget(service, {
+          service,
+          provider: 'zernio',
+          state: classified.retryable ? 'failed_retryable' : 'failed_permanent',
+          attemptCount: prevAttempt + 1,
+          failureCategory: classified.category,
+          retryable: classified.retryable,
+          statusCode: zResult.statusCode,
+          errorMessage: zResult.message || 'Zernio dispatch failed',
+          updatedAt: doneIso,
+        });
+        warnings.push(`${service}: ${zResult.message || 'Zernio dispatch failed'}`);
+        channelResults.push({
+          service,
+          provider: 'zernio',
+          ok: false,
+          message: zResult.message || 'Zernio dispatch failed',
+        });
+      }
+      continue;
+    }
+
+    await checkpointTarget(service, {
+      service,
+      provider: 'metricool-csv',
+      state: 'skipped_fallback',
+      attemptCount: prevAttempt + 1,
+      errorMessage: undefined,
+      updatedAt: startIso,
+      completedAt: startIso,
+    });
+    channelResults.push({
+      service,
+      provider: 'metricool-csv',
+      ok: true,
+      message: 'Included in Metricool CSV (API key not set for channel)',
+    });
+  }
+
+  // 2. TikTok (Zernio Free API primary -> Buffer if connected -> Metricool CSV fallback)
+  if (validTargets.includes('tiktok')) {
+    const existingOp = workingOutbox.operations.tiktok;
+    if (!params.cancelExistingBeforeDispatch && isOperationConfirmedSuccess(existingOp) && existingOp) {
+      channelResults.push({
+        service: 'tiktok',
+        provider: existingOp.provider,
+        ok: true,
+        ...(existingOp.bufferPostId ? { bufferPostId: existingOp.bufferPostId } : {}),
+        ...(existingOp.zernioPostId ? { zernioPostId: existingOp.zernioPostId } : {}),
+        reusedFromOutbox: true,
+      });
+    } else {
+      const prevAttempt = existingOp?.attemptCount || 0;
+      const startIso = new Date().toISOString();
+      const zernioTikTok = zernioMap.get('tiktok');
+      const bufferTikTokId = bufferMap.get('tiktok');
+
+      if (config.zernioApiKey && effectiveTikTokUrls.length > 0) {
+        if (!zernioTikTok) {
+          warnings.push(
+            'tiktok: ZERNIO_API_KEY is set, but no connected TikTok account was found in your Zernio profile (GET /v1/accounts). Prepared Metricool CSV fallback.'
+          );
+          await checkpointTarget('tiktok', {
+            service: 'tiktok',
+            provider: 'metricool-csv',
+            state: 'skipped_fallback',
+            attemptCount: prevAttempt + 1,
+            updatedAt: startIso,
+            completedAt: startIso,
+          });
+          channelResults.push({
+            service: 'tiktok',
+            provider: 'metricool-csv',
+            ok: true,
+            message: 'Connect TikTok in Zernio dashboard; CSV ready as fallback',
+          });
+        } else {
+          await checkpointTarget('tiktok', {
+            service: 'tiktok',
+            provider: 'zernio',
+            state: 'dispatching',
+            attemptCount: prevAttempt + 1,
+            updatedAt: startIso,
+          });
+
+          const zTikTokResult = await dispatchToZernioApi({
+            zernioApiKey: config.zernioApiKey,
+            accountId: zernioTikTok.accountId,
+            service: 'tiktok',
+            text: postText,
+            mode,
+            dueAt,
+            timezone,
+            imageUrls: effectiveTikTokUrls,
+            tiktokSettings,
+          });
+
+          const doneIso = new Date().toISOString();
+          if (zTikTokResult.ok && zTikTokResult.zernioPostId) {
+            await checkpointTarget('tiktok', {
+              service: 'tiktok',
+              provider: 'zernio',
+              state: 'succeeded',
+              attemptCount: prevAttempt + 1,
+              remotePostId: zTikTokResult.zernioPostId,
+              zernioPostId: zTikTokResult.zernioPostId,
+              updatedAt: doneIso,
+              completedAt: doneIso,
+            });
+            channelResults.push({
+              service: 'tiktok',
+              provider: 'zernio',
+              ok: true,
+              zernioPostId: zTikTokResult.zernioPostId,
+            });
+          } else {
+            const classified = classifyProviderFailure({
+              statusCode: zTikTokResult.statusCode,
+              message: zTikTokResult.message,
+              isTimeout: zTikTokResult.isTimeout,
+              isNetworkError: zTikTokResult.isNetworkError,
+            });
+            await checkpointTarget('tiktok', {
+              service: 'tiktok',
+              provider: 'zernio',
+              state: classified.retryable ? 'failed_retryable' : 'failed_permanent',
+              attemptCount: prevAttempt + 1,
+              failureCategory: classified.category,
+              retryable: classified.retryable,
+              statusCode: zTikTokResult.statusCode,
+              errorMessage: zTikTokResult.message || 'Zernio TikTok dispatch failed',
+              updatedAt: doneIso,
+            });
+            warnings.push(`tiktok: ${zTikTokResult.message || 'Zernio TikTok dispatch failed'}`);
+            channelResults.push({
+              service: 'tiktok',
+              provider: 'zernio',
+              ok: false,
+              message: zTikTokResult.message || 'Zernio TikTok dispatch failed',
+            });
+          }
+        }
+      } else if (config.bufferApiKey && bufferTikTokId && effectiveTikTokUrls.length > 0) {
+        await checkpointTarget('tiktok', {
+          service: 'tiktok',
+          provider: 'buffer',
+          state: 'dispatching',
+          attemptCount: prevAttempt + 1,
+          updatedAt: startIso,
+        });
+
+        const bTikTokResult = await dispatchToBufferGraphQl({
+          bufferApiKey: config.bufferApiKey,
+          channelId: bufferTikTokId,
+          service: 'tiktok',
+          text: postText,
+          mode,
+          dueAt,
+          imageUrls: effectiveTikTokUrls,
+        });
+        const doneIso = new Date().toISOString();
+        if (bTikTokResult.ok && bTikTokResult.bufferPostId) {
+          await checkpointTarget('tiktok', {
+            service: 'tiktok',
+            provider: 'buffer',
+            state: 'succeeded',
+            attemptCount: prevAttempt + 1,
+            remotePostId: bTikTokResult.bufferPostId,
+            bufferPostId: bTikTokResult.bufferPostId,
+            updatedAt: doneIso,
+            completedAt: doneIso,
+          });
+          channelResults.push({
+            service: 'tiktok',
+            provider: 'buffer',
+            ok: true,
+            bufferPostId: bTikTokResult.bufferPostId,
+          });
+        } else {
+          const classified = classifyProviderFailure({
+            statusCode: bTikTokResult.statusCode,
+            message: bTikTokResult.message,
+            isTimeout: bTikTokResult.isTimeout,
+            isNetworkError: bTikTokResult.isNetworkError,
+          });
+          await checkpointTarget('tiktok', {
+            service: 'tiktok',
+            provider: 'buffer',
+            state: classified.retryable ? 'failed_retryable' : 'failed_permanent',
+            attemptCount: prevAttempt + 1,
+            failureCategory: classified.category,
+            retryable: classified.retryable,
+            statusCode: bTikTokResult.statusCode,
+            errorMessage: bTikTokResult.message || 'Buffer TikTok dispatch failed',
+            updatedAt: doneIso,
+          });
+          warnings.push(`tiktok: ${bTikTokResult.message || 'Buffer TikTok dispatch failed'}`);
+          channelResults.push({
+            service: 'tiktok',
+            provider: 'buffer',
+            ok: false,
+            message: bTikTokResult.message || 'Buffer TikTok dispatch failed',
+          });
+        }
+      } else {
+        await checkpointTarget('tiktok', {
+          service: 'tiktok',
+          provider: 'metricool-csv',
+          state: 'skipped_fallback',
+          attemptCount: prevAttempt + 1,
+          updatedAt: startIso,
+          completedAt: startIso,
+        });
+        channelResults.push({
+          service: 'tiktok',
+          provider: 'metricool-csv',
+          ok: true,
+          message:
+            'Included in Official Metricool 99-Column CSV (Add ZERNIO_API_KEY for 1-click TikTok API)',
+        });
+      }
+    }
+  }
+
+  let finalizedOutbox = finalizeOutboxRecord(workingOutbox);
+  finalizedOutbox = await checkpointOutboxRecordDurable(finalizedOutbox, config);
+
+  const { bufferPostIds, zernioPostIds } = collectOutboxRemoteIds(finalizedOutbox.operations);
+  const bufferFailedCount = channelResults.filter(
+    (r) => (r.provider === 'buffer' || r.provider === 'zernio') && !r.ok
+  ).length;
+  const apiSucceededCount = channelResults.filter(
+    (r) => (r.provider === 'buffer' || r.provider === 'zernio') && r.ok
+  ).length;
+  const hasPublishFailure = bufferFailedCount > 0;
+  const allAttemptedApiChannelsFailed = bufferFailedCount > 0 && apiSucceededCount === 0;
+
+  let savedRecord: SavedPostRecord | null = null;
+  let nextPosts = params.existingPosts;
+  const nowIso = new Date().toISOString();
+  const currentMonthKey = nowIso.slice(0, 7);
+
+  if (params.existingRecord) {
+    const targetRecord = params.existingRecord;
+    const resolvedScheduledFor =
+      mode === 'customScheduled' && typeof dueAt === 'string' && dueAt.trim()
+        ? dueAt.trim()
+        : mode === 'addToQueue'
+        ? (typeof dueAt === 'string' && dueAt.trim()) ||
+          new Date(Date.now() + 4 * 3600_000).toISOString()
+        : undefined;
+
+    const mergedPublishTargets: PublishTargetPlatform[] = mergeRemoteIds
+      ? Array.from(
+          new Set<PublishTargetPlatform>([
+            ...(targetRecord.publishTargets || []),
+            ...validTargets,
+          ])
+        )
+      : validTargets;
+
+    const mergedBufferPostIds = params.cancelExistingBeforeDispatch
+      ? bufferPostIds
+      : mergeRemoteIds
+      ? Array.from(new Set([...(targetRecord.bufferPostIds || []), ...bufferPostIds]))
+      : bufferPostIds.length > 0
+      ? bufferPostIds
+      : targetRecord.bufferPostIds;
+
+    const mergedZernioPostIds = params.cancelExistingBeforeDispatch
+      ? zernioPostIds
+      : mergeRemoteIds
+      ? Array.from(new Set([...(targetRecord.zernioPostIds || []), ...zernioPostIds]))
+      : zernioPostIds.length > 0
+      ? zernioPostIds
+      : targetRecord.zernioPostIds;
+
+    const effectivePostStatus =
+      isImmediate && !allAttemptedApiChannelsFailed ? 'posted' : 'validated';
+
+    savedRecord = {
+      ...targetRecord,
+      postStatus: effectivePostStatus,
+      publishFailed: hasPublishFailure,
+      updatedAt: nowIso,
+      postedAt: effectivePostStatus === 'posted' ? nowIso : undefined,
+      scheduledFor: resolvedScheduledFor,
+      publishTargets: mergedPublishTargets,
+      hostedSlideUrls:
+        imageUrls.length > 0 ? imageUrls : targetRecord.hostedSlideUrls,
+      tiktokHostedSlideUrls:
+        effectiveTikTokUrls.length > 0
+          ? effectiveTikTokUrls
+          : targetRecord.tiktokHostedSlideUrls,
+      cloudinaryPublicIds:
+        cloudinaryPublicIds.length > 0
+          ? cloudinaryPublicIds
+          : targetRecord.cloudinaryPublicIds,
+      cloudinaryCleanedAt:
+        cloudinaryPublicIds.length > 0 ? undefined : targetRecord.cloudinaryCleanedAt,
+      bufferPostIds: mergedBufferPostIds,
+      zernioPostIds: mergedZernioPostIds,
+      countedInMetricoolMonth:
+        mergedPublishTargets.includes('tiktok') &&
+        (!mergedZernioPostIds || mergedZernioPostIds.length === 0)
+          ? currentMonthKey
+          : targetRecord.countedInMetricoolMonth,
+      lastDispatchFingerprint: allAttemptedApiChannelsFailed
+        ? targetRecord.lastDispatchFingerprint
+        : finalizedOutbox.dispatchFingerprint,
+      lastDispatchedAt: allAttemptedApiChannelsFailed
+        ? targetRecord.lastDispatchedAt
+        : nowIso,
+      outboxDispatchId: finalizedOutbox.id,
+      outboxState: finalizedOutbox.state,
+      lastPublishError: finalizedOutbox.lastErrorMessage || undefined,
+      deck: {
+        ...targetRecord.deck,
+        sourceMeta: {
+          ...targetRecord.deck?.sourceMeta,
+          publishFailed: hasPublishFailure,
+          lastDispatchFingerprint: allAttemptedApiChannelsFailed
+            ? targetRecord.deck?.sourceMeta?.lastDispatchFingerprint
+            : finalizedOutbox.dispatchFingerprint,
+          lastDispatchedAt: allAttemptedApiChannelsFailed
+            ? targetRecord.deck?.sourceMeta?.lastDispatchedAt
+            : nowIso,
+        },
+      },
+    };
+
+    nextPosts = [
+      savedRecord,
+      ...params.existingPosts.filter((p) => p.id !== savedRecord!.id),
+    ];
+
+    try {
+      await upsertSingleStoredPost(savedRecord, params.existingPosts);
+    } catch (localErr) {
+      const localErrMsg =
+        localErr instanceof Error ? localErr.message : 'Failed to persist post record after dispatch';
+      const localClass = classifyProviderFailure({ isLocalError: true, message: localErrMsg });
+      finalizedOutbox = await checkpointOutboxRecordDurable(
+        {
+          ...finalizedOutbox,
+          lastErrorCategory: localClass.category,
+          lastErrorMessage: localClass.reason,
+          updatedAt: new Date().toISOString(),
+        },
+        config
+      );
+      throw new Error(localClass.reason);
+    }
+  }
+
+  return {
+    finalizedOutbox,
+    savedRecord,
+    nextPosts,
+    channelResults,
+    bufferPostIds,
+    zernioPostIds,
+    bufferFailedCount,
+    warnings,
+  };
+}
+
 export async function handleDispatchPublish(req: Request, res: Response) {
   let activeLockKey: string | null = null;
   let activePostLockKey: string | null = null;
+  let activeOutboxRecord: PublishOutboxRecord | null = null;
   let partialTargetRecord: SavedPostRecord | undefined;
   let partialExistingPosts: SavedPostRecord[] = [];
-  const partialBufferPostIds: string[] = [];
-  const partialZernioPostIds: string[] = [];
+  const config = getServerConfig();
   try {
-    const config = getServerConfig();
     const body = req.body || {};
     const {
       postId,
@@ -1437,6 +2206,10 @@ export async function handleDispatchPublish(req: Request, res: Response) {
         ? imageUrls
         : [];
     const postText = String(caption || deck?.caption || '');
+    const cleanPostId = String(
+      postId || existingRecord?.id || deck?.id || `adhoc_${Date.now()}`
+    ).trim();
+
     const dispatchFingerprint = computeDispatchFingerprint({
       postId: postId || existingRecord?.id || deck?.id,
       title: title || existingRecord?.title || deck?.slides?.[0]?.enTitle,
@@ -1453,8 +2226,7 @@ export async function handleDispatchPublish(req: Request, res: Response) {
           : undefined,
     });
 
-    // Idempotent Replay Gate: if an identical dispatch payload already succeeded for this post
-    // and the caller did not request cancelExistingBeforeDispatch, return the stored result without double-posting.
+    // Legacy Idempotent Replay Gate for pre-outbox Vault records
     const storedFingerprint =
       existingRecord?.lastDispatchFingerprint ||
       existingRecord?.deck?.sourceMeta?.lastDispatchFingerprint;
@@ -1468,6 +2240,7 @@ export async function handleDispatchPublish(req: Request, res: Response) {
     if (
       !cancelExistingBeforeDispatch &&
       existingRecord &&
+      !existingRecord.outboxDispatchId &&
       storedFingerprint === dispatchFingerprint &&
       hasCompletedPriorDispatch
     ) {
@@ -1521,8 +2294,87 @@ export async function handleDispatchPublish(req: Request, res: Response) {
       activePostLockKey = candidatePostLock;
     }
 
-    const isImmediate = mode === 'shareNow';
-    const warnings: string[] = [];
+    const payloadSnapshot: PublishOutboxPayloadSnapshot = {
+      postId: cleanPostId,
+      title: typeof title === 'string' ? title : existingRecord?.title,
+      caption: postText,
+      mode: mode as PublishScheduleMode,
+      dueAt: typeof dueAt === 'string' ? dueAt : undefined,
+      timezone: typeof timezone === 'string' ? timezone : undefined,
+      targets: validTargets,
+      imageUrls: Array.isArray(imageUrls) ? imageUrls : [],
+      tiktokImageUrls: effectiveTikTokUrls,
+      cloudinaryPublicIds: Array.isArray(cloudinaryPublicIds) ? cloudinaryPublicIds : [],
+      mergeRemoteIds: Boolean(mergeRemoteIds),
+      tiktokSettings:
+        tiktokSettings && typeof tiktokSettings === 'object'
+          ? (tiktokSettings as PublishOutboxPayloadSnapshot['tiktokSettings'])
+          : undefined,
+    };
+
+    const leaseOwner = `worker_${process.pid}_${crypto.randomUUID().slice(0, 12)}`;
+    const claim = await claimOutboxDispatchDurable(
+      {
+        postId: cleanPostId,
+        dispatchFingerprint,
+        mode: mode as PublishScheduleMode,
+        dueAt: typeof dueAt === 'string' ? dueAt : undefined,
+        timezone: typeof timezone === 'string' ? timezone : undefined,
+        targets: validTargets,
+        payload: payloadSnapshot,
+        leaseOwner,
+        leaseDurationMs: DEFAULT_OUTBOX_LEASE_MS,
+        maxAttempts: DEFAULT_OUTBOX_MAX_ATTEMPTS,
+        cancelExistingBeforeDispatch: Boolean(cancelExistingBeforeDispatch),
+      },
+      config
+    );
+
+    if (claim.status === 'already_completed') {
+      const quotaStats = computeFreePlanQuotaStats(existingPosts);
+      return res.json({
+        ok: true,
+        idempotentReplay: true,
+        dispatchFingerprint,
+        mode: claim.record.mode,
+        scheduledFor: existingRecord?.scheduledFor || claim.record.dueAt || null,
+        cloudinaryCleaned: Boolean(existingRecord?.cloudinaryCleanedAt),
+        cleanedPublicIds: [],
+        post: existingRecord || null,
+        bufferDispatchedCount:
+          (existingRecord?.bufferPostIds?.length || 0) +
+          (existingRecord?.zernioPostIds?.length || 0) ||
+          Object.values(claim.record.operations).filter((op) => op?.state === 'succeeded').length,
+        bufferFailedCount: 0,
+        channelResults: buildChannelResultsFromOutboxRecord(claim.record, true),
+        warnings: [],
+        outbox: toOutboxSummary(claim.record),
+        quotaStats,
+      });
+    }
+
+    if (claim.status === 'in_flight') {
+      return res.status(409).json({
+        error: 'An identical or overlapping publish dispatch is already in progress on another worker.',
+        code: 'DISPATCH_IN_FLIGHT',
+        outbox: toOutboxSummary(claim.record),
+      });
+    }
+
+    if (claim.status === 'permanent_or_exhausted') {
+      const isPerm = claim.record.state === 'failed_permanent';
+      return res.status(422).json({
+        error: isPerm
+          ? `Publish dispatch failed permanently (${claim.record.lastErrorCategory || 'validation'}): ${
+              claim.record.lastErrorMessage || 'Fix payload or credentials before retrying.'
+            }`
+          : `Publish dispatch exceeded maximum retry attempts (${claim.record.attemptCount}/${claim.record.maxAttempts}).`,
+        code: isPerm ? 'DISPATCH_PERMANENT_FAILURE' : 'DISPATCH_RETRY_EXHAUSTED',
+        outbox: toOutboxSummary(claim.record),
+      });
+    }
+
+    activeOutboxRecord = claim.record;
 
     // If user chose "Cancel & Re-Dispatch All", cancel any existing Buffer & Zernio queue IDs first
     if (cancelExistingBeforeDispatch && existingRecord) {
@@ -1547,7 +2399,7 @@ export async function handleDispatchPublish(req: Request, res: Response) {
         id: postId,
         deck,
         title,
-        postStatus: isImmediate ? 'posted' : 'validated',
+        postStatus: mode === 'shareNow' ? 'posted' : 'validated',
         allowOverride: true,
         existingRecord,
       });
@@ -1557,362 +2409,64 @@ export async function handleDispatchPublish(req: Request, res: Response) {
     }
     partialTargetRecord = targetRecord;
 
-    const nowIso = new Date().toISOString();
-    const currentMonthKey = nowIso.slice(0, 7);
-    const bufferPostIds = partialBufferPostIds;
-    const zernioPostIds = partialZernioPostIds;
-    const channelResults: Array<{
-      service: PublishTargetPlatform;
-      provider: 'buffer' | 'zernio' | 'metricool-csv';
-      ok: boolean;
-      bufferPostId?: string;
-      zernioPostId?: string;
-      message?: string;
-    }> = [];
+    const execResult = await executeOutboxDispatchTargets({
+      outboxRecord: claim.record,
+      existingRecord: targetRecord,
+      existingPosts,
+      cancelExistingBeforeDispatch: Boolean(cancelExistingBeforeDispatch),
+      config,
+    });
 
-    const hasLocalOnlyUrls =
-      Array.isArray(imageUrls) &&
-      imageUrls.some((u: unknown) => typeof u === 'string' && /localhost|127\.0\.0\.1/.test(u));
-
-    if (hasLocalOnlyUrls) {
-      warnings.push(
-        'Slide images were staged locally because Cloudinary credentials are not configured; external cloud APIs (Buffer/Zernio/Metricool) require public HTTPS image URLs.'
-      );
-    }
-
-    const zernioMap = config.zernioApiKey
-      ? await resolveZernioAccountMap(config.zernioApiKey)
-      : new Map<PublishTargetPlatform, { accountId: string; username?: string }>();
-    const bufferMap = config.bufferApiKey
-      ? await resolveBufferChannelMap(config.bufferApiKey)
-      : new Map<PublishTargetPlatform, string>();
-
-    // 1. Dispatch Instagram, Facebook, LinkedIn (Buffer primary -> Zernio failover -> Metricool CSV fallback)
-    const metaLinkedInTargets = validTargets.filter((t) => t !== 'tiktok');
-    if (metaLinkedInTargets.length > 0) {
-      for (const service of metaLinkedInTargets) {
-        const bufferChannelId = bufferMap.get(service);
-        const zernioAccount = zernioMap.get(service);
-
-        if (config.bufferApiKey && bufferChannelId && Array.isArray(imageUrls) && imageUrls.length > 0) {
-          const result = await dispatchToBufferGraphQl({
-            bufferApiKey: config.bufferApiKey,
-            channelId: bufferChannelId,
-            service,
-            text: postText,
-            mode: mode as PublishScheduleMode,
-            dueAt: typeof dueAt === 'string' ? dueAt : undefined,
-            imageUrls,
-          });
-
-          if (result.ok && result.bufferPostId) {
-            bufferPostIds.push(result.bufferPostId);
-            channelResults.push({
-              service,
-              provider: 'buffer',
-              ok: true,
-              bufferPostId: result.bufferPostId,
-            });
-            continue;
-          }
-
-          // If Buffer failed for this channel (e.g. Instagram queue full) AND the channel is connected in Zernio, failover automatically!
-          if (config.zernioApiKey && zernioAccount) {
-            const zernioFallback = await dispatchToZernioApi({
-              zernioApiKey: config.zernioApiKey,
-              accountId: zernioAccount.accountId,
-              service,
-              text: postText,
-              mode: mode as PublishScheduleMode,
-              dueAt: typeof dueAt === 'string' ? dueAt : undefined,
-              timezone: typeof timezone === 'string' ? timezone : undefined,
-              imageUrls,
-            });
-            if (zernioFallback.ok && zernioFallback.zernioPostId) {
-              zernioPostIds.push(zernioFallback.zernioPostId);
-              channelResults.push({
-                service,
-                provider: 'zernio',
-                ok: true,
-                zernioPostId: zernioFallback.zernioPostId,
-              });
-              continue;
-            }
-          }
-
-          warnings.push(`${service}: ${result.message || 'Buffer dispatch failed'}`);
-          channelResults.push({
-            service,
-            provider: 'buffer',
-            ok: false,
-            message: result.message || 'Buffer dispatch failed',
-          });
-          continue;
-        }
-
-        // If Buffer isn't configured for this channel, check if Zernio has it connected
-        if (config.zernioApiKey && zernioAccount && Array.isArray(imageUrls) && imageUrls.length > 0) {
-          const zResult = await dispatchToZernioApi({
-            zernioApiKey: config.zernioApiKey,
-            accountId: zernioAccount.accountId,
-            service,
-            text: postText,
-            mode: mode as PublishScheduleMode,
-            dueAt: typeof dueAt === 'string' ? dueAt : undefined,
-            timezone: typeof timezone === 'string' ? timezone : undefined,
-            imageUrls,
-          });
-          if (zResult.ok && zResult.zernioPostId) {
-            zernioPostIds.push(zResult.zernioPostId);
-            channelResults.push({
-              service,
-              provider: 'zernio',
-              ok: true,
-              zernioPostId: zResult.zernioPostId,
-            });
-          } else {
-            warnings.push(`${service}: ${zResult.message || 'Zernio dispatch failed'}`);
-            channelResults.push({
-              service,
-              provider: 'zernio',
-              ok: false,
-              message: zResult.message || 'Zernio dispatch failed',
-            });
-          }
-          continue;
-        }
-
-        // Otherwise fallback to Metricool CSV
-        channelResults.push({
-          service,
-          provider: 'metricool-csv',
-          ok: true,
-          message: 'Included in Metricool CSV (API key not set for channel)',
-        });
-      }
-    }
-
-    // 2. Dispatch TikTok (Zernio Free API primary -> Buffer if connected -> Metricool CSV fallback)
-    if (validTargets.includes('tiktok')) {
-      const zernioTikTok = zernioMap.get('tiktok');
-      const bufferTikTokId = bufferMap.get('tiktok');
-
-      if (config.zernioApiKey && effectiveTikTokUrls.length > 0) {
-        if (!zernioTikTok) {
-          warnings.push(
-            'tiktok: ZERNIO_API_KEY is set, but no connected TikTok account was found in your Zernio profile (GET /v1/accounts). Prepared Metricool CSV fallback.'
-          );
-          channelResults.push({
-            service: 'tiktok',
-            provider: 'metricool-csv',
-            ok: true,
-            message: 'Connect TikTok in Zernio dashboard; CSV ready as fallback',
-          });
-        } else {
-          const zTikTokResult = await dispatchToZernioApi({
-            zernioApiKey: config.zernioApiKey,
-            accountId: zernioTikTok.accountId,
-            service: 'tiktok',
-            text: postText,
-            mode: mode as PublishScheduleMode,
-            dueAt: typeof dueAt === 'string' ? dueAt : undefined,
-            timezone: typeof timezone === 'string' ? timezone : undefined,
-            imageUrls: effectiveTikTokUrls,
-            tiktokSettings,
-          });
-
-          if (zTikTokResult.ok && zTikTokResult.zernioPostId) {
-            zernioPostIds.push(zTikTokResult.zernioPostId);
-            channelResults.push({
-              service: 'tiktok',
-              provider: 'zernio',
-              ok: true,
-              zernioPostId: zTikTokResult.zernioPostId,
-            });
-          } else {
-            warnings.push(`tiktok: ${zTikTokResult.message || 'Zernio TikTok dispatch failed'}`);
-            channelResults.push({
-              service: 'tiktok',
-              provider: 'zernio',
-              ok: false,
-              message: zTikTokResult.message || 'Zernio TikTok dispatch failed',
-            });
-          }
-        }
-      } else if (config.bufferApiKey && bufferTikTokId && effectiveTikTokUrls.length > 0) {
-        const bTikTokResult = await dispatchToBufferGraphQl({
-          bufferApiKey: config.bufferApiKey,
-          channelId: bufferTikTokId,
-          service: 'tiktok',
-          text: postText,
-          mode: mode as PublishScheduleMode,
-          dueAt: typeof dueAt === 'string' ? dueAt : undefined,
-          imageUrls: effectiveTikTokUrls,
-        });
-        if (bTikTokResult.ok && bTikTokResult.bufferPostId) {
-          bufferPostIds.push(bTikTokResult.bufferPostId);
-          channelResults.push({
-            service: 'tiktok',
-            provider: 'buffer',
-            ok: true,
-            bufferPostId: bTikTokResult.bufferPostId,
-          });
-        } else {
-          warnings.push(`tiktok: ${bTikTokResult.message || 'Buffer TikTok dispatch failed'}`);
-          channelResults.push({
-            service: 'tiktok',
-            provider: 'buffer',
-            ok: false,
-            message: bTikTokResult.message || 'Buffer TikTok dispatch failed',
-          });
-        }
-      } else {
-        channelResults.push({
-          service: 'tiktok',
-          provider: 'metricool-csv',
-          ok: true,
-          message: 'Included in Official Metricool 99-Column CSV (Add ZERNIO_API_KEY for 1-click TikTok API)',
-        });
-      }
-    }
-
-    // NOTE: Do NOT destroy Cloudinary images at 0ms on shareNow!
-    // Buffer/Zernio background media workers fetch imageUrls asynchronously over the next 15-60 seconds.
-    // sweepExpiredCloudinaryAssets() automatically cleans them up 1 hour after postedAt / scheduledFor.
-    const cloudinaryCleanedAt: string | undefined = undefined;
-    const cleanedIds: string[] = [];
-
-    const bufferFailedCount = channelResults.filter(
-      (r) => (r.provider === 'buffer' || r.provider === 'zernio') && !r.ok
-    ).length;
-    const apiSucceededCount = channelResults.filter(
-      (r) => (r.provider === 'buffer' || r.provider === 'zernio') && r.ok
-    ).length;
-    const hasPublishFailure = bufferFailedCount > 0;
-    const allAttemptedApiChannelsFailed = bufferFailedCount > 0 && apiSucceededCount === 0;
-
-    let savedRecord: SavedPostRecord | null = null;
-    let nextPosts = existingPosts;
-
-    if (targetRecord) {
-      const resolvedScheduledFor =
-        mode === 'customScheduled' && typeof dueAt === 'string' && dueAt.trim()
-          ? dueAt.trim()
-          : mode === 'addToQueue'
-          ? (typeof dueAt === 'string' && dueAt.trim()) ||
-            new Date(Date.now() + 4 * 3600_000).toISOString()
-          : undefined;
-
-      const mergedPublishTargets: PublishTargetPlatform[] = mergeRemoteIds
-        ? Array.from(
-            new Set<PublishTargetPlatform>([
-              ...(targetRecord.publishTargets || []),
-              ...validTargets,
-            ])
-          )
-        : validTargets;
-
-      const mergedBufferPostIds = cancelExistingBeforeDispatch
-        ? bufferPostIds
-        : mergeRemoteIds
-        ? Array.from(new Set([...(targetRecord.bufferPostIds || []), ...bufferPostIds]))
-        : bufferPostIds.length > 0
-        ? bufferPostIds
-        : targetRecord.bufferPostIds;
-
-      const mergedZernioPostIds = cancelExistingBeforeDispatch
-        ? zernioPostIds
-        : mergeRemoteIds
-        ? Array.from(new Set([...(targetRecord.zernioPostIds || []), ...zernioPostIds]))
-        : zernioPostIds.length > 0
-        ? zernioPostIds
-        : targetRecord.zernioPostIds;
-
-      const effectivePostStatus =
-        isImmediate && !allAttemptedApiChannelsFailed ? 'posted' : 'validated';
-
-      savedRecord = {
-        ...targetRecord,
-        postStatus: effectivePostStatus,
-        publishFailed: hasPublishFailure,
-        updatedAt: nowIso,
-        postedAt: effectivePostStatus === 'posted' ? nowIso : undefined,
-        scheduledFor: resolvedScheduledFor,
-        publishTargets: mergedPublishTargets,
-        hostedSlideUrls:
-          Array.isArray(imageUrls) && imageUrls.length > 0
-            ? imageUrls
-            : targetRecord.hostedSlideUrls,
-        tiktokHostedSlideUrls:
-          effectiveTikTokUrls.length > 0
-            ? effectiveTikTokUrls
-            : targetRecord.tiktokHostedSlideUrls,
-        cloudinaryPublicIds:
-          Array.isArray(cloudinaryPublicIds) && cloudinaryPublicIds.length > 0
-            ? cloudinaryPublicIds
-            : targetRecord.cloudinaryPublicIds,
-        cloudinaryCleanedAt:
-          Array.isArray(cloudinaryPublicIds) && cloudinaryPublicIds.length > 0
-            ? undefined
-            : cloudinaryCleanedAt || targetRecord.cloudinaryCleanedAt,
-        bufferPostIds: mergedBufferPostIds,
-        zernioPostIds: mergedZernioPostIds,
-        countedInMetricoolMonth:
-          mergedPublishTargets.includes('tiktok') &&
-          (!mergedZernioPostIds || mergedZernioPostIds.length === 0)
-            ? currentMonthKey
-            : targetRecord.countedInMetricoolMonth,
-        lastDispatchFingerprint: allAttemptedApiChannelsFailed
-          ? targetRecord.lastDispatchFingerprint
-          : dispatchFingerprint,
-        lastDispatchedAt: allAttemptedApiChannelsFailed
-          ? targetRecord.lastDispatchedAt
-          : nowIso,
-        deck: {
-          ...targetRecord.deck,
-          sourceMeta: {
-            ...targetRecord.deck?.sourceMeta,
-            publishFailed: hasPublishFailure,
-            lastDispatchFingerprint: allAttemptedApiChannelsFailed
-              ? targetRecord.deck?.sourceMeta?.lastDispatchFingerprint
-              : dispatchFingerprint,
-            lastDispatchedAt: allAttemptedApiChannelsFailed
-              ? targetRecord.deck?.sourceMeta?.lastDispatchedAt
-              : nowIso,
-          },
-        },
-      };
-
-      nextPosts = [
-        savedRecord,
-        ...existingPosts.filter((p) => p.id !== savedRecord!.id),
-      ];
-      await upsertSingleStoredPost(savedRecord, existingPosts);
-    }
-
-    const quotaStats = computeFreePlanQuotaStats(nextPosts);
+    activeOutboxRecord = execResult.finalizedOutbox;
+    const quotaStats = computeFreePlanQuotaStats(execResult.nextPosts);
 
     return res.json({
       ok: true,
       idempotentReplay: false,
+      recoveredFromInterrupt: claim.recoveredFromInterrupt || undefined,
       dispatchFingerprint,
       mode,
-      scheduledFor: savedRecord?.scheduledFor || null,
+      scheduledFor: execResult.savedRecord?.scheduledFor || null,
       cloudinaryCleaned: false,
-      cleanedPublicIds: cleanedIds,
-      post: savedRecord,
-      bufferDispatchedCount: bufferPostIds.length + zernioPostIds.length,
-      bufferFailedCount,
-      channelResults,
-      warnings,
+      cleanedPublicIds: [],
+      post: execResult.savedRecord,
+      bufferDispatchedCount:
+        execResult.bufferPostIds.length + execResult.zernioPostIds.length,
+      bufferFailedCount: execResult.bufferFailedCount,
+      channelResults: execResult.channelResults,
+      warnings: execResult.warnings,
+      outbox: toOutboxSummary(execResult.finalizedOutbox),
       quotaStats,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Failed to dispatch post';
     console.error('[PublishController] Dispatch error:', msg);
+    let finalizedErrOutbox: PublishOutboxRecord | null = null;
+    if (activeOutboxRecord) {
+      try {
+        const classified = classifyProviderFailure({
+          isLocalError: /persist post record/i.test(msg),
+          message: msg,
+        });
+        finalizedErrOutbox = await checkpointOutboxRecordDurable(
+          finalizeOutboxRecord(activeOutboxRecord, {
+            overrideErrorCategory: classified.category,
+            overrideErrorMessage: msg,
+          }),
+          config
+        );
+      } catch (outboxErr) {
+        console.warn('[PublishController] Outbox error checkpoint failed:', outboxErr);
+      }
+    }
+
+    const collectedRemote = finalizedErrOutbox
+      ? collectOutboxRemoteIds(finalizedErrOutbox.operations)
+      : { bufferPostIds: [], zernioPostIds: [] };
+
     if (
       partialTargetRecord &&
-      (partialBufferPostIds.length > 0 || partialZernioPostIds.length > 0)
+      (collectedRemote.bufferPostIds.length > 0 || collectedRemote.zernioPostIds.length > 0)
     ) {
       try {
         const failedIso = new Date().toISOString();
@@ -1921,11 +2475,20 @@ export async function handleDispatchPublish(req: Request, res: Response) {
           postStatus: 'validated',
           publishFailed: true,
           updatedAt: failedIso,
+          outboxDispatchId: finalizedErrOutbox?.id,
+          outboxState: finalizedErrOutbox?.state,
+          lastPublishError: msg,
           bufferPostIds: Array.from(
-            new Set([...(partialTargetRecord.bufferPostIds || []), ...partialBufferPostIds])
+            new Set([
+              ...(partialTargetRecord.bufferPostIds || []),
+              ...collectedRemote.bufferPostIds,
+            ])
           ),
           zernioPostIds: Array.from(
-            new Set([...(partialTargetRecord.zernioPostIds || []), ...partialZernioPostIds])
+            new Set([
+              ...(partialTargetRecord.zernioPostIds || []),
+              ...collectedRemote.zernioPostIds,
+            ])
           ),
           deck: {
             ...partialTargetRecord.deck,
@@ -1940,7 +2503,10 @@ export async function handleDispatchPublish(req: Request, res: Response) {
         console.warn('[PublishController] Partial-dispatch recovery persistence failed:', persistErr);
       }
     }
-    return res.status(500).json({ error: msg });
+    return res.status(500).json({
+      error: msg,
+      ...(finalizedErrOutbox ? { outbox: toOutboxSummary(finalizedErrOutbox) } : {}),
+    });
   } finally {
     if (activeLockKey) {
       activeDispatchLocks.delete(activeLockKey);
@@ -1948,6 +2514,178 @@ export async function handleDispatchPublish(req: Request, res: Response) {
     if (activePostLockKey) {
       activeDispatchLocks.delete(activePostLockKey);
     }
+  }
+}
+
+/**
+ * Safely recovers expired-lease interrupted dispatches and retries eligible failed/partial
+ * outbox records (skipping any target already holding a persisted remotePostId).
+ */
+export async function recoverAndRetryOutboxDispatches(
+  options: {
+    nowMs?: number;
+    limit?: number;
+    ignoreBackoff?: boolean;
+    postId?: string;
+    config?: ServerConfig;
+  } = {}
+): Promise<{
+  checkedCount: number;
+  recoveredIds: string[];
+  completedIds: string[];
+  skippedIds: string[];
+  failedIds: string[];
+}> {
+  const config = options.config || getServerConfig();
+  const nowMs = options.nowMs ?? Date.now();
+  const maxBatch = Math.max(1, Math.min(20, options.limit ?? 5));
+
+  const candidates = await queryOutboxDispatchesDurable(
+    {
+      postId: options.postId,
+      recoverableOnly: true,
+      nowMs,
+      limit: maxBatch * 2,
+    },
+    config
+  );
+
+  const recoveredIds: string[] = [];
+  const completedIds: string[] = [];
+  const skippedIds: string[] = [];
+  const failedIds: string[] = [];
+
+  if (candidates.length === 0) {
+    return { checkedCount: 0, recoveredIds, completedIds, skippedIds, failedIds };
+  }
+
+  const { posts: existingPosts } = await loadStoredPosts();
+  let workingPosts = [...existingPosts];
+
+  let processed = 0;
+  for (const candidate of candidates) {
+    if (processed >= maxBatch) break;
+
+    if (!canRetryOutboxRecord(candidate, nowMs, Boolean(options.ignoreBackoff))) {
+      skippedIds.push(candidate.id);
+      continue;
+    }
+
+    processed++;
+    const leaseOwner = `recover_${process.pid}_${crypto.randomUUID().slice(0, 12)}`;
+    const claim = await claimOutboxDispatchDurable(
+      {
+        postId: candidate.postId,
+        dispatchFingerprint: candidate.dispatchFingerprint,
+        mode: candidate.mode,
+        dueAt: candidate.dueAt,
+        timezone: candidate.timezone,
+        targets: candidate.targets,
+        payload: candidate.payload,
+        leaseOwner,
+        leaseDurationMs: DEFAULT_OUTBOX_LEASE_MS,
+        maxAttempts: candidate.maxAttempts,
+        cancelExistingBeforeDispatch: false,
+        nowMs,
+      },
+      config
+    );
+
+    if (claim.status !== 'claimed') {
+      skippedIds.push(candidate.id);
+      continue;
+    }
+
+    const existingRecord = workingPosts.find((p) => p.id === candidate.postId);
+    try {
+      const resExec = await executeOutboxDispatchTargets({
+        outboxRecord: claim.record,
+        existingRecord,
+        existingPosts: workingPosts,
+        cancelExistingBeforeDispatch: false,
+        config,
+      });
+      workingPosts = resExec.nextPosts;
+      recoveredIds.push(resExec.finalizedOutbox.id);
+      if (resExec.finalizedOutbox.state === 'completed') {
+        completedIds.push(resExec.finalizedOutbox.id);
+      } else if (
+        resExec.finalizedOutbox.state === 'failed_retryable' ||
+        resExec.finalizedOutbox.state === 'failed_permanent'
+      ) {
+        failedIds.push(resExec.finalizedOutbox.id);
+      }
+    } catch (recoverErr) {
+      const errMsg = recoverErr instanceof Error ? recoverErr.message : 'Outbox recovery error';
+      await checkpointOutboxRecordDurable(
+        finalizeOutboxRecord(claim.record, {
+          nowMs: Date.now(),
+          overrideErrorCategory: 'unknown',
+          overrideErrorMessage: errMsg,
+        }),
+        config
+      ).catch(() => undefined);
+      failedIds.push(candidate.id);
+    }
+  }
+
+  return {
+    checkedCount: candidates.length,
+    recoveredIds,
+    completedIds,
+    skippedIds,
+    failedIds,
+  };
+}
+
+/**
+ * GET /api/publish/outbox (Read-pure)
+ * Lists durable publish outbox dispatches, optionally filtered by ?postId=
+ */
+export async function handleGetPublishOutbox(req: Request, res: Response) {
+  try {
+    const config = getServerConfig();
+    const postId = typeof req.query?.postId === 'string' ? req.query.postId.trim() : undefined;
+    const recoverableOnly = req.query?.recoverableOnly === 'true';
+    const dispatches = await queryOutboxDispatchesDurable(
+      { postId, recoverableOnly },
+      config
+    );
+    return res.json({
+      ok: true,
+      dispatches: dispatches.map(toOutboxSummary),
+      records: dispatches,
+    });
+  } catch (err) {
+    console.error('[PublishController] Failed to query publish outbox:', err);
+    return res.status(500).json({ error: 'Failed to load publish outbox records' });
+  }
+}
+
+/**
+ * POST /api/publish/recover
+ * Recovers interrupted or retryable publish outbox dispatches safely without double-posting.
+ */
+export async function handleRecoverPublishOutbox(req: Request, res: Response) {
+  try {
+    const config = getServerConfig();
+    const body = req.body || {};
+    const postId = typeof body.postId === 'string' ? body.postId.trim() : undefined;
+    const ignoreBackoff = body.ignoreBackoff === true;
+    const limit = typeof body.limit === 'number' ? body.limit : 5;
+    const result = await recoverAndRetryOutboxDispatches({
+      postId,
+      ignoreBackoff,
+      limit,
+      config,
+    });
+    return res.json({
+      ok: true,
+      ...result,
+    });
+  } catch (err) {
+    console.error('[PublishController] Failed to recover publish outbox:', err);
+    return res.status(500).json({ error: 'Failed to recover publish outbox' });
   }
 }
 
@@ -2080,6 +2818,7 @@ export async function handleManagePublishedPost(req: Request, res: Response) {
 
     if (action === 'cancelAndDelete') {
       await cancelExistingRemoteQueues();
+      await cancelOutboxDispatchesForPostDurable(cleanId, config).catch(() => undefined);
 
       const pubIds = existing.cloudinaryPublicIds || [];
       const cleanedPublicIds: string[] = [];
@@ -2111,6 +2850,7 @@ export async function handleManagePublishedPost(req: Request, res: Response) {
 
     if (action === 'unschedule') {
       await cancelExistingRemoteQueues();
+      await cancelOutboxDispatchesForPostDurable(cleanId, config).catch(() => undefined);
 
       const nowIso = new Date().toISOString();
       const updatedRecord: SavedPostRecord = {
@@ -2120,6 +2860,7 @@ export async function handleManagePublishedPost(req: Request, res: Response) {
         scheduledFor: undefined,
         bufferPostIds: undefined,
         zernioPostIds: undefined,
+        outboxState: 'cancelled',
         updatedAt: nowIso,
       };
 

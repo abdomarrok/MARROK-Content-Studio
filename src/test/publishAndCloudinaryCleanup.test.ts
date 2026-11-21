@@ -7,10 +7,17 @@ import {
   computeDispatchFingerprint,
   computeFreePlanQuotaStats,
   sweepExpiredCloudinaryAssets,
+  recoverAndRetryOutboxDispatches,
   handleGetPublishStatus,
+  handleGetPublishOutbox,
+  handleRecoverPublishOutbox,
   handleDispatchPublish,
   handleManagePublishedPost,
 } from '../../api/controllers/publishController.ts';
+import {
+  checkpointLocalOutboxRecord,
+  createNewOutboxRecord,
+} from '../lib/publish/publishOutbox.ts';
 import { loadStoredPosts, saveStoredPosts } from '../../api/controllers/postsController.ts';
 import {
   runScheduledPromotion,
@@ -54,6 +61,11 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
     delete process.env.ZERNIO_API_KEY;
     try {
       await fs.unlink(tmpFile);
+    } catch {
+      // ignore
+    }
+    try {
+      await fs.unlink(`${tmpFile}.outbox.json`);
     } catch {
       // ignore
     }
@@ -920,6 +932,408 @@ describe('Publishing, Weekly Queue & Cloudinary Auto-Cleanup Engine', () => {
     ).rejects.toThrow(
       /Cloudinary media staging is not configured or server proxy returned an HTML page/i
     );
+  });
+
+  it('persists partial outbox success and recovers failed target without creating duplicate remote posts', async () => {
+    process.env.BUFFER_API_KEY = 'buf_partial_test';
+    process.env.ZERNIO_API_KEY = 'zernio_partial_test';
+
+    let bufferCreateCalls = 0;
+    let zernioPostCalls = 0;
+    let shouldZernioFail = true;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: any) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (url === 'https://api.buffer.com') {
+        const parsed = JSON.parse(String(init?.body || '{}'));
+        if (String(parsed.query || '').includes('GetMarrokChannels')) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                account: {
+                  organizations: [
+                    {
+                      id: 'org_1',
+                      channels: [
+                        { id: 'buf_ig_1', name: 'marrok_org', service: 'instagram' },
+                      ],
+                    },
+                  ],
+                },
+              },
+            }),
+            { status: 200 }
+          );
+        }
+        bufferCreateCalls++;
+        return new Response(
+          JSON.stringify({
+            data: { createPost: { post: { id: `buf_ig_unique_${bufferCreateCalls}` } } },
+          }),
+          { status: 200 }
+        );
+      }
+
+      if (url === 'https://zernio.com/api/v1/accounts') {
+        return new Response(
+          JSON.stringify({
+            accounts: [
+              { _id: 'z_tt_1', platform: 'tiktok', username: 'Marrok', enabled: true },
+            ],
+          }),
+          { status: 200 }
+        );
+      }
+
+      if (url.includes('/tiktok/commercial-music')) {
+        return new Response(
+          JSON.stringify({ tracks: [{ id: '7000018757057955842', name: 'Test Track' }] }),
+          { status: 200 }
+        );
+      }
+
+      if (url === 'https://zernio.com/api/v1/posts') {
+        zernioPostCalls++;
+        if (shouldZernioFail) {
+          return new Response(JSON.stringify({ error: 'Zernio upstream 502' }), { status: 502 });
+        }
+        return new Response(
+          JSON.stringify({ post: { _id: `zernio_tt_recovered_${zernioPostCalls}` } }),
+          { status: 200 }
+        );
+      }
+
+      return new Response('{}', { status: 200 });
+    });
+
+    const reviewedDeck = {
+      ...DEFAULT_STARTER_DECK,
+      id: 'post_partial_recovery_1',
+      sourceMeta: {
+        ...DEFAULT_STARTER_DECK.sourceMeta,
+        userReviewed: true,
+        humanApproved: true,
+        verifiedNumbers: true,
+      },
+    };
+
+    const requestBody = {
+      postId: 'post_partial_recovery_1',
+      deck: reviewedDeck,
+      title: 'Partial Failure Recovery Test',
+      caption: 'Testing partial outbox checkpointing.',
+      mode: 'shareNow',
+      targets: ['instagram', 'tiktok'],
+      imageUrls: ['https://cdn.example.com/ig_1.jpg'],
+      tiktokImageUrls: ['https://cdn.example.com/tt_1.jpg'],
+      cloudinaryPublicIds: ['marrok_staging/p1'],
+    };
+
+    const invokeDispatch = async () => {
+      let statusCode = 200;
+      let jsonBody: any = null;
+      await handleDispatchPublish(
+        { body: requestBody } as any,
+        {
+          status(code: number) {
+            statusCode = code;
+            return this;
+          },
+          json(payload: unknown) {
+            jsonBody = payload;
+            return this;
+          },
+        } as any
+      );
+      return { statusCode, jsonBody };
+    };
+
+    // 1. First run: Instagram succeeds (buf_ig_unique_1), TikTok fails 502 -> partially_completed
+    const first = await invokeDispatch();
+    expect(first.statusCode).toBe(200);
+    expect(bufferCreateCalls).toBe(1);
+    expect(zernioPostCalls).toBe(2); // initial + music fallback retry inside dispatchToZernioApi
+    expect(first.jsonBody.outbox.state).toBe('partially_completed');
+    expect(first.jsonBody.outbox.operations.instagram).toMatchObject({
+      state: 'succeeded',
+      bufferPostId: 'buf_ig_unique_1',
+    });
+    expect(first.jsonBody.outbox.operations.tiktok).toMatchObject({
+      state: 'failed_retryable',
+      failureCategory: 'upstream_5xx',
+      statusCode: 502,
+    });
+    expect(first.jsonBody.post.bufferPostIds).toEqual(['buf_ig_unique_1']);
+    expect(first.jsonBody.post.publishFailed).toBe(true);
+
+    // 2. Recover via POST /api/publish/recover (simulating scheduled or manual recovery) after Zernio recovers
+    shouldZernioFail = false;
+    let recoverBody: any = null;
+    await handleRecoverPublishOutbox(
+      { body: { postId: 'post_partial_recovery_1', ignoreBackoff: true } } as any,
+      {
+        status() {
+          return this;
+        },
+        json(payload: unknown) {
+          recoverBody = payload;
+          return this;
+        },
+      } as any
+    );
+
+    expect(recoverBody.ok).toBe(true);
+    expect(recoverBody.completedIds).toHaveLength(1);
+    // CRITICAL INVARIANT: Buffer createPost must NOT be called a second time!
+    expect(bufferCreateCalls).toBe(1);
+
+    // Inspect outbox via GET /api/publish/outbox and Vault via loadStoredPosts
+    let outboxQueryBody: any = null;
+    await handleGetPublishOutbox(
+      { query: { postId: 'post_partial_recovery_1' } } as any,
+      {
+        status() {
+          return this;
+        },
+        json(payload: unknown) {
+          outboxQueryBody = payload;
+          return this;
+        },
+      } as any
+    );
+    expect(outboxQueryBody.dispatches[0].state).toBe('completed');
+    expect(outboxQueryBody.dispatches[0].operations.instagram.bufferPostId).toBe('buf_ig_unique_1');
+    expect(outboxQueryBody.dispatches[0].operations.tiktok.state).toBe('succeeded');
+    expect(outboxQueryBody.dispatches[0].operations.tiktok.zernioPostId).toMatch(/^zernio_tt_recovered_/);
+
+    const storedAfter = await loadStoredPosts();
+    const postAfter = storedAfter.posts.find((p) => p.id === 'post_partial_recovery_1');
+    expect(postAfter?.publishFailed).toBe(false);
+    expect(postAfter?.bufferPostIds).toEqual(['buf_ig_unique_1']);
+    expect(postAfter?.zernioPostIds).toHaveLength(1);
+
+    // 3. Re-submitting identical payload now replays idempotently with 0 additional API calls
+    const beforeReplayBuffer = bufferCreateCalls;
+    const beforeReplayZernio = zernioPostCalls;
+    const replay = await invokeDispatch();
+    expect(replay.jsonBody.idempotentReplay).toBe(true);
+    expect(bufferCreateCalls).toBe(beforeReplayBuffer);
+    expect(zernioPostCalls).toBe(beforeReplayZernio);
+  });
+
+  it('rejects concurrent cross-instance leases with 409 and safely recovers expired leases', async () => {
+    process.env.BUFFER_API_KEY = 'buf_lease_test';
+    let bufferCalls = 0;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input: any, init?: any) => {
+      const parsed = JSON.parse(String(init?.body || '{}'));
+      if (String(parsed.query || '').includes('GetMarrokChannels')) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              account: {
+                organizations: [
+                  {
+                    id: 'org_1',
+                    channels: [
+                      { id: 'buf_ig_1', name: 'marrok_org', service: 'instagram' },
+                      { id: 'buf_li_1', name: 'Marrok', service: 'linkedin' },
+                    ],
+                  },
+                ],
+              },
+            },
+          }),
+          { status: 200 }
+        );
+      }
+      bufferCalls++;
+      return new Response(
+        JSON.stringify({
+          data: { createPost: { post: { id: `buf_lease_post_${bufferCalls}` } } },
+        }),
+        { status: 200 }
+      );
+    });
+
+    const payloadBody = {
+      postId: 'post_lease_test_1',
+      deck: {
+        ...DEFAULT_STARTER_DECK,
+        id: 'post_lease_test_1',
+        sourceMeta: {
+          ...DEFAULT_STARTER_DECK.sourceMeta,
+          userReviewed: true,
+          humanApproved: true,
+          verifiedNumbers: true,
+        },
+      },
+      title: 'Lease Recovery Test',
+      caption: 'Testing cross-instance lease.',
+      mode: 'shareNow' as const,
+      targets: ['instagram', 'linkedin'] as ('instagram' | 'linkedin')[],
+      imageUrls: ['https://cdn.example.com/1.jpg'],
+    };
+
+    const fp = computeDispatchFingerprint({
+      postId: payloadBody.postId,
+      title: payloadBody.title,
+      mode: payloadBody.mode,
+      targets: payloadBody.targets,
+      text: payloadBody.caption,
+      imageUrls: payloadBody.imageUrls,
+      tiktokImageUrls: payloadBody.imageUrls,
+    });
+
+    // Simulate another serverless instance currently holding an active unexpired lease
+    const activeLeaseRecord = createNewOutboxRecord({
+      postId: payloadBody.postId,
+      dispatchFingerprint: fp,
+      mode: 'shareNow',
+      targets: ['instagram', 'linkedin'],
+      payload: {
+        postId: payloadBody.postId,
+        title: payloadBody.title,
+        caption: payloadBody.caption,
+        mode: 'shareNow',
+        targets: ['instagram', 'linkedin'],
+        imageUrls: payloadBody.imageUrls,
+        tiktokImageUrls: payloadBody.imageUrls,
+        cloudinaryPublicIds: [],
+      },
+      leaseOwner: 'remote_lambda_instance_99',
+      leaseDurationMs: 120_000,
+    });
+    activeLeaseRecord.operations.instagram = {
+      service: 'instagram',
+      provider: 'buffer',
+      state: 'succeeded',
+      attemptCount: 1,
+      remotePostId: 'buf_already_posted_before_crash',
+      bufferPostId: 'buf_already_posted_before_crash',
+      updatedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+    };
+    activeLeaseRecord.operations.linkedin = {
+      service: 'linkedin',
+      provider: 'buffer',
+      state: 'dispatching',
+      attemptCount: 1,
+      updatedAt: new Date().toISOString(),
+    };
+    await checkpointLocalOutboxRecord(activeLeaseRecord);
+
+    // Active unexpired lease rejects new request with 409 DISPATCH_IN_FLIGHT
+    let conflictStatus = 200;
+    let conflictBody: any = null;
+    await handleDispatchPublish(
+      { body: payloadBody } as any,
+      {
+        status(code: number) {
+          conflictStatus = code;
+          return this;
+        },
+        json(payload: unknown) {
+          conflictBody = payload;
+          return this;
+        },
+      } as any
+    );
+    expect(conflictStatus).toBe(409);
+    expect(conflictBody.code).toBe('DISPATCH_IN_FLIGHT');
+    expect(bufferCalls).toBe(0);
+
+    // Expire the lease to simulate remote worker crash; recovery must ONLY dispatch LinkedIn!
+    await checkpointLocalOutboxRecord({
+      ...activeLeaseRecord,
+      leaseExpiresAt: new Date(Date.now() - 10_000).toISOString(),
+    });
+
+    const recovery = await recoverAndRetryOutboxDispatches({
+      postId: payloadBody.postId,
+      ignoreBackoff: true,
+    });
+    expect(recovery.completedIds).toHaveLength(1);
+    expect(bufferCalls).toBe(1); // Only LinkedIn dispatched; Instagram was preserved!
+  });
+
+  it('classifies HTTP 400/401 as failed_permanent and stops retries after permanent or exhausted attempts', async () => {
+    process.env.BUFFER_API_KEY = 'buf_perm_fail_key';
+    let fetchCalls = 0;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: any) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (url === 'https://api.buffer.com') {
+        const parsed = JSON.parse(String(init?.body || '{}'));
+        if (String(parsed.query || '').includes('GetMarrokChannels')) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                account: {
+                  organizations: [
+                    { id: 'org_1', channels: [{ id: 'buf_ig_1', service: 'instagram' }] },
+                  ],
+                },
+              },
+            }),
+            { status: 200 }
+          );
+        }
+        fetchCalls++;
+        return new Response(JSON.stringify({ error: 'Invalid Bearer token' }), { status: 401 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+
+    const body = {
+      postId: 'post_perm_fail_1',
+      deck: {
+        ...DEFAULT_STARTER_DECK,
+        id: 'post_perm_fail_1',
+        sourceMeta: {
+          ...DEFAULT_STARTER_DECK.sourceMeta,
+          userReviewed: true,
+          humanApproved: true,
+          verifiedNumbers: true,
+        },
+      },
+      title: 'Permanent Fail Test',
+      caption: 'Invalid token test',
+      mode: 'shareNow',
+      targets: ['instagram'],
+      imageUrls: ['https://cdn.example.com/1.jpg'],
+    };
+
+    const callDispatch = async () => {
+      let statusCode = 200;
+      let jsonBody: any = null;
+      await handleDispatchPublish(
+        { body } as any,
+        {
+          status(code: number) {
+            statusCode = code;
+            return this;
+          },
+          json(payload: unknown) {
+            jsonBody = payload;
+            return this;
+          },
+        } as any
+      );
+      return { statusCode, jsonBody };
+    };
+
+    const first = await callDispatch();
+    expect(first.statusCode).toBe(200);
+    expect(first.jsonBody.outbox.state).toBe('failed_permanent');
+    expect(first.jsonBody.outbox.lastErrorCategory).toBe('auth_config');
+    expect(fetchCalls).toBe(1);
+
+    // Subsequent retry must refuse to hit external API again (422 DISPATCH_PERMANENT_FAILURE)
+    const second = await callDispatch();
+    expect(second.statusCode).toBe(422);
+    expect(second.jsonBody.code).toBe('DISPATCH_PERMANENT_FAILURE');
+    expect(fetchCalls).toBe(1);
   });
 });
 

@@ -26,10 +26,12 @@ import {
 } from './controllers/postsController.ts';
 import {
   handleGetPublishStatus,
+  handleGetPublishOutbox,
   handleGetTikTokCommercialMusic,
   handleUploadPublishMedia,
   handleCleanupPublishMedia,
   handleDispatchPublish,
+  handleRecoverPublishOutbox,
   handleManagePublishedPost,
   handleServeStagedMedia,
 } from './controllers/publishController.ts';
@@ -354,12 +356,14 @@ app.post(['/api/posts', '/posts'], handleSavePost);
 app.patch(['/api/posts/:id/status', '/posts/:id/status'], handleUpdatePostStatus);
 app.delete(['/api/posts/:id', '/posts/:id'], handleDeletePost);
 
-// Publishing, Scheduling & Cloudinary Auto-Cleanup Endpoints
+// Publishing, Scheduling, Outbox Recovery & Cloudinary Auto-Cleanup Endpoints
 app.get(['/api/publish/status', '/publish/status'], handleGetPublishStatus);
+app.get(['/api/publish/outbox', '/publish/outbox'], handleGetPublishOutbox);
 app.get(['/api/publish/tiktok-music', '/publish/tiktok-music'], handleGetTikTokCommercialMusic);
 app.post(['/api/publish/upload-media', '/publish/upload-media'], handleUploadPublishMedia);
 app.post(['/api/publish/cleanup-media', '/publish/cleanup-media'], handleCleanupPublishMedia);
 app.post(['/api/publish/dispatch', '/publish/dispatch'], handleDispatchPublish);
+app.post(['/api/publish/recover', '/publish/recover'], handleRecoverPublishOutbox);
 app.post(['/api/publish/manage-post', '/publish/manage-post'], handleManagePublishedPost);
 app.get(['/api/publish/media/:assetId', '/publish/media/:assetId'], handleServeStagedMedia);
 

@@ -1,5 +1,11 @@
 import pg from 'pg';
 import type {
+  PublishDispatchState,
+  PublishFailureCategory,
+  PublishOutboxOperation,
+  PublishOutboxPayloadSnapshot,
+  PublishOutboxRecord,
+  PublishScheduleMode,
   PublishTargetPlatform,
   SavedPostRecord,
   SavedPostStatus,
@@ -7,6 +13,12 @@ import type {
   TriageDecisionRecord,
   TriageSkipReason,
 } from '../../src/types.ts';
+import {
+  createNewOutboxRecord,
+  evaluateExistingOutboxClaim,
+  type ClaimOutboxDispatchOutcome,
+  type ClaimOutboxDispatchParams,
+} from '../../src/lib/publish/publishOutbox.ts';
 
 const VALID_PUBLISH_TARGETS = new Set<PublishTargetPlatform>([
   'instagram',
@@ -139,6 +151,29 @@ export async function initPostgresSchema(pool: pg.Pool): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS publish_outbox (
+      id VARCHAR(80) PRIMARY KEY,
+      post_id VARCHAR(64) NOT NULL,
+      dispatch_fingerprint VARCHAR(64) NOT NULL UNIQUE,
+      state VARCHAR(32) NOT NULL DEFAULT 'pending',
+      mode VARCHAR(32) NOT NULL DEFAULT 'addToQueue',
+      due_at TIMESTAMPTZ,
+      timezone VARCHAR(64),
+      targets JSONB NOT NULL DEFAULT '[]'::jsonb,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 3,
+      lease_owner VARCHAR(128),
+      lease_expires_at TIMESTAMPTZ,
+      next_retry_at TIMESTAMPTZ,
+      last_error_category VARCHAR(48),
+      last_error_message TEXT,
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      operations JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ
+    );
+
     ALTER TABLE saved_posts ADD COLUMN IF NOT EXISTS cloudinary_cleaned_at TIMESTAMPTZ;
 
     CREATE INDEX IF NOT EXISTS idx_saved_posts_status ON saved_posts(post_status);
@@ -147,6 +182,10 @@ export async function initPostgresSchema(pool: pg.Pool): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_saved_posts_signature ON saved_posts(title_signature);
     CREATE INDEX IF NOT EXISTS idx_inbox_triage_created_at ON inbox_triage_decisions(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_inbox_triage_topic_id ON inbox_triage_decisions(topic_id);
+    CREATE INDEX IF NOT EXISTS idx_publish_outbox_post_id ON publish_outbox(post_id);
+    CREATE INDEX IF NOT EXISTS idx_publish_outbox_state ON publish_outbox(state);
+    CREATE INDEX IF NOT EXISTS idx_publish_outbox_lease_expires ON publish_outbox(lease_expires_at);
+    CREATE INDEX IF NOT EXISTS idx_publish_outbox_next_retry ON publish_outbox(next_retry_at);
   `;
 
   await pool.query(createTableSql);
@@ -185,6 +224,25 @@ function rowToSavedPostRecord(row: Record<string, unknown>): SavedPostRecord {
     typeof sourceMeta?.lastDispatchedAt === 'string'
       ? sourceMeta.lastDispatchedAt
       : undefined;
+  const sourceMetaExtended = sourceMeta as
+    | (typeof sourceMeta & {
+        outboxDispatchId?: string;
+        outboxState?: PublishDispatchState;
+        lastPublishError?: string;
+      })
+    | undefined;
+  const outboxDispatchId =
+    typeof sourceMetaExtended?.outboxDispatchId === 'string'
+      ? sourceMetaExtended.outboxDispatchId
+      : undefined;
+  const outboxState =
+    typeof sourceMetaExtended?.outboxState === 'string'
+      ? sourceMetaExtended.outboxState
+      : undefined;
+  const lastPublishError =
+    typeof sourceMetaExtended?.lastPublishError === 'string'
+      ? sourceMetaExtended.lastPublishError
+      : undefined;
 
   return {
     id: String(row.id),
@@ -208,6 +266,9 @@ function rowToSavedPostRecord(row: Record<string, unknown>): SavedPostRecord {
     ...(publishFailed !== undefined ? { publishFailed } : {}),
     ...(lastDispatchFingerprint ? { lastDispatchFingerprint } : {}),
     ...(lastDispatchedAt ? { lastDispatchedAt } : {}),
+    ...(outboxDispatchId ? { outboxDispatchId } : {}),
+    ...(outboxState ? { outboxState } : {}),
+    ...(lastPublishError ? { lastPublishError } : {}),
     scheduledFor: row.scheduled_for
       ? row.scheduled_for instanceof Date
         ? row.scheduled_for.toISOString()
@@ -263,7 +324,10 @@ function preparePostRowParams(post: SavedPostRecord, titleSignature?: string) {
     post.humanApproved !== undefined ||
     post.publishFailed !== undefined ||
     post.lastDispatchFingerprint !== undefined ||
-    post.lastDispatchedAt !== undefined
+    post.lastDispatchedAt !== undefined ||
+    post.outboxDispatchId !== undefined ||
+    post.outboxState !== undefined ||
+    post.lastPublishError !== undefined
       ? {
           ...post.deck,
           sourceMeta: {
@@ -284,6 +348,13 @@ function preparePostRowParams(post: SavedPostRecord, titleSignature?: string) {
               : {}),
             ...(post.lastDispatchedAt !== undefined
               ? { lastDispatchedAt: post.lastDispatchedAt }
+              : {}),
+            ...(post.outboxDispatchId !== undefined
+              ? { outboxDispatchId: post.outboxDispatchId }
+              : {}),
+            ...(post.outboxState !== undefined ? { outboxState: post.outboxState } : {}),
+            ...(post.lastPublishError !== undefined
+              ? { lastPublishError: post.lastPublishError }
               : {}),
           },
         }
@@ -618,5 +689,389 @@ export async function deletePostgresTriageDecision(pool: pg.Pool, id: string): P
   const result = await pool.query('DELETE FROM inbox_triage_decisions WHERE id = $1;', [id]);
   return (result.rowCount ?? 0) > 0;
 }
+
+function parseJsonColumn<T>(raw: unknown, fallback: T): T {
+  if (raw && typeof raw === 'object') return raw as T;
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
+function rowToOutboxRecord(row: Record<string, unknown>): PublishOutboxRecord {
+  const targets = parsePublishTargets(parseJsonColumn(row.targets, [])) || [];
+  const payload = parseJsonColumn<PublishOutboxPayloadSnapshot>(row.payload, {
+    caption: '',
+    mode: ((row.mode as PublishScheduleMode) || 'addToQueue'),
+    targets,
+    imageUrls: [],
+    tiktokImageUrls: [],
+    cloudinaryPublicIds: [],
+  });
+  const operations = parseJsonColumn<
+    Partial<Record<PublishTargetPlatform, PublishOutboxOperation>>
+  >(row.operations, {});
+
+  return {
+    id: String(row.id),
+    postId: String(row.post_id),
+    dispatchFingerprint: String(row.dispatch_fingerprint),
+    state: (row.state as PublishDispatchState) || 'pending',
+    mode: (row.mode as PublishScheduleMode) || 'addToQueue',
+    dueAt: row.due_at
+      ? row.due_at instanceof Date
+        ? row.due_at.toISOString()
+        : String(row.due_at)
+      : undefined,
+    timezone: row.timezone ? String(row.timezone) : undefined,
+    targets,
+    attemptCount: Number(row.attempt_count ?? 0),
+    maxAttempts: Number(row.max_attempts ?? 3),
+    leaseOwner: row.lease_owner ? String(row.lease_owner) : null,
+    leaseExpiresAt: row.lease_expires_at
+      ? row.lease_expires_at instanceof Date
+        ? row.lease_expires_at.toISOString()
+        : String(row.lease_expires_at)
+      : null,
+    nextRetryAt: row.next_retry_at
+      ? row.next_retry_at instanceof Date
+        ? row.next_retry_at.toISOString()
+        : String(row.next_retry_at)
+      : null,
+    lastErrorCategory: row.last_error_category
+      ? (String(row.last_error_category) as PublishFailureCategory)
+      : null,
+    lastErrorMessage: row.last_error_message ? String(row.last_error_message) : null,
+    payload,
+    operations,
+    createdAt:
+      row.created_at instanceof Date
+        ? row.created_at.toISOString()
+        : String(row.created_at || new Date().toISOString()),
+    updatedAt:
+      row.updated_at instanceof Date
+        ? row.updated_at.toISOString()
+        : String(row.updated_at || new Date().toISOString()),
+    completedAt: row.completed_at
+      ? row.completed_at instanceof Date
+        ? row.completed_at.toISOString()
+        : String(row.completed_at)
+      : null,
+  };
+}
+
+/**
+ * Atomically claims or resumes a durable publishing outbox dispatch in PostgreSQL.
+ * Coordinates across serverless instances using row leases (`lease_owner`, `lease_expires_at`)
+ * and unique `dispatch_fingerprint` + active `post_id` guards.
+ */
+export async function claimPostgresOutboxDispatch(
+  pool: pg.Pool,
+  params: ClaimOutboxDispatchParams
+): Promise<ClaimOutboxDispatchOutcome> {
+  await initPostgresSchema(pool);
+  const nowDate = new Date(params.nowMs ?? Date.now());
+
+  const runClaim = async (queryFn: pg.Pool['query']): Promise<ClaimOutboxDispatchOutcome> => {
+    if (!params.cancelExistingBeforeDispatch) {
+      const activePostRes = await queryFn(
+        `SELECT * FROM publish_outbox
+         WHERE post_id = $1
+           AND dispatch_fingerprint <> $2
+           AND state = 'dispatching'
+           AND lease_expires_at > $3
+         LIMIT 1;`,
+        [params.postId, params.dispatchFingerprint, nowDate]
+      );
+      if (activePostRes.rows && activePostRes.rows.length > 0) {
+        return {
+          status: 'in_flight',
+          record: rowToOutboxRecord(activePostRes.rows[0] as Record<string, unknown>),
+        };
+      }
+    } else {
+      await queryFn(
+        `UPDATE publish_outbox
+         SET state = 'cancelled',
+             lease_owner = NULL,
+             lease_expires_at = NULL,
+             next_retry_at = NULL,
+             updated_at = $2
+         WHERE post_id = $1
+           AND dispatch_fingerprint <> $3
+           AND state NOT IN ('completed', 'cancelled');`,
+        [params.postId, nowDate, params.dispatchFingerprint]
+      );
+    }
+
+    const existingRes = await queryFn(
+      'SELECT * FROM publish_outbox WHERE dispatch_fingerprint = $1 LIMIT 1;',
+      [params.dispatchFingerprint]
+    );
+
+    if (!existingRes.rows || existingRes.rows.length === 0) {
+      const created = createNewOutboxRecord(params);
+      const insertSql = `
+        INSERT INTO publish_outbox (
+          id, post_id, dispatch_fingerprint, state, mode, due_at, timezone,
+          targets, attempt_count, max_attempts, lease_owner, lease_expires_at,
+          next_retry_at, last_error_category, last_error_message, payload, operations,
+          created_at, updated_at, completed_at
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7,
+          $8::jsonb, $9, $10, $11, $12,
+          $13, $14, $15, $16::jsonb, $17::jsonb,
+          $18, $19, $20
+        )
+        ON CONFLICT (dispatch_fingerprint) DO NOTHING
+        RETURNING *;
+      `;
+      const insertRes = await queryFn(insertSql, [
+        created.id,
+        created.postId,
+        created.dispatchFingerprint,
+        created.state,
+        created.mode,
+        created.dueAt ? new Date(created.dueAt) : null,
+        created.timezone || null,
+        JSON.stringify(created.targets),
+        created.attemptCount,
+        created.maxAttempts,
+        created.leaseOwner || null,
+        created.leaseExpiresAt ? new Date(created.leaseExpiresAt) : null,
+        null,
+        null,
+        null,
+        JSON.stringify(created.payload),
+        JSON.stringify(created.operations),
+        new Date(created.createdAt),
+        new Date(created.updatedAt),
+        null,
+      ]);
+
+      if (insertRes.rows && insertRes.rows.length > 0) {
+        return {
+          status: 'claimed',
+          record: rowToOutboxRecord(insertRes.rows[0] as Record<string, unknown>),
+          recoveredFromInterrupt: false,
+        };
+      }
+
+      // Race lost against concurrent serverless instance inserting the same fingerprint
+      const racedRes = await queryFn(
+        'SELECT * FROM publish_outbox WHERE dispatch_fingerprint = $1 LIMIT 1;',
+        [params.dispatchFingerprint]
+      );
+      if (racedRes.rows && racedRes.rows.length > 0) {
+        const racedRecord = rowToOutboxRecord(racedRes.rows[0] as Record<string, unknown>);
+        return evaluateExistingOutboxClaim(racedRecord, params);
+      }
+      return { status: 'claimed', record: created, recoveredFromInterrupt: false };
+    }
+
+    const existingRecord = rowToOutboxRecord(existingRes.rows[0] as Record<string, unknown>);
+    const outcome = evaluateExistingOutboxClaim(existingRecord, params);
+    if (outcome.status !== 'claimed') {
+      return outcome;
+    }
+
+    const next = outcome.record;
+    const updateSql = `
+      UPDATE publish_outbox
+      SET id = $2,
+          state = $3,
+          mode = $4,
+          due_at = $5,
+          timezone = $6,
+          targets = $7::jsonb,
+          attempt_count = $8,
+          max_attempts = $9,
+          lease_owner = $10,
+          lease_expires_at = $11,
+          next_retry_at = $12,
+          last_error_category = $13,
+          last_error_message = $14,
+          payload = $15::jsonb,
+          operations = $16::jsonb,
+          updated_at = $17,
+          completed_at = $18
+      WHERE dispatch_fingerprint = $1
+        AND (
+          $19::boolean = true
+          OR state IN ('pending', 'partially_completed', 'failed_retryable', 'cancelled')
+          OR (state = 'dispatching' AND (lease_expires_at IS NULL OR lease_expires_at <= $20))
+        )
+      RETURNING *;
+    `;
+    const updatedRes = await queryFn(updateSql, [
+      next.dispatchFingerprint,
+      next.id,
+      next.state,
+      next.mode,
+      next.dueAt ? new Date(next.dueAt) : null,
+      next.timezone || null,
+      JSON.stringify(next.targets),
+      next.attemptCount,
+      next.maxAttempts,
+      next.leaseOwner || null,
+      next.leaseExpiresAt ? new Date(next.leaseExpiresAt) : null,
+      next.nextRetryAt ? new Date(next.nextRetryAt) : null,
+      next.lastErrorCategory || null,
+      next.lastErrorMessage || null,
+      JSON.stringify(next.payload),
+      JSON.stringify(next.operations),
+      new Date(next.updatedAt),
+      next.completedAt ? new Date(next.completedAt) : null,
+      Boolean(params.cancelExistingBeforeDispatch),
+      nowDate,
+    ]);
+
+    if (!updatedRes.rows || updatedRes.rows.length === 0) {
+      const latestRes = await queryFn(
+        'SELECT * FROM publish_outbox WHERE dispatch_fingerprint = $1 LIMIT 1;',
+        [params.dispatchFingerprint]
+      );
+      if (latestRes.rows && latestRes.rows.length > 0) {
+        return {
+          status: 'in_flight',
+          record: rowToOutboxRecord(latestRes.rows[0] as Record<string, unknown>),
+        };
+      }
+      return { status: 'in_flight', record: existingRecord };
+    }
+
+    return {
+      status: 'claimed',
+      record: rowToOutboxRecord(updatedRes.rows[0] as Record<string, unknown>),
+      recoveredFromInterrupt: outcome.recoveredFromInterrupt,
+    };
+  };
+
+  const hasConnect = typeof (pool as unknown as { connect?: unknown }).connect === 'function';
+  if (hasConnect) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const outcome = await runClaim(client.query.bind(client) as pg.Pool['query']);
+      await client.query('COMMIT');
+      return outcome;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  return runClaim(pool.query.bind(pool));
+}
+
+export async function checkpointPostgresOutboxRecord(
+  pool: pg.Pool,
+  record: PublishOutboxRecord
+): Promise<PublishOutboxRecord> {
+  await initPostgresSchema(pool);
+  const sql = `
+    UPDATE publish_outbox
+    SET state = $2,
+        targets = $3::jsonb,
+        attempt_count = $4,
+        lease_owner = $5,
+        lease_expires_at = $6,
+        next_retry_at = $7,
+        last_error_category = $8,
+        last_error_message = $9,
+        operations = $10::jsonb,
+        updated_at = $11,
+        completed_at = $12
+    WHERE dispatch_fingerprint = $1
+    RETURNING *;
+  `;
+  const result = await pool.query(sql, [
+    record.dispatchFingerprint,
+    record.state,
+    JSON.stringify(record.targets),
+    record.attemptCount,
+    record.leaseOwner ?? null,
+    record.leaseExpiresAt ? new Date(record.leaseExpiresAt) : null,
+    record.nextRetryAt ? new Date(record.nextRetryAt) : null,
+    record.lastErrorCategory ?? null,
+    record.lastErrorMessage ?? null,
+    JSON.stringify(record.operations),
+    new Date(record.updatedAt || new Date().toISOString()),
+    record.completedAt ? new Date(record.completedAt) : null,
+  ]);
+  if (result.rows && result.rows.length > 0) {
+    return rowToOutboxRecord(result.rows[0] as Record<string, unknown>);
+  }
+  return record;
+}
+
+export async function queryPostgresOutboxDispatches(
+  pool: pg.Pool,
+  options: { postId?: string; recoverableOnly?: boolean; nowMs?: number; limit?: number } = {}
+): Promise<PublishOutboxRecord[]> {
+  await initPostgresSchema(pool);
+  const safeLimit = Math.max(1, Math.min(200, Number(options.limit) || 100));
+  const nowDate = new Date(options.nowMs ?? Date.now());
+
+  if (options.postId) {
+    const res = await pool.query(
+      `SELECT * FROM publish_outbox WHERE post_id = $1 ORDER BY updated_at DESC LIMIT $2;`,
+      [options.postId, safeLimit]
+    );
+    const rows = (res.rows || []).map((r) => rowToOutboxRecord(r as Record<string, unknown>));
+    if (!options.recoverableOnly) return rows;
+    return rows.filter((r) => {
+      const leaseMs = r.leaseExpiresAt ? Date.parse(r.leaseExpiresAt) : NaN;
+      return (
+        r.state === 'partially_completed' ||
+        r.state === 'failed_retryable' ||
+        (r.state === 'dispatching' && (!Number.isFinite(leaseMs) || leaseMs <= nowDate.getTime()))
+      );
+    });
+  }
+
+  if (options.recoverableOnly) {
+    const res = await pool.query(
+      `SELECT * FROM publish_outbox
+       WHERE state IN ('partially_completed', 'failed_retryable')
+          OR (state = 'dispatching' AND (lease_expires_at IS NULL OR lease_expires_at <= $1))
+       ORDER BY updated_at ASC
+       LIMIT $2;`,
+      [nowDate, safeLimit]
+    );
+    return (res.rows || []).map((r) => rowToOutboxRecord(r as Record<string, unknown>));
+  }
+
+  const res = await pool.query(
+    `SELECT * FROM publish_outbox ORDER BY updated_at DESC LIMIT $1;`,
+    [safeLimit]
+  );
+  return (res.rows || []).map((r) => rowToOutboxRecord(r as Record<string, unknown>));
+}
+
+export async function cancelPostgresOutboxDispatchesForPost(
+  pool: pg.Pool,
+  postId: string
+): Promise<void> {
+  await initPostgresSchema(pool);
+  await pool.query(
+    `UPDATE publish_outbox
+     SET state = 'cancelled',
+         lease_owner = NULL,
+         lease_expires_at = NULL,
+         next_retry_at = NULL,
+         updated_at = NOW()
+     WHERE post_id = $1
+       AND state NOT IN ('completed', 'cancelled');`,
+    [postId]
+  );
+}
+
 
 

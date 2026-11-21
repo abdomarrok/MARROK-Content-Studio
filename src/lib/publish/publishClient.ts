@@ -2,6 +2,7 @@ import type {
   BufferChannelInfo,
   CanvasDimensionPreset,
   CarouselData,
+  PublishOutboxSummary,
   PublishScheduleMode,
   PublishTargetPlatform,
   SavedPostRecord,
@@ -92,11 +93,13 @@ export interface ChannelDispatchResult {
   bufferPostId?: string;
   zernioPostId?: string;
   message?: string;
+  reusedFromOutbox?: boolean;
 }
 
 export interface DispatchPublishResponse {
   ok: boolean;
   idempotentReplay?: boolean;
+  recoveredFromInterrupt?: boolean;
   dispatchFingerprint?: string;
   mode: PublishScheduleMode;
   scheduledFor: string | null;
@@ -107,6 +110,7 @@ export interface DispatchPublishResponse {
   bufferFailedCount?: number;
   channelResults?: ChannelDispatchResult[];
   warnings?: string[];
+  outbox?: PublishOutboxSummary;
   quotaStats: Omit<
     PublishStatusResponse,
     | 'cloudinaryConfigured'

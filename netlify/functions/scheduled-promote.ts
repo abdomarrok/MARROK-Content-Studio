@@ -1,12 +1,16 @@
 import type { Config, Context } from '@netlify/functions';
-import { sweepExpiredCloudinaryAssets } from '../../api/controllers/publishController.ts';
+import {
+  recoverAndRetryOutboxDispatches,
+  sweepExpiredCloudinaryAssets,
+} from '../../api/controllers/publishController.ts';
 import { readRuntimeEnv } from '../../src/lib/security/env.ts';
 import type { NetlifyLambdaEvent, NetlifyLambdaResult } from '../../src/lib/network/netlifyBridge.ts';
 
 /**
  * Netlify Scheduled Function (UTC cron, <= 30s execution window).
- * Promotes eligible overdue scheduled posts to 'posted' and destroys staged
- * Cloudinary assets +1h after publication, keeping GET endpoints 100% read-pure.
+ * Promotes eligible overdue scheduled posts to 'posted', recovers expired/retryable
+ * durable publish outbox dispatches, and destroys staged Cloudinary assets +1h after publication,
+ * keeping GET endpoints 100% read-pure.
  */
 export async function runScheduledPromotion(env: NodeJS.ProcessEnv = process.env): Promise<{
   ok: boolean;
@@ -17,6 +21,8 @@ export async function runScheduledPromotion(env: NodeJS.ProcessEnv = process.env
   cleanedCount: number;
   cleanedPostIds: string[];
   remainingStagedCount: number;
+  recoveredOutboxCount: number;
+  recoveredOutboxIds: string[];
 }> {
   const netlifyContext = (readRuntimeEnv('CONTEXT', env) || '').trim().toLowerCase();
   const allowNonProd = readRuntimeEnv('ALLOW_NON_PROD_CRON', env) === 'true';
@@ -35,15 +41,31 @@ export async function runScheduledPromotion(env: NodeJS.ProcessEnv = process.env
       cleanedCount: 0,
       cleanedPostIds: [],
       remainingStagedCount: 0,
+      recoveredOutboxCount: 0,
+      recoveredOutboxIds: [],
     };
   }
 
-  const sweepPromise = sweepExpiredCloudinaryAssets();
+  const runTasks = async () => {
+    const outboxRecovery = await recoverAndRetryOutboxDispatches({ limit: 5 }).catch((err) => {
+      console.warn('[ScheduledPromote] Outbox recovery warning:', err);
+      return {
+        checkedCount: 0,
+        recoveredIds: [] as string[],
+        completedIds: [] as string[],
+        skippedIds: [] as string[],
+        failedIds: [] as string[],
+      };
+    });
+    const sweep = await sweepExpiredCloudinaryAssets();
+    return { outboxRecovery, sweep };
+  };
+
   const timeoutPromise = new Promise<never>((_, reject) => {
     setTimeout(() => reject(new Error('Scheduled sweep exceeded 25s safety budget')), 25_000);
   });
 
-  const sweep = await Promise.race([sweepPromise, timeoutPromise]);
+  const { outboxRecovery, sweep } = await Promise.race([runTasks(), timeoutPromise]);
 
   return {
     ok: true,
@@ -52,6 +74,8 @@ export async function runScheduledPromotion(env: NodeJS.ProcessEnv = process.env
     cleanedCount: sweep.cleanedPostIds.length,
     cleanedPostIds: sweep.cleanedPostIds,
     remainingStagedCount: sweep.remainingStagedCount,
+    recoveredOutboxCount: outboxRecovery.recoveredIds.length,
+    recoveredOutboxIds: outboxRecovery.recoveredIds,
   };
 }
 

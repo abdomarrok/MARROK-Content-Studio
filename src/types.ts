@@ -668,6 +668,106 @@ export type PublishTargetPlatform = 'instagram' | 'facebook' | 'linkedin' | 'tik
 
 export type PublishScheduleMode = 'shareNow' | 'addToQueue' | 'customScheduled';
 
+export type PublishDispatchState =
+  | 'pending'
+  | 'dispatching'
+  | 'partially_completed'
+  | 'completed'
+  | 'failed_retryable'
+  | 'failed_permanent'
+  | 'cancelled';
+
+export type PublishTargetState =
+  | 'pending'
+  | 'dispatching'
+  | 'succeeded'
+  | 'skipped_fallback'
+  | 'failed_retryable'
+  | 'failed_permanent';
+
+export type PublishFailureCategory =
+  | 'transient_network'
+  | 'timeout_interrupted'
+  | 'rate_limited'
+  | 'upstream_5xx'
+  | 'auth_config'
+  | 'validation_permanent'
+  | 'local_persistence_error'
+  | 'unknown';
+
+export interface PublishOutboxOperation {
+  service: PublishTargetPlatform;
+  provider: 'buffer' | 'zernio' | 'metricool-csv';
+  state: PublishTargetState;
+  attemptCount: number;
+  remotePostId?: string;
+  bufferPostId?: string;
+  zernioPostId?: string;
+  failureCategory?: PublishFailureCategory;
+  retryable?: boolean;
+  statusCode?: number;
+  errorMessage?: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export interface PublishOutboxPayloadSnapshot {
+  postId?: string;
+  title?: string;
+  caption: string;
+  mode: PublishScheduleMode;
+  dueAt?: string;
+  timezone?: string;
+  targets: PublishTargetPlatform[];
+  imageUrls: string[];
+  tiktokImageUrls: string[];
+  cloudinaryPublicIds: string[];
+  mergeRemoteIds?: boolean;
+  tiktokSettings?: {
+    privacyLevel?: string;
+    photoCoverIndex?: number;
+    autoAddMusic?: boolean;
+    allowComment?: boolean;
+    title?: string;
+    musicSoundId?: string;
+  };
+}
+
+export interface PublishOutboxRecord {
+  id: string;
+  postId: string;
+  dispatchFingerprint: string;
+  state: PublishDispatchState;
+  mode: PublishScheduleMode;
+  dueAt?: string;
+  timezone?: string;
+  targets: PublishTargetPlatform[];
+  attemptCount: number;
+  maxAttempts: number;
+  leaseOwner?: string | null;
+  leaseExpiresAt?: string | null;
+  nextRetryAt?: string | null;
+  lastErrorCategory?: PublishFailureCategory | null;
+  lastErrorMessage?: string | null;
+  payload: PublishOutboxPayloadSnapshot;
+  operations: Partial<Record<PublishTargetPlatform, PublishOutboxOperation>>;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+}
+
+export interface PublishOutboxSummary {
+  dispatchId: string;
+  dispatchFingerprint: string;
+  state: PublishDispatchState;
+  attemptCount: number;
+  maxAttempts: number;
+  nextRetryAt?: string | null;
+  lastErrorCategory?: PublishFailureCategory | null;
+  lastErrorMessage?: string | null;
+  operations: Partial<Record<PublishTargetPlatform, PublishOutboxOperation>>;
+}
+
 export interface BufferChannelInfo {
   id: string;
   name: string;
@@ -709,6 +809,9 @@ export interface SavedPostRecord {
   countedInMetricoolMonth?: string;
   lastDispatchFingerprint?: string;
   lastDispatchedAt?: string;
+  outboxDispatchId?: string;
+  outboxState?: PublishDispatchState;
+  lastPublishError?: string;
 }
 
 // Re-export immutable palette repositories for backwards compatibility
