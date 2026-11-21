@@ -270,24 +270,50 @@ export async function undoTriageDecision(id: string): Promise<void> {
 }
 
 export function getDismissedGatherTopicIds(): Set<string> {
+  const dismissed = new Set<string>();
+  // 1. Derive from authoritative triage decisions (action === 'skip', 'draft', or active 'snooze')
+  const decisions = getLocalTriageDecisions();
+  const nowMs = Date.now();
+  for (const d of decisions) {
+    if (d.action === 'skip' || d.action === 'draft') {
+      dismissed.add(d.topicId);
+    } else if (d.action === 'snooze' && d.snoozeUntil) {
+      const until = Date.parse(d.snoozeUntil);
+      if (Number.isFinite(until) && until > nowMs) {
+        dismissed.add(d.topicId);
+      }
+    }
+  }
+  // 2. One-time migration/cleanup of legacy prototype localStorage key if still present
   try {
     const raw = localStorage.getItem(DISMISSED_TOPICS_KEY);
-    if (!raw) return new Set();
-    const parsed = JSON.parse(raw);
-    return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        parsed.forEach((id) => dismissed.add(String(id)));
+      }
+      localStorage.removeItem(DISMISSED_TOPICS_KEY);
+    }
   } catch {
-    return new Set();
+    // Ignore
   }
+  return dismissed;
 }
 
 export function dismissGatherTopicId(topicId: string): void {
-  try {
-    const current = getDismissedGatherTopicIds();
-    current.add(topicId);
-    localStorage.setItem(DISMISSED_TOPICS_KEY, JSON.stringify(Array.from(current).slice(-250)));
-    candidateDeckCache.delete(topicId);
-  } catch {
-    // Ignore storage errors
+  candidateDeckCache.delete(topicId);
+  // Persist locally as a triage decision record with action 'skip'
+  const decisions = getLocalTriageDecisions();
+  if (!decisions.some((d) => d.topicId === topicId)) {
+    decisions.unshift({
+      id: `triage_local_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      topicId,
+      sourceDomain: 'local',
+      domainCategory: 'DISTRIBUTED SYSTEMS',
+      action: 'skip',
+      createdAt: new Date().toISOString(),
+    });
+    saveLocalTriageDecisions(decisions);
   }
 }
 

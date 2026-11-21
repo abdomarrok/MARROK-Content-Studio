@@ -340,7 +340,19 @@ export async function verifySessionCookieValue(
     } catch (err: unknown) {
       const pgCode = (err as { code?: string })?.code;
       if (pgCode === '42P01') {
-        // Table auth_revoked_sessions does not exist yet before first logout; benign
+        // Table auth_revoked_sessions does not exist yet; attempt self-healing bootstrap
+        try {
+          await pool.query(
+            `CREATE TABLE IF NOT EXISTS auth_revoked_sessions (
+              jti VARCHAR(96) PRIMARY KEY,
+              expires_at TIMESTAMPTZ NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_auth_revoked_sessions_expires ON auth_revoked_sessions(expires_at);`
+          );
+        } catch (initErr) {
+          console.error('[SessionAuth] Failed to bootstrap auth_revoked_sessions on 42P01 (fail-closed):', initErr);
+          return null;
+        }
       } else {
         // Database connection failed or outage occurred.
         // FAIL CLOSED: when authoritative database is configured, an outage must not allow
@@ -386,7 +398,20 @@ export async function checkLoginLockout(
     } catch (err: unknown) {
       const pgCode = (err as { code?: string })?.code;
       if (pgCode === '42P01') {
-        // Table does not exist yet before first lockout; benign
+        // Table does not exist yet; attempt self-healing bootstrap
+        try {
+          await pool.query(
+            `CREATE TABLE IF NOT EXISTS auth_login_attempts (
+              attempt_key VARCHAR(160) PRIMARY KEY,
+              attempt_count INTEGER NOT NULL DEFAULT 0,
+              first_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              locked_until TIMESTAMPTZ
+            );`
+          );
+        } catch (initErr) {
+          console.error('[SessionAuth] Failed to bootstrap auth_login_attempts on 42P01 (fail-closed):', initErr);
+          return { locked: true, retryAfterSeconds: 60 };
+        }
       } else {
         console.error('[SessionAuth] Database error checking login lockout (fail-closed):', err instanceof Error ? err.message : err);
         // Fail closed: if database is down, prevent brute-force attacks across serverless instances
@@ -483,7 +508,15 @@ export function isCronOrWebhookSecretAuthorized(
   ) {
     const expected = readRuntimeEnv('API_SHARED_SECRET', envOverride);
     const provided = headerValue('x-api-secret');
-    return Boolean(expected && provided && constantTimeEqualText(provided, expected));
+    if (expected && provided && constantTimeEqualText(provided, expected)) {
+      return true;
+    }
+    const cronSecret = readRuntimeEnv('CRON_SECRET', envOverride);
+    const authHeader = headerValue('authorization');
+    if (cronSecret && authHeader && constantTimeEqualText(authHeader, `Bearer ${cronSecret}`)) {
+      return true;
+    }
+    return false;
   }
 
   if (cleanPath === '/api/gather/telegram-webhook' || cleanPath === '/gather/telegram-webhook') {

@@ -285,8 +285,13 @@ export function getServerConfig(envOverride?: NodeJS.ProcessEnv): ServerConfig {
 
 /**
  * Hybrid per-IP sliding-window rate limiter middleware.
- * Uses atomic Upstash/KV REST commands when configured for distributed serverless protection,
- * with fail-safe automatic fallback to process-local in-memory tracking.
+ * Uses atomic Upstash Redis REST transactions (/multi-exec) for distributed sliding-window counter
+ * estimation across serverless instances, with fail-safe automatic fallback to process-local
+ * in-memory tracking when Redis is unconfigured or unavailable.
+ *
+ * NOTE ON OUTAGES: Process-local fallback protects the individual serverless instance from crashing
+ * or exhausting local resources, but does NOT enforce a unified distributed ceiling across multiple
+ * concurrent serverless instances during a Redis outage.
  */
 export function createRateLimiter(options?: { windowMs?: number; maxRequests?: number }) {
   const windowMs = options?.windowMs ?? 60_000;
@@ -303,29 +308,56 @@ export function createRateLimiter(options?: { windowMs?: number; maxRequests?: n
       req.socket?.remoteAddress ||
       'unknown';
 
-    // 1. Distributed rate limiting via Upstash Redis REST if configured
+    const now = Date.now();
+
+    // 1. Distributed sliding-window counter via Upstash Redis REST /multi-exec if configured
     if (config.kvRestUrl && config.kvRestToken && clientIp !== 'unknown') {
       try {
         const windowSec = Math.max(1, Math.ceil(windowMs / 1000));
-        const bucket = Math.floor(Date.now() / windowMs);
-        const rateKey = `ratelimit:ip:${encodeURIComponent(clientIp)}:${bucket}`;
+        const currentBucket = Math.floor(now / windowMs);
+        const prevBucket = currentBucket - 1;
+        const currentKey = `ratelimit:ip:${encodeURIComponent(clientIp)}:${currentBucket}`;
+        const prevKey = `ratelimit:ip:${encodeURIComponent(clientIp)}:${prevBucket}`;
         const cleanUrl = config.kvRestUrl.replace(/\/+$/, '');
-        const kvRes = await fetch(`${cleanUrl}/pipeline`, {
+
+        // Atomic transaction: fetch previous window count, increment current window counter, and ensure TTL
+        const kvRes = await fetch(`${cleanUrl}/multi-exec`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${config.kvRestToken}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify([
-            ['INCR', rateKey],
-            ['EXPIRE', rateKey, windowSec * 2],
+            ['GET', prevKey],
+            ['INCR', currentKey],
+            ['EXPIRE', currentKey, windowSec * 2],
           ]),
           signal: AbortSignal.timeout(1500),
         });
+
         if (kvRes.ok) {
-          const results = (await kvRes.json()) as Array<{ result?: number }>;
-          const currentHits = results?.[0]?.result ?? 1;
-          if (currentHits > maxRequests) {
+          const results = (await kvRes.json()) as Array<{ error?: string; result?: unknown }>;
+          if (!Array.isArray(results) || results.length < 3) {
+            throw new Error('Malformed Upstash /multi-exec transaction response');
+          }
+          const commandError = results.find((r) => Boolean(r && typeof r === 'object' && r.error));
+          if (commandError) {
+            throw new Error(`Upstash command error inside transaction: ${commandError.error}`);
+          }
+          const prevRaw = results[0]?.result;
+          const prevHits = typeof prevRaw === 'string' || typeof prevRaw === 'number'
+            ? Number.parseInt(String(prevRaw), 10) || 0
+            : 0;
+          const currentHits = typeof results[1]?.result === 'number'
+            ? results[1].result
+            : 1;
+
+          // Sliding-window counter approximation: decay previous bucket hits based on elapsed window time
+          const timeIntoWindow = now % windowMs;
+          const prevWeight = Math.max(0, Math.min(1, (windowMs - timeIntoWindow) / windowMs));
+          const estimatedHits = Math.floor(prevHits * prevWeight) + currentHits;
+
+          if (estimatedHits > maxRequests) {
             res.setHeader('Retry-After', String(windowSec));
             return res.status(429).json({
               error: 'Rate limit exceeded. Please wait before making more requests.',
@@ -340,7 +372,6 @@ export function createRateLimiter(options?: { windowMs?: number; maxRequests?: n
     }
 
     // 2. In-memory sliding-window fallback
-    const now = Date.now();
     const cutoff = now - windowMs;
     const recent = (hits.get(clientIp) || []).filter((ts) => ts > cutoff);
 

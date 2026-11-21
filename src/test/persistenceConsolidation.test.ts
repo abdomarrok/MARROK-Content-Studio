@@ -7,6 +7,7 @@ import {
   createSignedSessionToken,
   hashPasswordScrypt,
   resetAuthStateForTest,
+  isCronOrWebhookSecretAuthorized,
   type AuthConfigStatus,
 } from '../lib/security/sessionAuth.ts';
 import {
@@ -23,6 +24,7 @@ import {
   mergeRecords,
 } from '../lib/storage/postsVaultClient.ts';
 import { DEFAULT_STARTER_DECK } from '../lib/presets.ts';
+import { getDismissedGatherTopicIds } from '../lib/gather/gatherClient.ts';
 import type { SavedPostRecord } from '../types.ts';
 import type { Request, Response } from 'express';
 
@@ -70,14 +72,17 @@ describe('Phase 2.2: Legacy Storage Retirement & Persistence Consolidation', () 
       expect(outagePool.query).toHaveBeenCalledTimes(1);
     });
 
-    it('tolerates benign 42P01 undefined_table before first session logout', async () => {
+    it('tolerates benign 42P01 undefined_table by bootstrapping auth_revoked_sessions and fails closed if bootstrap fails', async () => {
       const { token } = createSignedSessionToken(ADMIN_USER, SESSION_SECRET);
 
       const uninitializedPool = {
-        query: vi.fn().mockRejectedValue({ code: '42P01', message: 'relation does not exist' }),
+        query: vi
+          .fn()
+          .mockRejectedValueOnce({ code: '42P01', message: 'relation does not exist' })
+          .mockResolvedValueOnce({ rows: [] }),
       } as unknown as pg.Pool;
 
-      // 42P01 is benign: table hasn't been created yet because no user has logged out yet
+      // 42P01 triggers self-healing bootstrap of auth_revoked_sessions
       const verified = await verifySessionCookieValue(
         `__Host-marrok_session=${token}`,
         authConfig,
@@ -86,6 +91,22 @@ describe('Phase 2.2: Legacy Storage Retirement & Persistence Consolidation', () 
 
       expect(verified).not.toBeNull();
       expect(verified?.sub).toBe(ADMIN_USER);
+      expect(uninitializedPool.query).toHaveBeenCalledTimes(2);
+
+      // If bootstrap itself fails (e.g. read-only permissions), it MUST fail closed
+      const failedBootstrapPool = {
+        query: vi
+          .fn()
+          .mockRejectedValueOnce({ code: '42P01', message: 'relation does not exist' })
+          .mockRejectedValueOnce(new Error('Permission denied: cannot create table in read-only transaction')),
+      } as unknown as pg.Pool;
+
+      const failedVerification = await verifySessionCookieValue(
+        `__Host-marrok_session=${token}`,
+        authConfig,
+        failedBootstrapPool
+      );
+      expect(failedVerification).toBeNull();
     });
 
     it('fails closed when revokeSessionToken encounters database outage', async () => {
@@ -109,6 +130,30 @@ describe('Phase 2.2: Legacy Storage Retirement & Persistence Consolidation', () 
 
       expect(lockout.locked).toBe(true);
       expect(lockout.retryAfterSeconds).toBe(60);
+    });
+
+    it('self-heals auth_login_attempts on 42P01 and fails closed if bootstrap query fails', async () => {
+      const selfHealingPool = {
+        query: vi
+          .fn()
+          .mockRejectedValueOnce({ code: '42P01', message: 'relation does not exist' })
+          .mockResolvedValueOnce({ rows: [] }),
+      } as unknown as pg.Pool;
+
+      const lockout = await checkLoginLockout('192.168.1.1:admin', selfHealingPool);
+      expect(lockout.locked).toBe(false);
+      expect(selfHealingPool.query).toHaveBeenCalledTimes(2);
+
+      const failedBootstrapPool = {
+        query: vi
+          .fn()
+          .mockRejectedValueOnce({ code: '42P01', message: 'relation does not exist' })
+          .mockRejectedValueOnce(new Error('Database disk full')),
+      } as unknown as pg.Pool;
+
+      const lockoutFail = await checkLoginLockout('192.168.1.1:admin', failedBootstrapPool);
+      expect(lockoutFail.locked).toBe(true);
+      expect(lockoutFail.retryAfterSeconds).toBe(60);
     });
   });
 
@@ -237,10 +282,10 @@ describe('Phase 2.2: Legacy Storage Retirement & Persistence Consolidation', () 
   });
 
   describe('5. Distributed Rate Limiter & Upstash Fail-Safe Protection', () => {
-    it('performs distributed rate-limiting pipeline when Upstash KV is configured', async () => {
-      const mockPipelineFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+    it('performs distributed sliding-window counter transaction via Upstash /multi-exec', async () => {
+      const mockMultiExecFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
         ok: true,
-        json: async () => [{ result: 1 }, { result: 1 }],
+        json: async () => [{ result: '0' }, { result: 1 }, { result: 1 }],
       } as unknown as globalThis.Response);
 
       const savedKvUrl = process.env.KV_REST_API_URL;
@@ -264,10 +309,107 @@ describe('Phase 2.2: Legacy Storage Retirement & Persistence Consolidation', () 
         await limiter(req, res, next);
 
         expect(next).toHaveBeenCalledTimes(1);
-        expect(mockPipelineFetch).toHaveBeenCalledTimes(1);
-        const [calledUrl, options] = mockPipelineFetch.mock.calls[0];
-        expect(String(calledUrl)).toContain('https://upstash.io/pipeline');
+        expect(mockMultiExecFetch).toHaveBeenCalledTimes(1);
+        const [calledUrl, options] = mockMultiExecFetch.mock.calls[0];
+        expect(String(calledUrl)).toContain('https://upstash.io/multi-exec');
         expect(options?.headers).toHaveProperty('Authorization', 'Bearer test_token');
+        const commands = JSON.parse(options?.body as string);
+        expect(commands).toEqual([
+          ['GET', expect.stringContaining('ratelimit:ip:203.0.113.195:')],
+          ['INCR', expect.stringContaining('ratelimit:ip:203.0.113.195:')],
+          ['EXPIRE', expect.stringContaining('ratelimit:ip:203.0.113.195:'), 120],
+        ]);
+      } finally {
+        if (savedKvUrl === undefined) delete process.env.KV_REST_API_URL;
+        else process.env.KV_REST_API_URL = savedKvUrl;
+        if (savedKvToken === undefined) delete process.env.KV_REST_API_TOKEN;
+        else process.env.KV_REST_API_TOKEN = savedKvToken;
+      }
+    });
+
+    it('handles concurrent requests through /multi-exec atomically with sequential counter progression', async () => {
+      let counter = 0;
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+        counter += 1;
+        const assignedCount = counter;
+        return {
+          ok: true,
+          json: async () => [{ result: '0' }, { result: assignedCount }, { result: 1 }],
+        } as unknown as globalThis.Response;
+      });
+
+      const savedKvUrl = process.env.KV_REST_API_URL;
+      const savedKvToken = process.env.KV_REST_API_TOKEN;
+      process.env.KV_REST_API_URL = 'https://upstash.io';
+      process.env.KV_REST_API_TOKEN = 'test_token';
+
+      try {
+        const limiter = createRateLimiter({ windowMs: 60000, maxRequests: 2 });
+        const createCall = () => {
+          const req = {
+            headers: { 'x-forwarded-for': '203.0.113.205' },
+            ip: '203.0.113.205',
+          } as unknown as Request;
+          const res = {
+            setHeader: vi.fn(),
+            status: vi.fn().mockReturnThis(),
+            json: vi.fn(),
+          } as unknown as Response;
+          const next = vi.fn();
+          return { req, res, next, run: () => limiter(req, res, next) };
+        };
+
+        const c1 = createCall();
+        const c2 = createCall();
+        const c3 = createCall();
+
+        await Promise.all([c1.run(), c2.run(), c3.run()]);
+
+        // Requests 1 and 2 are within maxRequests (2)
+        expect(c1.next).toHaveBeenCalledTimes(1);
+        expect(c2.next).toHaveBeenCalledTimes(1);
+        // Request 3 exceeds maxRequests -> 429
+        expect(c3.next).not.toHaveBeenCalled();
+        expect(c3.res.status).toHaveBeenCalledWith(429);
+      } finally {
+        if (savedKvUrl === undefined) delete process.env.KV_REST_API_URL;
+        else process.env.KV_REST_API_URL = savedKvUrl;
+        if (savedKvToken === undefined) delete process.env.KV_REST_API_TOKEN;
+        else process.env.KV_REST_API_TOKEN = savedKvToken;
+      }
+    });
+
+    it('enforces 429 when sliding-window estimated hits exceed maxRequests', async () => {
+      // Current window has 6 hits, which exceeds maxRequests (5) regardless of elapsed time
+      const mockMultiExecFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ result: '4' }, { result: 6 }, { result: 1 }],
+      } as unknown as globalThis.Response);
+
+      const savedKvUrl = process.env.KV_REST_API_URL;
+      const savedKvToken = process.env.KV_REST_API_TOKEN;
+      process.env.KV_REST_API_URL = 'https://upstash.io';
+      process.env.KV_REST_API_TOKEN = 'test_token';
+
+      try {
+        const limiter = createRateLimiter({ windowMs: 60000, maxRequests: 5 });
+        const req = {
+          headers: { 'x-forwarded-for': '203.0.113.200' },
+          ip: '203.0.113.200',
+        } as unknown as Request;
+        const res = {
+          setHeader: vi.fn(),
+          status: vi.fn().mockReturnThis(),
+          json: vi.fn(),
+        } as unknown as Response;
+        const next = vi.fn();
+
+        await limiter(req, res, next);
+
+        expect(mockMultiExecFetch).toHaveBeenCalledTimes(1);
+        expect(next).not.toHaveBeenCalled();
+        expect(res.status).toHaveBeenCalledWith(429);
+        expect(res.setHeader).toHaveBeenCalledWith('Retry-After', '60');
       } finally {
         if (savedKvUrl === undefined) delete process.env.KV_REST_API_URL;
         else process.env.KV_REST_API_URL = savedKvUrl;
@@ -315,6 +457,97 @@ describe('Phase 2.2: Legacy Storage Retirement & Persistence Consolidation', () 
         if (savedKvToken === undefined) delete process.env.KV_REST_API_TOKEN;
         else process.env.KV_REST_API_TOKEN = savedKvToken;
       }
+    });
+
+    it('falls back safely to in-memory rate limiting when Upstash /multi-exec response contains command error or malformed payload', async () => {
+      // Simulate command error inside multi-exec (e.g. EXECABORT or WRONGTYPE)
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          { result: '0' },
+          { error: 'WRONGTYPE Operation against a key holding the wrong kind of value' },
+          { result: 1 },
+        ],
+      } as unknown as globalThis.Response);
+
+      const savedKvUrl = process.env.KV_REST_API_URL;
+      const savedKvToken = process.env.KV_REST_API_TOKEN;
+      process.env.KV_REST_API_URL = 'https://upstash.io';
+      process.env.KV_REST_API_TOKEN = 'test_token';
+
+      try {
+        const limiter = createRateLimiter({ windowMs: 60000, maxRequests: 2 });
+        const req = {
+          headers: { 'x-forwarded-for': '198.51.100.99' },
+          ip: '198.51.100.99',
+        } as unknown as Request;
+        const res = {
+          setHeader: vi.fn(),
+          status: vi.fn().mockReturnThis(),
+          json: vi.fn(),
+        } as unknown as Response;
+        const next = vi.fn();
+
+        // Should detect command error, catch it, and fall back to in-memory without crashing
+        await limiter(req, res, next);
+        expect(next).toHaveBeenCalledTimes(1);
+      } finally {
+        if (savedKvUrl === undefined) delete process.env.KV_REST_API_URL;
+        else process.env.KV_REST_API_URL = savedKvUrl;
+        if (savedKvToken === undefined) delete process.env.KV_REST_API_TOKEN;
+        else process.env.KV_REST_API_TOKEN = savedKvToken;
+      }
+    });
+  });
+
+  describe('6. Publishing Recovery & Cron Authorization', () => {
+    it('authorizes /api/publish/recover via CRON_SECRET Bearer token for Vercel Cron integration', () => {
+      const envWithCron: NodeJS.ProcessEnv = {
+        CRON_SECRET: 'test-cron-secret-1234567890abcdef',
+        API_SHARED_SECRET: 'test-api-secret-1234567890abcdef',
+      };
+
+      const authVercelCron = isCronOrWebhookSecretAuthorized(
+        '/api/publish/recover',
+        { authorization: 'Bearer test-cron-secret-1234567890abcdef' },
+        envWithCron
+      );
+      expect(authVercelCron).toBe(true);
+
+      const authSharedSecret = isCronOrWebhookSecretAuthorized(
+        '/api/publish/recover',
+        { 'x-api-secret': 'test-api-secret-1234567890abcdef' },
+        envWithCron
+      );
+      expect(authSharedSecret).toBe(true);
+
+      const rejectBadSecret = isCronOrWebhookSecretAuthorized(
+        '/api/publish/recover',
+        { authorization: 'Bearer invalid-token' },
+        envWithCron
+      );
+      expect(rejectBadSecret).toBe(false);
+    });
+  });
+
+  describe('7. Triage State Consolidation & Prototype Key Retirement', () => {
+    it('derives dismissed topics from triage decision records and cleans up legacy localStorage key', () => {
+      localStorage.setItem(
+        'marrok_inbox_triage_decisions_v1',
+        JSON.stringify([
+          { id: 't1', topicId: 'topic_skip_1', action: 'skip', createdAt: new Date().toISOString() },
+          { id: 't2', topicId: 'topic_draft_2', action: 'draft', createdAt: new Date().toISOString() },
+        ])
+      );
+      localStorage.setItem('marrok_dismissed_gather_topic_ids_v1', JSON.stringify(['topic_legacy_3']));
+
+      const dismissed = getDismissedGatherTopicIds();
+      expect(dismissed.has('topic_skip_1')).toBe(true);
+      expect(dismissed.has('topic_draft_2')).toBe(true);
+      expect(dismissed.has('topic_legacy_3')).toBe(true);
+
+      // Legacy prototype key must have been swept
+      expect(localStorage.getItem('marrok_dismissed_gather_topic_ids_v1')).toBeNull();
     });
   });
 });

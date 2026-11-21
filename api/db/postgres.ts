@@ -176,6 +176,18 @@ export async function initPostgresSchema(pool: pg.Pool): Promise<void> {
       completed_at TIMESTAMPTZ
     );
 
+    CREATE TABLE IF NOT EXISTS auth_revoked_sessions (
+      jti VARCHAR(96) PRIMARY KEY,
+      expires_at TIMESTAMPTZ NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS auth_login_attempts (
+      attempt_key VARCHAR(160) PRIMARY KEY,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      first_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      locked_until TIMESTAMPTZ
+    );
+
     ALTER TABLE saved_posts ADD COLUMN IF NOT EXISTS cloudinary_cleaned_at TIMESTAMPTZ;
     ALTER TABLE publish_outbox ADD COLUMN IF NOT EXISTS lease_generation INTEGER NOT NULL DEFAULT 0;
 
@@ -190,6 +202,7 @@ export async function initPostgresSchema(pool: pg.Pool): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_publish_outbox_lease_expires ON publish_outbox(lease_expires_at);
     CREATE INDEX IF NOT EXISTS idx_publish_outbox_next_retry ON publish_outbox(next_retry_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_publish_outbox_active_post ON publish_outbox(post_id) WHERE state = 'dispatching';
+    CREATE INDEX IF NOT EXISTS idx_auth_revoked_sessions_expires ON auth_revoked_sessions(expires_at);
   `;
 
   await pool.query(createTableSql);

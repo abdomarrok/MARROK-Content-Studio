@@ -67,6 +67,8 @@ const radarScanLimiter = createRateLimiter({
   windowMs: 60_000,
   maxRequests: Math.max(10, Number(process.env.RADAR_RATE_LIMIT_RPM || 30)),
 });
+const authLimiter = createRateLimiter({ windowMs: 60_000, maxRequests: 20 });
+const publishLimiter = createRateLimiter({ windowMs: 60_000, maxRequests: 30 });
 
 app.use(securityHeadersMiddleware);
 
@@ -180,7 +182,7 @@ function isAiStudioIframeRequest(req: express.Request): boolean {
   return host.includes('.run.app') || origin.includes('.run.app');
 }
 
-app.post(['/api/auth/login', '/auth/login'], async (req, res) => {
+app.post(['/api/auth/login', '/auth/login'], authLimiter, async (req, res) => {
   const authCfg = getAuthConfigStatus();
   if (!authCfg.configured) {
     return res.status(503).json({
@@ -363,8 +365,8 @@ app.get(['/api/publish/outbox', '/publish/outbox'], handleGetPublishOutbox);
 app.get(['/api/publish/tiktok-music', '/publish/tiktok-music'], handleGetTikTokCommercialMusic);
 app.post(['/api/publish/upload-media', '/publish/upload-media'], handleUploadPublishMedia);
 app.post(['/api/publish/cleanup-media', '/publish/cleanup-media'], handleCleanupPublishMedia);
-app.post(['/api/publish/dispatch', '/publish/dispatch'], handleDispatchPublish);
-app.post(['/api/publish/recover', '/publish/recover'], handleRecoverPublishOutbox);
+app.post(['/api/publish/dispatch', '/publish/dispatch'], publishLimiter, handleDispatchPublish);
+app.all(['/api/publish/recover', '/publish/recover'], handleRecoverPublishOutbox);
 app.post(['/api/publish/manage-post', '/publish/manage-post'], handleManagePublishedPost);
 
 export default app;
