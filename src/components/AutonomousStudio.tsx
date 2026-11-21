@@ -37,11 +37,7 @@ import {
   MotionTemplateId,
   CanvasDimensionPreset,
   SavedPostRecord,
-  TargetPlatform,
-  ContentPillarId,
-  PublicationObjective,
 } from '../types.ts';
-import { fetchStrategyBrief } from '../lib/strategy/strategyClient.ts';
 import { analyzePostHistoryCadence, normalizeThemeId } from '../lib/theme/cadenceEngine.ts';
 import {
   downloadSingleSlidePng,
@@ -204,9 +200,6 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   const [promptInput, setPromptInput] = useState('');
   const [inputValidationError, setInputValidationError] = useState<string | null>(null);
   const [categoryHint, setCategoryHint] = useState<string>('auto');
-  const [targetPlatform, setTargetPlatform] = useState<TargetPlatform>('all');
-  const [contentPillar, setContentPillar] = useState<ContentPillarId | 'auto'>('auto');
-  const [publicationObjective, setPublicationObjective] = useState<PublicationObjective>('discovery');
 
   // Intelligent Feed Cadence Analysis for Live Context via custom hook
   const { cadence: dockCadence } = useThemeCadence({
@@ -931,27 +924,6 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     try {
       const pipelineTargetFormat: 'carousel' | 'single' =
         activePostFormat === 'single' ? 'single' : 'carousel';
-
-      let strategyBrief = null;
-      const hasStrategyDirectives =
-        targetPlatform !== 'all' || contentPillar !== 'auto' || publicationObjective !== 'discovery';
-
-      if (hasStrategyDirectives) {
-        if (isCurrentRun()) setPipelineStatus('Analyzing content strategy & platform rules...');
-        try {
-          strategyBrief = await fetchStrategyBrief({
-            topic: query,
-            platform: targetPlatform,
-            pillar: contentPillar === 'auto' ? undefined : contentPillar,
-            objective: publicationObjective,
-            postFormat: pipelineTargetFormat,
-            signal: controller.signal,
-          });
-        } catch {
-          // Graceful fallback
-        }
-      }
-
       const generated = await runAutonomousPipeline(query, {
         theme,
         generateDiagram: !uploadedImage,
@@ -961,10 +933,6 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         imageName: uploadedImage?.name,
         categoryHint: categoryHint !== 'auto' ? categoryHint : undefined,
         postFormat: pipelineTargetFormat,
-        strategyBrief,
-        targetPlatform,
-        contentPillar: contentPillar === 'auto' ? undefined : contentPillar,
-        publicationObjective,
         signal: controller.signal,
         onProgress: (status) => {
           if (isCurrentRun()) setPipelineStatus(status);
@@ -2696,12 +2664,6 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         onSelectTheme={onSelectTheme}
         onOpenThemeCustomizer={onOpenThemeCustomizer}
         onOpenPublishScheduleModal={onOpenPublishScheduleModal}
-        targetPlatform={targetPlatform}
-        onSetTargetPlatform={setTargetPlatform}
-        contentPillar={contentPillar}
-        onSetContentPillar={setContentPillar}
-        publicationObjective={publicationObjective}
-        onSetPublicationObjective={setPublicationObjective}
         onShowToast={onShowToast}
       />
 

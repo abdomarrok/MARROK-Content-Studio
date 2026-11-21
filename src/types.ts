@@ -614,47 +614,6 @@ export interface CarouselData {
   visualOptions?: VisualSystemOptions; // Phase 1-3 visual graphics system toggles
   syncDeckEnabled?: boolean;
   officialBrandIcons?: Record<string, boolean | { enabled: boolean; colorMode: 'official' | 'mono' }>;
-  // Content Strategy & AI Settings Metadata
-  targetPlatform?: TargetPlatform;
-  contentPillar?: string;
-  publicationObjective?: string;
-  strategyBriefUsed?: boolean;
-  aiProviderUsed?: string;
-  aiModelUsed?: string;
-}
-
-export type TargetPlatform = 'instagram' | 'tiktok' | 'linkedin' | 'facebook' | 'all';
-export type PublicationObjective = 'discovery' | 'engagement' | 'education' | 'authority';
-export type ContentPillarId =
-  | 'cybersecurity'
-  | 'artificial-intelligence'
-  | 'software-engineering'
-  | 'developer-culture'
-  | 'practical-tech';
-
-export type AIProviderId = 'gemini' | 'anthropic' | 'openai' | 'groq' | 'ollama' | 'custom';
-
-export interface AIProviderConfig {
-  providerId: AIProviderId;
-  name: string;
-  enabled: boolean;
-  apiKey?: string;
-  backupApiKey?: string;
-  baseUrl?: string;
-  selectedModel?: string;
-  availableModels: string[];
-  isCustomEndpoint?: boolean;
-  lastTestedAt?: string;
-  lastTestLatencyMs?: number;
-  lastTestStatus?: 'ok' | 'error';
-  lastTestError?: string;
-}
-
-export interface AISettingsState {
-  activeProviderId: AIProviderId;
-  fallbackEnabled: boolean;
-  freeBackupEnabled: boolean;
-  providers: Record<AIProviderId, AIProviderConfig>;
 }
 
 export interface VisualSystemOptions {

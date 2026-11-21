@@ -33,12 +33,6 @@ import {
   handleManagePublishedPost,
   handleServeStagedMedia,
 } from './controllers/publishController.ts';
-import {
-  handleStrategyBrief,
-  handleGetAiSettings,
-  handleSaveAiSettings,
-  handleTestConnection,
-} from './controllers/aiStudioController.ts';
 import { getServerConfig, createRateLimiter, securityHeadersMiddleware } from './config.ts';
 import { getPostgresPool } from './db/postgres.ts';
 import { evaluateCorsOrigin } from '../src/lib/security/corsPolicy.ts';
@@ -283,9 +277,7 @@ app.use(async (req, res, next) => {
     pathOnly.startsWith('/search-media') ||
     pathOnly.startsWith('/generate') ||
     pathOnly.startsWith('/refine-slide') ||
-    pathOnly.startsWith('/direct-visual') ||
-    pathOnly.startsWith('/strategy-brief') ||
-    pathOnly.startsWith('/ai-settings');
+    pathOnly.startsWith('/direct-visual');
 
   if (!isApiRoute) {
     return next();
@@ -345,12 +337,6 @@ app.post(['/api/generate-image', '/generate-image'], generationLimiter, handleGe
 app.post(['/api/generate', '/generate'], generationLimiter, handleGenerateCarousel);
 app.post(['/api/refine-slide', '/refine-slide'], generationLimiter, handleRefineSlide);
 app.post(['/api/direct-visual', '/direct-visual'], generationLimiter, handleDirectVisual);
-
-// Content Strategy & AI Settings Endpoints
-app.post(['/api/strategy-brief', '/strategy-brief'], generationLimiter, handleStrategyBrief);
-app.get(['/api/ai-settings', '/ai-settings'], handleGetAiSettings);
-app.post(['/api/ai-settings', '/ai-settings'], handleSaveAiSettings);
-app.post(['/api/ai-settings/test', '/ai-settings/test'], handleTestConnection);
 
 // Automated Post Gathering, Quality-Gated Autopilot, Triage Learning & Telegram Webhook Endpoints
 app.get(['/api/gather/radar', '/gather/radar'], radarScanLimiter, handleGetTopicRadar);

@@ -6,8 +6,8 @@ import { AuthGateModal } from './components/AuthGateModal';
 const ThemeCustomizer = lazy(() =>
   import('./components/ThemeCustomizer').then((m) => ({ default: m.ThemeCustomizer }))
 );
-const AiSettingsDrawer = lazy(() =>
-  import('./components/studio/AiSettingsDrawer').then((m) => ({ default: m.AiSettingsDrawer }))
+const ApiKeyModal = lazy(() =>
+  import('./components/ApiKeyModal').then((m) => ({ default: m.ApiKeyModal }))
 );
 const ContactSheetModal = lazy(() =>
   import('./components/ContactSheetModal').then((m) => ({ default: m.ContactSheetModal }))
@@ -628,14 +628,16 @@ export default function App() {
         </Suspense>
       )}
 
-      {/* AI Studio Multi-Provider Connections Drawer */}
+      {/* Gemini API Key Configuration Modal */}
       {isApiKeyModalOpen && (
         <Suspense fallback={null}>
-          <AiSettingsDrawer
+          <ApiKeyModal
             isOpen={isApiKeyModalOpen}
             onClose={() => setIsApiKeyModalOpen(false)}
+            onKeyUpdated={(key) => {
+              showToast(key ? 'Custom Gemini API key active' : 'Using default environment key');
+            }}
             onShowToast={showToast}
-            theme={currentPalette}
           />
         </Suspense>
       )}

@@ -17,5 +17,4 @@ bun.lock
 bun.lockb
 data/*.deleted.json
 backups/
-.data/
 

@@ -157,8 +157,8 @@ export function resolveRequestGeminiKeys(
   const secretHeader = String(req.headers['x-api-secret'] || '');
   const hasSecretMatch = Boolean(
     config.apiSharedSecret &&
-    secretHeader &&
-    constantTimeEqualText(secretHeader, config.apiSharedSecret)
+      secretHeader &&
+      constantTimeEqualText(secretHeader, config.apiSharedSecret)
   );
   const canUseServerKeys =
     config.geminiApiKeys.length > 0 &&
@@ -230,17 +230,11 @@ export function getServerConfig(envOverride?: NodeJS.ProcessEnv): ServerConfig {
   }
   const bufferApiKey = readRuntimeEnv('BUFFER_API_KEY', envOverride);
   const zernioApiKey = readRuntimeEnv('ZERNIO_API_KEY', envOverride);
-  const explicitDbUrl = readRuntimeEnv('DATABASE_URL', envOverride);
-  const isVitestDisabled =
-    process.env.VITEST === 'true' &&
-    process.env.ENABLE_TEST_DATABASE !== 'true' &&
-    !envOverride?.DATABASE_URL;
-  const databaseUrl = isVitestDisabled
-    ? ''
-    : explicitDbUrl ||
-      readRuntimeEnv('POSTGRES_URL', envOverride) ||
-      readRuntimeEnv('NETLIFY_DATABASE_URL', envOverride) ||
-      readRuntimeEnv('NETLIFY_DATABASE_URL_UNPOOLED', envOverride);
+  const databaseUrl =
+    readRuntimeEnv('DATABASE_URL', envOverride) ||
+    readRuntimeEnv('POSTGRES_URL', envOverride) ||
+    readRuntimeEnv('NETLIFY_DATABASE_URL', envOverride) ||
+    readRuntimeEnv('NETLIFY_DATABASE_URL_UNPOOLED', envOverride);
   const rawTelegramBotToken =
     readRuntimeEnv('TELEGRAM_BOT_TOKEN', envOverride) ||
     readRuntimeEnv('TELEGRAM_TOKEN', envOverride) ||

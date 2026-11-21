@@ -2,12 +2,6 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
 import { afterEach, vi } from 'vitest';
 
-// Prevent unit tests from opening real network sockets to external cloud databases
-delete process.env.DATABASE_URL;
-delete process.env.POSTGRES_URL;
-delete process.env.NETLIFY_DATABASE_URL;
-delete process.env.NETLIFY_DATABASE_URL_UNPOOLED;
-
 // Silence jsdom "Not implemented: HTMLCanvasElement's getContext()" across component & export tests
 if (typeof HTMLCanvasElement !== 'undefined') {
   const createMock2dContext = (canvas: HTMLCanvasElement) => {
