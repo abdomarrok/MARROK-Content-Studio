@@ -1,11 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, Suspense, lazy } from 'react';
 import {
   AlertTriangle,
-  Sparkles,
   CheckCircle2,
   RefreshCw,
-  Check,
-  Copy,
   ChevronDown,
   Sliders,
   Type,
@@ -83,20 +80,16 @@ import {
 import {
   ViewportCanvas,
   SlideNavigator,
-  InlineSlideEditor,
-  ArchetypeControls,
-  PublishChecklist,
+  CopyInspector,
+  VisualInspector,
+  ReviewInspector,
+  CaptionInspector,
   getPublishBlockers,
   StageOverlayMode,
-  ElementInspector,
   MotionReelViewport,
-  MotionReelInspector,
   useStudioShortcutsAndClipboard,
 } from './studio/index.ts';
 
-const SlideImageStudio = lazy(() =>
-  import('./SlideImageStudio.tsx').then((m) => ({ default: m.SlideImageStudio }))
-);
 const MediaSearchModal = lazy(() =>
   import('./MediaSearchModal.tsx').then((m) => ({ default: m.MediaSearchModal }))
 );
@@ -2412,50 +2405,34 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
           {/* Scrollable Tab Viewport */}
           <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
-            {/* MOTION REEL INSPECTOR */}
-            {activePostFormat === 'reel' && inspectorTab === 'copy' && (
-              <MotionReelInspector
-                reelConfig={activeReelConfig}
-                theme={theme}
-                selectedSceneId={selectedMotionSceneId}
-                onSelectScene={setSelectedMotionSceneId}
-                onChangeReelConfig={(updated) => {
-                  applyDeckUpdate((prev) => ({
-                    ...prev,
-                    reelConfig: updated,
-                  }));
-                }}
-                onSyncFromCarousel={(tplId, langMode) => {
-                  handleSyncReelFromCarousel(tplId, langMode);
-                }}
-                onShowToast={onShowToast}
-              />
-            )}
-
-            {/* TAB 1: CONTENT (Bilingual Headlines, Body, Hook Variants & Auto-Fit) */}
-            {activePostFormat !== 'reel' && inspectorTab === 'copy' && (
-              <InlineSlideEditor
+            {/* TAB 1: CONTENT (Bilingual Headlines, Body, Hook Variants & Auto-Fit / Motion Reel) */}
+            {inspectorTab === 'copy' && (
+              <CopyInspector
+                activePostFormat={activePostFormat}
                 currentSlide={currentSlide}
                 currentSlideIndex={currentSlideIndex}
+                totalSlides={carousel.slides.length}
+                carousel={carousel}
                 theme={theme}
-                isAdvancedCustomizerOpen={false}
-                onToggleAdvancedCustomizer={() => setInspectorTab('visual')}
+                visibleHookVariants={visibleHookVariants}
+                selectedElementId={selectedElementId}
+                isSingleSlide={activePostFormat === 'single'}
+                isMemeFormat={activePostFormat === 'meme'}
+                isGeneratingFromVideo={isGeneratingFromVideo}
+                isAnalyzingPhoto={isAnalyzingPhoto}
+                isSyncingArabic={isSyncingArabic}
+                photoCopySuggestion={photoCopySuggestion}
+                activeReelConfig={activeReelConfig}
+                selectedMotionSceneId={selectedMotionSceneId}
                 onUpdateField={handleUpdateCurrentSlide}
                 onSetSlideType={handleSetSlideType}
                 onSmartMatchVisuals={handleSmartMatchVisuals}
                 onDiversifyDeckVisuals={handleDiversifyDeckVisuals}
-                selectedElementId={selectedElementId}
                 onSelectElement={setSelectedElementId}
-                hookVariants={visibleHookVariants}
                 onApplyHookVariant={handleApplyHookVariant}
                 onAutoFitSlide={handleAutoFitCurrentSlide}
                 onOpenPolishDrawer={onOpenPreviewDrawer ? () => onOpenPreviewDrawer('polish') : undefined}
-                isSingleSlide={activePostFormat === 'single'}
-                isMemeFormat={activePostFormat === 'meme'}
                 onGenerateFromVideo={() => handleGenerateFromVideo()}
-                isGeneratingFromVideo={isGeneratingFromVideo}
-                carouselCategory={carousel.category}
-                carouselCaption={carousel.caption}
                 onUpdateCarouselField={(field, value) =>
                   applyDeckUpdate((prev) => ({
                     ...prev,
@@ -2471,132 +2448,117 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 onAnalyzePhotoCaption={() => {
                   void handleAnalyzePhotoCaption();
                 }}
-                isAnalyzingPhoto={isAnalyzingPhoto}
-                photoCopySuggestion={photoCopySuggestion}
                 onApplyPhotoCopySuggestion={handleApplyPhotoCopySuggestion}
                 onDismissPhotoCopySuggestion={() => setPhotoCopySuggestion(null)}
-                totalSlides={carousel.slides.length}
                 onApplyCoverStyle={handleApplyCoverStyle}
                 onOpenVisualTab={() => setInspectorTab('visual')}
                 onSyncArabic={() => void handleSyncCurrentSlideArabic()}
-                isSyncingArabic={isSyncingArabic}
+                onSelectMotionScene={setSelectedMotionSceneId}
+                onChangeReelConfig={(updated) => {
+                  applyDeckUpdate((prev) => ({
+                    ...prev,
+                    reelConfig: updated,
+                  }));
+                }}
+                onSyncReelFromCarousel={(tplId, langMode) => {
+                  handleSyncReelFromCarousel(tplId, langMode);
+                }}
+                onShowToast={onShowToast}
               />
             )}
 
-            {/* TAB 2: VISUAL (Active Visual Card, Grouped Visual Gallery, Essentials & Collapsible Position & Scale) */}
+            {/* TAB 2 & 3: VISUAL & POSITION (Active Visual Card, Gallery, Essentials, Position & Scale) */}
             {activePostFormat !== 'reel' && (inspectorTab === 'visual' || inspectorTab === 'position') && (
-              <div className="space-y-4">
-                <ArchetypeControls
-                  currentSlide={currentSlide}
-                  currentSlideIndex={currentSlideIndex}
-                  carousel={carousel}
-                  theme={theme}
-                  isAdvancedCustomizerOpen={true}
-                  onSetSlideType={handleSetSlideType}
-                  onUpdateField={handleUpdateCurrentSlide}
-                  onUpdateSlideFields={handleUpdateSlideFields}
-                  onSmartMatchVisuals={handleSmartMatchVisuals}
-                  onToggleAutoLayout={handleToggleAutoLayout}
-                  onReimagineVisual={() => void handleReimagineVisual()}
-                  isReimaginingVisual={isReimaginingVisual}
-                  onDiversifyDeckVisuals={handleDiversifyDeckVisuals}
-                  onUpdateCarouselField={(field, value) =>
-                    applyDeckUpdate((prev) => ({
-                      ...prev,
-                      [field]: value,
-                    }))
+              <VisualInspector
+                currentSlide={currentSlide}
+                currentSlideIndex={currentSlideIndex}
+                carousel={carousel}
+                theme={theme}
+                selectedElementId={selectedElementId}
+                onSelectElement={setSelectedElementId}
+                onSetSlideType={handleSetSlideType}
+                onUpdateField={handleUpdateCurrentSlide}
+                onUpdateSlideFields={handleUpdateSlideFields}
+                onSmartMatchVisuals={handleSmartMatchVisuals}
+                onToggleAutoLayout={handleToggleAutoLayout}
+                onReimagineVisual={() => void handleReimagineVisual()}
+                isReimaginingVisual={isReimaginingVisual}
+                onDiversifyDeckVisuals={handleDiversifyDeckVisuals}
+                onUpdateCarouselField={(field, value) =>
+                  applyDeckUpdate((prev) => ({
+                    ...prev,
+                    [field]: value,
+                  }))
+                }
+                onUpdateSatLabel={handleUpdateSatLabel}
+                onUpdateSatIcon={handleUpdateSatIcon}
+                onUpdateCenterIcon={handleUpdateCenterIcon}
+                onUpdateCenterTag={handleUpdateCenterTag}
+                onAddSatNode={handleAddSatNode}
+                onDeleteSatNode={handleDeleteSatNode}
+                onUpdateDiagramNode={handleUpdateDiagramNode}
+                onUpdateDiagramEdge={handleUpdateDiagramEdge}
+                onOpenAiImageStudio={() => setImageStudioTargetIndex(currentSlideIndex)}
+                onOpenMediaSearch={() =>
+                  setMediaModalTarget({
+                    field: 'imageUrl',
+                    title: 'Search Architecture Graphic',
+                    initialQuery: currentSlide.enTitle?.slice(0, 30) || '',
+                  })
+                }
+                onExportVideoMp4={handleExportSingleSlideVideoMp4}
+                isExportingVideo={isExportingVideo}
+                videoExportProgress={videoExportProgress}
+                videoExportStage={videoExportStage}
+                onGenerateFromVideo={(fileOrUrl) => handleGenerateFromVideo(fileOrUrl)}
+                isGeneratingFromVideo={isGeneratingFromVideo}
+                onGenerateFromPhoto={(file, dataUrl, mode) => {
+                  void handleAnalyzePhotoCaption(dataUrl, file.type || 'image/jpeg', file.name, mode);
+                }}
+                isPositionSectionOpen={isPositionSectionOpen || inspectorTab === 'position'}
+                onTogglePositionSection={() => {
+                  if (inspectorTab === 'position') {
+                    setInspectorTab('visual');
+                    setIsPositionSectionOpen(false);
+                  } else {
+                    setIsPositionSectionOpen((prev) => !prev);
                   }
-                  onUpdateSatLabel={handleUpdateSatLabel}
-                  onUpdateSatIcon={handleUpdateSatIcon}
-                  onUpdateCenterIcon={handleUpdateCenterIcon}
-                  onUpdateCenterTag={handleUpdateCenterTag}
-                  onAddSatNode={handleAddSatNode}
-                  onDeleteSatNode={handleDeleteSatNode}
-                  onUpdateDiagramNode={handleUpdateDiagramNode}
-                  onUpdateDiagramEdge={handleUpdateDiagramEdge}
-                  onOpenAiImageStudio={() => setImageStudioTargetIndex(currentSlideIndex)}
-                  onOpenMediaSearch={() =>
-                    setMediaModalTarget({
-                      field: 'imageUrl',
-                      title: 'Search Architecture Graphic',
-                      initialQuery: currentSlide.enTitle?.slice(0, 30) || '',
-                    })
-                  }
-                  onExportVideoMp4={handleExportSingleSlideVideoMp4}
-                  isExportingVideo={isExportingVideo}
-                  videoExportProgress={videoExportProgress}
-                  videoExportStage={videoExportStage}
-                  onGenerateFromVideo={(fileOrUrl) => handleGenerateFromVideo(fileOrUrl)}
-                  isGeneratingFromVideo={isGeneratingFromVideo}
-                  onGenerateFromPhoto={(file, dataUrl, mode) => {
-                    void handleAnalyzePhotoCaption(dataUrl, file.type || 'image/jpeg', file.name, mode);
-                  }}
-                  isPositionSectionOpen={isPositionSectionOpen || inspectorTab === 'position'}
-                  onTogglePositionSection={() => {
-                    if (inspectorTab === 'position') {
-                      setInspectorTab('visual');
-                      setIsPositionSectionOpen(false);
-                    } else {
-                      setIsPositionSectionOpen((prev) => !prev);
-                    }
-                  }}
-                  activeOverridesCount={activeOverridesCount}
-                  onApplyCoverStyle={handleApplyCoverStyle}
-                  positionSection={
-                    <ElementInspector
-                      slide={currentSlide}
-                      theme={theme}
-                      isOpen={true}
-                      headless={true}
-                      onToggleOpen={() => {}}
-                      selectedElementId={selectedElementId}
-                      onSelectElement={setSelectedElementId}
-                      onUpdateOverride={handleUpdateElementLayoutOverride}
-                      onResetOverrides={handleResetSlideLayoutOverrides}
-                      onApplyToAllSlides={handleApplyOverrideToAllSlides}
-                      onApplySlideLayoutToAllSlides={handleApplySlideLayoutToAllSlides}
-                      onUpdateSlideFields={handleUpdateSlideFields}
-                    />
-                  }
-                />
-
-                {imageStudioTargetIndex !== null && carousel.slides[imageStudioTargetIndex] && (
-                  <Suspense fallback={null}>
-                    <SlideImageStudio
-                      slideIndex={imageStudioTargetIndex}
-                      slide={carousel.slides[imageStudioTargetIndex]}
-                      theme={theme}
-                      onApplyImage={(targetIndex, imageUrl, prompt, model) => {
-                        applyDeckUpdate((prev) => {
-                          if (targetIndex < 0 || targetIndex >= prev.slides.length) return prev;
-                          const newSlides = [...prev.slides];
-                          newSlides[targetIndex] = sanitizeSlide(
-                            {
-                              ...newSlides[targetIndex],
-                              imageUrl,
-                              imagePrompt: prompt,
-                              imageModel: model,
-                            },
-                            targetIndex,
-                            prev.slides.length
-                          );
-                          return { ...prev, slides: newSlides };
-                        });
-                        setImageStudioTargetIndex(null);
-                        onShowToast(`Applied AI diagram to Slide ${targetIndex + 1}`);
-                      }}
-                      onClose={() => setImageStudioTargetIndex(null)}
-                      onShowToast={onShowToast}
-                    />
-                  </Suspense>
-                )}
-              </div>
+                }}
+                activeOverridesCount={activeOverridesCount}
+                onApplyCoverStyle={handleApplyCoverStyle}
+                onUpdateElementLayoutOverride={handleUpdateElementLayoutOverride}
+                onResetSlideLayoutOverrides={handleResetSlideLayoutOverrides}
+                onApplyOverrideToAllSlides={handleApplyOverrideToAllSlides}
+                onApplySlideLayoutToAllSlides={handleApplySlideLayoutToAllSlides}
+                imageStudioTargetIndex={imageStudioTargetIndex}
+                onApplyStudioImage={(targetIndex, imageUrl, prompt, model) => {
+                  applyDeckUpdate((prev) => {
+                    if (targetIndex < 0 || targetIndex >= prev.slides.length) return prev;
+                    const newSlides = [...prev.slides];
+                    newSlides[targetIndex] = sanitizeSlide(
+                      {
+                        ...newSlides[targetIndex],
+                        imageUrl,
+                        imagePrompt: prompt,
+                        imageModel: model,
+                      },
+                      targetIndex,
+                      prev.slides.length
+                    );
+                    return { ...prev, slides: newSlides };
+                  });
+                  setImageStudioTargetIndex(null);
+                  onShowToast(`Applied AI diagram to Slide ${targetIndex + 1}`);
+                }}
+                onCloseStudioImage={() => setImageStudioTargetIndex(null)}
+                onShowToast={onShowToast}
+              />
             )}
 
-            {/* TAB 4: PUBLISH (Unified Ready-to-Publish Checklist, Sources & Bilingual Social Caption) */}
+            {/* TAB 4: PUBLISH (Review Checklist & Social Caption) */}
             {(inspectorTab === 'review' || inspectorTab === 'caption') && (
               <div className="space-y-4 w-full">
-                <PublishChecklist
+                <ReviewInspector
                   carousel={carousel}
                   currentSlideIndex={currentSlideIndex}
                   theme={theme}
@@ -2671,88 +2633,24 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   onShowToast={onShowToast}
                 />
 
-                {/* Bilingual TikTok / Instagram Posting Copy */}
-                <div className="p-4 rounded-2xl bg-slate-900/80 border border-white/[0.08] space-y-3 shadow-xl">
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <div>
-                      <span className="text-xs font-bold text-white uppercase tracking-wider block">
-                        Social Caption &amp; Hashtags (EN / AR)
-                      </span>
-                      <span className="text-[11px] text-slate-400">
-                        {activePostFormat === 'single'
-                          ? 'Ready to paste directly into TikTok/Instagram or export in your bundle'
-                          : 'Included automatically in your marrok_<topic>.zip bundle'}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {isVideoSlide(currentSlide) && (
-                        <button
-                          type="button"
-                          data-testid="caption-generate-from-video-btn"
-                          disabled={isGeneratingFromVideo}
-                          onClick={() => handleGenerateFromVideo()}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-xs text-emerald-200 hover:bg-emerald-500/30 font-semibold cursor-pointer transition-colors disabled:opacity-60"
-                          title="Extract keyframes from the active video and generate a bilingual social caption + slide copy"
-                        >
-                          {isGeneratingFromVideo ? (
-                            <>
-                              <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-300" />
-                              <span>Analyzing Video...</span>
-                            </>
-                          ) : (
-                            <>
-                              <Sparkles className="w-3.5 h-3.5 text-emerald-300" />
-                              <span>Generate Caption &amp; Text from Video</span>
-                            </>
-                          )}
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={handleCopyCaption}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/30 text-xs text-cyan-200 hover:bg-cyan-500/25 font-semibold cursor-pointer transition-colors"
-                      >
-                        {copiedType === 'caption' ? (
-                          <Check className="w-3.5 h-3.5 text-emerald-400" />
-                        ) : (
-                          <Copy className="w-3.5 h-3.5" />
-                        )}
-                        <span>{copiedType === 'caption' ? 'Copied EN + AR!' : 'Copy EN + AR Caption & Hashtags'}</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  <textarea
-                    rows={5}
-                    value={carousel.caption || ''}
-                    onChange={(e) =>
-                      applyDeckUpdate((prev) => ({
-                        ...prev,
-                        caption: e.target.value,
-                      }))
-                    }
-                    placeholder="Enter bilingual TikTok caption..."
-                    className="w-full p-3 rounded-xl bg-black/70 border border-white/10 focus:border-white/30 text-xs text-slate-200 leading-relaxed focus:outline-none resize-y font-sans"
-                  />
-
-                  <div className="flex items-center justify-between gap-2 text-[11px] font-mono text-slate-400 tabular-nums">
-                    <span className="truncate">{dynamicHashtags.join(' ')}</span>
-                    <span className="shrink-0">{(carousel.caption || '').length} chars</span>
-                  </div>
-                </div>
-
-                {onOpenPublishScheduleModal && (
-                  <div className="flex justify-end pt-1">
-                    <button
-                      type="button"
-                      onClick={() => onOpenPublishScheduleModal('single')}
-                      className="px-4 py-2 rounded-xl text-xs font-bold text-slate-950 transition-all cursor-pointer whitespace-nowrap shadow-sm hover:brightness-105"
-                      style={{ backgroundColor: theme.accent }}
-                    >
-                      Send to Publish Hub →
-                    </button>
-                  </div>
-                )}
+                <CaptionInspector
+                  caption={carousel.caption || ''}
+                  onChangeCaption={(caption) =>
+                    applyDeckUpdate((prev) => ({
+                      ...prev,
+                      caption,
+                    }))
+                  }
+                  hashtags={dynamicHashtags}
+                  activePostFormat={activePostFormat}
+                  isVideoSlide={isVideoSlide(currentSlide)}
+                  isGeneratingFromVideo={isGeneratingFromVideo}
+                  onGenerateFromVideo={() => handleGenerateFromVideo()}
+                  copiedType={copiedType}
+                  onCopyCaption={handleCopyCaption}
+                  theme={theme}
+                  onOpenPublishScheduleModal={onOpenPublishScheduleModal}
+                />
               </div>
             )}
           </div>

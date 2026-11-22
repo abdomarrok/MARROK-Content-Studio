@@ -80,4 +80,32 @@ describe('useMediaIngestion', () => {
     expect(result.current.uploadedImage).toBeNull();
     expect(onShowToast).toHaveBeenCalledWith('Cleared input dock');
   });
+
+  it('rejects unsupported file formats with an advisory toast', async () => {
+    const onShowToast = vi.fn();
+    const { result } = renderHook(() =>
+      useMediaIngestion({
+        activePostFormat: 'carousel',
+        carousel: DEFAULT_STARTER_DECK,
+        currentSlideIndexRef: { current: 0 },
+        applyDeckUpdate: vi.fn(),
+        changeSlide: vi.fn(),
+        onShowToast,
+        isExpanded: false,
+        setIsExpanded: vi.fn(),
+        setActiveTab: vi.fn(),
+        setInspectorTab: vi.fn(),
+        onAnalyzePhotoCaption: vi.fn().mockResolvedValue(undefined),
+      })
+    );
+
+    const textFile = new File(['hello world'], 'readme.txt', { type: 'text/plain' });
+    await act(async () => {
+      await result.current.handleImageFile(textFile);
+    });
+
+    expect(onShowToast).toHaveBeenCalledWith(
+      'Please select a valid image or video file (PNG, JPG, WebP, MP4, WebM, MOV).'
+    );
+  });
 });

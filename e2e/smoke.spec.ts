@@ -1,36 +1,46 @@
 import { test, expect } from '@playwright/test';
+import { createSignedSessionToken } from '../src/lib/security/sessionAuth.ts';
+
+const SESSION_SECRET =
+  process.env.SESSION_SECRET || '3fd3d0b27d99827d954cb8e78be1dd42ece06e58c28b229074b639d7a8f659b0';
 
 test.describe('MARROK Studio UX Smoke Tests (PR 4)', () => {
   test.beforeEach(async ({ page }) => {
+    const { token } = createSignedSessionToken('admin', SESSION_SECRET);
+
+    await page.addInitScript((authToken) => {
+      window.sessionStorage.setItem('marrok_iframe_session_token_v1', authToken);
+    }, token);
+
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
-    await expect(page.locator('form')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('form').first()).toBeVisible({ timeout: 10000 });
   });
 
   test('Flow 1: Generate a carousel deck from prompt', async ({ page }) => {
-    const input = page.locator('input[placeholder*="Enter topic"]');
+    const input = page.locator('input[placeholder*="Describe a topic"], input[placeholder*="Enter topic"]').first();
     await expect(input).toBeVisible();
     await input.fill('Distributed Consensus with Raft & Paxos');
 
-    const generateBtn = page.locator('button[type="submit"]');
+    const generateBtn = page.locator('button[type="submit"], button:has-text("Generate")').first();
     await generateBtn.click();
 
     // Verify stage canvas rendered
-    await expect(page.locator('canvas')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('canvas').first()).toBeVisible({ timeout: 15000 });
   });
 
   test('Flow 2: Fix a failing check in the Review checklist', async ({ page, isMobile }) => {
-    // On mobile, tap "Slide Inspector" to reveal bottom sheet
+    // On mobile, tap "Publish" / review tab in mobile bottom bar
     if (isMobile) {
-      const inspectorToggle = page.locator('button:has-text("Slide Inspector")');
-      await inspectorToggle.click();
+      const reviewMobileTab = page.locator('[data-testid="mobile-tab-review"]');
+      await reviewMobileTab.click({ force: true });
       await page.waitForTimeout(400);
+    } else {
+      // Switch to Review tab on desktop
+      const reviewTab = page.locator('button[data-testid="tab-review"]').first();
+      await expect(reviewTab).toBeVisible({ timeout: 10000 });
+      await reviewTab.click({ force: true });
     }
-
-    // Switch to Review tab
-    const reviewTab = page.locator('button[data-testid="tab-review"]').first();
-    await expect(reviewTab).toBeVisible({ timeout: 10000 });
-    await reviewTab.click({ force: true });
 
     // Verify Ready to Publish Checklist is mounted
     await expect(page.locator('text=Ready to Publish Checklist')).toBeVisible({ timeout: 10000 });
@@ -58,13 +68,14 @@ test.describe('MARROK Studio UX Smoke Tests (PR 4)', () => {
 
   test('Flow 3: Export Metricool ZIP bundle', async ({ page, isMobile }) => {
     if (isMobile) {
-      const inspectorToggle = page.locator('button:has-text("Slide Inspector")');
-      await inspectorToggle.click();
+      const reviewMobileTab = page.locator('[data-testid="mobile-tab-review"]');
+      await reviewMobileTab.click({ force: true });
       await page.waitForTimeout(400);
+    } else {
+      const reviewTab = page.locator('button[data-testid="tab-review"]').first();
+      await reviewTab.click({ force: true });
     }
 
-    const reviewTab = page.locator('button[data-testid="tab-review"]').first();
-    await reviewTab.click({ force: true });
     await expect(page.locator('text=Ready to Publish Checklist')).toBeVisible({ timeout: 10000 });
 
     // If an "I reviewed" button is visible for offline drafts, click it to clear draft blocker
@@ -87,8 +98,10 @@ test.describe('MARROK Studio UX Smoke Tests (PR 4)', () => {
     // On mobile, close bottom sheet to expose the dock
     if (isMobile) {
       const closeSheetBtn = page.locator('button[aria-label="Close inspector bottom sheet"]');
-      await closeSheetBtn.click();
-      await page.waitForTimeout(400);
+      if (await closeSheetBtn.isVisible()) {
+        await closeSheetBtn.click();
+        await page.waitForTimeout(400);
+      }
     }
 
     // Export button inside dock or inspector (filter for visible one)

@@ -38,8 +38,13 @@ export function useDeckHistory({
 
   const beforeEditsDeckRef = useRef<CarouselData>(carousel);
   const deckRevisionRef = useRef<number>(0);
-  const hasHistoryPastRef = useRef<boolean>(false);
-  hasHistoryPastRef.current = historyPast.length > 0;
+  const hasHistoryPastRef = useRef<boolean>(historyPast.length > 0);
+  const pastRef = useRef<CarouselData[]>(historyPast);
+  pastRef.current = historyPast;
+  const futureRef = useRef<CarouselData[]>(historyFuture);
+  futureRef.current = historyFuture;
+  const carouselRef = useRef<CarouselData>(carousel);
+  carouselRef.current = carousel;
 
   const applyDeckUpdate = useCallback(
     (updater: (prev: CarouselData) => CarouselData) => {
@@ -49,8 +54,12 @@ export function useDeckHistory({
         if (next !== prev) {
           if (!hasHistoryPastRef.current) {
             beforeEditsDeckRef.current = prev;
+            hasHistoryPastRef.current = true;
           }
-          setHistoryPast((h) => [...h.slice(-(maxDepth - 1)), prev]);
+          const nextPast = [...pastRef.current.slice(-(maxDepth - 1)), prev];
+          pastRef.current = nextPast;
+          futureRef.current = [];
+          setHistoryPast(nextPast);
           setHistoryFuture([]);
         }
         return next;
@@ -60,24 +69,40 @@ export function useDeckHistory({
   );
 
   const handleUndo = useCallback(() => {
-    if (historyPast.length === 0) return;
-    const previousDeck = historyPast[historyPast.length - 1];
-    setHistoryPast((h) => h.slice(0, -1));
-    setHistoryFuture((f) => [carousel, ...f.slice(0, maxDepth - 1)]);
+    const currentPast = pastRef.current;
+    if (currentPast.length === 0) return;
+    const previousDeck = currentPast[currentPast.length - 1];
+    const nextPast = currentPast.slice(0, -1);
+    const nextFuture = [carouselRef.current, ...futureRef.current.slice(0, maxDepth - 1)];
+
+    pastRef.current = nextPast;
+    futureRef.current = nextFuture;
+    hasHistoryPastRef.current = nextPast.length > 0;
+
+    setHistoryPast(nextPast);
+    setHistoryFuture(nextFuture);
     deckRevisionRef.current += 1;
     onUpdateCarousel(previousDeck);
     onShowToast('Undid last change');
-  }, [historyPast, carousel, onUpdateCarousel, onShowToast, maxDepth]);
+  }, [onUpdateCarousel, onShowToast, maxDepth]);
 
   const handleRedo = useCallback(() => {
-    if (historyFuture.length === 0) return;
-    const nextDeck = historyFuture[0];
-    setHistoryFuture((f) => f.slice(1));
-    setHistoryPast((h) => [...h.slice(-(maxDepth - 1)), carousel]);
+    const currentFuture = futureRef.current;
+    if (currentFuture.length === 0) return;
+    const nextDeck = currentFuture[0];
+    const nextFuture = currentFuture.slice(1);
+    const nextPast = [...pastRef.current.slice(-(maxDepth - 1)), carouselRef.current];
+
+    futureRef.current = nextFuture;
+    pastRef.current = nextPast;
+    hasHistoryPastRef.current = true;
+
+    setHistoryFuture(nextFuture);
+    setHistoryPast(nextPast);
     deckRevisionRef.current += 1;
     onUpdateCarousel(nextDeck);
     onShowToast('Redid change');
-  }, [historyFuture, carousel, onUpdateCarousel, onShowToast, maxDepth]);
+  }, [onUpdateCarousel, onShowToast, maxDepth]);
 
   return {
     historyPast,

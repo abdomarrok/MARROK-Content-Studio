@@ -13,7 +13,7 @@ export interface PostManagerBulkScheduleViewProps {
   bulkTimeStr: string;
   setBulkTimeStr: (t: string) => void;
   reviewedReadyDrafts: SavedPostRecord[];
-  selectedBulkIds: string[] | string[];
+  selectedBulkIds: string[];
   setSelectedBulkIds: React.Dispatch<React.SetStateAction<string[]>>;
   bulkSlots: Array<{ datePart: string; timePart: string }>;
   isBulkBusy: boolean;

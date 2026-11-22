@@ -11,5 +11,6 @@ export * from './IconThumbnail.tsx';
 export * from './useStudioShortcutsAndClipboard.ts';
 export { MotionReelViewport } from './motion/MotionReelViewport.tsx';
 export { MotionReelInspector } from './motion/MotionReelInspector.tsx';
+export * from './inspector/index.ts';
 
 

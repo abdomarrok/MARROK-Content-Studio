@@ -70,4 +70,58 @@ describe('useDeckHistory', () => {
     });
     expect(result.current.isComparingBefore).toBe(true);
   });
+
+  it('preserves beforeEditsDeckRef across rapid consecutive updates before rerender', () => {
+    let currentDeck: CarouselData = { ...DEFAULT_STARTER_DECK, id: 'deck-rapid', category: 'ORIGINAL' };
+    const onUpdateCarousel = vi.fn((updater) => {
+      currentDeck = typeof updater === 'function' ? updater(currentDeck) : updater;
+    });
+    const onShowToast = vi.fn();
+
+    const { result } = renderHook(() =>
+      useDeckHistory({
+        carousel: currentDeck,
+        onUpdateCarousel,
+        onShowToast,
+        maxDepth: 5,
+      })
+    );
+
+    // Apply two rapid updates without an intermediate render
+    act(() => {
+      result.current.applyDeckUpdate((prev) => ({ ...prev, category: 'RAPID 1' }));
+      result.current.applyDeckUpdate((prev) => ({ ...prev, category: 'RAPID 2' }));
+    });
+
+    // beforeEditsDeckRef must still hold the original deck with category 'ORIGINAL'
+    expect(result.current.beforeEditsDeckRef.current.category).toBe('ORIGINAL');
+  });
+
+  it('truncates historyPast to maxDepth (ring buffer)', () => {
+    let currentDeck: CarouselData = { ...DEFAULT_STARTER_DECK, id: 'deck-depth' };
+    const onUpdateCarousel = vi.fn((updater) => {
+      currentDeck = typeof updater === 'function' ? updater(currentDeck) : updater;
+    });
+    const onShowToast = vi.fn();
+
+    const { result, rerender } = renderHook(
+      ({ deck }) =>
+        useDeckHistory({
+          carousel: deck,
+          onUpdateCarousel,
+          onShowToast,
+          maxDepth: 3,
+        }),
+      { initialProps: { deck: currentDeck } }
+    );
+
+    for (let i = 1; i <= 6; i++) {
+      act(() => {
+        result.current.applyDeckUpdate((prev) => ({ ...prev, category: `STEP ${i}` }));
+      });
+      rerender({ deck: currentDeck });
+    }
+
+    expect(result.current.historyPast.length).toBeLessThanOrEqual(3);
+  });
 });

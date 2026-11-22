@@ -30,6 +30,19 @@
 
 ## Source map / gotchas
 - Barrels: `src/lib/synthesizer.ts` -> `src/lib/synthesis/`, `src/lib/canvasExporter.ts` -> `src/lib/canvas/`, `src/lib/textSanitizer.ts` -> `src/lib/text/`. Edit the modular files, not the barrels.
+- Public Facades & Boundaries: External consumers must import core engines strictly through public facades:
+  - `src/lib/qaChecks.ts` (never import `src/lib/qa/*` directly)
+  - `src/lib/synthesis/smartVisualDefaults.ts` (never import `src/lib/synthesis/smartVisual/*` directly)
+  - `src/lib/canvas/layoutAwareness.ts` (never import `src/lib/canvas/layout/*` directly)
+  - `src/lib/synthesis/universalExtractor.ts` (never import `src/lib/synthesis/extractor/*` directly)
+  - Enforced automatically by `src/test/architectureBoundary.test.ts`.
+- Where to Add Features:
+  - New slide archetype/diagram: `src/lib/canvas/` & `src/lib/synthesis/smartVisual/`
+  - New inspector panel: `src/components/studio/inspector/` (register in `AutonomousStudio.tsx`)
+  - New PostManager view: `src/components/studio/panels/` (register in `PostManagerPanel.tsx`)
+  - New publishing channel or webhook: `api/controllers/publishController.ts` & `src/lib/publish/`
+  - New API route: register in `api/index.ts` AND Netlify function `config.path`, keep `api/` file count <= 12.
+  - Shared hook: `src/hooks/` with explicit lifecycle cleanup and `isMountedRef`.
 - `src/lib/canvas/` is the static + single-slide video pipeline. `renderSlide.ts` is a pure read-only projection (do not sanitize in the draw loop); `textLayout.ts` fits text. `constants.ts` holds the real safe zones: `SAFE_MARGIN_LEFT=84`, `SAFE_MARGIN_RIGHT=930`, `SAFE_MAX_Y=1650`, `SAFE_HEADER_Y=206`, `SAFE_FOOTER_CEILING_Y=1428`, plus `FULL_MEME_CARD_W=1008` and `resolveSmartFullMemeCardBounds()`. `layoutAwareness.ts` computes non-overlapping clearances (`MIN_GAP_GRAPHIC_TO_TITLE=44`, `MIN_GAP_TITLES=18`, `MIN_GAP_TITLE_TO_BODY=36`, `MIN_GAP_BODIES=22`, `MIN_GAP_TO_FOOTER=24`), font scaling, ceiling compression, and `clampElementDrag()`. `layoutBounds.ts` consumes it for 1:1 viewport overlays/hit-testing.
 - `videoFrameExtractor.ts`: `extractVideoStoryboardDataUrl` (2x2 keyframes for Gemini Vision), `buildCleanMemeCarouselDeck`, `applySlideGraphicPhoto`, `analyzeImageForMemeAndCaption`. `singleSlideVideoExporter.ts` (`exportSingleSlideVideo`) muxes single-slide video with MARROK chrome + preserved audio (`.mp4`/`.webm`).
 - `src/lib/theme/cadenceEngine.ts` (`analyzePostHistoryCadence`, `resolveHarmoniousPaletteWithoutRepetition`) reads posted Vault records (`postStatus === 'posted'`) to avoid consecutive same-color posts; `ThemeCustomizer.tsx` shows "Recommended Next Palette" and `AutonomousStudio.tsx` auto-rotates during synthesis.

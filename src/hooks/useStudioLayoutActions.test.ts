@@ -67,4 +67,99 @@ describe('useStudioLayoutActions', () => {
     expect(applyDeckUpdate).toHaveBeenCalled();
     expect(currentDeck.slides[0].enTitle).toBe('Updated Headline.');
   });
+
+  it('handles canvas element deletion for takeawaysBlock vs general element', () => {
+    let currentDeck: CarouselData = {
+      ...DEFAULT_STARTER_DECK,
+      slides: [
+        {
+          ...DEFAULT_STARTER_DECK.slides[0],
+          takeaways: [{ en: 'Point 1', ar: 'نقطة 1' }],
+          layoutOverrides: {
+            takeawaysBlock: { dx: 10 },
+            titleBlock: { dy: 20 },
+          },
+        },
+      ],
+    };
+    const applyDeckUpdate = vi.fn((updater) => {
+      currentDeck = updater(currentDeck);
+    });
+    const onShowToast = vi.fn();
+    const setSelectedElementId = vi.fn();
+
+    const { result } = renderHook(() =>
+      useStudioLayoutActions({
+        carousel: currentDeck,
+        currentSlideIndex: 0,
+        applyDeckUpdate,
+        onShowToast,
+        setSelectedElementId,
+      })
+    );
+
+    // Delete takeawaysBlock
+    act(() => {
+      result.current.handleDeleteCanvasElement('takeawaysBlock');
+    });
+    expect(currentDeck.slides[0].takeaways).toEqual([]);
+    expect(currentDeck.slides[0].layoutOverrides?.takeawaysBlock).toBeUndefined();
+    expect(setSelectedElementId).toHaveBeenCalledWith(null);
+    expect(onShowToast).toHaveBeenCalledWith('Removed Takeaways card from slide');
+
+    // Delete titleBlock
+    act(() => {
+      result.current.handleDeleteCanvasElement('titleBlock');
+    });
+    expect(currentDeck.slides[0].layoutOverrides?.titleBlock?.hidden).toBe(true);
+    expect(onShowToast).toHaveBeenCalledWith('Removed titleBlock from slide');
+  });
+
+  it('skips manualLayoutLocked slides when applying layout to all slides', () => {
+    let currentDeck: CarouselData = {
+      ...DEFAULT_STARTER_DECK,
+      slides: [
+        {
+          ...DEFAULT_STARTER_DECK.slides[0],
+          compositionPreset: 'split-balanced',
+          freeMoveLayout: true,
+        },
+        {
+          ...DEFAULT_STARTER_DECK.slides[1],
+          manualLayoutLocked: true,
+          compositionPreset: 'standard',
+        },
+        {
+          ...DEFAULT_STARTER_DECK.slides[2],
+          manualLayoutLocked: false,
+          compositionPreset: 'standard',
+        },
+      ],
+    };
+    const applyDeckUpdate = vi.fn((updater) => {
+      currentDeck = updater(currentDeck);
+    });
+    const onShowToast = vi.fn();
+
+    const { result } = renderHook(() =>
+      useStudioLayoutActions({
+        carousel: currentDeck,
+        currentSlideIndex: 0,
+        applyDeckUpdate,
+        onShowToast,
+      })
+    );
+
+    act(() => {
+      result.current.handleApplySlideLayoutToAllSlides();
+    });
+
+    // Slide 1 (locked) must NOT change
+    expect(currentDeck.slides[1].compositionPreset).toBe('standard');
+    // Slide 2 (unlocked) must receive the split-balanced preset
+    expect(currentDeck.slides[2].compositionPreset).toBe('split-balanced');
+    expect(onShowToast).toHaveBeenCalledWith(
+      expect.stringContaining('1 Cascade-Locked slide(s) protected')
+    );
+  });
 });

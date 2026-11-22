@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import type {
   CarouselData,
   SlideType,
@@ -12,7 +12,7 @@ import {
   applySlideGraphicPhoto,
 } from '../lib/canvasExporter.ts';
 import { compressImageClientSide } from '../components/studio/index.ts';
-import { trackAndReplaceBlobUrl } from '../lib/media/blobUrlRegistry.ts';
+import { trackAndReplaceBlobUrl, revokeBlobUrl } from '../lib/media/blobUrlRegistry.ts';
 import {
   resolveEffectivePostFormat,
   snapshotFormatDraft,
@@ -68,6 +68,13 @@ export function useMediaIngestion({
   const [studioCustomUrl, setStudioCustomUrl] = useState('');
   const [isExtractingStudioUrl, setIsExtractingStudioUrl] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Smart Dock Text input with auto-expansion when pasting or typing long material (> 200 chars)
   const handlePromptChange = (val: string) => {
@@ -85,12 +92,17 @@ export function useMediaIngestion({
     async (file: File) => {
       setInputValidationError(null);
       if (isVideoFile(file)) {
+        let videoBlobUrl = '';
         try {
-          const videoBlobUrl =
+          videoBlobUrl =
             typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function'
               ? URL.createObjectURL(file)
               : '';
           const storyboard = await extractVideoStoryboardDataUrl(file);
+          if (!isMountedRef.current) {
+            revokeBlobUrl(videoBlobUrl);
+            return;
+          }
           setUploadedImage({
             base64: storyboard.dataUrl,
             mimeType: storyboard.mimeType,
@@ -135,8 +147,13 @@ export function useMediaIngestion({
           setActiveTab('upload');
           onShowToast(`Attached video "${file.name}" & extracted keyframes for AI captioning`);
         } catch (err) {
+          if (videoBlobUrl) {
+            revokeBlobUrl(videoBlobUrl);
+          }
           console.warn('Video frame extraction failed:', err);
-          onShowToast('Attached video file');
+          if (isMountedRef.current) {
+            onShowToast('Attached video file');
+          }
         }
         return;
       }
@@ -211,11 +228,13 @@ export function useMediaIngestion({
 
       try {
         const { base64, mimeType, sizeKb } = await compressImageClientSide(file);
+        if (!isMountedRef.current) return;
         applyUploadedImageByMode(base64, mimeType, sizeKb);
       } catch (err) {
         console.warn('Image downscaling failed, using raw fallback:', err);
         const reader = new FileReader();
         reader.onload = () => {
+          if (!isMountedRef.current) return;
           const base64 = (reader.result as string) || '';
           const mimeType = file.type || 'image/jpeg';
           const sizeKb = Math.max(1, Math.round(file.size / 1024));
@@ -246,6 +265,7 @@ export function useMediaIngestion({
       }
       try {
         const { base64, mimeType, sizeKb } = await compressImageClientSide(file);
+        if (!isMountedRef.current) return;
         setUploadedImage({ base64, mimeType, name: file.name, sizeKb });
         applyDeckUpdate((prev) => {
           const prevFormat = resolveEffectivePostFormat(prev);
@@ -298,6 +318,7 @@ export function useMediaIngestion({
       }
       try {
         const { base64, mimeType, sizeKb } = await compressImageClientSide(file);
+        if (!isMountedRef.current) return;
         setUploadedImage({ base64, mimeType, name: file.name, sizeKb });
         applyDeckUpdate((prev) => {
           const targetIndex = Math.min(currentSlideIndexRef.current, prev.slides.length - 1);
@@ -353,6 +374,7 @@ export function useMediaIngestion({
       const blob = await res.blob();
       const reader = new FileReader();
       reader.onload = () => {
+        if (!isMountedRef.current) return;
         setUploadedImage({
           base64: reader.result as string,
           mimeType: blob.type || 'image/jpeg',
