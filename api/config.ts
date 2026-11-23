@@ -1,7 +1,101 @@
+import crypto from 'node:crypto';
 import type { Request, Response, NextFunction } from 'express';
 import { readRuntimeEnv } from '../src/lib/security/env.ts';
 import { PRODUCTION_NETLIFY_ORIGIN } from '../src/lib/security/corsPolicy.ts';
 import { constantTimeEqualText } from '../src/lib/security/sessionAuth.ts';
+
+export const REQUEST_ID_HEADER = 'X-Request-Id';
+const VALID_REQUEST_ID_RE = /^[A-Za-z0-9._-]{8,64}$/;
+
+export interface RequestWithCorrelation extends Request {
+  requestId?: string;
+}
+
+export function isValidRequestId(raw: unknown): raw is string {
+  return typeof raw === 'string' && VALID_REQUEST_ID_RE.test(raw);
+}
+
+/**
+ * Validates an incoming X-Request-Id header against a strict alphanumeric/dot/dash/underscore allowlist
+ * (8-64 chars) to prevent log/CRLF injection, or mints a fresh cryptographic UUID correlation ID.
+ */
+export function resolveOrCreateRequestId(incoming: unknown): string {
+  const candidate = Array.isArray(incoming) ? incoming[0] : incoming;
+  if (typeof candidate === 'string') {
+    const trimmed = candidate.trim();
+    if (isValidRequestId(trimmed)) {
+      return trimmed;
+    }
+  }
+  return `req_${crypto.randomUUID()}`;
+}
+
+function sanitizeStructuredValue(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return value.replace(/[\r\n\t\x00-\x1f\x7f]+/g, ' ').slice(0, 240);
+  }
+  if (typeof value === 'number' || typeof value === 'boolean' || value === null) {
+    return value;
+  }
+  return undefined;
+}
+
+/**
+ * Emits single-line JSON operational logs with strict control-character stripping.
+ * Callers must pass only non-sensitive metadata (never credentials, tokens, cookies, or user content).
+ */
+export function logStructuredEvent(
+  level: 'info' | 'warn' | 'error',
+  event: string,
+  fields: Record<string, unknown> = {}
+): void {
+  const safeFields: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(fields)) {
+    const sanitized = sanitizeStructuredValue(v);
+    if (sanitized !== undefined) {
+      safeFields[k] = sanitized;
+    }
+  }
+  const line = JSON.stringify({
+    ts: new Date().toISOString(),
+    level,
+    event: sanitizeStructuredValue(event),
+    ...safeFields,
+  });
+  if (level === 'error') {
+    console.error(line);
+  } else if (level === 'warn') {
+    console.warn(line);
+  } else {
+    console.info(line);
+  }
+}
+
+export function requestCorrelationMiddleware(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  const requestId = resolveOrCreateRequestId(req.headers['x-request-id']);
+  (req as RequestWithCorrelation).requestId = requestId;
+  res.setHeader(REQUEST_ID_HEADER, requestId);
+
+  const startedAt = Date.now();
+  res.on('finish', () => {
+    if (res.statusCode >= 500) {
+      const pathOnly = String(req.originalUrl || req.url || '/').split('?')[0];
+      logStructuredEvent('error', 'http_server_error', {
+        requestId,
+        method: req.method,
+        path: pathOnly,
+        status: res.statusCode,
+        durationMs: Date.now() - startedAt,
+      });
+    }
+  });
+
+  next();
+}
 
 export interface ServerConfig {
   geminiApiKey: string;
@@ -358,6 +452,13 @@ export function createRateLimiter(options?: { windowMs?: number; maxRequests?: n
           const estimatedHits = Math.floor(prevHits * prevWeight) + currentHits;
 
           if (estimatedHits > maxRequests) {
+            const reqId = (req as RequestWithCorrelation).requestId;
+            logStructuredEvent('warn', 'rate_limit_exceeded', {
+              requestId: reqId,
+              path: String(req.originalUrl || req.url || '/').split('?')[0],
+              backend: 'upstash',
+              retryAfterSeconds: windowSec,
+            });
             res.setHeader('Retry-After', String(windowSec));
             return res.status(429).json({
               error: 'Rate limit exceeded. Please wait before making more requests.',
@@ -376,10 +477,18 @@ export function createRateLimiter(options?: { windowMs?: number; maxRequests?: n
     const recent = (hits.get(clientIp) || []).filter((ts) => ts > cutoff);
 
     if (recent.length >= maxRequests) {
-      res.setHeader('Retry-After', String(Math.ceil(windowMs / 1000)));
+      const retrySec = Math.ceil(windowMs / 1000);
+      const reqId = (req as RequestWithCorrelation).requestId;
+      logStructuredEvent('warn', 'rate_limit_exceeded', {
+        requestId: reqId,
+        path: String(req.originalUrl || req.url || '/').split('?')[0],
+        backend: 'memory',
+        retryAfterSeconds: retrySec,
+      });
+      res.setHeader('Retry-After', String(retrySec));
       return res.status(429).json({
         error: 'Rate limit exceeded. Please wait before making more generation requests.',
-        retryAfterSeconds: Math.ceil(windowMs / 1000),
+        retryAfterSeconds: retrySec,
       });
     }
 

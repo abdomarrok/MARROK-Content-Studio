@@ -335,8 +335,12 @@ All errors across controllers, client SDKs, and business engines map to standard
 | `TimeoutError` | 504 Gateway Timeout | Yes | Abort upstream fetch at 45s; transition outbox to `outcome_unknown` |
 | `QuarantineError` | 409 Conflict | Manual | Non-idempotent timeout quarantine; requires admin review |
 
-### 7.2 Observability & Redaction Guidelines
-- **Correlation IDs**: Log entries for long-running workflows (AI synthesis, publishing dispatches, Cloudinary sweeps) should include a correlation identifier (`postId` or `leaseToken`).
+### 7.2 Observability, Request Correlation & Health Probes (Phase 2.6.1)
+- **Request Correlation (`X-Request-Id`)**: `requestCorrelationMiddleware` (`api/config.ts`) runs before security headers and CORS in `api/index.ts`. Incoming `X-Request-Id` headers are accepted only when matching `/^[A-Za-z0-9._-]{8,64}$/`; missing or unsafe values are replaced with a server-generated UUID. Every response — including `403 CORS`, `401 Auth`, `429 Rate Limit`, and `5xx` errors — echoes `X-Request-Id`, and CORS exposes `X-Request-Id`, `X-Marrok-Engine`, `X-Marrok-Model`, and `Retry-After`.
+- **Structured Single-Line JSON Logs**: `logStructuredEvent` emits single-line sanitized JSON (newlines/control characters stripped) for `http_server_error` (`status >= 500`), `rate_limit_exceeded` (`429`), and `db_slow_query` (`>= 500ms`), strictly recording route pathname (never query strings, headers, bodies, cookies, tokens, or credentials).
+- **Liveness vs Readiness (`GET /api/health` & `/health`)**:
+  - Default (`GET /api/health`): zero-dependency liveness probe returning `200 { status: 'ok', probe: 'live', timestamp }` with `Cache-Control: no-store` (never hits Neon Postgres or external APIs).
+  - Readiness (`GET /api/health?probe=ready`): runs a bounded `2500ms` `SELECT 1 AS ok` check via `pingPostgresPool` when `DATABASE_URL` is configured, returning `200 { status: 'ready', probe: 'ready', checks: { database: 'ok' | 'local_fallback' } }` or `503 { status: 'not_ready', checks: { database: 'unavailable' } }` without exposing SQL errors, hostnames, or secrets. Optional providers (Gemini, Buffer, Zernio, Cloudinary, Upstash) never fail core readiness.
 - **Secret Redaction**: Logging utilities must never print:
   - Passwords or scrypt hashes.
   - Session cookies or Bearer tokens.
@@ -358,14 +362,23 @@ All errors across controllers, client SDKs, and business engines map to standard
 - **Vendor ZIP (JSZip)**: `dist/assets/vendor-zip-*.js` — `95.93 kB` (28.48 kB gzip)
 - **Lazy Modals**: `5 kB – 22 kB` each (loaded on demand)
 
-### 8.2 Performance Budgets & Guardrails
+### 8.2 Performance Budgets, Pagination & Runtime Guardrails (Phase 2.6.1)
 1. **Initial Bundle Budget**: Total critical-path JavaScript before gzip must remain $\le 900\text{ kB}$ (gzip $\le 250\text{ kB}$).
 2. **Canvas Engine Size**: The `engine-canvas` chunk bundles the offline Simple Icons catalog, mathematical geometry, and typography measurement. It is budget-capped at $\le 800\text{ kB}$ uncompressed.
-3. **Execution Deadlines**:
-   - `POST /api/generate`: 45s hard budget with `AbortSignal.timeout(45000)`.
+3. **Saved Posts Keyset Cursor Pagination (`GET /api/posts`)**:
+   - Deterministic composite ordering: `ORDER BY updated_at DESC, id DESC`, backed by composite index `idx_saved_posts_updated_at_id` (`saved_posts(updated_at DESC, id DESC)`).
+   - Opaque `base64url` cursor encoding `{ updatedAt, id }`, default `limit=50`, hard cap `100`, optional `status=all|validated|posted|scheduled`, returning `{ posts, nextCursor, hasMore, limit, storageEngine, isCloudPersistent, deletedIds }`.
+   - `postsVaultClient.loadVaultPosts()` transparently walks cursor pages (with cycle guard and deduplication) so client-side search, calendar, topic dedup, and feed cadence never silently truncate older posts; `loadVaultPostsPage()` exposes explicit single-page fetches.
+4. **Runtime-Aware Neon Connection Pool Budgets (`api/db/postgres.ts`)**:
+   - Long-lived Express (`server.ts`): `max: 5`, `allowExitOnIdle: false`.
+   - Serverless runtimes (`VERCEL` / `NETLIFY` / `AWS_LAMBDA_FUNCTION_NAME`): `max: 2`, `allowExitOnIdle: true`.
+   - Explicit timeouts on all runtimes: `connectionTimeoutMillis: 5000`, `idleTimeoutMillis: 10000`, `statement_timeout: 10000`, `query_timeout: 10000` (all overridable via `PG_*` env vars). Production serverless deployments should always connect through Neon's `-pooler` (PgBouncer) endpoint.
+5. **Reproducible Core Engine Benchmarks**: Run `npm run benchmark` (`scripts/benchmark-core-engines.ts`) to measure pure local min/median/p95/max latencies for Layout Awareness (cold cache-cleared vs LRU cached), Smart Visual Defaults, QA Engine, and Universal Extractor across 1-slide, 8-slide, 10-slide, and short/medium/large briefs.
+6. **Execution Deadlines**:
+   - `POST /api/generate`: 38s request budget (`22s` for `/api/refine-slide`) with combined `AbortSignal.timeout`.
    - `GET /api/gather/radar`: 12s timeout per upstream RSS/feed provider.
    - `POST /api/publish/dispatch`: 30s timeout per social provider.
-4. **Debounced User Input**: Viewport text inputs must maintain $\ge 150\text{ms}$ debounce to prevent layout thrashing and canvas re-renders during active typing.
+7. **Debounced User Input**: Viewport text inputs must maintain $\ge 150\text{ms}$ debounce to prevent layout thrashing and canvas re-renders during active typing.
 
 ---
 

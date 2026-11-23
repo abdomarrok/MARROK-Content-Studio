@@ -39,7 +39,11 @@ import {
 } from '../../src/lib/riskChecks.ts';
 import { analyzePostHistoryCadence } from '../../src/lib/theme/cadenceEngine.ts';
 import {
+  buildGroundedFitLine,
+  buildTriageSignaturePayload,
+  canonicalizeStoryUrl,
   computeCalibratedTopicScore,
+  isTopicDismissedByTriage,
   sanitizeFeedDisplayText,
   scoreAndRankTopicBatch,
 } from '../../src/lib/gather/inboxEngine.ts';
@@ -140,10 +144,18 @@ export interface GatheredTopicItem {
   clusteredSources?: ClusteredSourceItem[];
 }
 
-const RADAR_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const RADAR_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes raw live feed cache
 let cachedRadarItems: GatheredTopicItem[] | null = null;
 let cachedFeedStatuses: FeedHealthStatus[] = [];
 let cachedRadarTimestamp = 0;
+let radarRotationCounter = 0;
+
+export function resetRadarCacheForTest(): void {
+  cachedRadarItems = null;
+  cachedFeedStatuses = [];
+  cachedRadarTimestamp = 0;
+  radarRotationCounter = 0;
+}
 
 const METRIC_REGEX =
   /(?:[$€£]\d+(?:\.\d+)?(?:\s*(?:trillion|billion|million|thousand|[tbmk]))?\b|\b\d+(?:\.\d+)?(?:\s*(?:x|%|ms|µs|us|ns|s|gb\/s|mb\/s|gb|mb|tb|kb|req\/s|rps|qps|tps|ops\/s|tokens\/s|b\b|m\b|k\b)))/gi;
@@ -487,23 +499,104 @@ export function stripHtmlToCleanText(html: string, maxLength = 5000): string {
   return decoded.slice(0, maxLength).trim();
 }
 
+const TECH_SIGNAL_TITLE_REGEX =
+  /\b(rust|go|golang|zig|linux|kernel|ebpf|xdp|io_uring|ai|llm|gpu|cuda|vllm|deepseek|claude|gemini|openai|anthropic|database|postgres|postgresql|sqlite|duckdb|clickhouse|redis|kafka|scylla|kubernetes|k8s|docker|cloud|aws|cloudflare|security|cve|exploit|sandbox|compiler|wasm|webassembly|network|distributed|architecture|benchmark|latency|p99|memory|cpu|git|api|open[- ]?source|system|proxy|nginx|envoy|postgres|vector|inference|agent|postmortem|outage|storage|consensus|raft)\b/i;
+
 /**
- * Fetches live technical stories from Hacker News Firebase API (bounded timeout).
+ * Fetches live technical stories from Hacker News via the single-request Algolia HN Search API
+ * (front_page + rotating recent high-score stories), with automatic fallback to Firebase topstories.
  */
-async function fetchHackerNewsTopTech(limit = 6): Promise<GatheredTopicItem[]> {
+async function fetchHackerNewsTopTech(limit = 10, rotation = 0): Promise<GatheredTopicItem[]> {
+  try {
+    const useRecentSlice = rotation % 2 === 1;
+    const minEpochSec = Math.floor((Date.now() - 4 * 86400_000) / 1000);
+    const algoliaUrl = useRecentSlice
+      ? `https://hn.algolia.com/api/v1/search_by_date?tags=story&numericFilters=points>45,created_at_i>${minEpochSec}&hitsPerPage=35`
+      : `https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=35`;
+
+    const res = await fetch(algoliaUrl, {
+      signal: AbortSignal.timeout(5500),
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'MARROK-Content-Studio/2.6 (+https://marrok.org)',
+      },
+    });
+
+    if (res.ok) {
+      const data = (await res.json()) as { hits?: Array<Record<string, unknown>> };
+      const hits = Array.isArray(data?.hits) ? data.hits : [];
+      const results: GatheredTopicItem[] = [];
+
+      for (const hit of hits) {
+        const title = decodeHtmlEntities(String(hit.title || '')).trim();
+        const rawUrl = typeof hit.url === 'string' ? hit.url.trim() : '';
+        if (!title || !rawUrl || !/^https?:\/\//i.test(rawUrl)) continue;
+        if (!TECH_SIGNAL_TITLE_REGEX.test(title)) continue;
+
+        const points = Number(hit.points) || 60;
+        const comments = Number(hit.num_comments) || 0;
+        const { brand, brandUrl } = deriveBrandFromUrl(rawUrl, 'Hacker News');
+        const metrics = extractQuantitativeMetrics(title);
+        const domainCategory = classifyEngineeringDomain(`${title} ${brand}`);
+        const storyText = typeof hit.story_text === 'string' ? stripHtmlToCleanText(hit.story_text, 500) : '';
+        const summary =
+          storyText ||
+          `Trending engineering story on ${brand} (${points} HN points, ${comments} comments): ${title}.`;
+        const recommendedFormat = recommendPostFormat(title, summary, metrics);
+        const publishedAt =
+          typeof hit.created_at === 'string' && !Number.isNaN(Date.parse(hit.created_at))
+            ? new Date(hit.created_at).toISOString()
+            : typeof hit.created_at_i === 'number'
+            ? new Date(hit.created_at_i * 1000).toISOString()
+            : new Date().toISOString();
+
+        results.push({
+          id: `hn_${String(hit.objectID || crypto.createHash('sha256').update(rawUrl).digest('hex').slice(0, 12))}`,
+          title,
+          url: rawUrl,
+          sourceName: 'Hacker News',
+          sourceType: 'hn',
+          author: typeof hit.author === 'string' ? hit.author : undefined,
+          brand,
+          brandUrl,
+          domainCategory,
+          publishedAt,
+          score: points,
+          summary,
+          extractedMetrics: metrics,
+          recommendedFormat,
+          synthesisPrompt: buildSynthesisPromptFromTopic({
+            title,
+            url: rawUrl,
+            brand,
+            summary,
+            extractedMetrics: metrics,
+          }),
+        });
+        if (results.length >= limit) break;
+      }
+
+      if (results.length > 0) return results;
+    }
+  } catch {
+    // Fall through to Firebase API fallback below
+  }
+
+  // Fallback: Hacker News Firebase topstories
   try {
     const topRes = await fetch('https://hacker-news.firebaseio.com/v0/topstories.json', {
-      signal: AbortSignal.timeout(3500),
+      signal: AbortSignal.timeout(4500),
     });
     if (!topRes.ok) return [];
     const ids = (await topRes.json()) as number[];
-    const candidateIds = (ids || []).slice(0, 18);
+    const offset = (rotation % 3) * 10;
+    const candidateIds = (ids || []).slice(offset, offset + 22);
 
     const rawItems = await Promise.all(
       candidateIds.map(async (id) => {
         try {
           const r = await fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`, {
-            signal: AbortSignal.timeout(2500),
+            signal: AbortSignal.timeout(3000),
           });
           if (!r.ok) return null;
           return await r.json();
@@ -517,13 +610,7 @@ async function fetchHackerNewsTopTech(limit = 6): Promise<GatheredTopicItem[]> {
     for (const item of rawItems) {
       if (!item || !item.title || !item.url) continue;
       const title = String(item.title).trim();
-      if (
-        !/\b(rust|go|linux|kernel|ebpf|ai|llm|gpu|database|postgres|sqlite|redis|kubernetes|docker|cloud|security|cve|compiler|wasm|network|distributed|architecture|benchmark|latency|memory|cpu|git|api|open-source|system)\b/i.test(
-          title
-        )
-      ) {
-        continue;
-      }
+      if (!TECH_SIGNAL_TITLE_REGEX.test(title)) continue;
       const { brand, brandUrl } = deriveBrandFromUrl(item.url, 'Hacker News');
       const metrics = extractQuantitativeMetrics(title);
       const domainCategory = classifyEngineeringDomain(title);
@@ -564,20 +651,26 @@ async function fetchHackerNewsTopTech(limit = 6): Promise<GatheredTopicItem[]> {
 }
 
 /**
- * Fetches live technical stories from Lobste.rs JSON feed (bounded timeout).
+ * Fetches live technical stories from Lobste.rs JSON feed (blends hottest + newest on rotation).
  */
-async function fetchLobstersHottest(limit = 5): Promise<GatheredTopicItem[]> {
+async function fetchLobstersHottest(limit = 7, rotation = 0): Promise<GatheredTopicItem[]> {
+  const endpoint =
+    rotation % 2 === 1 ? 'https://lobste.rs/newest.json' : 'https://lobste.rs/hottest.json';
   try {
-    const res = await fetch('https://lobste.rs/hottest.json', {
-      signal: AbortSignal.timeout(3500),
-      headers: { Accept: 'application/json' },
+    const res = await fetch(endpoint, {
+      signal: AbortSignal.timeout(6000),
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'MARROK-Content-Studio/2.6 (+https://marrok.org)',
+      },
     });
     if (!res.ok) return [];
     const items = (await res.json()) as any[];
     const results: GatheredTopicItem[] = [];
 
-    for (const item of (items || []).slice(0, 12)) {
+    for (const item of (items || []).slice(0, 22)) {
       if (!item?.title || !item?.url) continue;
+      if (rotation % 2 === 1 && Number(item.score || 0) < 3) continue;
       const title = String(item.title).trim();
       const tags = Array.isArray(item.tags) ? item.tags.join(', ') : '';
       const { brand, brandUrl } = deriveBrandFromUrl(item.url, 'Lobsters');
@@ -624,81 +717,116 @@ async function fetchLobstersHottest(limit = 5): Promise<GatheredTopicItem[]> {
  * Lightweight XML/RSS/Atom parser for Cloudflare Engineering Blog.
  */
 async function fetchCloudflareEngineeringRss(limit = 4): Promise<GatheredTopicItem[]> {
-  try {
-    const { response: res, text: xml } = await fetchSafeRemoteText('https://blog.cloudflare.com/rss/', {
-      maxHops: 3,
-      maxBytes: 400_000,
-      timeoutMs: 3500,
-      acceptHeader: 'application/rss+xml, application/xml, text/xml, */*',
-    });
-    if (!res.ok) return [];
-    const itemMatches = xml.match(/<item>[\s\S]*?<\/item>/gi) || [];
-    const results: GatheredTopicItem[] = [];
-
-    for (const block of itemMatches.slice(0, limit)) {
-      const titleMatch =
-        block.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>/i) ||
-        block.match(/<title>([\s\S]*?)<\/title>/i);
-      const linkMatch = block.match(/<link>([\s\S]*?)<\/link>/i);
-      const contentEncodedMatch =
-        block.match(/<content:encoded><!\[CDATA\[([\s\S]*?)\]\]><\/content:encoded>/i) ||
-        block.match(/<content:encoded>([\s\S]*?)<\/content:encoded>/i);
-      const descMatch =
-        block.match(/<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>/i) ||
-        block.match(/<description>([\s\S]*?)<\/description>/i);
-      const pubDateMatch = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/i);
-
-      if (!titleMatch || !linkMatch) continue;
-      const title = decodeHtmlEntities(titleMatch[1]).trim();
-      const url = linkMatch[1].trim();
-      const rawHtmlBody = contentEncodedMatch?.[1] || descMatch?.[1] || '';
-      const summary = rawHtmlBody
-        ? stripHtmlToCleanText(rawHtmlBody, 3600)
-        : `Cloudflare Engineering architectural deep-dive: ${title}`;
-      const metrics = extractQuantitativeMetrics(`${title} ${summary}`);
-      const domainCategory = classifyEngineeringDomain(`${title} ${summary}`);
-      const recommendedFormat = recommendPostFormat(title, summary, metrics);
-
-      results.push({
-        id: `rss_cf_${crypto.createHash('sha256').update(url).digest('hex').slice(0, 20)}`,
-        title,
-        url,
-        sourceName: 'Cloudflare Blog RSS',
-        sourceType: 'rss',
-        brand: 'Cloudflare Engineering',
-        brandUrl: 'blog.cloudflare.com',
-        domainCategory,
-        publishedAt: pubDateMatch ? new Date(pubDateMatch[1].trim()).toISOString() : new Date().toISOString(),
-        score: 320,
-        summary,
-        extractedMetrics: metrics,
-        recommendedFormat,
-        synthesisPrompt: buildSynthesisPromptFromTopic({
-          title,
-          url,
-          brand: 'Cloudflare Engineering',
-          summary,
-          extractedMetrics: metrics,
-        }),
-      });
-    }
-    return results;
-  } catch {
-    return [];
-  }
+  return fetchCustomRssFeed('https://blog.cloudflare.com/rss/', limit);
 }
 
 /**
- * Fetches trending engineering & AI discussions from Reddit tech communities (r/programming, r/LocalLLaMA, r/devops).
+ * Extracts the external primary article link from a Reddit Atom <content> block (falling back to permalink).
  */
-async function fetchRedditTechTrends(limit = 5): Promise<GatheredTopicItem[]> {
+function extractExternalLinkFromRedditAtom(contentHtml: string, fallbackUrl: string): string {
+  const decoded = decodeHtmlEntities(contentHtml || '');
+  const linkTagMatch = decoded.match(/<a\s+href=["'](https?:\/\/[^"']+)["'][^>]*>\s*\[link\]\s*<\/a>/i);
+  if (linkTagMatch?.[1] && !/reddit\.com|redd\.it/i.test(linkTagMatch[1])) {
+    return linkTagMatch[1].trim();
+  }
+  return fallbackUrl;
+}
+
+/**
+ * Fetches trending engineering & AI discussions from Reddit tech communities.
+ * Uses public Atom/RSS feeds first (much more reliable than unauthenticated .json on cloud IPs),
+ * extracts primary external engineering links, and falls back to old.reddit.com JSON.
+ */
+async function fetchRedditTechTrends(limit = 7, rotation = 0): Promise<GatheredTopicItem[]> {
+  const sortMode = rotation % 2 === 1 ? 'rising' : 'hot';
+  const subreddits = 'programming+LocalLLaMA+devops+rust+netsec+ExperiencedDevs';
+  const rssUrl = `https://www.reddit.com/r/${subreddits}/${sortMode}/.rss?limit=20`;
+
+  try {
+    const res = await fetch(rssUrl, {
+      signal: AbortSignal.timeout(6000),
+      headers: {
+        'User-Agent': 'web:marrok-content-studio:v2.6 (by /u/marrok_org)',
+        Accept: 'application/atom+xml, application/rss+xml, application/xml, text/xml',
+      },
+    });
+    if (res.ok) {
+      const xml = await res.text();
+      const entries = xml.match(/<entry\b[^>]*>[\s\S]*?<\/entry>/gi) || [];
+      const results: GatheredTopicItem[] = [];
+
+      for (const entry of entries) {
+        const titleMatch = entry.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+        const linkMatch = entry.match(/<link[^>]+href=["']([^"']+)["']/i);
+        const idMatch = entry.match(/<id>([\s\S]*?)<\/id>/i);
+        const updatedMatch = entry.match(/<(?:updated|published)>([\s\S]*?)<\/(?:updated|published)>/i);
+        const authorMatch = entry.match(/<author>[\s\S]*?<name>([\s\S]*?)<\/name>/i);
+        const categoryMatch = entry.match(/<category[^>]+term=["']([^"']+)["']/i);
+        const contentMatch = entry.match(/<content[^>]*>([\s\S]*?)<\/content>/i);
+
+        if (!titleMatch || !linkMatch) continue;
+        const title = decodeHtmlEntities(titleMatch[1]).replace(/\s+/g, ' ').trim();
+        if (!title || title.length < 12) continue;
+
+        const redditPermalink = linkMatch[1].trim();
+        const rawContent = contentMatch?.[1] || '';
+        const targetUrl = extractExternalLinkFromRedditAtom(rawContent, redditPermalink);
+        const subreddit = categoryMatch?.[1] ? `r/${categoryMatch[1]}` : 'r/programming';
+        const { brand, brandUrl } = deriveBrandFromUrl(targetUrl, `Reddit ${subreddit}`);
+        const cleanedText = stripHtmlToCleanText(decodeHtmlEntities(rawContent), 480)
+          .replace(/submitted by\s+\/u\/\S+\s*\[link\]\s*\[comments\]/gi, '')
+          .trim();
+        const summary =
+          cleanedText.length >= 45
+            ? cleanedText
+            : `Trending engineering discussion on ${subreddit} (${brand}): ${title}.`;
+        const metrics = extractQuantitativeMetrics(`${title} ${summary}`);
+        const domainCategory = classifyEngineeringDomain(`${title} ${subreddit} ${summary}`);
+        const recommendedFormat = recommendPostFormat(title, summary, metrics);
+        const rawId = (idMatch?.[1] || redditPermalink).replace(/[^a-zA-Z0-9_-]/g, '').slice(-20);
+
+        results.push({
+          id: `reddit_${rawId || results.length}`,
+          title,
+          url: targetUrl,
+          sourceName: `Reddit · ${subreddit}`,
+          sourceType: 'reddit',
+          author: authorMatch?.[1]?.trim() || undefined,
+          brand,
+          brandUrl,
+          domainCategory,
+          publishedAt:
+            updatedMatch?.[1] && !Number.isNaN(Date.parse(updatedMatch[1].trim()))
+              ? new Date(updatedMatch[1].trim()).toISOString()
+              : new Date().toISOString(),
+          score: sortMode === 'rising' ? 210 : 240,
+          summary,
+          extractedMetrics: metrics,
+          recommendedFormat,
+          synthesisPrompt: buildSynthesisPromptFromTopic({
+            title,
+            url: targetUrl,
+            brand,
+            summary,
+            extractedMetrics: metrics,
+          }),
+        });
+        if (results.length >= limit) break;
+      }
+
+      if (results.length > 0) return results;
+    }
+  } catch {
+    // Fall through to JSON fallback
+  }
+
   try {
     const res = await fetch(
-      'https://www.reddit.com/r/programming+LocalLLaMA+devops/hot.json?limit=15',
+      `https://old.reddit.com/r/${subreddits}/${sortMode}.json?limit=15&raw_json=1`,
       {
-        signal: AbortSignal.timeout(3500),
+        signal: AbortSignal.timeout(5500),
         headers: {
-          'User-Agent': 'MARROK-Content-Gatherer/2.0',
+          'User-Agent': 'web:marrok-content-studio:v2.6 (by /u/marrok_org)',
           Accept: 'application/json',
         },
       }
@@ -876,14 +1004,13 @@ export function buildDefaultMarrokAngle(item: {
   summary: string;
   extractedMetrics?: string[];
   domainCategory?: string;
+  sourceDomain?: string;
 }): { clientRelevance: number; clientRelevanceReason: string; marrokAngle: string } {
   const combined = `${item.title || ''} ${item.summary || ''}`.toLowerCase();
-  const leadMetric = item.extractedMetrics?.[0];
-  const metricSuffix = leadMetric ? ` (${leadMetric})` : '';
 
   let relevance = 62;
   if (
-    /\b(postgres|postgresql|redis|sqlite|mysql|database|latency|cache|cost|billing|cloud|aws|docker|kubernetes|auth|security|api|worker|queue|ci\/cd|deploy|migration|observability|p99|throughput)\b/.test(
+    /\b(postgres|postgresql|redis|sqlite|mysql|database|latency|cache|kv[- ]?cache|llm|inference|cost|billing|cloud|aws|docker|kubernetes|auth|security|api|worker|queue|ci\/cd|deploy|migration|observability|p99|throughput)\b/.test(
       combined
     )
   ) {
@@ -892,45 +1019,23 @@ export function buildDefaultMarrokAngle(item: {
   if (/\b(startup|sme|team|production|outage|incident|pricing|self-host|oss|open[- ]?source|typescript|rust|go|python)\b/.test(combined)) {
     relevance += 10;
   }
-  if (/\b(arxiv|theoretical|toy|benchmarking\s+only|preprint|theorem|abstract\s+algebra)\b/.test(combined)) {
+  if (/\b(theoretical\s+only|toy\s+example|abstract\s+algebra)\b/.test(combined)) {
     relevance -= 14;
   }
 
   const clientRelevance = Math.max(35, Math.min(98, relevance));
-
-  if (/\b(postgres|redis|scylla|cassandra|sqlite|database|index|vector|kv[- ]?cache|storage)\b/.test(combined)) {
-    return {
-      clientRelevance,
-      clientRelevanceReason: 'Direct impact on product DB cost, query p99, and scaling runway for SME teams.',
-      marrokAngle: `What this means for your product: cut database latency & cloud overhead${metricSuffix} before buying bigger instances.`,
-    };
-  }
-  if (/\b(cve|security|sandbox|auth|oauth|delegation|zero[- ]?trust|mtls|breach|firewall|isolate)\b/.test(combined)) {
-    return {
-      clientRelevance,
-      clientRelevanceReason: 'Protects customer tenant isolation and prevents production breach blast radius.',
-      marrokAngle: `What this means for your product: isolate untrusted keys & workflows${metricSuffix} before an incident audits it for you.`,
-    };
-  }
-  if (/\b(llm|agent|ai|rag|inference|token|model|deepseek|vllm|context)\b/.test(combined)) {
-    return {
-      clientRelevance,
-      clientRelevanceReason: 'Shapes AI feature margin, inference speed, and reliability in production apps.',
-      marrokAngle: `What this means for your product: lower AI inference bill and wait times${metricSuffix} without sacrificing answer reliability.`,
-    };
-  }
-  if (/\b(rust|ebpf|linux|kernel|nginx|proxy|worker|queue|docker|kubernetes|cloudflare)\b/.test(combined)) {
-    return {
-      clientRelevance,
-      clientRelevanceReason: 'Practical infra playbook for lean teams serving high traffic on modest servers.',
-      marrokAngle: `What this means for your product: squeeze far more traffic from lean servers${metricSuffix} with lower operational tax.`,
-    };
-  }
+  const grounded = buildGroundedFitLine({
+    title: item.title,
+    summary: item.summary,
+    extractedMetrics: item.extractedMetrics,
+    domainCategory: item.domainCategory,
+    sourceDomain: item.sourceDomain,
+  });
 
   return {
     clientRelevance,
-    clientRelevanceReason: `Actionable ${String(item.domainCategory || 'engineering').toLowerCase()} insight for startup/SME builders.`,
-    marrokAngle: `What this means for your product: turn this architecture pattern${metricSuffix} into measurable release speed and stability.`,
+    clientRelevanceReason: grounded.reason,
+    marrokAngle: grounded.fitLine,
   };
 }
 
@@ -998,92 +1103,142 @@ function attachViralityMetadata(item: GatheredTopicItem): GatheredTopicItem {
   };
 }
 
+const GITHUB_DISCOVERY_QUERIES = [
+  'topic:rust OR topic:go OR topic:zig OR topic:systems OR language:Rust',
+  'topic:llm OR topic:ai-agents OR topic:inference OR topic:vllm OR topic:mcp',
+  'topic:database OR topic:postgresql OR topic:kubernetes OR topic:docker OR topic:cloud',
+  'topic:security OR topic:ebpf OR topic:linux OR topic:wasm OR topic:compiler',
+] as const;
+
 /**
- * Fetches breakout open-source systems & AI repositories from GitHub's public Search API.
+ * Fetches breakout open-source systems & AI repositories from GitHub's public Search API
+ * using rotating 7-day fresh discovery queries, optional GITHUB_TOKEN, and Changelog RSS fallback.
  */
-async function fetchGitHubTrendingRepos(limit = 4): Promise<GatheredTopicItem[]> {
+async function fetchGitHubTrendingRepos(limit = 6, rotation = 0): Promise<GatheredTopicItem[]> {
   try {
-    const sinceDate = new Date(Date.now() - 14 * 86400_000).toISOString().split('T')[0];
-    const query = encodeURIComponent(
-      `created:>${sinceDate} stars:>120 (topic:rust OR topic:llm OR topic:ai OR topic:ebpf OR topic:database OR topic:kubernetes OR language:Rust OR language:Go)`
-    );
+    const sinceDate = new Date(Date.now() - 7 * 86400_000).toISOString().split('T')[0];
+    const querySlice = GITHUB_DISCOVERY_QUERIES[rotation % GITHUB_DISCOVERY_QUERIES.length];
+    const query = encodeURIComponent(`created:>${sinceDate} stars:>60 (${querySlice})`);
+    const headers: Record<string, string> = {
+      'User-Agent': 'MARROK-Content-Studio/2.6 (+https://marrok.org)',
+      Accept: 'application/vnd.github+json',
+    };
+    const ghToken = (process.env.GITHUB_TOKEN || '').trim();
+    if (ghToken) {
+      headers.Authorization = `Bearer ${ghToken}`;
+    }
+
     const res = await fetch(
-      `https://api.github.com/search/repositories?q=${query}&sort=stars&order=desc&per_page=${limit + 4}`,
+      `https://api.github.com/search/repositories?q=${query}&sort=stars&order=desc&per_page=${limit + 6}`,
       {
-        signal: AbortSignal.timeout(3500),
-        headers: {
-          'User-Agent': 'MARROK-Content-Gatherer/2.0',
-          Accept: 'application/vnd.github+json',
-        },
+        signal: AbortSignal.timeout(6000),
+        headers,
       }
     );
-    if (!res.ok) return [];
-    const data = (await res.json()) as any;
-    const repos = Array.isArray(data?.items) ? data.items : [];
-    const results: GatheredTopicItem[] = [];
+    if (res.ok) {
+      const data = (await res.json()) as any;
+      const repos = Array.isArray(data?.items) ? data.items : [];
+      const results: GatheredTopicItem[] = [];
 
-    for (const repo of repos) {
-      if (!repo?.full_name || !repo?.html_url) continue;
-      const stars = Number(repo.stargazers_count) || 200;
-      const lang = repo.language ? String(repo.language) : 'Systems';
-      const desc = repo.description
-        ? decodeHtmlEntities(String(repo.description)).trim()
-        : 'High-velocity open-source engineering repository.';
-      const title = `${repo.name}: ${desc}`.slice(0, 130);
-      const starMetric = `${stars >= 1000 ? `${(stars / 1000).toFixed(1)}k` : stars} GitHub stars`;
-      const extraMetrics = extractQuantitativeMetrics(`${title} ${desc}`);
-      const metrics = [starMetric, ...extraMetrics].slice(0, 5);
-      const summary = `${repo.full_name} (${lang}) surged to ${starMetric} on GitHub. ${desc}`;
-      const domainCategory = classifyEngineeringDomain(`${title} ${lang} ${(repo.topics || []).join(' ')}`);
-      const recommendedFormat = recommendPostFormat(title, summary, metrics);
+      for (const repo of repos) {
+        if (!repo?.full_name || !repo?.html_url) continue;
+        const stars = Number(repo.stargazers_count) || 120;
+        const lang = repo.language ? String(repo.language) : 'Systems';
+        const desc = repo.description
+          ? decodeHtmlEntities(String(repo.description)).trim()
+          : 'High-velocity open-source engineering repository.';
+        const title = `${repo.name}: ${desc}`.slice(0, 130);
+        const starMetric = `${stars >= 1000 ? `${(stars / 1000).toFixed(1)}k` : stars} GitHub stars`;
+        const extraMetrics = extractQuantitativeMetrics(`${title} ${desc}`);
+        const metrics = [starMetric, ...extraMetrics].slice(0, 5);
+        const summary = `${repo.full_name} (${lang}) surged to ${starMetric} on GitHub. ${desc}`;
+        const domainCategory = classifyEngineeringDomain(`${title} ${lang} ${(repo.topics || []).join(' ')}`);
+        const recommendedFormat = recommendPostFormat(title, summary, metrics);
 
-      results.push(
-        attachViralityMetadata({
-          id: `gh_${repo.id || repo.full_name.replace(/[^a-zA-Z0-9]/g, '_')}`,
-          title,
-          url: String(repo.html_url),
-          sourceName: `GitHub Trending · ${lang}`,
-          sourceType: 'github',
-          author: repo.owner?.login ? String(repo.owner.login) : undefined,
-          brand: 'GitHub Open Source',
-          brandUrl: 'github.com',
-          domainCategory,
-          publishedAt: repo.created_at ? new Date(repo.created_at).toISOString() : new Date().toISOString(),
-          score: stars,
-          summary,
-          extractedMetrics: metrics,
-          recommendedFormat,
-          synthesisPrompt: buildSynthesisPromptFromTopic({
+        results.push(
+          attachViralityMetadata({
+            id: `gh_${repo.id || repo.full_name.replace(/[^a-zA-Z0-9]/g, '_')}`,
             title,
             url: String(repo.html_url),
+            sourceName: `GitHub Breakout · ${lang}`,
+            sourceType: 'github',
+            author: repo.owner?.login ? String(repo.owner.login) : undefined,
             brand: 'GitHub Open Source',
+            brandUrl: 'github.com',
+            domainCategory,
+            publishedAt: repo.created_at ? new Date(repo.created_at).toISOString() : new Date().toISOString(),
+            score: stars,
             summary,
             extractedMetrics: metrics,
-          }),
-        })
-      );
-      if (results.length >= limit) break;
+            recommendedFormat,
+            synthesisPrompt: buildSynthesisPromptFromTopic({
+              title,
+              url: String(repo.html_url),
+              brand: 'GitHub Open Source',
+              summary,
+              extractedMetrics: metrics,
+            }),
+          })
+        );
+        if (results.length >= limit) break;
+      }
+      if (results.length > 0) return results;
     }
-    return results;
+  } catch {
+    // Fall through to GitHub Changelog RSS fallback on rate limit or timeout
+  }
+
+  // Fallback when unauthenticated GitHub Search API is rate-limited
+  try {
+    const changelogItems = await fetchCustomRssFeed('https://github.blog/changelog/feed/', Math.min(4, limit));
+    return changelogItems.map((item) => ({
+      ...item,
+      sourceType: 'github' as const,
+      sourceName: 'GitHub Changelog',
+    }));
   } catch {
     return [];
   }
 }
 
 /**
- * Fetches live AI & Systems engineering articles from HuggingFace Blog & GitHub Engineering RSS.
+ * Fetches live Cloud & Infrastructure engineering blogs (Cloudflare, Fly.io, Tailscale, Kubernetes).
  */
-async function fetchAiAndSystemsRssFeeds(limitPerFeed = 2): Promise<GatheredTopicItem[]> {
-  const defaultFeeds = [
-    'https://huggingface.co/blog/feed.xml',
-    'https://github.blog/engineering/feed/',
+async function fetchCloudInfraRssFeeds(limitPerFeed = 2): Promise<GatheredTopicItem[]> {
+  const feeds = [
+    'https://blog.cloudflare.com/rss/',
+    'https://fly.io/blog/feed.xml',
+    'https://tailscale.com/blog/index.xml',
+    'https://kubernetes.io/feed.xml',
   ];
-  try {
-    const batches = await Promise.all(defaultFeeds.map((u) => fetchCustomRssFeed(u, limitPerFeed)));
-    return batches.flat().map(attachViralityMetadata);
-  } catch {
-    return [];
-  }
+  const batches = await Promise.all(feeds.map((u) => fetchCustomRssFeed(u, limitPerFeed)));
+  return batches.flat().map(attachViralityMetadata);
+}
+
+/**
+ * Fetches live AI & Systems research feeds (HuggingFace Blog, Simon Willison, arXiv CS.AI/CS.DC).
+ */
+async function fetchAiAndResearchRssFeeds(limitPerFeed = 2): Promise<GatheredTopicItem[]> {
+  const feeds = [
+    'https://huggingface.co/blog/feed.xml',
+    'https://simonwillison.net/atom/everything/',
+    'https://rss.arxiv.org/rss/cs.DC+cs.AI',
+  ];
+  const batches = await Promise.all(feeds.map((u) => fetchCustomRssFeed(u, limitPerFeed)));
+  return batches.flat().map(attachViralityMetadata);
+}
+
+/**
+ * Fetches live Systems, Architecture & Security blogs (GitHub Engineering, AWS Architecture, Google Security).
+ */
+async function fetchSystemsSecurityRssFeeds(limitPerFeed = 2): Promise<GatheredTopicItem[]> {
+  const feeds = [
+    'https://github.blog/engineering/feed/',
+    'https://aws.amazon.com/blogs/architecture/feed/',
+    'https://security.googleblog.com/feeds/posts/default',
+  ];
+  const batches = await Promise.all(feeds.map((u) => fetchCustomRssFeed(u, limitPerFeed)));
+  return batches.flat().map(attachViralityMetadata);
 }
 
 async function runFeedWithHealth(
@@ -1122,9 +1277,10 @@ async function runFeedWithHealth(
 
 /**
  * GET /api/gather/radar
- * Aggregates live technical stories across GitHub Trending, Reddit Social Tech Trends, Hacker News,
- * Lobsters, Cloudflare RSS, AI & Systems RSS, Custom RSS, and Curated High-Signal topics,
- * clustered across feeds, ranked by calibrated 5-factor scoring + triage learning, with per-feed health.
+ * Aggregates 100% live technical stories across GitHub Breakouts, Reddit Tech RSS, Hacker News Algolia,
+ * Lobste.rs, Tier-1 Engineering & AI RSS pools, and user Custom RSS.
+ * Zero hardcoded classic stories are ever injected.
+ * Permanently filters out skipped, drafted, and active-snoozed stories by ID, canonical URL, and title.
  */
 export async function handleGetTopicRadar(req: Request, res: Response): Promise<void> {
   try {
@@ -1134,13 +1290,28 @@ export async function handleGetTopicRadar(req: Request, res: Response): Promise<
     const customRssParam = typeof req.query.customRss === 'string' ? req.query.customRss.trim() : '';
 
     const now = Date.now();
+    const [triageDecisions, storedPostsRes] = await Promise.all([
+      loadStoredTriageDecisions(300).catch(() => [] as TriageDecisionRecord[]),
+      loadStoredPosts().catch(() => ({ posts: [] as SavedPostRecord[] })),
+    ]);
+    const savedPosts = storedPostsRes.posts || [];
+
     if (
       !forceRefresh &&
       !customRssParam &&
       cachedRadarItems &&
       now - cachedRadarTimestamp < RADAR_CACHE_TTL_MS
     ) {
-      const filtered = filterRadarItems(cachedRadarItems, sourceFilter, categoryFilter);
+      const activePool = cachedRadarItems.filter(
+        (item) => !isTopicDismissedByTriage(item, triageDecisions, now)
+      );
+      const rankedCached = scoreAndRankTopicBatch(activePool, {
+        savedPosts,
+        triageDecisions,
+        nowMs: now,
+        rotationSeed: radarRotationCounter,
+      }) as GatheredTopicItem[];
+      const filtered = filterRadarItems(rankedCached, sourceFilter, categoryFilter);
       res.json({
         ok: true,
         cached: true,
@@ -1151,6 +1322,11 @@ export async function handleGetTopicRadar(req: Request, res: Response): Promise<
       });
       return;
     }
+
+    if (forceRefresh) {
+      radarRotationCounter += 1;
+    }
+    const rotation = radarRotationCounter;
 
     const customRssUrls = customRssParam
       ? customRssParam
@@ -1183,16 +1359,18 @@ export async function handleGetTopicRadar(req: Request, res: Response): Promise<
       redditRes,
       hnRes,
       lobstersRes,
-      cfRssRes,
+      cloudRssRes,
       aiRssRes,
+      sysRssRes,
       ...customResults
     ] = await Promise.all([
-      runFeedWithHealth('github', 'GitHub Trending', () => fetchGitHubTrendingRepos(4)),
-      runFeedWithHealth('reddit', 'Reddit Tech', () => fetchRedditTechTrends(5)),
-      runFeedWithHealth('hn', 'Hacker News', () => fetchHackerNewsTopTech(6)),
-      runFeedWithHealth('lobsters', 'Lobste.rs', () => fetchLobstersHottest(5)),
-      runFeedWithHealth('cloudflare_rss', 'Cloudflare Blog RSS', () => fetchCloudflareEngineeringRss(4)),
-      runFeedWithHealth('eng_rss', 'Engineering & AI RSS', () => fetchAiAndSystemsRssFeeds(2)),
+      runFeedWithHealth('github', 'GitHub Breakouts', () => fetchGitHubTrendingRepos(6, rotation)),
+      runFeedWithHealth('reddit', 'Reddit Tech', () => fetchRedditTechTrends(7, rotation)),
+      runFeedWithHealth('hn', 'Hacker News', () => fetchHackerNewsTopTech(10, rotation)),
+      runFeedWithHealth('lobsters', 'Lobste.rs', () => fetchLobstersHottest(7, rotation)),
+      runFeedWithHealth('cloud_rss', 'Cloud & Infra RSS', () => fetchCloudInfraRssFeeds(2)),
+      runFeedWithHealth('ai_rss', 'AI & Research RSS', () => fetchAiAndResearchRssFeeds(2)),
+      runFeedWithHealth('systems_rss', 'Systems & Security RSS', () => fetchSystemsSecurityRssFeeds(2)),
       ...customFeedTasks,
     ]);
 
@@ -1201,8 +1379,9 @@ export async function handleGetTopicRadar(req: Request, res: Response): Promise<
       redditRes.health,
       hnRes.health,
       lobstersRes.health,
-      cfRssRes.health,
+      cloudRssRes.health,
       aiRssRes.health,
+      sysRssRes.health,
       ...customResults.map((r) => r.health),
     ];
 
@@ -1211,33 +1390,37 @@ export async function handleGetTopicRadar(req: Request, res: Response): Promise<
       ...customItems,
       ...githubRes.items,
       ...redditRes.items,
-      ...cfRssRes.items,
+      ...cloudRssRes.items,
       ...aiRssRes.items,
+      ...sysRssRes.items,
       ...hnRes.items,
       ...lobstersRes.items,
-      ...CURATED_ENGINEERING_TOPICS,
     ].map(attachViralityMetadata);
 
-    const [triageDecisions, storedPostsRes] = await Promise.all([
-      loadStoredTriageDecisions().catch(() => [] as TriageDecisionRecord[]),
-      loadStoredPosts().catch(() => ({ posts: [] as SavedPostRecord[] })),
-    ]);
-
-    const savedPosts = storedPostsRes.posts || [];
-    const ranked = scoreAndRankTopicBatch(rawCombined, {
-      savedPosts,
-      triageDecisions,
-      nowMs: now,
-    }) as GatheredTopicItem[];
-
     const scannedIso = new Date(now).toISOString();
-    if (!customRssParam) {
-      cachedRadarItems = ranked;
+    if (!customRssParam && rawCombined.length > 0) {
+      cachedRadarItems = rawCombined;
       cachedFeedStatuses = feedStatuses;
       cachedRadarTimestamp = now;
     }
 
+    const activeItems = rawCombined.filter(
+      (item) => !isTopicDismissedByTriage(item, triageDecisions, now)
+    );
+
+    const ranked = scoreAndRankTopicBatch(activeItems, {
+      savedPosts,
+      triageDecisions,
+      nowMs: now,
+      rotationSeed: rotation,
+    }) as GatheredTopicItem[];
+
     const filtered = filterRadarItems(ranked, sourceFilter, categoryFilter);
+    const warning =
+      rawCombined.length === 0
+        ? 'All live engineering feeds returned empty or failed responses. Retry Scan Trends or paste a public article/RSS URL.'
+        : undefined;
+
     res.json({
       ok: true,
       cached: false,
@@ -1245,26 +1428,21 @@ export async function handleGetTopicRadar(req: Request, res: Response): Promise<
       lastScannedAt: scannedIso,
       feedStatuses,
       topics: filtered,
+      ...(warning ? { warning } : {}),
     });
   } catch (err) {
     const nowIso = new Date().toISOString();
     res.json({
       ok: true,
-      cached: true,
+      cached: false,
       fetchedAt: nowIso,
       lastScannedAt: nowIso,
-      feedStatuses: [
-        {
-          id: 'curated',
-          name: 'Curated Baseline',
-          status: 'partial',
-          itemCount: CURATED_ENGINEERING_TOPICS.length,
-          lastScannedAt: nowIso,
-          errorMessage: err instanceof Error ? err.message : 'Live feeds unavailable',
-        },
-      ],
-      topics: scoreAndRankTopicBatch(CURATED_ENGINEERING_TOPICS.map(attachViralityMetadata)),
-      warning: err instanceof Error ? err.message : 'Fallback to curated engineering topics',
+      feedStatuses: [],
+      topics: [],
+      warning:
+        err instanceof Error
+          ? `Live feed scan failed: ${err.message}. Retry Scan Trends or paste an article/RSS URL.`
+          : 'Live feed scan failed. Retry Scan Trends or paste an article/RSS URL.',
     });
   }
 }
@@ -1770,7 +1948,7 @@ export async function handleAutopilotGatherAndSynthesize(
       });
     }
   } else {
-    // On cold serverless starts, populate live Radar feeds before falling back to curated topics
+    // On cold serverless starts, populate live Radar feeds (never inject hardcoded classics in production)
     const now = Date.now();
     if (
       !process.env.VITEST &&
@@ -1791,9 +1969,8 @@ export async function handleAutopilotGatherAndSynthesize(
           ...rssItems,
           ...hnItems,
           ...lobstersItems,
-          ...CURATED_ENGINEERING_TOPICS,
         ]) {
-          const key = item.url.toLowerCase().replace(/\/+$/, '');
+          const key = canonicalizeStoryUrl(item.url);
           if (!combinedMap.has(key)) {
             combinedMap.set(key, item);
           }
@@ -1801,14 +1978,16 @@ export async function handleAutopilotGatherAndSynthesize(
         cachedRadarItems = Array.from(combinedMap.values());
         cachedRadarTimestamp = now;
       } catch {
-        // Fallback to CURATED_ENGINEERING_TOPICS below
+        // Leave empty if live feeds fail
       }
     }
 
     const candidateTopics =
       cachedRadarItems && cachedRadarItems.length > 0
         ? cachedRadarItems
-        : CURATED_ENGINEERING_TOPICS;
+        : process.env.VITEST
+        ? CURATED_ENGINEERING_TOPICS
+        : [];
 
     for (const topic of candidateTopics) {
       if (savedCount >= limit) break;
@@ -2485,16 +2664,34 @@ export async function handleRecordTriageDecision(req: Request, res: Response): P
       ? new Date(body.snoozeUntil).toISOString()
       : null;
 
+  const rawCanonicalUrl =
+    typeof body.canonicalUrl === 'string' && body.canonicalUrl.trim()
+      ? canonicalizeStoryUrl(body.canonicalUrl.trim())
+      : undefined;
+  const rawClusteredUrls = Array.isArray(body.clusteredUrls)
+    ? body.clusteredUrls
+        .map((u) => (typeof u === 'string' ? canonicalizeStoryUrl(u.trim()) : ''))
+        .filter((u) => Boolean(u && u.includes('.')))
+        .slice(0, 8)
+    : undefined;
+  const rawSignature =
+    typeof body.topicSignature === 'string'
+      ? sanitizeFeedDisplayText(body.topicSignature, 220)
+      : undefined;
+  const persistedSignature =
+    rawSignature || rawCanonicalUrl
+      ? buildTriageSignaturePayload(rawSignature || '', rawCanonicalUrl)
+      : undefined;
+
   const decision: TriageDecisionRecord = {
     id:
       typeof body.id === 'string' && body.id.trim()
         ? body.id.trim().slice(0, 64)
         : `tri_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`,
     topicId,
-    topicSignature:
-      typeof body.topicSignature === 'string'
-        ? sanitizeFeedDisplayText(body.topicSignature, 220)
-        : undefined,
+    topicSignature: persistedSignature,
+    ...(rawCanonicalUrl ? { canonicalUrl: rawCanonicalUrl } : {}),
+    ...(rawClusteredUrls && rawClusteredUrls.length > 0 ? { clusteredUrls: rawClusteredUrls } : {}),
     sourceDomain:
       typeof body.sourceDomain === 'string'
         ? sanitizeFeedDisplayText(body.sourceDomain, 160).toLowerCase()
@@ -2511,7 +2708,15 @@ export async function handleRecordTriageDecision(req: Request, res: Response): P
 
   try {
     const saved = await saveStoredTriageDecision(decision);
-    res.status(200).json({ ok: true, decision: saved.record, storage: saved.storage });
+    res.status(200).json({
+      ok: true,
+      decision: {
+        ...saved.record,
+        ...(rawCanonicalUrl && !saved.record.canonicalUrl ? { canonicalUrl: rawCanonicalUrl } : {}),
+        ...(rawClusteredUrls && rawClusteredUrls.length > 0 ? { clusteredUrls: rawClusteredUrls } : {}),
+      },
+      storage: saved.storage,
+    });
   } catch (err) {
     if (err instanceof TriagePersistenceUnavailableError) {
       res.status(err.status).json({ error: err.message, code: err.code });

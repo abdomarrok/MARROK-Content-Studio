@@ -14,16 +14,56 @@ import { sanitizeFullCarousel } from '../../src/lib/textSanitizer.ts';
 import { runQAChecks } from '../../src/lib/qaChecks.ts';
 import { runPlatformRiskChecks } from '../../src/lib/riskChecks.ts';
 import {
+  DEFAULT_POSTS_PAGE_SIZE,
+  MAX_POSTS_PAGE_SIZE,
+  decodePostsCursor,
+  encodePostsCursor,
   getPostgresPool,
+  queryPostgresPostById,
   queryPostgresPosts,
+  queryPostgresPostsPage,
   queryPostgresDeletedIds,
   upsertPostgresPost,
   upsertPostgresPostsBatch,
   deletePostgresPost,
   clearPostgresDeletedTombstone,
+  type DecodedPostsCursor,
+  type PostsStatusFilter,
 } from '../db/postgres.ts';
 
-const MAX_SAVED_POSTS = 100;
+const MAX_SAVED_POSTS = 500;
+const VALID_STATUS_FILTERS = new Set<PostsStatusFilter>(['validated', 'posted', 'scheduled']);
+
+function compareSavedPostsDesc(a: SavedPostRecord, b: SavedPostRecord): number {
+  const aMs = Date.parse(a.updatedAt || a.createdAt || '');
+  const bMs = Date.parse(b.updatedAt || b.createdAt || '');
+  const safeA = Number.isFinite(aMs) ? aMs : 0;
+  const safeB = Number.isFinite(bMs) ? bMs : 0;
+  if (safeB !== safeA) return safeB - safeA;
+  if (a.id === b.id) return 0;
+  return a.id < b.id ? 1 : -1;
+}
+
+function matchesStatusFilter(post: SavedPostRecord, status?: PostsStatusFilter): boolean {
+  if (!status) return true;
+  if (status === 'posted') return post.postStatus === 'posted';
+  if (status === 'validated') return post.postStatus === 'validated';
+  if (status === 'scheduled') {
+    return post.postStatus !== 'posted' && Boolean(post.scheduledFor);
+  }
+  return true;
+}
+
+function isStrictlyBeforeCursor(post: SavedPostRecord, cursor: DecodedPostsCursor): boolean {
+  const postMs = Date.parse(post.updatedAt || post.createdAt || '');
+  const cursorMs = Date.parse(cursor.updatedAt);
+  const safePostMs = Number.isFinite(postMs) ? postMs : 0;
+  const safeCursorMs = Number.isFinite(cursorMs) ? cursorMs : 0;
+  if (safePostMs !== safeCursorMs) {
+    return safePostMs < safeCursorMs;
+  }
+  return post.id < cursor.id;
+}
 
 export class VaultPersistenceUnavailableError extends Error {
   status: number;
@@ -321,6 +361,119 @@ export async function loadStoredPosts(
   };
 }
 
+export interface LoadStoredPostsPageOptions {
+  strictDatabase?: boolean;
+  limit?: number;
+  cursor?: DecodedPostsCursor | null;
+  status?: PostsStatusFilter;
+}
+
+export interface LoadStoredPostsPageResult {
+  posts: SavedPostRecord[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  limit: number;
+  storageEngine: SavedPostStorageEngine;
+  isCloudPersistent: boolean;
+  deletedIds: string[];
+}
+
+/**
+ * READ-PURE keyset-paginated loader for GET /api/posts.
+ * Uses deterministic `(updated_at DESC, id DESC)` ordering so identical timestamps,
+ * concurrent updates, and deletions never skip or duplicate records across page boundaries.
+ */
+export async function loadStoredPostsPage(
+  env: NodeJS.ProcessEnv = process.env,
+  options: LoadStoredPostsPageOptions = {}
+): Promise<LoadStoredPostsPageResult> {
+  const config = getServerConfig(env);
+  const deletedIds = await loadServerDeletedPostIds(env);
+  const safeLimit = Math.max(
+    1,
+    Math.min(MAX_POSTS_PAGE_SIZE, Math.floor(options.limit ?? DEFAULT_POSTS_PAGE_SIZE))
+  );
+
+  // 1. Authoritative Neon Serverless PostgreSQL
+  if (config.databaseUrl) {
+    try {
+      const pool = getPostgresPool(config.databaseUrl);
+      if (pool) {
+        const page = await queryPostgresPostsPage(pool, {
+          limit: safeLimit,
+          cursor: options.cursor ?? null,
+          status: options.status,
+        });
+        const visiblePosts = page.posts.filter((p) => !deletedIds.has(p.id));
+        return {
+          posts: visiblePosts,
+          nextCursor: page.nextCursor,
+          hasMore: page.hasMore,
+          limit: page.limit,
+          storageEngine: 'neon-postgres',
+          isCloudPersistent: true,
+          deletedIds: Array.from(deletedIds),
+        };
+      }
+      if (options.strictDatabase) {
+        throw new VaultPersistenceUnavailableError(
+          'PostgreSQL pool is unavailable for Vault reads.',
+          502
+        );
+      }
+    } catch (pgErr) {
+      if (pgErr instanceof VaultPersistenceUnavailableError) throw pgErr;
+      if (options.strictDatabase) {
+        console.error('[PostsStore] Neon PostgreSQL paginated query failed (fail-closed):', pgErr);
+        throw new VaultPersistenceUnavailableError(
+          `Neon PostgreSQL read failed: ${pgErr instanceof Error ? pgErr.message : 'database error'}`,
+          502
+        );
+      }
+      console.warn('[PostsStore] Neon PostgreSQL paginated query failed, falling back to ephemeral store:', pgErr);
+    }
+  } else if (options.strictDatabase && isProductionServerlessVaultRuntime(env)) {
+    throw new VaultPersistenceUnavailableError(
+      'DATABASE_URL is required for durable Vault persistence in production serverless environments.',
+      503
+    );
+  }
+
+  // 2. Ephemeral Local File Store (local dev & offline tests) — mirrors exact SQL keyset semantics
+  const { posts: rawLocalPosts, engine } = await readFromFileStore(env);
+  const byId = new Map<string, SavedPostRecord>();
+  for (const post of rawLocalPosts) {
+    if (!post || typeof post.id !== 'string' || deletedIds.has(post.id)) continue;
+    const prev = byId.get(post.id);
+    if (!prev || isIncomingPostPreferred(post, prev)) {
+      byId.set(post.id, post);
+    }
+  }
+
+  const ordered = Array.from(byId.values())
+    .filter((p) => matchesStatusFilter(p, options.status))
+    .sort(compareSavedPostsDesc);
+
+  const afterCursor = options.cursor
+    ? ordered.filter((p) => isStrictlyBeforeCursor(p, options.cursor!))
+    : ordered;
+
+  const hasMore = afterCursor.length > safeLimit;
+  const pagePosts = hasMore ? afterCursor.slice(0, safeLimit) : afterCursor;
+  const tail = pagePosts[pagePosts.length - 1];
+  const nextCursor = hasMore && tail ? encodePostsCursor(tail.updatedAt, tail.id) : null;
+
+  return {
+    posts: pagePosts,
+    nextCursor,
+    hasMore,
+    limit: safeLimit,
+    storageEngine: engine,
+    isCloudPersistent: engine === 'local-disk',
+    deletedIds: Array.from(deletedIds),
+  };
+}
+
 /**
  * Persists a single SavedPostRecord cleanly with a single-row UPSERT in Postgres.
  * Fails closed in production serverless when PostgreSQL is unavailable.
@@ -509,7 +662,7 @@ export function deduplicateSavedPosts(posts: SavedPostRecord[]): SavedPostRecord
   }
 
   return Array.from(bySignature.values())
-    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    .sort(compareSavedPostsDesc)
     .slice(0, MAX_SAVED_POSTS);
 }
 
@@ -702,19 +855,80 @@ export function validateAndBuildPostRecord(
 
 /**
  * GET /api/posts
- * Lists all saved validated/posted carousels along with active storage engine metadata and deletion tombstones.
+ * Lists saved validated/posted/scheduled carousels using deterministic keyset cursor pagination
+ * (`ORDER BY updated_at DESC, id DESC`).
+ * Query parameters:
+ *   - limit: optional integer in [1..100] (defaults to 50, values > 100 clamped to 100)
+ *   - cursor: optional opaque base64url keyset cursor from previous page's `nextCursor`
+ *   - status: optional filter ('all' | 'validated' | 'posted' | 'scheduled')
  */
-export async function handleListPosts(_req: Request, res: Response) {
+export async function handleListPosts(req: Request, res: Response) {
   try {
-    const { posts, storageEngine, isCloudPersistent, deletedIds } = await loadStoredPosts(
-      process.env,
-      { strictDatabase: true }
-    );
+    const query = (req.query || {}) as Record<string, unknown>;
+
+    let limit = DEFAULT_POSTS_PAGE_SIZE;
+    if (query.limit !== undefined && query.limit !== '') {
+      const rawLimit = Array.isArray(query.limit) ? query.limit[0] : query.limit;
+      const strLimit = String(rawLimit).trim();
+      if (!/^\d+$/.test(strLimit)) {
+        return res.status(400).json({
+          error: 'Invalid pagination limit. Provide a positive integer.',
+          code: 'INVALID_PAGINATION_LIMIT',
+        });
+      }
+      const parsedLimit = Number.parseInt(strLimit, 10);
+      if (!Number.isFinite(parsedLimit) || parsedLimit < 1) {
+        return res.status(400).json({
+          error: 'Invalid pagination limit. Must be >= 1.',
+          code: 'INVALID_PAGINATION_LIMIT',
+        });
+      }
+      limit = Math.min(MAX_POSTS_PAGE_SIZE, parsedLimit);
+    }
+
+    let decodedCursor: DecodedPostsCursor | null = null;
+    if (query.cursor !== undefined && query.cursor !== '') {
+      const rawCursor = Array.isArray(query.cursor) ? query.cursor[0] : query.cursor;
+      const decoded = decodePostsCursor(rawCursor);
+      if (!decoded.ok) {
+        return res.status(400).json({
+          error: decoded.error,
+          code: 'INVALID_PAGINATION_CURSOR',
+        });
+      }
+      decodedCursor = decoded.cursor;
+    }
+
+    let statusFilter: PostsStatusFilter | undefined;
+    if (query.status !== undefined && query.status !== '') {
+      const rawStatus = Array.isArray(query.status) ? query.status[0] : query.status;
+      const normalized = String(rawStatus).trim().toLowerCase();
+      if (normalized && normalized !== 'all') {
+        if (!VALID_STATUS_FILTERS.has(normalized as PostsStatusFilter)) {
+          return res.status(400).json({
+            error: 'Invalid status filter. Allowed values: all, validated, posted, scheduled.',
+            code: 'INVALID_STATUS_FILTER',
+          });
+        }
+        statusFilter = normalized as PostsStatusFilter;
+      }
+    }
+
+    const page = await loadStoredPostsPage(process.env, {
+      strictDatabase: true,
+      limit,
+      cursor: decodedCursor,
+      status: statusFilter,
+    });
+
     return res.json({
-      posts,
-      storageEngine,
-      isCloudPersistent,
-      deletedIds: deletedIds || [],
+      posts: page.posts,
+      nextCursor: page.nextCursor,
+      hasMore: page.hasMore,
+      limit: page.limit,
+      storageEngine: page.storageEngine,
+      isCloudPersistent: page.isCloudPersistent,
+      deletedIds: page.deletedIds,
     });
   } catch (err) {
     if (err instanceof VaultPersistenceUnavailableError) {
@@ -727,7 +941,7 @@ export async function handleListPosts(_req: Request, res: Response) {
 
 /**
  * GET /api/posts/:id
- * Retrieves a single saved post by ID.
+ * Retrieves a single saved post by ID (supports direct point lookup in PostgreSQL beyond page 1).
  */
 export async function handleGetPost(req: Request, res: Response) {
   try {
@@ -735,6 +949,29 @@ export async function handleGetPost(req: Request, res: Response) {
     if (!id) {
       return res.status(400).json({ error: 'Post ID is required' });
     }
+    const config = getServerConfig(process.env);
+    if (config.databaseUrl) {
+      const pool = getPostgresPool(config.databaseUrl);
+      if (!pool) {
+        throw new VaultPersistenceUnavailableError(
+          'PostgreSQL pool is unavailable for post lookup.',
+          502
+        );
+      }
+      try {
+        const found = await queryPostgresPostById(pool, id);
+        if (!found) {
+          return res.status(404).json({ error: 'Saved post not found' });
+        }
+        return res.json({ post: { ...found, storageEngine: 'neon-postgres' as const } });
+      } catch (pgErr) {
+        throw new VaultPersistenceUnavailableError(
+          `Neon PostgreSQL post lookup failed: ${pgErr instanceof Error ? pgErr.message : 'database error'}`,
+          502
+        );
+      }
+    }
+
     const { posts, storageEngine } = await loadStoredPosts(process.env, { strictDatabase: true });
     const found = posts.find((p) => p.id === id);
     if (!found) {
@@ -852,21 +1089,45 @@ export async function handleUpdatePostStatus(req: Request, res: Response) {
     const postStatus: SavedPostStatus =
       req.body?.postStatus === 'posted' ? 'posted' : 'validated';
 
-    const { posts } = await loadStoredPosts(process.env, { strictDatabase: true });
-    const idx = posts.findIndex((p) => p.id === id);
-    if (idx === -1) {
+    const config = getServerConfig(process.env);
+    let existingPost: SavedPostRecord | null = null;
+    let listHint: SavedPostRecord[] | undefined;
+
+    if (config.databaseUrl) {
+      const pool = getPostgresPool(config.databaseUrl);
+      if (!pool) {
+        throw new VaultPersistenceUnavailableError(
+          'PostgreSQL pool is unavailable for post status update.',
+          502
+        );
+      }
+      try {
+        existingPost = await queryPostgresPostById(pool, id);
+      } catch (pgErr) {
+        throw new VaultPersistenceUnavailableError(
+          `Neon PostgreSQL status lookup failed: ${pgErr instanceof Error ? pgErr.message : 'database error'}`,
+          502
+        );
+      }
+    } else {
+      const { posts } = await loadStoredPosts(process.env, { strictDatabase: true });
+      listHint = posts;
+      existingPost = posts.find((p) => p.id === id) ?? null;
+    }
+
+    if (!existingPost) {
       return res.status(404).json({ error: 'Saved post not found' });
     }
 
     const nowIso = new Date().toISOString();
     const updated: SavedPostRecord = {
-      ...posts[idx],
+      ...existingPost,
       postStatus,
       updatedAt: nowIso,
-      postedAt: postStatus === 'posted' ? posts[idx].postedAt || nowIso : undefined,
+      postedAt: postStatus === 'posted' ? existingPost.postedAt || nowIso : undefined,
     };
 
-    const storageEngine = await upsertSingleStoredPost(updated, posts);
+    const storageEngine = await upsertSingleStoredPost(updated, listHint);
 
     return res.json({
       post: { ...updated, storageEngine },

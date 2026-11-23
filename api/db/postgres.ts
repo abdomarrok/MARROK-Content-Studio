@@ -37,11 +37,60 @@ function parsePublishTargets(raw: unknown): PublishTargetPlatform[] | undefined 
   return filtered.length > 0 ? filtered : [];
 }
 import { readRuntimeEnv } from '../../src/lib/security/env.ts';
+import { logStructuredEvent } from '../config.ts';
 
 const { Pool } = pg;
 
 let poolInstance: pg.Pool | null = null;
 let schemaInitialized = false;
+
+export const SLOW_DB_QUERY_THRESHOLD_MS = 500;
+export const DEFAULT_POSTS_PAGE_SIZE = 50;
+export const MAX_POSTS_PAGE_SIZE = 100;
+
+export type PostsStatusFilter = 'validated' | 'posted' | 'scheduled';
+
+export interface DecodedPostsCursor {
+  updatedAt: string;
+  id: string;
+}
+
+export interface PostgresPostsPageResult {
+  posts: SavedPostRecord[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  limit: number;
+}
+
+function parseBoundedIntEnv(
+  raw: string | undefined,
+  fallback: number,
+  min: number,
+  max: number
+): number {
+  if (!raw || !raw.trim()) return fallback;
+  const parsed = Number.parseInt(raw.trim(), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+export function isServerlessPostgresRuntime(env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(
+    env.VERCEL ||
+      env.VERCEL_ENV ||
+      env.NETLIFY ||
+      env.AWS_LAMBDA_FUNCTION_NAME
+  );
+}
+
+export function isNeonPooledConnectionString(connectionString: string): boolean {
+  try {
+    const parsed = new URL(connectionString);
+    return parsed.hostname.includes('-pooler.');
+  } catch {
+    return false;
+  }
+}
 
 export function resolvePostgresSslConfig(
   connectionString: string,
@@ -69,6 +118,58 @@ export function resolvePostgresSslConfig(
   };
 }
 
+/**
+ * Builds runtime-aware PostgreSQL pool settings with explicit connection, idle, statement, and query timeouts.
+ * Uses a conservative default per-instance pool ceiling (`max: 2` in serverless vs `max: 5` in long-lived Express)
+ * so concurrent serverless functions do not exhaust Neon pooled or direct connection limits.
+ */
+export function resolvePostgresPoolConfig(
+  connectionString: string,
+  env: NodeJS.ProcessEnv = process.env
+): pg.PoolConfig {
+  const cleanUrl = connectionString.trim();
+  const isServerless = isServerlessPostgresRuntime(env);
+  const defaultMax = isServerless ? 2 : 5;
+
+  return {
+    connectionString: cleanUrl,
+    ssl: resolvePostgresSslConfig(cleanUrl, env),
+    connectionTimeoutMillis: parseBoundedIntEnv(
+      readRuntimeEnv('PG_CONNECTION_TIMEOUT_MS', env),
+      5000,
+      500,
+      30_000
+    ),
+    idleTimeoutMillis: parseBoundedIntEnv(
+      readRuntimeEnv('PG_IDLE_TIMEOUT_MS', env),
+      10_000,
+      1000,
+      60_000
+    ),
+    statement_timeout: parseBoundedIntEnv(
+      readRuntimeEnv('PG_STATEMENT_TIMEOUT_MS', env),
+      10_000,
+      500,
+      60_000
+    ),
+    query_timeout: parseBoundedIntEnv(
+      readRuntimeEnv('PG_QUERY_TIMEOUT_MS', env),
+      10_000,
+      500,
+      60_000
+    ),
+    max: parseBoundedIntEnv(readRuntimeEnv('PG_POOL_MAX', env), defaultMax, 1, 20),
+    allowExitOnIdle: isServerless,
+  };
+}
+
+function warnIfSlowDbOp(operation: string, startedAtMs: number): void {
+  const durationMs = Date.now() - startedAtMs;
+  if (durationMs >= SLOW_DB_QUERY_THRESHOLD_MS) {
+    logStructuredEvent('warn', 'db_slow_query', { operation, durationMs });
+  }
+}
+
 export function getPostgresPool(connectionString?: string): pg.Pool | null {
   const url =
     connectionString ||
@@ -79,20 +180,54 @@ export function getPostgresPool(connectionString?: string): pg.Pool | null {
   if (!url || !url.trim()) return null;
 
   if (!poolInstance) {
-    const cleanUrl = url.trim();
-    poolInstance = new Pool({
-      connectionString: cleanUrl,
-      ssl: resolvePostgresSslConfig(cleanUrl),
-      connectionTimeoutMillis: 5000,
-      max: 5,
-    });
+    const poolConfig = resolvePostgresPoolConfig(url);
+    poolInstance = new Pool(poolConfig);
 
     poolInstance.on('error', (err) => {
-      console.warn('[NeonPostgres] Pool error:', err.message);
+      logStructuredEvent('warn', 'db_pool_error', {
+        message: err.message,
+      });
     });
   }
 
   return poolInstance;
+}
+
+/**
+ * Bounded readiness ping (`SELECT 1`) with automatic timer cleanup and connection return via `pool.query`.
+ * Never leaks checked-out clients or raw database credentials/errors.
+ */
+export async function pingPostgresPool(
+  pool: pg.Pool,
+  timeoutMs = 2500
+): Promise<{ ok: boolean; latencyMs: number; timedOut?: boolean }> {
+  const boundedTimeout = Math.max(250, Math.min(10_000, Math.floor(timeoutMs)));
+  const startedAt = Date.now();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let timedOut = false;
+
+  const queryPromise = Promise.resolve()
+    .then(() => pool.query('SELECT 1 AS ok'))
+    .then(() => true);
+  // Prevent unhandled rejection if query rejects after timeout wins the race
+  queryPromise.catch(() => {});
+
+  try {
+    const timeoutPromise = new Promise<boolean>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        reject(new Error('PostgreSQL readiness ping timed out'));
+      }, boundedTimeout);
+    });
+
+    await Promise.race([queryPromise, timeoutPromise]);
+    warnIfSlowDbOp('readiness_ping', startedAt);
+    return { ok: true, latencyMs: Date.now() - startedAt };
+  } catch {
+    return { ok: false, latencyMs: Date.now() - startedAt, ...(timedOut ? { timedOut: true } : {}) };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export function resetPostgresPoolForTesting(): void {
@@ -194,6 +329,7 @@ export async function initPostgresSchema(pool: pg.Pool): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_saved_posts_status ON saved_posts(post_status);
     CREATE INDEX IF NOT EXISTS idx_saved_posts_scheduled_for ON saved_posts(scheduled_for);
     CREATE INDEX IF NOT EXISTS idx_saved_posts_updated_at ON saved_posts(updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_saved_posts_updated_at_id ON saved_posts(updated_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_saved_posts_signature ON saved_posts(title_signature);
     CREATE INDEX IF NOT EXISTS idx_inbox_triage_created_at ON inbox_triage_decisions(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_inbox_triage_topic_id ON inbox_triage_decisions(topic_id);
@@ -311,12 +447,140 @@ function rowToSavedPostRecord(row: Record<string, unknown>): SavedPostRecord {
   };
 }
 
-export async function queryPostgresPosts(pool: pg.Pool): Promise<SavedPostRecord[]> {
+export function encodePostsCursor(updatedAt: string, id: string): string {
+  const payload = JSON.stringify({ u: updatedAt, id });
+  return Buffer.from(payload, 'utf-8').toString('base64url');
+}
+
+export function decodePostsCursor(
+  raw: unknown
+): { ok: true; cursor: DecodedPostsCursor } | { ok: false; error: string } {
+  if (typeof raw !== 'string') {
+    return { ok: false, error: 'Pagination cursor must be a string.' };
+  }
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > 256 || !/^[A-Za-z0-9_-]+$/.test(trimmed)) {
+    return { ok: false, error: 'Invalid pagination cursor format.' };
+  }
+
+  try {
+    const decoded = Buffer.from(trimmed, 'base64url').toString('utf-8');
+    const parsed = JSON.parse(decoded) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { ok: false, error: 'Malformed pagination cursor payload.' };
+    }
+    const u = typeof parsed.u === 'string' ? parsed.u.trim() : '';
+    const id = typeof parsed.id === 'string' ? parsed.id.trim() : '';
+    if (!u || !id || id.length > 128) {
+      return { ok: false, error: 'Pagination cursor is missing required timestamp or id.' };
+    }
+    const parsedMs = Date.parse(u);
+    if (!Number.isFinite(parsedMs)) {
+      return { ok: false, error: 'Pagination cursor contains an invalid timestamp.' };
+    }
+    return {
+      ok: true,
+      cursor: {
+        updatedAt: new Date(parsedMs).toISOString(),
+        id,
+      },
+    };
+  } catch {
+    return { ok: false, error: 'Unable to decode pagination cursor.' };
+  }
+}
+
+export async function queryPostgresPosts(
+  pool: pg.Pool,
+  limit = MAX_POSTS_PAGE_SIZE
+): Promise<SavedPostRecord[]> {
   await initPostgresSchema(pool);
+  const safeLimit = Math.max(1, Math.min(MAX_POSTS_PAGE_SIZE, Math.floor(limit) || MAX_POSTS_PAGE_SIZE));
+  const startedAt = Date.now();
   const result = await pool.query(
-    'SELECT * FROM saved_posts ORDER BY updated_at DESC LIMIT 100;'
+    `SELECT * FROM saved_posts ORDER BY updated_at DESC, id DESC LIMIT $1;`,
+    [safeLimit]
   );
-  return result.rows.map(rowToSavedPostRecord);
+  warnIfSlowDbOp('query_saved_posts', startedAt);
+  return (result.rows || []).map(rowToSavedPostRecord);
+}
+
+/**
+ * Deterministic keyset cursor pagination over `saved_posts` ordered by `(updated_at DESC, id DESC)`.
+ * Uses row-value comparison `(updated_at, id) < ($ts, $id)` so identical timestamps never skip or duplicate rows.
+ */
+export async function queryPostgresPostsPage(
+  pool: pg.Pool,
+  options: {
+    limit?: number;
+    cursor?: DecodedPostsCursor | null;
+    status?: PostsStatusFilter;
+  } = {}
+): Promise<PostgresPostsPageResult> {
+  await initPostgresSchema(pool);
+  const safeLimit = Math.max(
+    1,
+    Math.min(MAX_POSTS_PAGE_SIZE, Math.floor(options.limit ?? DEFAULT_POSTS_PAGE_SIZE))
+  );
+
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  if (options.status === 'posted') {
+    conditions.push(`post_status = 'posted'`);
+  } else if (options.status === 'validated') {
+    conditions.push(`post_status = 'validated'`);
+  } else if (options.status === 'scheduled') {
+    conditions.push(`post_status <> 'posted' AND scheduled_for IS NOT NULL`);
+  }
+
+  if (options.cursor) {
+    params.push(new Date(options.cursor.updatedAt));
+    const tsIdx = params.length;
+    params.push(options.cursor.id);
+    const idIdx = params.length;
+    conditions.push(`(updated_at, id) < ($${tsIdx}::timestamptz, $${idIdx}::varchar)`);
+  }
+
+  params.push(safeLimit + 1);
+  const limitIdx = params.length;
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const sql = `
+    SELECT * FROM saved_posts
+    ${whereClause}
+    ORDER BY updated_at DESC, id DESC
+    LIMIT $${limitIdx};
+  `;
+
+  const startedAt = Date.now();
+  const result = await pool.query(sql, params);
+  warnIfSlowDbOp('query_saved_posts_page', startedAt);
+
+  const mapped = (result.rows || []).map(rowToSavedPostRecord);
+  const hasMore = mapped.length > safeLimit;
+  const pagePosts = hasMore ? mapped.slice(0, safeLimit) : mapped;
+  const tail = pagePosts[pagePosts.length - 1];
+  const nextCursor = hasMore && tail ? encodePostsCursor(tail.updatedAt, tail.id) : null;
+
+  return {
+    posts: pagePosts,
+    nextCursor,
+    hasMore,
+    limit: safeLimit,
+  };
+}
+
+export async function queryPostgresPostById(
+  pool: pg.Pool,
+  id: string
+): Promise<SavedPostRecord | null> {
+  await initPostgresSchema(pool);
+  const startedAt = Date.now();
+  const result = await pool.query('SELECT * FROM saved_posts WHERE id = $1 LIMIT 1;', [id]);
+  warnIfSlowDbOp('query_saved_post_by_id', startedAt);
+  if (!result.rows || result.rows.length === 0) return null;
+  return rowToSavedPostRecord(result.rows[0]);
 }
 
 export async function queryPostgresDeletedIds(pool: pg.Pool): Promise<string[]> {
@@ -638,10 +902,20 @@ export async function clearPostgresDeletedTombstone(pool: pg.Pool, id: string): 
 }
 
 function rowToTriageDecision(row: Record<string, unknown>): TriageDecisionRecord {
+  const rawSignature = row.topic_signature ? String(row.topic_signature) : undefined;
+  let canonicalUrl: string | undefined;
+  if (rawSignature) {
+    const delimIdx = rawSignature.indexOf(' ||url::');
+    if (delimIdx !== -1) {
+      const extracted = rawSignature.slice(delimIdx + ' ||url::'.length).trim();
+      if (extracted) canonicalUrl = extracted;
+    }
+  }
   return {
     id: String(row.id),
     topicId: String(row.topic_id || ''),
-    topicSignature: row.topic_signature ? String(row.topic_signature) : undefined,
+    topicSignature: rawSignature,
+    ...(canonicalUrl ? { canonicalUrl } : {}),
     sourceDomain: String(row.source_domain || ''),
     domainCategory: String(row.domain_category || 'DISTRIBUTED SYSTEMS'),
     action: (row.action as TriageAction) || 'skip',

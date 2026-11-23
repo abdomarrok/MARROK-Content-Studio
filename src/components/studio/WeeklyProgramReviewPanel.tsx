@@ -11,6 +11,7 @@ import {
 import {
   acceptGatheredCandidatesToDrafts,
   buildLightweightLazyCandidate,
+  clearAllHiddenTriageDecisions,
   extractArticleFromUrl,
   fetchTopicRadar,
   fetchTriageDecisions,
@@ -18,6 +19,7 @@ import {
   generateGatheredCandidatesInBackground,
   getSavedCustomRssFeeds,
   hydrateCandidateDeckOnDemand,
+  isTopicAlreadyInVault,
   logTriageDecision,
   reEvaluateCandidateQuality,
   regenerateSingleCandidateSlideWithAi,
@@ -81,6 +83,11 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
 }) => {
   const isMountedRef = useRef<boolean>(true);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savedPostsRef = useRef<SavedPostRecord[]>(savedPosts);
+
+  useEffect(() => {
+    savedPostsRef.current = savedPosts;
+  }, [savedPosts]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -197,7 +204,7 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
 
         const generated = await generateGatheredCandidatesInBackground(
           res.topics || [],
-          savedPosts,
+          savedPostsRef.current,
           {
             formatOverride: formatFilter,
             lazy: true,
@@ -235,12 +242,42 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
         }
       }
     },
-    [sourceFilter, domainFilter, formatFilter, customRssFeeds, savedPosts, onShowToast]
+    [sourceFilter, domainFilter, formatFilter, customRssFeeds, onShowToast]
   );
 
   useEffect(() => {
     void runBackgroundGatherer(false);
   }, [runBackgroundGatherer]);
+
+  // Keep Vault "Already Covered" status synced in-place without triggering a full radar re-scan
+  useEffect(() => {
+    setCandidates((prev) => {
+      if (prev.length === 0) return prev;
+      let changed = false;
+      const next = prev.map((cand) => {
+        const vaultMatch = isTopicAlreadyInVault(cand.topic, savedPosts);
+        const nextCovered = Boolean(vaultMatch);
+        const nextPostId = vaultMatch?.id;
+        const nextPostStatus = vaultMatch?.postStatus;
+        if (
+          Boolean(cand.alreadyCovered) === nextCovered &&
+          cand.coveredPostId === nextPostId &&
+          cand.coveredPostStatus === nextPostStatus
+        ) {
+          return cand;
+        }
+        changed = true;
+        return reEvaluateCandidateQuality({
+          ...cand,
+          alreadyCovered: nextCovered,
+          coveredPostId: nextPostId,
+          coveredPostTitle: vaultMatch?.title,
+          coveredPostStatus: nextPostStatus,
+        });
+      });
+      return changed ? next : prev;
+    });
+  }, [savedPosts]);
 
   const updateCandidateDeck = useCallback(
     (
@@ -467,6 +504,8 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
           const decision = await logTriageDecision({
             topicId: candidate.topic.id,
             topicSignature: candidate.topic.title,
+            canonicalUrl: candidate.topic.url,
+            clusteredUrls: (candidate.clusteredSources || []).map((s) => s.url),
             sourceDomain: candidate.sourceDomain,
             domainCategory: candidate.topic.domainCategory,
             action: 'draft',
@@ -529,6 +568,8 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
             logTriageDecision({
               topicId: c.topic.id,
               topicSignature: c.topic.title,
+              canonicalUrl: c.topic.url,
+              clusteredUrls: (c.clusteredSources || []).map((s) => s.url),
               sourceDomain: c.sourceDomain,
               domainCategory: c.topic.domainCategory,
               action: 'draft',
@@ -567,13 +608,15 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
       const decision = await logTriageDecision({
         topicId: candidate.topic.id,
         topicSignature: candidate.topic.title,
+        canonicalUrl: candidate.topic.url,
+        clusteredUrls: (candidate.clusteredSources || []).map((s) => s.url),
         sourceDomain: candidate.sourceDomain,
         domainCategory: candidate.topic.domainCategory,
         action: 'skip',
         reason,
       });
 
-      const nextDecisions = [decision, ...triageDecisions];
+      const nextDecisions = [decision, ...triageDecisions.filter((d) => d.id !== decision.id)];
       setTriageDecisions(nextDecisions);
 
       setCandidates((prev) => {
@@ -590,6 +633,10 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
         setExpandedCandidateId(null);
       }
 
+      if (decision.pendingSync) {
+        onShowToast('Saved skip locally — will sync automatically when DB reconnects');
+      }
+
       pushUndoEntry({
         decisionId: decision.id,
         candidate,
@@ -600,7 +647,14 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
         ).slice(0, 30)}"`,
       });
     },
-    [candidates, triageDecisions, expandedCandidateId, applyLearningToRemaining, pushUndoEntry]
+    [
+      candidates,
+      triageDecisions,
+      expandedCandidateId,
+      applyLearningToRemaining,
+      onShowToast,
+      pushUndoEntry,
+    ]
   );
 
   const handleSnoozeCandidate = useCallback(
@@ -612,13 +666,15 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
       const decision = await logTriageDecision({
         topicId: candidate.topic.id,
         topicSignature: candidate.topic.title,
+        canonicalUrl: candidate.topic.url,
+        clusteredUrls: (candidate.clusteredSources || []).map((s) => s.url),
         sourceDomain: candidate.sourceDomain,
         domainCategory: candidate.topic.domainCategory,
         action: 'snooze',
         snoozeUntil,
       });
 
-      const nextDecisions = [decision, ...triageDecisions];
+      const nextDecisions = [decision, ...triageDecisions.filter((d) => d.id !== decision.id)];
       setTriageDecisions(nextDecisions);
 
       setCandidates((prev) => {
@@ -634,6 +690,10 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
         setExpandedCandidateId(null);
       }
 
+      if (decision.pendingSync) {
+        onShowToast('Saved snooze locally — will sync automatically when DB reconnects');
+      }
+
       pushUndoEntry({
         decisionId: decision.id,
         candidate,
@@ -644,7 +704,7 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
         ).slice(0, 30)}"`,
       });
     },
-    [candidates, triageDecisions, expandedCandidateId, pushUndoEntry]
+    [candidates, triageDecisions, expandedCandidateId, onShowToast, pushUndoEntry]
   );
 
   const handleUndoLastTriage = useCallback(async () => {
@@ -667,6 +727,25 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
     });
     setFocusedCandidateId(entry.candidate.id);
   }, [lastUndoEntry]);
+
+  const handleRestoreHiddenDecision = useCallback(
+    async (decisionId: string) => {
+      await undoTriageDecision(decisionId);
+      setTriageDecisions((prev) => prev.filter((d) => d.id !== decisionId));
+      onShowToast('Restored hidden topic — refreshing feeds...');
+      void runBackgroundGatherer(false);
+    },
+    [onShowToast, runBackgroundGatherer]
+  );
+
+  const handleClearAllHiddenDecisions = useCallback(async () => {
+    await clearAllHiddenTriageDecisions();
+    setTriageDecisions((prev) =>
+      prev.filter((d) => d.action !== 'skip' && d.action !== 'snooze')
+    );
+    onShowToast('Cleared all hidden topics — refreshing feeds...');
+    void runBackgroundGatherer(false);
+  }, [onShowToast, runBackgroundGatherer]);
 
   // Keyboard triage shortcuts: J/K (move), D (add to drafts), X (skip), Z (undo)
   useEffect(() => {
@@ -777,6 +856,9 @@ export const WeeklyProgramReviewPanel: React.FC<WeeklyProgramReviewPanelProps> =
       onSnoozeCandidate={handleSnoozeCandidate}
       lastUndoEntry={lastUndoEntry}
       onUndoLastTriage={handleUndoLastTriage}
+      triageDecisions={triageDecisions}
+      onRestoreHiddenDecision={handleRestoreHiddenDecision}
+      onClearAllHiddenDecisions={handleClearAllHiddenDecisions}
       onRunBackgroundGatherer={runBackgroundGatherer}
       expandedCandidateId={expandedCandidateId}
       onOpenAndHydrateCandidate={handleOpenAndHydrateCandidate}

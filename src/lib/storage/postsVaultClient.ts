@@ -279,10 +279,87 @@ export interface VaultLoadResult {
   storageEngine: SavedPostStorageEngine;
   isCloudPersistent: boolean;
   offlineFallback?: boolean;
+  hasMore?: boolean;
+  nextCursor?: string | null;
+}
+
+export interface VaultPageQueryOptions {
+  cursor?: string | null;
+  limit?: number;
+  status?: 'all' | 'validated' | 'posted' | 'scheduled';
+}
+
+interface RawPostsApiResponse {
+  posts?: SavedPostRecord[];
+  nextCursor?: string | null;
+  hasMore?: boolean;
+  limit?: number;
+  deletedIds?: string[];
+  storageEngine?: SavedPostStorageEngine;
+  isCloudPersistent?: boolean;
+}
+
+const MAX_VAULT_PAGES = 20;
+
+function buildPostsEndpointUrl(options?: VaultPageQueryOptions): string {
+  if (!options) return '/api/posts';
+  const params = new URLSearchParams();
+  if (typeof options.limit === 'number' && Number.isFinite(options.limit) && options.limit > 0) {
+    params.set('limit', String(Math.floor(options.limit)));
+  }
+  if (typeof options.cursor === 'string' && options.cursor.trim()) {
+    params.set('cursor', options.cursor.trim());
+  }
+  if (options.status && options.status !== 'all') {
+    params.set('status', options.status);
+  }
+  const qs = params.toString();
+  return qs ? `/api/posts?${qs}` : '/api/posts';
+}
+
+async function fetchPostsPageRaw(options?: VaultPageQueryOptions): Promise<RawPostsApiResponse> {
+  const res = await fetch(buildPostsEndpointUrl(options), {
+    method: 'GET',
+    credentials: 'include',
+    headers: withClientAuthHeaders({ Accept: 'application/json' }),
+  });
+
+  if (!res.ok) {
+    const { message, code } = await readApiErrorPayload(res, 'Failed to load Vault posts');
+    if (isNonFallbackHttpStatus(res.status)) {
+      throw new VaultApiError(message, res.status, code);
+    }
+    throw new Error(message);
+  }
+
+  return (await res.json()) as RawPostsApiResponse;
 }
 
 /**
- * Loads saved validated/posted carousels from /api/posts and reconciles with the local IndexedDB cache.
+ * Fetches a single cursor-paginated slice from GET /api/posts.
+ */
+export async function loadVaultPostsPage(
+  options: VaultPageQueryOptions = {}
+): Promise<VaultLoadResult> {
+  const data = await fetchPostsPageRaw(options);
+  const deletedIds = mergeServerDeletedIds(data.deletedIds);
+  const pagePosts = (Array.isArray(data.posts) ? data.posts : [])
+    .filter((p) => p && !deletedIds.has(p.id))
+    .map((p) => ({ ...p, offlineDraft: false }));
+
+  return {
+    posts: pagePosts,
+    storageEngine: data.storageEngine || 'local-disk',
+    isCloudPersistent: Boolean(data.isCloudPersistent),
+    offlineFallback: false,
+    hasMore: Boolean(data.hasMore && data.nextCursor),
+    nextCursor: typeof data.nextCursor === 'string' ? data.nextCursor : null,
+  };
+}
+
+/**
+ * Loads saved validated/posted carousels from /api/posts, transparently following cursor pages
+ * (`nextCursor`) so older posts remain accessible to UI search, status filters, calendar, and cadence engines.
  * Surfaces 400/401/403/503 auth & configuration errors directly instead of silently masking them.
  * Falls back to honest offline IndexedDB storage ONLY on network failures or transient 5xx outages.
  */
@@ -291,30 +368,57 @@ export async function loadVaultPosts(): Promise<VaultLoadResult> {
   const localPosts = await readLocalVault();
 
   try {
-    const res = await fetch('/api/posts', {
-      method: 'GET',
-      credentials: 'include',
-      headers: withClientAuthHeaders({ Accept: 'application/json' }),
-    });
+    const accumulatedServerPosts: SavedPostRecord[] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | null = null;
+    let storageEngine: SavedPostStorageEngine = 'local-disk';
+    let isCloudPersistent = false;
+    let hasMore = false;
+    let lastNextCursor: string | null = null;
 
-    if (!res.ok) {
-      const { message, code } = await readApiErrorPayload(res, 'Failed to load Vault posts');
-      if (isNonFallbackHttpStatus(res.status)) {
-        throw new VaultApiError(message, res.status, code);
+    for (let pageIdx = 0; pageIdx < MAX_VAULT_PAGES; pageIdx++) {
+      // Keep page 1 URL exact (`/api/posts`) for backward compatibility with existing callers/tests;
+      // follow server-issued `nextCursor` on subsequent pages.
+      const data = await fetchPostsPageRaw(cursor ? { cursor } : undefined);
+      deletedIds = mergeServerDeletedIds(data.deletedIds);
+      if (pageIdx === 0) {
+        storageEngine = data.storageEngine || 'local-disk';
+        isCloudPersistent = Boolean(data.isCloudPersistent);
       }
-      throw new Error(message);
+
+      const pageItems = (Array.isArray(data.posts) ? data.posts : [])
+        .filter((p) => p && !deletedIds.has(p.id))
+        .map((p) => ({ ...p, offlineDraft: false }));
+      accumulatedServerPosts.push(...pageItems);
+
+      const nextCursor =
+        typeof data.nextCursor === 'string' && data.nextCursor.trim().length > 0
+          ? data.nextCursor.trim()
+          : null;
+      const serverHasMore = Boolean(data.hasMore && nextCursor);
+
+      if (!serverHasMore || !nextCursor || seenCursors.has(nextCursor)) {
+        hasMore = false;
+        lastNextCursor = null;
+        break;
+      }
+
+      seenCursors.add(nextCursor);
+      cursor = nextCursor;
+      hasMore = true;
+      lastNextCursor = nextCursor;
     }
 
-    const data = (await res.json()) as {
-      posts?: SavedPostRecord[];
-      deletedIds?: string[];
-      storageEngine?: SavedPostStorageEngine;
-      isCloudPersistent?: boolean;
-    };
-    deletedIds = mergeServerDeletedIds(data.deletedIds);
-    const serverPosts = (Array.isArray(data.posts) ? data.posts : [])
-      .filter((p) => !deletedIds.has(p.id))
-      .map((p) => ({ ...p, offlineDraft: false }));
+    // Deduplicate across page boundaries in case a post was updated concurrently while paging
+    const serverById = new Map<string, SavedPostRecord>();
+    for (const post of accumulatedServerPosts) {
+      const prev = serverById.get(post.id);
+      if (!prev || isPreferredClientRecord(post, prev)) {
+        serverById.set(post.id, post);
+      }
+    }
+    const serverPosts = Array.from(serverById.values());
+
     const pendingOfflineDrafts = localPosts.filter(
       (p) => p.offlineDraft === true && !deletedIds.has(p.id)
     );
@@ -340,9 +444,11 @@ export async function loadVaultPosts(): Promise<VaultLoadResult> {
 
     return {
       posts: merged,
-      storageEngine: data.storageEngine || 'local-disk',
-      isCloudPersistent: Boolean(data.isCloudPersistent),
+      storageEngine,
+      isCloudPersistent,
       offlineFallback: false,
+      hasMore,
+      nextCursor: lastNextCursor,
     };
   } catch (err) {
     if (err instanceof VaultApiError) {
@@ -363,6 +469,8 @@ export async function loadVaultPosts(): Promise<VaultLoadResult> {
     storageEngine: 'browser-vault',
     isCloudPersistent: false,
     offlineFallback: true,
+    hasMore: false,
+    nextCursor: null,
   };
 }
 

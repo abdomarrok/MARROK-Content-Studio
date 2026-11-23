@@ -393,12 +393,15 @@ export interface TriageDecisionRecord {
   id: string;
   topicId: string;
   topicSignature?: string;
+  canonicalUrl?: string;
+  clusteredUrls?: string[];
   sourceDomain: string;
   domainCategory: string;
   action: TriageAction;
   reason?: TriageSkipReason;
   snoozeUntil?: string | null;
   createdAt: string;
+  pendingSync?: boolean;
 }
 
 export interface MetricEvidenceItem {

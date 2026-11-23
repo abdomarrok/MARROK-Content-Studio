@@ -1034,8 +1034,11 @@ export async function exportSingleSlideVideoMp4(
             timestamp: timestampUs,
             duration: frameDurationUs,
           });
-          videoEncoder.encode(videoFrame, { keyFrame: i % fps === 0 });
-          videoFrame.close();
+          try {
+            videoEncoder.encode(videoFrame, { keyFrame: i % fps === 0 });
+          } finally {
+            videoFrame.close();
+          }
 
           if (videoEncoder.encodeQueueSize > 12) {
             await new Promise<void>((r) => setTimeout(r, 8));
@@ -1106,122 +1109,158 @@ export async function exportSingleSlideVideoMp4(
 
     let audioCtx: AudioContext | null = null;
     let audioTrackAttached = false;
-    if (preserveAudio) {
-      try {
-        const AudioCtx =
-          window.AudioContext ||
-          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-        if (AudioCtx) {
-          audioCtx = new AudioCtx();
-          video.muted = false;
-          const sourceNode = audioCtx.createMediaElementSource(video);
-          const destNode = audioCtx.createMediaStreamDestination();
-          sourceNode.connect(destNode);
-          const audioTracks = destNode.stream.getAudioTracks();
-          if (audioTracks.length > 0) {
-            combinedTracks.push(...audioTracks);
-            audioTrackAttached = true;
+    let recorder: MediaRecorder | null = null;
+    try {
+      if (preserveAudio) {
+        try {
+          const AudioCtx =
+            window.AudioContext ||
+            (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+          if (AudioCtx) {
+            audioCtx = new AudioCtx();
+            video.muted = false;
+            const sourceNode = audioCtx.createMediaElementSource(video);
+            const destNode = audioCtx.createMediaStreamDestination();
+            sourceNode.connect(destNode);
+            const audioTracks = destNode.stream.getAudioTracks();
+            if (audioTracks.length > 0) {
+              combinedTracks.push(...audioTracks);
+              audioTrackAttached = true;
+            }
           }
+        } catch {
+          // Fallback to video-only tracks if media element source fails
+        }
+      }
+      const mediaRecorderWarning =
+        preserveAudio && decodedAudio && !audioTrackAttached
+          ? 'Original audio was not included because audio capture failed during MediaRecorder export.'
+          : undefined;
+
+      const combinedStream = new MediaStream(combinedTracks);
+      const mimeCandidates = [
+        'video/mp4;codecs=avc1,mp4a.40.2',
+        'video/mp4',
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8,opus',
+        'video/webm',
+      ];
+      let selectedMime = 'video/mp4';
+      for (const candidate of mimeCandidates) {
+        if (typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(candidate)) {
+          selectedMime = candidate;
+          break;
+        }
+      }
+
+      const chunks: BlobPart[] = [];
+      recorder = new MediaRecorder(combinedStream, {
+        mimeType: selectedMime,
+        videoBitsPerSecond: 10_000_000,
+      });
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+
+      const recorderStopped = new Promise<void>((resolve) => {
+        if (!recorder) {
+          resolve();
+          return;
+        }
+        recorder.onstop = () => resolve();
+      });
+
+      video.currentTime = 0;
+      recorder.start(100);
+      try {
+        await video.play();
+      } catch {
+        // If autoplay blocked, we still step frames below
+      }
+
+      const mrLayerCache = new SingleSlideLayerCache();
+      for (let i = 0; i < totalFrames; i++) {
+        if (options.signal?.aborted) {
+          throw new Error('Video export cancelled.');
+        }
+        const timeSec = i / fps;
+        if (video.paused) {
+          await seekVideoToTime(video, timeSec, { signal: options.signal });
+        }
+        await mrLayerCache.renderFrame(
+          canvas,
+          targetCarousel,
+          0,
+          video,
+          options.theme,
+          options.visualOptions
+        );
+        const pct = Math.min(95, 12 + Math.round(((i + 1) / totalFrames) * 82));
+        if (i % 3 === 0 || i === totalFrames - 1) {
+          options.onProgress?.(
+            pct,
+            `Encoding frame ${i + 1} / ${totalFrames} (${width}×${height} @ ${fps}fps)`
+          );
+        }
+        await new Promise<void>((r) => setTimeout(r, Math.round(1000 / fps)));
+      }
+
+      video.pause();
+      if (recorder.state !== 'inactive') {
+        recorder.stop();
+      }
+      await recorderStopped;
+
+      options.onProgress?.(97, 'Finalizing container duration metadata...');
+      const rawBlob = new Blob(chunks, { type: selectedMime });
+      chunks.length = 0;
+      const fixedBlob = await fixVideoBlobDuration(rawBlob, durationSec);
+      const isMp4 = selectedMime.includes('mp4');
+      const finalFilename = isMp4 ? filename : filename.replace(/\.mp4$/i, '.webm');
+
+      options.onProgress?.(100, 'Video export complete');
+      return {
+        blob: fixedBlob,
+        filename: finalFilename,
+        mimeType: selectedMime,
+        extension: isMp4 ? 'mp4' : 'webm',
+        width,
+        height,
+        fps,
+        durationSec,
+        totalFrames,
+        ...(mediaRecorderWarning ? { warning: mediaRecorderWarning } : {}),
+      };
+    } finally {
+      try {
+        video.pause();
+      } catch {
+        // ignore
+      }
+      try {
+        if (recorder && recorder.state !== 'inactive') {
+          recorder.stop();
         }
       } catch {
-        // Fallback to video-only tracks if media element source fails
+        // ignore
+      }
+      if (audioCtx) {
+        void audioCtx.close().catch(() => {});
+      }
+      for (const track of combinedTracks) {
+        try {
+          track.stop();
+        } catch {
+          // ignore
+        }
+      }
+      try {
+        canvas.width = 1;
+        canvas.height = 1;
+      } catch {
+        // ignore
       }
     }
-    const mediaRecorderWarning =
-      preserveAudio && decodedAudio && !audioTrackAttached
-        ? 'Original audio was not included because audio capture failed during MediaRecorder export.'
-        : undefined;
-
-    const combinedStream = new MediaStream(combinedTracks);
-    const mimeCandidates = [
-      'video/mp4;codecs=avc1,mp4a.40.2',
-      'video/mp4',
-      'video/webm;codecs=vp9,opus',
-      'video/webm;codecs=vp8,opus',
-      'video/webm',
-    ];
-    let selectedMime = 'video/mp4';
-    for (const candidate of mimeCandidates) {
-      if (typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(candidate)) {
-        selectedMime = candidate;
-        break;
-      }
-    }
-
-    const chunks: BlobPart[] = [];
-    const recorder = new MediaRecorder(combinedStream, {
-      mimeType: selectedMime,
-      videoBitsPerSecond: 10_000_000,
-    });
-    recorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) chunks.push(e.data);
-    };
-
-    const recorderStopped = new Promise<void>((resolve) => {
-      recorder.onstop = () => resolve();
-    });
-
-    video.currentTime = 0;
-    recorder.start(100);
-    try {
-      await video.play();
-    } catch {
-      // If autoplay blocked, we still step frames below
-    }
-
-    const mrLayerCache = new SingleSlideLayerCache();
-    for (let i = 0; i < totalFrames; i++) {
-      if (options.signal?.aborted) {
-        recorder.stop();
-        if (audioCtx) void audioCtx.close().catch(() => {});
-        throw new Error('Video export cancelled.');
-      }
-      const timeSec = i / fps;
-      if (video.paused) {
-        await seekVideoToTime(video, timeSec, { signal: options.signal });
-      }
-      await mrLayerCache.renderFrame(
-        canvas,
-        targetCarousel,
-        0,
-        video,
-        options.theme,
-        options.visualOptions
-      );
-      const pct = Math.min(95, 12 + Math.round(((i + 1) / totalFrames) * 82));
-      if (i % 3 === 0 || i === totalFrames - 1) {
-        options.onProgress?.(
-          pct,
-          `Encoding frame ${i + 1} / ${totalFrames} (${width}×${height} @ ${fps}fps)`
-        );
-      }
-      await new Promise<void>((r) => setTimeout(r, Math.round(1000 / fps)));
-    }
-
-    video.pause();
-    recorder.stop();
-    await recorderStopped;
-    if (audioCtx) void audioCtx.close().catch(() => {});
-
-    options.onProgress?.(97, 'Finalizing container duration metadata...');
-    const rawBlob = new Blob(chunks, { type: selectedMime });
-    const fixedBlob = await fixVideoBlobDuration(rawBlob, durationSec);
-    const isMp4 = selectedMime.includes('mp4');
-    const finalFilename = isMp4 ? filename : filename.replace(/\.mp4$/i, '.webm');
-
-    options.onProgress?.(100, 'Video export complete');
-    return {
-      blob: fixedBlob,
-      filename: finalFilename,
-      mimeType: selectedMime,
-      extension: isMp4 ? 'mp4' : 'webm',
-      width,
-      height,
-      fps,
-      durationSec,
-      totalFrames,
-      ...(mediaRecorderWarning ? { warning: mediaRecorderWarning } : {}),
-    };
   }
 
   // ── 3. Deterministic Headless / Unit Test Pipeline ──

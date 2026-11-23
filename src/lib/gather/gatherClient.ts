@@ -38,11 +38,15 @@ import { withClientAuthHeaders } from '../security/clientSessionToken.ts';
 import {
   buildGroundedFitLine,
   buildProposedHook,
+  buildTriageSignaturePayload,
+  canonicalizeStoryUrl,
   computeCandidateRiskSignals,
   computeCalibratedTopicScore,
   extractMetricEvidenceChips,
   formatShortInboxDate,
   isSingleMetricUnverified,
+  isTopicDismissedByTriage,
+  parseTriageSignature,
   sanitizeFeedDisplayText,
   sanitizeSafeHttpUrl,
   scoreAndRankTopicBatch,
@@ -140,14 +144,195 @@ export interface ExtractUrlResponse {
 const DISMISSED_TOPICS_KEY = 'marrok_dismissed_gather_topic_ids_v1';
 const CUSTOM_RSS_FEEDS_KEY = 'marrok_custom_rss_feeds_v1';
 const TRIAGE_DECISIONS_KEY = 'marrok_inbox_triage_decisions_v1';
+const TRIAGE_PENDING_SYNC_KEY = 'marrok_inbox_triage_pending_sync_v1';
+const TRIAGE_PENDING_UNDO_KEY = 'marrok_inbox_triage_pending_undo_v1';
 const candidateDeckCache = new Map<string, GatheredCandidatePost>();
+
+function normalizeTriageRecord(record: TriageDecisionRecord): TriageDecisionRecord {
+  const parsed = parseTriageSignature(record.topicSignature);
+  const canonicalUrl = canonicalizeStoryUrl(record.canonicalUrl || parsed.canonicalUrl || '');
+  const clusteredUrls = Array.isArray(record.clusteredUrls)
+    ? Array.from(
+        new Set(record.clusteredUrls.map((u) => canonicalizeStoryUrl(u)).filter(Boolean))
+      ).slice(0, 8)
+    : undefined;
+  return {
+    ...record,
+    canonicalUrl: canonicalUrl || undefined,
+    clusteredUrls: clusteredUrls && clusteredUrls.length > 0 ? clusteredUrls : undefined,
+  };
+}
+
+function getPendingTriageSyncs(): TriageDecisionRecord[] {
+  try {
+    const raw = localStorage.getItem(TRIAGE_PENDING_SYNC_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? (parsed as TriageDecisionRecord[]).map(normalizeTriageRecord)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePendingTriageSyncs(records: TriageDecisionRecord[]): void {
+  try {
+    if (records.length === 0) {
+      localStorage.removeItem(TRIAGE_PENDING_SYNC_KEY);
+    } else {
+      localStorage.setItem(TRIAGE_PENDING_SYNC_KEY, JSON.stringify(records.slice(0, 150)));
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+function getPendingTriageUndos(): string[] {
+  try {
+    const raw = localStorage.getItem(TRIAGE_PENDING_UNDO_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePendingTriageUndos(ids: string[]): void {
+  try {
+    if (ids.length === 0) {
+      localStorage.removeItem(TRIAGE_PENDING_UNDO_KEY);
+    } else {
+      localStorage.setItem(
+        TRIAGE_PENDING_UNDO_KEY,
+        JSON.stringify(Array.from(new Set(ids)).slice(0, 150))
+      );
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+function mergeTriageDecisionLists(
+  serverDecisions: TriageDecisionRecord[],
+  localDecisions: TriageDecisionRecord[],
+  pendingSyncs: TriageDecisionRecord[],
+  pendingUndos: string[]
+): TriageDecisionRecord[] {
+  const undoSet = new Set(pendingUndos);
+  const byId = new Map<string, TriageDecisionRecord>();
+  const serverTopicActionKeys = new Set<string>();
+
+  for (const raw of serverDecisions) {
+    if (!raw?.id || undoSet.has(raw.id)) continue;
+    const norm = normalizeTriageRecord({ ...raw, pendingSync: false });
+    byId.set(norm.id, norm);
+    serverTopicActionKeys.add(`${norm.topicId}::${norm.action}`);
+  }
+
+  for (const raw of [...pendingSyncs, ...localDecisions]) {
+    if (!raw?.id || undoSet.has(raw.id)) continue;
+    if (byId.has(raw.id)) continue;
+    const norm = normalizeTriageRecord(raw);
+    // Avoid duplicating a pending local record if server already confirmed the same topicId+action
+    if (norm.pendingSync && serverTopicActionKeys.has(`${norm.topicId}::${norm.action}`)) {
+      continue;
+    }
+    byId.set(norm.id, norm);
+  }
+
+  return Array.from(byId.values())
+    .sort((a, b) => {
+      const ta = Date.parse(a.createdAt || '') || 0;
+      const tb = Date.parse(b.createdAt || '') || 0;
+      return tb - ta;
+    })
+    .slice(0, 300);
+}
+
+async function flushPendingTriageOperations(): Promise<void> {
+  const pendingSyncs = getPendingTriageSyncs();
+  const pendingUndos = getPendingTriageUndos();
+  if (pendingSyncs.length === 0 && pendingUndos.length === 0) return;
+
+  if (pendingSyncs.length > 0) {
+    const stillPending: TriageDecisionRecord[] = [];
+    for (const item of pendingSyncs) {
+      try {
+        const parsed = parseTriageSignature(item.topicSignature);
+        const res = await fetch('/api/gather/triage', {
+          method: 'POST',
+          credentials: 'include',
+          headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            topicId: item.topicId,
+            topicSignature: parsed.title || item.topicSignature,
+            canonicalUrl: item.canonicalUrl || parsed.canonicalUrl,
+            clusteredUrls: item.clusteredUrls,
+            sourceDomain: item.sourceDomain,
+            domainCategory: item.domainCategory,
+            action: item.action,
+            reason: item.reason,
+            snoozeUntil: item.snoozeUntil,
+          }),
+        });
+        if (res.ok) {
+          const data = (await res.json().catch(() => ({}))) as {
+            decision?: TriageDecisionRecord;
+          };
+          const confirmed = normalizeTriageRecord({
+            ...(data?.decision || item),
+            canonicalUrl:
+              data?.decision?.canonicalUrl || item.canonicalUrl || parsed.canonicalUrl || undefined,
+            clusteredUrls: data?.decision?.clusteredUrls || item.clusteredUrls,
+            pendingSync: false,
+          });
+          const nextLocal = [
+            confirmed,
+            ...getLocalTriageDecisions().filter(
+              (d) => d.id !== item.id && d.id !== confirmed.id
+            ),
+          ].slice(0, 300);
+          saveLocalTriageDecisions(nextLocal);
+        } else {
+          stillPending.push(item);
+        }
+      } catch {
+        stillPending.push(item);
+      }
+    }
+    savePendingTriageSyncs(stillPending);
+  }
+
+  if (pendingUndos.length > 0) {
+    const stillPendingUndos: string[] = [];
+    for (const id of pendingUndos) {
+      try {
+        const res = await fetch(`/api/gather/triage/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          credentials: 'include',
+          headers: withClientAuthHeaders({ Accept: 'application/json' }),
+        });
+        if (!res.ok) {
+          stillPendingUndos.push(id);
+        }
+      } catch {
+        stillPendingUndos.push(id);
+      }
+    }
+    savePendingTriageUndos(stillPendingUndos);
+  }
+}
 
 export function getLocalTriageDecisions(): TriageDecisionRecord[] {
   try {
     const raw = localStorage.getItem(TRIAGE_DECISIONS_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as TriageDecisionRecord[]) : [];
+    return Array.isArray(parsed)
+      ? (parsed as TriageDecisionRecord[]).map(normalizeTriageRecord)
+      : [];
   } catch {
     return [];
   }
@@ -164,6 +349,8 @@ export function saveLocalTriageDecisions(records: TriageDecisionRecord[]): void 
 export function clearLocalTriageDecisions(): void {
   try {
     localStorage.removeItem(TRIAGE_DECISIONS_KEY);
+    localStorage.removeItem(TRIAGE_PENDING_SYNC_KEY);
+    localStorage.removeItem(TRIAGE_PENDING_UNDO_KEY);
   } catch {
     // Ignore
   }
@@ -190,83 +377,163 @@ export function isCandidateSnoozed(
 
 export async function fetchTriageDecisions(): Promise<TriageDecisionRecord[]> {
   const local = getLocalTriageDecisions();
+  const pendingSyncs = getPendingTriageSyncs();
+  const pendingUndos = getPendingTriageUndos();
+
   try {
     const res = await fetch('/api/gather/triage?limit=250', {
       method: 'GET',
       credentials: 'include',
       headers: withClientAuthHeaders({ Accept: 'application/json' }),
     });
-    if (!res.ok) return local;
-    const data = (await res.json()) as { ok?: boolean; decisions?: TriageDecisionRecord[] };
-    if (Array.isArray(data?.decisions)) {
-      saveLocalTriageDecisions(data.decisions);
-      return data.decisions;
+    if (!res.ok) {
+      return mergeTriageDecisionLists([], local, pendingSyncs, pendingUndos);
     }
-    return local;
+    const data = (await res.json()) as { ok?: boolean; decisions?: TriageDecisionRecord[] };
+    const serverList = Array.isArray(data?.decisions) ? data.decisions : [];
+    const merged = mergeTriageDecisionLists(serverList, local, pendingSyncs, pendingUndos);
+    saveLocalTriageDecisions(merged);
+
+    if (pendingSyncs.length > 0 || pendingUndos.length > 0) {
+      void flushPendingTriageOperations();
+    }
+    return merged;
   } catch {
-    return local;
+    return mergeTriageDecisionLists([], local, pendingSyncs, pendingUndos);
   }
 }
 
 export async function logTriageDecision(payload: {
   topicId: string;
   topicSignature?: string;
+  canonicalUrl?: string;
+  clusteredUrls?: string[];
   sourceDomain: string;
   domainCategory: string;
   action: TriageAction;
   reason?: TriageSkipReason;
   snoozeUntil?: string;
 }): Promise<TriageDecisionRecord> {
-  const fallbackRecord: TriageDecisionRecord = {
+  const parsedExisting = parseTriageSignature(payload.topicSignature);
+  const cleanTitle = sanitizeFeedDisplayText(
+    parsedExisting.title || payload.topicSignature || payload.topicId,
+    160
+  );
+  const canonicalUrl = canonicalizeStoryUrl(
+    payload.canonicalUrl || parsedExisting.canonicalUrl || ''
+  );
+  const clusteredUrls = Array.isArray(payload.clusteredUrls)
+    ? Array.from(
+        new Set(payload.clusteredUrls.map((u) => canonicalizeStoryUrl(u)).filter(Boolean))
+      ).slice(0, 8)
+    : undefined;
+  const encodedSignature = buildTriageSignaturePayload(cleanTitle, canonicalUrl || undefined);
+
+  const optimisticRecord: TriageDecisionRecord = {
     id: `triage_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     topicId: payload.topicId,
-    topicSignature: sanitizeFeedDisplayText(payload.topicSignature || payload.topicId, 160),
+    topicSignature: encodedSignature,
+    canonicalUrl: canonicalUrl || undefined,
+    clusteredUrls: clusteredUrls && clusteredUrls.length > 0 ? clusteredUrls : undefined,
     sourceDomain: payload.sourceDomain,
     domainCategory: payload.domainCategory,
     action: payload.action,
     reason: payload.reason,
     snoozeUntil: payload.snoozeUntil,
     createdAt: new Date().toISOString(),
+    pendingSync: true,
   };
+
+  // Persist optimistically before network call so skips survive reloads/failures
+  saveLocalTriageDecisions(
+    [optimisticRecord, ...getLocalTriageDecisions().filter((d) => d.id !== optimisticRecord.id)].slice(
+      0,
+      300
+    )
+  );
+  savePendingTriageSyncs([
+    optimisticRecord,
+    ...getPendingTriageSyncs().filter((d) => d.id !== optimisticRecord.id),
+  ]);
 
   try {
     const res = await fetch('/api/gather/triage', {
       method: 'POST',
       credentials: 'include',
       headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        ...payload,
+        topicSignature: cleanTitle,
+        canonicalUrl: canonicalUrl || undefined,
+        clusteredUrls: clusteredUrls && clusteredUrls.length > 0 ? clusteredUrls : undefined,
+      }),
     });
     if (res.ok) {
       const data = (await res.json()) as { ok?: boolean; decision?: TriageDecisionRecord };
-      const saved = data?.decision || fallbackRecord;
-      const merged = [saved, ...getLocalTriageDecisions().filter((d) => d.id !== saved.id)].slice(
-        0,
-        300
-      );
+      const saved: TriageDecisionRecord = normalizeTriageRecord({
+        ...(data?.decision || optimisticRecord),
+        topicSignature: data?.decision?.topicSignature || encodedSignature,
+        canonicalUrl: data?.decision?.canonicalUrl || canonicalUrl || undefined,
+        clusteredUrls:
+          data?.decision?.clusteredUrls ||
+          (clusteredUrls && clusteredUrls.length > 0 ? clusteredUrls : undefined),
+        pendingSync: false,
+      });
+      const merged = [
+        saved,
+        ...getLocalTriageDecisions().filter(
+          (d) => d.id !== optimisticRecord.id && d.id !== saved.id
+        ),
+      ].slice(0, 300);
       saveLocalTriageDecisions(merged);
+      savePendingTriageSyncs(
+        getPendingTriageSyncs().filter(
+          (d) => d.id !== optimisticRecord.id && d.id !== saved.id
+        )
+      );
       return saved;
     }
   } catch {
-    // Fall back to local persistence offline
+    // Keep optimisticRecord queued in pendingSync for automatic retry
   }
 
-  const merged = [fallbackRecord, ...getLocalTriageDecisions()].slice(0, 300);
-  saveLocalTriageDecisions(merged);
-  return fallbackRecord;
+  return optimisticRecord;
 }
 
 export async function undoTriageDecision(id: string): Promise<void> {
+  const wasOnlyLocalUnsynced = getPendingTriageSyncs().some((d) => d.id === id);
   const nextLocal = getLocalTriageDecisions().filter((d) => d.id !== id);
   saveLocalTriageDecisions(nextLocal);
+  savePendingTriageSyncs(getPendingTriageSyncs().filter((d) => d.id !== id));
+
+  if (wasOnlyLocalUnsynced && id.startsWith('triage_')) {
+    return;
+  }
+
+  savePendingTriageUndos([...getPendingTriageUndos(), id]);
   try {
-    await fetch(`/api/gather/triage/${encodeURIComponent(id)}`, {
+    const res = await fetch(`/api/gather/triage/${encodeURIComponent(id)}`, {
       method: 'DELETE',
       credentials: 'include',
       headers: withClientAuthHeaders({ Accept: 'application/json' }),
     });
+    if (res.ok) {
+      savePendingTriageUndos(getPendingTriageUndos().filter((item) => item !== id));
+    }
   } catch {
-    // Local removal already applied
+    // Keep in pendingUndos so next fetchTriageDecisions retries DELETE
   }
+}
+
+export async function clearAllHiddenTriageDecisions(): Promise<void> {
+  const current = getLocalTriageDecisions();
+  const hiddenIds = current
+    .filter((d) => d.action === 'skip' || d.action === 'snooze')
+    .map((d) => d.id);
+  for (const id of hiddenIds) {
+    await undoTriageDecision(id);
+  }
+  clearDismissedGatherTopicIds();
 }
 
 export function getDismissedGatherTopicIds(): Set<string> {
@@ -969,9 +1236,7 @@ export async function generateGatheredCandidatesInBackground(
   const eligible = topics.filter(
     (t) =>
       !dismissedIds.has(t.id) &&
-      !isCandidateSkipped(t.id, decisions) &&
-      !isCandidateSnoozed(t.id, decisions, nowMs) &&
-      decisions.find((d) => d.topicId === t.id)?.action !== 'draft'
+      !isTopicDismissedByTriage(t, decisions, nowMs)
   );
 
   // Cluster overlapping stories and apply calibrated 5-factor batch ranking
@@ -1332,15 +1597,17 @@ export async function acceptGatheredCandidatesToDrafts(
         scheduledFor: undefined,
       });
 
-      // Unify triage decision: persist action 'draft' to authoritative PostgreSQL inbox_triage_decisions
+      // Unify triage decision: persist action 'draft' with canonical URL + clustered URLs
       void logTriageDecision({
         topicId: candidate.topic.id,
-        topicSignature: candidate.draftTitle,
+        topicSignature: candidate.topic.title || candidate.draftTitle,
+        canonicalUrl: candidate.topic.url,
+        clusteredUrls: (candidate.clusteredSources || []).map((s) => s.url),
         sourceDomain: candidate.topic.sourceDomain || candidate.topic.sourceName || 'unknown',
         domainCategory: candidate.topic.domainCategory || 'DISTRIBUTED SYSTEMS',
         action: 'draft',
       }).catch(() => {});
-      dismissGatherTopicId(candidate.topic.id);
+      candidateDeckCache.delete(candidate.topic.id);
     } catch (err) {
       failedCandidates.push({
         title: rawCandidate.draftTitle,

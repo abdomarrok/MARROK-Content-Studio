@@ -34,8 +34,17 @@ import {
   handleRecoverPublishOutbox,
   handleManagePublishedPost,
 } from './controllers/publishController.ts';
-import { getServerConfig, createRateLimiter, securityHeadersMiddleware } from './config.ts';
-import { getPostgresPool } from './db/postgres.ts';
+import {
+  getServerConfig,
+  createRateLimiter,
+  requestCorrelationMiddleware,
+  securityHeadersMiddleware,
+} from './config.ts';
+import {
+  getPostgresPool,
+  isServerlessPostgresRuntime,
+  pingPostgresPool,
+} from './db/postgres.ts';
 import { evaluateCorsOrigin } from '../src/lib/security/corsPolicy.ts';
 import { isPreviewWriteBlocked } from '../src/lib/security/env.ts';
 import {
@@ -70,6 +79,7 @@ const radarScanLimiter = createRateLimiter({
 const authLimiter = createRateLimiter({ windowMs: 60_000, maxRequests: 20 });
 const publishLimiter = createRateLimiter({ windowMs: 60_000, maxRequests: 30 });
 
+app.use(requestCorrelationMiddleware);
 app.use(securityHeadersMiddleware);
 
 // Strict Allowlist CORS & Proxy Path Restoration Middleware
@@ -93,7 +103,11 @@ app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.setHeader(
     'Access-Control-Allow-Headers',
-    'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-gemini-key, x-gemini-api-key, x-gemini-backup-key, x-api-secret, x-telegram-bot-api-secret-token'
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Request-Id, x-gemini-key, x-gemini-api-key, x-gemini-backup-key, x-api-secret, x-telegram-bot-api-secret-token'
+  );
+  res.setHeader(
+    'Access-Control-Expose-Headers',
+    'X-Request-Id, X-Marrok-Engine, X-Marrok-Model, Retry-After'
   );
 
   if (req.method === 'OPTIONS') {
@@ -125,10 +139,71 @@ app.use((req, res, next) => {
 
 app.use(express.json({ limit: serverConfig.jsonBodyLimit }));
 
-// Minimal unauthenticated liveness probe (zero secret telemetry)
-app.get(['/api/health', '/health'], (_req, res) => {
-  res.json({
-    status: 'ok',
+// Minimal unauthenticated liveness & readiness probes (zero secret/SQL telemetry)
+app.get(['/api/health', '/health'], async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const rawProbe = Array.isArray(req.query?.probe) ? req.query.probe[0] : req.query?.probe;
+  const probeMode = typeof rawProbe === 'string' ? rawProbe.trim().toLowerCase() : 'live';
+
+  if (probeMode !== 'ready') {
+    return res.status(200).json({
+      status: 'ok',
+      probe: 'live',
+      timestamp: Date.now(),
+    });
+  }
+
+  // Readiness checks critical database dependency only (optional providers never fail readiness)
+  const activeConfig = getServerConfig();
+  const nodeEnv = (process.env.NODE_ENV || '').trim().toLowerCase();
+  const isProdServerless =
+    isServerlessPostgresRuntime(process.env) &&
+    nodeEnv === 'production' &&
+    process.env.VITEST !== 'true';
+
+  if (!activeConfig.databaseUrl) {
+    if (isProdServerless) {
+      return res.status(503).json({
+        status: 'not_ready',
+        probe: 'ready',
+        checks: { database: 'unconfigured' },
+        timestamp: Date.now(),
+      });
+    }
+    return res.status(200).json({
+      status: 'ready',
+      probe: 'ready',
+      checks: { database: 'not_configured' },
+      timestamp: Date.now(),
+    });
+  }
+
+  const pool = getPostgresPool(activeConfig.databaseUrl);
+  if (!pool) {
+    return res.status(503).json({
+      status: 'not_ready',
+      probe: 'ready',
+      checks: { database: 'unavailable' },
+      timestamp: Date.now(),
+    });
+  }
+
+  const ping = await pingPostgresPool(pool, 2500);
+  if (!ping.ok) {
+    return res.status(503).json({
+      status: 'not_ready',
+      probe: 'ready',
+      checks: { database: 'unavailable' },
+      latencyMs: ping.latencyMs,
+      timestamp: Date.now(),
+    });
+  }
+
+  return res.status(200).json({
+    status: 'ready',
+    probe: 'ready',
+    checks: { database: 'ok' },
+    latencyMs: ping.latencyMs,
     timestamp: Date.now(),
   });
 });

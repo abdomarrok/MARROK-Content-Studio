@@ -211,7 +211,23 @@ export function canonicalizeStoryUrl(rawUrl: string): string {
       const lowerKey = key.toLowerCase();
       if (
         !lowerKey.startsWith('utm_') &&
-        !['ref', 'source', 'fbclid', 'gclid', 'mc_cid', 'mc_eid', 's', 'share'].includes(lowerKey)
+        ![
+          'ref',
+          'source',
+          'src',
+          'via',
+          'from',
+          'si',
+          'feature',
+          'fbclid',
+          'gclid',
+          'igshid',
+          'mkt_tok',
+          'mc_cid',
+          'mc_eid',
+          's',
+          'share',
+        ].includes(lowerKey)
       ) {
         keepParams.set(key, val);
       }
@@ -238,6 +254,173 @@ export function extractTopicTokens(text: string): string[] {
     .split(/\s+/)
     .map((w) => w.replace(/^-+|-+$/g, ''))
     .filter((w) => w.length >= 3 && !TITLE_STOPWORDS.has(w));
+}
+
+const TRIAGE_URL_DELIMITER = ' ||url::';
+
+/**
+ * Encodes a human-readable title signature together with its canonical URL so existing
+ * PostgreSQL `topic_signature` text columns persist cross-feed URL fingerprints without
+ * requiring a destructive schema migration.
+ */
+export function buildTriageSignaturePayload(title?: string, canonicalUrl?: string): string {
+  const cleanTitle = sanitizeFeedDisplayText(title || '', 150);
+  const cleanUrl = canonicalUrl ? canonicalizeStoryUrl(canonicalUrl).slice(0, 180) : '';
+  if (!cleanUrl) return cleanTitle;
+  return `${cleanTitle}${TRIAGE_URL_DELIMITER}${cleanUrl}`.slice(0, 340);
+}
+
+/**
+ * Parses a stored `topicSignature` back into its human title and optional embedded canonical URL.
+ */
+export function parseTriageSignature(raw?: string): { title: string; canonicalUrl?: string } {
+  if (!raw || typeof raw !== 'string') return { title: '' };
+  const idx = raw.indexOf(TRIAGE_URL_DELIMITER);
+  if (idx === -1) {
+    return { title: sanitizeFeedDisplayText(raw, 220) };
+  }
+  const title = sanitizeFeedDisplayText(raw.slice(0, idx), 220);
+  const urlPart = raw.slice(idx + TRIAGE_URL_DELIMITER.length).trim();
+  return {
+    title,
+    canonicalUrl: urlPart ? canonicalizeStoryUrl(urlPart) : undefined,
+  };
+}
+
+export function extractDecisionCanonicalUrls(decision: TriageDecisionRecord): string[] {
+  const urls = new Set<string>();
+  const addUrl = (raw?: string | null) => {
+    if (!raw) return;
+    const canon = canonicalizeStoryUrl(raw);
+    if (canon && canon.includes('.')) urls.add(canon);
+  };
+  addUrl(decision.canonicalUrl);
+  if (Array.isArray(decision.clusteredUrls)) {
+    for (const u of decision.clusteredUrls) addUrl(u);
+  }
+  const parsed = parseTriageSignature(decision.topicSignature);
+  addUrl(parsed.canonicalUrl);
+  return Array.from(urls);
+}
+
+export function extractTopicCanonicalUrls(topic: {
+  url?: string;
+  clusteredSources?: ClusteredSourceItem[];
+}): string[] {
+  const urls = new Set<string>();
+  const addUrl = (raw?: string | null) => {
+    if (!raw) return;
+    const canon = canonicalizeStoryUrl(raw);
+    if (canon && canon.includes('.')) urls.add(canon);
+  };
+  addUrl(topic.url);
+  if (Array.isArray(topic.clusteredSources)) {
+    for (const src of topic.clusteredSources) addUrl(src?.url);
+  }
+  return Array.from(urls);
+}
+
+/**
+ * Returns true if two story headlines represent the same underlying topic across feeds
+ * (>= 70% token containment or >= 60% Jaccard when at least 3 meaningful tokens exist,
+ * or exact normalized title equality for short headlines).
+ */
+export function titlesMatchDismissedStory(titleA: string, titleB: string): boolean {
+  const cleanA = sanitizeFeedDisplayText(titleA, 220).toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  const cleanB = sanitizeFeedDisplayText(titleB, 220).toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!cleanA || !cleanB) return false;
+  if (cleanA === cleanB) return true;
+
+  const tokensA = new Set(extractTopicTokens(cleanA));
+  const tokensB = new Set(extractTopicTokens(cleanB));
+  if (tokensA.size < 3 || tokensB.size < 3) return false;
+
+  let shared = 0;
+  tokensA.forEach((tok) => {
+    if (tokensB.has(tok)) shared += 1;
+  });
+
+  const minSize = Math.min(tokensA.size, tokensB.size);
+  const unionSize = tokensA.size + tokensB.size - shared;
+  const containment = minSize > 0 ? shared / minSize : 0;
+  const jaccard = unionSize > 0 ? shared / unionSize : 0;
+
+  return (shared >= 3 && containment >= 0.7) || (shared >= 3 && jaccard >= 0.6);
+}
+
+/**
+ * Finds the latest (newest-first) triage decision matching a topic by:
+ *  1. Exact topicId
+ *  2. Any canonicalized URL match (primary URL or clustered alternate source URLs)
+ *  3. Normalized cross-feed title similarity (>= 70% token overlap)
+ */
+export function findActiveTriageDecisionForTopic(
+  topic: {
+    id: string;
+    title: string;
+    url?: string;
+    clusteredSources?: ClusteredSourceItem[];
+  },
+  decisions: TriageDecisionRecord[] = [],
+  nowMs = Date.now()
+): TriageDecisionRecord | null {
+  if (!decisions || decisions.length === 0) return null;
+
+  const sorted = [...decisions].sort((a, b) => {
+    const ta = Date.parse(a.createdAt || '') || 0;
+    const tb = Date.parse(b.createdAt || '') || 0;
+    return tb - ta;
+  });
+
+  const topicUrls = new Set(extractTopicCanonicalUrls(topic));
+
+  for (const decision of sorted) {
+    const idMatch = Boolean(topic.id && decision.topicId && decision.topicId === topic.id);
+
+    let urlMatch = false;
+    if (!idMatch && topicUrls.size > 0) {
+      const decisionUrls = extractDecisionCanonicalUrls(decision);
+      urlMatch = decisionUrls.some((u) => topicUrls.has(u));
+    }
+
+    let titleMatch = false;
+    if (!idMatch && !urlMatch && decision.topicSignature) {
+      const parsedSig = parseTriageSignature(decision.topicSignature);
+      if (parsedSig.title) {
+        titleMatch = titlesMatchDismissedStory(topic.title, parsedSig.title);
+      }
+    }
+
+    if (idMatch || urlMatch || titleMatch) {
+      if (decision.action === 'snooze') {
+        if (!decision.snoozeUntil) return null;
+        const until = Date.parse(decision.snoozeUntil);
+        return Number.isFinite(until) && until > nowMs ? decision : null;
+      }
+      return decision;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Returns true if the story is permanently skipped, already moved to drafts, or actively snoozed
+ * across ANY feed by exact ID, canonical URL, or normalized title signature.
+ */
+export function isTopicDismissedByTriage(
+  topic: {
+    id: string;
+    title: string;
+    url?: string;
+    clusteredSources?: ClusteredSourceItem[];
+  },
+  decisions: TriageDecisionRecord[] = [],
+  nowMs = Date.now()
+): boolean {
+  const matched = findActiveTriageDecisionForTopic(topic, decisions, nowMs);
+  if (!matched) return false;
+  return matched.action === 'skip' || matched.action === 'draft' || matched.action === 'snooze';
 }
 
 const AGGREGATOR_DOMAINS = new Set([
@@ -509,7 +692,8 @@ export function computeLearningAdjustment(
       if (sameDomain) domainDelta += weight;
       if (sameCategory) categoryDelta += Math.round(weight * 0.45);
       if (d.topicSignature && titleTokens.size >= 2) {
-        const sigTokens = extractTopicTokens(d.topicSignature);
+        const parsedSig = parseTriageSignature(d.topicSignature);
+        const sigTokens = extractTopicTokens(parsedSig.title);
         const shared = sigTokens.filter((t) => titleTokens.has(t)).length;
         if (shared >= 2) {
           topicDelta += weight;
@@ -795,11 +979,15 @@ export function scoreAndRankTopicBatch<T extends InboxTopicLike>(
     triageDecisions?: TriageDecisionRecord[];
     isDuplicateFn?: (item: T) => boolean;
     nowMs?: number;
+    maxPerDomainInTop?: number;
+    rotationSeed?: number;
   }
 ): Array<T & { clusteredSources: ClusteredSourceItem[]; scoreBreakdown: TopicScoreBreakdown; viralityScore: number }> {
   const clustered = clusterSimilarTopics(items);
   const nowMs = options?.nowMs ?? Date.now();
   const decisions = options?.triageDecisions || [];
+  const rotationSeed = Number.isFinite(options?.rotationSeed) ? Number(options?.rotationSeed) : 0;
+  const maxPerDomainInTop = options?.maxPerDomainInTop ?? 3;
 
   // First pass: base score without batch order bias so highest-signal item per domain gets slot #0
   const prelim = clustered.map((item) => {
@@ -811,7 +999,11 @@ export function scoreAndRankTopicBatch<T extends InboxTopicLike>(
       triageDecisions: decisions,
       nowMs,
     });
-    return { item, isDup, prelimFloat: base.exactFloatScore };
+    const rotationJitter =
+      rotationSeed > 0
+        ? stableHashFraction(`${item.id}|${item.title}|rot_${rotationSeed}`) * 2.4
+        : 0;
+    return { item, isDup, prelimFloat: base.exactFloatScore + rotationJitter };
   });
 
   prelim.sort((a, b) => b.prelimFloat - a.prelimFloat);
@@ -836,6 +1028,11 @@ export function scoreAndRankTopicBatch<T extends InboxTopicLike>(
       nowMs,
     });
 
+    const rotationJitter =
+      rotationSeed > 0
+        ? stableHashFraction(`${item.id}|${srcKey}|rot_${rotationSeed}`) * 1.8
+        : 0;
+
     return {
       item: {
         ...item,
@@ -847,15 +1044,32 @@ export function scoreAndRankTopicBatch<T extends InboxTopicLike>(
         clientRelevanceReason: item.clientRelevanceReason || res.clientRelevanceReason,
         marrokAngle: item.marrokAngle || res.marrokAngle,
       },
-      exactFloat: res.exactFloatScore,
+      exactFloat: res.exactFloatScore + rotationJitter,
     };
   });
 
   scored.sort((a, b) => b.exactFloat - a.exactFloat);
 
+  // Enforce per-domain diversity in the top discovery band so one blog/aggregator never floods the Inbox
+  const diversified: typeof scored = [];
+  const overflow: typeof scored = [];
+  const topDomainFreq = new Map<string, number>();
+
+  for (const entry of scored) {
+    const dom = entry.item.sourceDomain || 'source';
+    const seen = topDomainFreq.get(dom) || 0;
+    if (diversified.length < 18 && seen >= maxPerDomainInTop) {
+      overflow.push(entry);
+    } else {
+      topDomainFreq.set(dom, seen + 1);
+      diversified.push(entry);
+    }
+  }
+  const finalOrdered = [...diversified, ...overflow];
+
   // Enforce clean ranking spread: cap identical integer scores at max 2 per value (strictly <= 3)
   const scoreFreq = new Map<number, number>();
-  for (const entry of scored) {
+  for (const entry of finalOrdered) {
     let val = entry.item.scoreBreakdown.composite;
     while ((scoreFreq.get(val) || 0) >= 2 && val > 12) {
       val -= 1;
@@ -868,11 +1082,45 @@ export function scoreAndRankTopicBatch<T extends InboxTopicLike>(
     entry.item.viralityScore = val;
   }
 
-  return scored.map((s) => s.item);
+  return finalOrdered.map((s) => s.item);
+}
+
+function extractLeadSubjectLabel(title: string, sourceDomain?: string): string {
+  const clean = sanitizeFeedDisplayText(title || '', 140)
+    .replace(/^(?:show\s+hn|ask\s+hn|launch\s+hn|how|why)\s*[:-]?\s*/i, '')
+    .trim();
+  const knownSubjectMatch = clean.match(
+    /\b(DeepSeek|Cloudflare|Pingora|Postgres(?:QL)?|SQLite|Redis|ScyllaDB|Cassandra|ClickHouse|Kafka|Rust|Go|Zig|Linux|eBPF|io_uring|Kubernetes|Docker|Envoy|Tailscale|WireGuard|vLLM|Llama|Claude|Gemini|OpenAI|Anthropic|HuggingFace|WebAssembly|WASM|GitHub|DuckDB|NGINX|Firecracker|Oxide|Fly\.io|AWS|Neon)\b/i
+  );
+  if (knownSubjectMatch?.[1]) return knownSubjectMatch[1];
+
+  const dom = (sourceDomain || '').toLowerCase();
+  if (dom.includes('kubernetes.io')) return 'Kubernetes';
+  if (dom.includes('cloudflare.com')) return 'Cloudflare';
+  if (dom.includes('fly.io')) return 'Fly.io';
+  if (dom.includes('tailscale.com')) return 'Tailscale';
+  if (dom.includes('huggingface.co')) return 'HuggingFace';
+  if (dom.includes('github.blog') || dom.includes('github.com')) return 'GitHub';
+  if (dom.includes('aws.amazon.com')) return 'AWS';
+  if (dom.includes('googleblog.com')) return 'Google Security';
+  if (dom.includes('simonwillison.net')) return 'Simon Willison';
+
+  const firstClause = clean.split(/[:|—–-]/)[0]?.trim() || clean;
+  const words = firstClause.split(/\s+/).filter((w) => w.length >= 2).slice(0, 3);
+  if (
+    words.length >= 1 &&
+    !/^(scheduling|removing|updating|introducing|announcing|building|using|making|running|testing)$/i.test(
+      words[0]
+    )
+  ) {
+    return words.join(' ');
+  }
+  return sourceDomain || 'this architecture';
 }
 
 /**
- * Generates a concise, grounded 1-line "Why it fits Marrok" explanation strictly from source context.
+ * Generates a concise, story-specific 1-line "Why it fits Marrok" explanation strictly from source context.
+ * Prioritizes AI/LLM/KV-cache before generic storage terms so AI papers are never mislabeled as databases.
  */
 export function buildGroundedFitLine(item: {
   title: string;
@@ -884,42 +1132,49 @@ export function buildGroundedFitLine(item: {
   const combined = sanitizeFeedDisplayText(`${item.title || ''} ${item.summary || ''}`, 1200).toLowerCase();
   const metric = item.extractedMetrics?.[0] ? sanitizeFeedDisplayText(item.extractedMetrics[0], 32) : '';
   const metricClause = metric ? ` (${metric})` : '';
+  const subject = extractLeadSubjectLabel(item.title, item.sourceDomain);
+  const srcLabel = item.sourceDomain ? ` from ${item.sourceDomain}` : '';
 
-  if (/\b(rust|nginx|proxy|cpu|memory|allocator|ebpf|io_uring|kernel)\b/.test(combined)) {
+  // 1. AI, LLM & Inference (checked before DB so `kv-cache` / `vector` / `memory` land here accurately)
+  if (/\b(llm|kv[- ]?cache|inference|agent|deepseek|vllm|gpu|transformer|token|rag|mla|quantiz|embedding|model\s+weight|fine[- ]?tun)\b/.test(combined)) {
     return {
-      fitLine: `Backend efficiency and lower compute overhead${metricClause} for lean engineering teams.`,
-      reason: 'Directly helps backend teams cut CPU, memory, and infrastructure bills.',
+      fitLine: `What this means for your product: ${subject} reshapes AI inference cost & GPU throughput${metricClause}.`,
+      reason: `Directly impacts AI feature latency, GPU memory usage, and unit economics (${subject}).`,
     };
   }
-  if (/\b(postgres|postgresql|redis|scylla|cassandra|sqlite|database|p99|sharding|storage)\b/.test(combined)) {
+  // 2. Security, CVEs & Zero-Trust
+  if (/\b(zero[- ]?trust|mtls|cve-\d+|sandbox|wireguard|nat\s+traversal|firewall|auth|oauth|security|encryption|exploit|vulnerabilit|breach)\b/.test(combined)) {
     return {
-      fitLine: `Database latency and storage scaling trade-offs${metricClause} for production SaaS stacks.`,
-      reason: 'Practical database architecture insight for teams managing growth and tail latency.',
+      fitLine: `What this means for your product: apply ${subject} security & isolation lessons${metricClause} before an incident hits.`,
+      reason: `Actionable security hardening${srcLabel} for teams operating customer-facing APIs.`,
     };
   }
-  if (/\b(llm|kv[- ]?cache|inference|agent|deepseek|vllm|gpu|model|token|rag|mla)\b/.test(combined)) {
+  // 3. Databases, Storage & Query Latency
+  if (/\b(postgres|postgresql|redis|scylla|cassandra|sqlite|duckdb|clickhouse|database|p99|sharding|storage|b-?tree|wal\b|mvcc)\b/.test(combined)) {
     return {
-      fitLine: `AI inference cost and throughput architecture${metricClause} for product engineering teams.`,
-      reason: 'Directly impacts AI feature latency, GPU memory usage, and unit economics.',
+      fitLine: `What this means for your product: ${subject} database latency & storage scaling lessons${metricClause}.`,
+      reason: `Practical storage architecture trade-offs${srcLabel} for teams managing tail latency.`,
     };
   }
-  if (/\b(zero[- ]?trust|mtls|cve-|sandbox|wireguard|nat|firewall|auth|security|encryption)\b/.test(combined)) {
+  // 4. Systems, Kernel, Rust, Compilers & Low-Level Performance
+  if (/\b(rust|zig|nginx|proxy|cpu|memory|allocator|ebpf|io_uring|kernel|compiler|wasm|webassembly|syscall|async)\b/.test(combined)) {
     return {
-      fitLine: `Network and tenant security mechanics${metricClause} for production cloud services.`,
-      reason: 'Actionable security hardening for teams operating customer-facing APIs.',
+      fitLine: `What this means for your product: ${subject} systems efficiency playbook${metricClause} to cut compute overhead.`,
+      reason: `Directly helps backend teams lower CPU, memory, and infrastructure bills (${subject}).`,
     };
   }
-  if (/\b(kubernetes|container|docker|serverless|microvm|wasm|cloud|failover|cluster)\b/.test(combined)) {
+  // 5. Cloud, Kubernetes, Containers & Reliability
+  if (/\b(kubernetes|k8s|container|docker|serverless|microvm|firecracker|cloud|failover|cluster|envoy|observability|postmortem)\b/.test(combined)) {
     return {
-      fitLine: `Cloud orchestration and reliability patterns${metricClause} for small platform teams.`,
-      reason: 'Concrete cloud reliability patterns without enterprise bloat.',
+      fitLine: `What this means for your product: ${subject} cloud reliability & orchestration patterns${metricClause} for lean teams.`,
+      reason: `Concrete reliability engineering patterns${srcLabel} without enterprise bloat.`,
     };
   }
 
   const domainLabel = (item.domainCategory || 'systems engineering').toLowerCase();
   return {
-    fitLine: `Practical ${domainLabel} trade-offs${metricClause} backed by ${item.sourceDomain || 'primary source'}.`,
-    reason: `Relevant ${domainLabel} lessons for product engineers.`,
+    fitLine: `What this means for your product: practical ${domainLabel} lessons from ${subject}${metricClause} (${item.sourceDomain || 'primary source'}).`,
+    reason: `Relevant ${domainLabel} trade-offs for product engineering teams.`,
   };
 }
 

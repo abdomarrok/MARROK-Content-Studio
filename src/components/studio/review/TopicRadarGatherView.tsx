@@ -23,21 +23,22 @@ import {
   SkipForward,
   FileCheck2,
   Eye,
+  EyeOff,
 } from 'lucide-react';
 import {
   CarouselData,
   FeedHealthStatus,
   PostFormat,
+  TriageDecisionRecord,
   TriageSkipReason,
 } from '../../../types.ts';
 import {
-  clearDismissedGatherTopicIds,
-  clearLocalTriageDecisions,
   GatheredCandidatePost,
   saveCustomRssFeeds,
 } from '../../../lib/gather/gatherClient.ts';
 import {
   isSingleMetricUnverified,
+  parseTriageSignature,
   sanitizeSafeHttpUrl,
 } from '../../../lib/gather/inboxEngine.ts';
 import {
@@ -142,6 +143,9 @@ export interface TopicRadarGatherViewProps {
   onSnoozeCandidate: (candidate: GatheredCandidatePost, duration: SnoozeDuration) => void;
   lastUndoEntry: InboxUndoEntry | null;
   onUndoLastTriage: () => void;
+  triageDecisions?: TriageDecisionRecord[];
+  onRestoreHiddenDecision?: (decisionId: string) => void;
+  onClearAllHiddenDecisions?: () => void;
   onRunBackgroundGatherer: (refresh?: boolean) => void;
   expandedCandidateId: string | null;
   onOpenAndHydrateCandidate: (
@@ -202,6 +206,9 @@ export const TopicRadarGatherView: React.FC<TopicRadarGatherViewProps> = ({
   onSnoozeCandidate,
   lastUndoEntry,
   onUndoLastTriage,
+  triageDecisions = [],
+  onRestoreHiddenDecision,
+  onClearAllHiddenDecisions,
   onRunBackgroundGatherer,
   expandedCandidateId,
   onOpenAndHydrateCandidate,
@@ -219,6 +226,7 @@ export const TopicRadarGatherView: React.FC<TopicRadarGatherViewProps> = ({
   onShowToast,
 }) => {
   const [showHowItWorks, setShowHowItWorks] = useState(false);
+  const [showHiddenDrawer, setShowHiddenDrawer] = useState(false);
   const [openScoreId, setOpenScoreId] = useState<string | null>(null);
   const [openSourcesId, setOpenSourcesId] = useState<string | null>(null);
   const [openMetricKey, setOpenMetricKey] = useState<string | null>(null);
@@ -274,6 +282,23 @@ export const TopicRadarGatherView: React.FC<TopicRadarGatherViewProps> = ({
     () => feedStatuses.filter((f) => f.status === 'error' || f.status === 'partial'),
     [feedStatuses]
   );
+
+  const allFeedsFailed = useMemo(
+    () => feedStatuses.length > 0 && feedStatuses.every((f) => f.status === 'error'),
+    [feedStatuses]
+  );
+
+  const hiddenDecisions = useMemo(() => {
+    const nowMs = Date.now();
+    return triageDecisions.filter((d) => {
+      if (d.action === 'skip') return true;
+      if (d.action === 'snooze' && d.snoozeUntil) {
+        const until = Date.parse(d.snoozeUntil);
+        return Number.isFinite(until) && until > nowMs;
+      }
+      return false;
+    });
+  }, [triageDecisions]);
 
   const visibleSlice = useMemo(() => {
     if (!shouldVirtualize) {
@@ -378,6 +403,21 @@ export const TopicRadarGatherView: React.FC<TopicRadarGatherViewProps> = ({
           <div className="flex items-center gap-2">
             <button
               type="button"
+              data-testid="hidden-topics-toggle-btn"
+              aria-expanded={showHiddenDrawer}
+              onClick={() => setShowHiddenDrawer((prev) => !prev)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors ${
+                showHiddenDrawer
+                  ? 'border-cyan-400/45 bg-cyan-500/15 text-cyan-200'
+                  : 'border-white/15 bg-white/[0.04] hover:bg-white/[0.08] text-slate-300'
+              }`}
+            >
+              <EyeOff className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <span>Hidden ({hiddenDecisions.length})</span>
+            </button>
+
+            <button
+              type="button"
               data-testid="feed-health-toggle-btn"
               onClick={() => onSetShowRssManager((prev) => !prev)}
               className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors ${
@@ -402,11 +442,7 @@ export const TopicRadarGatherView: React.FC<TopicRadarGatherViewProps> = ({
               type="button"
               data-testid="scan-trends-btn"
               disabled={isScanningTrends}
-              onClick={() => {
-                clearDismissedGatherTopicIds();
-                clearLocalTriageDecisions();
-                onRunBackgroundGatherer(true);
-              }}
+              onClick={() => onRunBackgroundGatherer(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-cyan-400/35 bg-cyan-500/15 hover:bg-cyan-500/25 text-xs font-bold text-cyan-200 cursor-pointer disabled:opacity-50 whitespace-nowrap"
             >
               <RefreshCw
@@ -520,6 +556,103 @@ export const TopicRadarGatherView: React.FC<TopicRadarGatherViewProps> = ({
                     </button>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Hidden & Snoozed Topics Drawer */}
+        {showHiddenDrawer && (
+          <div
+            data-testid="hidden-topics-drawer"
+            className="p-3 rounded-lg border border-white/10 bg-black/50 space-y-2.5 text-xs"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2">
+              <div className="min-w-0">
+                <div className="font-bold text-slate-100">
+                  Hidden Topics ({hiddenDecisions.length})
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  Dismissed stories stay permanently hidden across all feeds by URL and title.
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {hiddenDecisions.length > 0 && onClearAllHiddenDecisions && (
+                  <button
+                    type="button"
+                    data-testid="clear-all-hidden-btn"
+                    onClick={onClearAllHiddenDecisions}
+                    className="px-2.5 py-1 rounded border border-white/15 bg-white/[0.04] hover:bg-white/10 text-[11px] font-semibold text-slate-200 cursor-pointer"
+                  >
+                    Restore all
+                  </button>
+                )}
+                <button
+                  type="button"
+                  aria-label="Close hidden topics"
+                  onClick={() => setShowHiddenDrawer(false)}
+                  className="text-slate-400 hover:text-white cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {hiddenDecisions.length === 0 ? (
+              <div className="text-[11px] text-slate-400 py-2">
+                No hidden or snoozed stories yet. Skipping a topic hides it permanently across every feed.
+              </div>
+            ) : (
+              <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
+                {hiddenDecisions.map((decision) => {
+                  const parsed = parseTriageSignature(decision.topicSignature);
+                  const displayTitle = parsed.title || decision.topicId;
+                  const reasonLabel =
+                    decision.action === 'snooze' && decision.snoozeUntil
+                      ? `Snoozed until ${new Date(decision.snoozeUntil).toLocaleDateString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                        })}`
+                      : decision.reason
+                      ? `Skipped: ${decision.reason}`
+                      : 'Skipped';
+                  return (
+                    <div
+                      key={decision.id}
+                      data-testid={`hidden-topic-row-${decision.id}`}
+                      className="px-2.5 py-2 rounded-md border border-white/10 bg-white/[0.02] flex items-center justify-between gap-3"
+                    >
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <div className="text-xs font-semibold text-slate-100 truncate">
+                          {displayTitle}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] font-mono text-slate-400">
+                          <span>{decision.sourceDomain || 'feed'}</span>
+                          <span aria-hidden="true">·</span>
+                          <span className="text-amber-300/90">{reasonLabel}</span>
+                          {decision.pendingSync && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="text-cyan-300">Saved locally</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      {onRestoreHiddenDecision && (
+                        <button
+                          type="button"
+                          data-testid={`restore-hidden-btn-${decision.id}`}
+                          aria-label={`Restore ${displayTitle}`}
+                          onClick={() => onRestoreHiddenDecision(decision.id)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-cyan-400/35 bg-cyan-500/10 hover:bg-cyan-500/20 text-[11px] font-bold text-cyan-200 cursor-pointer shrink-0"
+                        >
+                          <Undo2 className="w-3 h-3" />
+                          <span>Restore</span>
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -704,14 +837,18 @@ export const TopicRadarGatherView: React.FC<TopicRadarGatherViewProps> = ({
           <div className="text-sm font-bold text-white">
             {hasActiveFilter
               ? 'No stories match these filters'
+              : allFeedsFailed
+              ? 'Live feeds are temporarily unreachable'
               : 'Inbox is clear'}
           </div>
           <p className="text-xs text-slate-400 max-w-md mx-auto">
             {hasActiveFilter
               ? 'Reset the source or domain filter to view other ranked stories.'
-              : 'Scan engineering feeds for new stories or paste an article URL above.'}
+              : allFeedsFailed
+              ? 'No hardcoded placeholder stories are shown. Retry live feeds, check Feed Status, or paste any engineering article/RSS URL above.'
+              : 'All current live stories have been triaged. Scan for fresh stories, paste a URL above, or review your hidden topics.'}
           </p>
-          <div className="flex items-center justify-center gap-2">
+          <div className="flex flex-wrap items-center justify-center gap-2">
             {hasActiveFilter && (
               <button
                 type="button"
@@ -724,16 +861,30 @@ export const TopicRadarGatherView: React.FC<TopicRadarGatherViewProps> = ({
                 Reset filters
               </button>
             )}
+            {allFeedsFailed && (
+              <button
+                type="button"
+                onClick={() => onSetShowRssManager(true)}
+                className="px-3.5 py-1.5 rounded-md border border-amber-400/35 bg-amber-500/10 hover:bg-amber-500/20 text-xs font-semibold text-amber-200 cursor-pointer"
+              >
+                Feed status
+              </button>
+            )}
+            {!hasActiveFilter && hiddenDecisions.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowHiddenDrawer(true)}
+                className="px-3.5 py-1.5 rounded-md border border-white/15 bg-white/[0.05] hover:bg-white/10 text-xs font-semibold text-slate-200 cursor-pointer"
+              >
+                View Hidden ({hiddenDecisions.length})
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => {
-                clearDismissedGatherTopicIds();
-                clearLocalTriageDecisions();
-                onRunBackgroundGatherer(true);
-              }}
+              onClick={() => onRunBackgroundGatherer(true)}
               className="px-4 py-1.5 rounded-md bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-extrabold text-xs cursor-pointer"
             >
-              Scan Trends
+              {allFeedsFailed ? 'Retry Live Scan' : 'Scan Trends'}
             </button>
           </div>
         </div>
