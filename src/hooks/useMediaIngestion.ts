@@ -43,6 +43,7 @@ export interface UseMediaIngestionProps {
     fileName?: string,
     mode?: 'meme' | 'graphic'
   ) => Promise<void>;
+  onAnalyzeVideoFile?: (file: File, videoBlobUrl: string, storyboardDataUrl?: string) => Promise<void> | void;
 }
 
 export function useMediaIngestion({
@@ -57,6 +58,7 @@ export function useMediaIngestion({
   setActiveTab,
   setInspectorTab,
   onAnalyzePhotoCaption,
+  onAnalyzeVideoFile,
 }: UseMediaIngestionProps) {
   const [promptInput, setPromptInput] = useState('');
   const [categoryHint, setCategoryHint] = useState<string>('auto');
@@ -93,30 +95,50 @@ export function useMediaIngestion({
       setInputValidationError(null);
       if (isVideoFile(file)) {
         let videoBlobUrl = '';
+        let storyboardDataUrl = '';
         try {
           videoBlobUrl =
             typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function'
               ? URL.createObjectURL(file)
               : '';
-          const storyboard = await extractVideoStoryboardDataUrl(file);
+          let storyboardDuration: number | undefined;
+          try {
+            const storyboard = await extractVideoStoryboardDataUrl(file);
+            storyboardDataUrl = storyboard.dataUrl;
+            storyboardDuration = storyboard.duration;
+            if (!isMountedRef.current) {
+              revokeBlobUrl(videoBlobUrl);
+              return;
+            }
+            setUploadedImage({
+              base64: storyboard.dataUrl,
+              mimeType: storyboard.mimeType,
+              name: file.name,
+              sizeKb: Math.max(1, Math.round((storyboard.dataUrl.length * 0.75) / 1024)),
+            });
+          } catch (storyboardErr) {
+            console.warn('Video frame extraction fallback used:', storyboardErr);
+          }
+
           if (!isMountedRef.current) {
             revokeBlobUrl(videoBlobUrl);
             return;
           }
-          setUploadedImage({
-            base64: storyboard.dataUrl,
-            mimeType: storyboard.mimeType,
-            name: file.name,
-            sizeKb: Math.max(1, Math.round((storyboard.dataUrl.length * 0.75) / 1024)),
-          });
+
           if (videoBlobUrl) {
             applyDeckUpdate((prev) => {
-              const targetIndex = Math.min(currentSlideIndexRef.current, prev.slides.length - 1);
+              const targetIndex =
+                activePostFormat === 'reel'
+                  ? 0
+                  : Math.min(currentSlideIndexRef.current, prev.slides.length - 1);
               if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
               const current = prev.slides[targetIndex];
               trackAndReplaceBlobUrl(current.videoUrl, videoBlobUrl);
               const targetType: SlideType =
-                current.type === 'poster' || prev.postFormat === 'single' || prev.slides.length === 1
+                current.type === 'poster' ||
+                prev.postFormat === 'single' ||
+                activePostFormat === 'reel' ||
+                prev.slides.length === 1
                   ? 'poster'
                   : 'image';
               const newSlides = [...prev.slides];
@@ -127,7 +149,7 @@ export function useMediaIngestion({
                 videoUrl: videoBlobUrl,
                 videoMimeType: file.type || 'video/mp4',
                 videoFileName: file.name,
-                videoDuration: storyboard.duration || current.videoDuration,
+                videoDuration: storyboardDuration || current.videoDuration,
                 videoMuted: true,
                 videoPlaying: true,
                 videoBorderRadius: 8,
@@ -138,19 +160,30 @@ export function useMediaIngestion({
               };
               return {
                 ...prev,
-                dimensionPreset: prev.dimensionPreset || 'ig-3:4',
+                dimensionPreset:
+                  activePostFormat === 'reel'
+                    ? 'tiktok-9:16'
+                    : prev.dimensionPreset || 'tiktok-9:16',
                 slides: newSlides,
               };
             });
           }
-          setIsExpanded(true);
+          setIsExpanded(false);
           setActiveTab('upload');
-          onShowToast(`Attached video "${file.name}" & extracted keyframes for AI captioning`);
+          setInspectorTab('copy');
+          onShowToast(
+            activePostFormat === 'reel'
+              ? `🎬 Attached video "${file.name}" to 9:16 Reel — analyzing frames...`
+              : `🎬 Attached video "${file.name}" & extracted keyframes for AI captioning`
+          );
+          if (onAnalyzeVideoFile) {
+            void onAnalyzeVideoFile(file, videoBlobUrl, storyboardDataUrl);
+          }
         } catch (err) {
           if (videoBlobUrl) {
             revokeBlobUrl(videoBlobUrl);
           }
-          console.warn('Video frame extraction failed:', err);
+          console.warn('Video attachment failed:', err);
           if (isMountedRef.current) {
             onShowToast('Attached video file');
           }
@@ -250,6 +283,7 @@ export function useMediaIngestion({
       changeSlide,
       currentSlideIndexRef,
       onAnalyzePhotoCaption,
+      onAnalyzeVideoFile,
       onShowToast,
       setActiveTab,
       setIsExpanded,

@@ -7,8 +7,10 @@ import {
   RefreshCw,
   Layers,
   Film,
+  Upload,
+  Video,
 } from 'lucide-react';
-import { MotionReelData, ThemePalette } from '../../../types.ts';
+import { MotionReelData, SlideData, ThemePalette } from '../../../types.ts';
 import {
   MOTION_W,
   MOTION_H,
@@ -16,17 +18,21 @@ import {
   generateCues,
   playProceduralSfxCue,
 } from '../../../lib/motion/index.ts';
+import { isVideoFile } from '../../../lib/canvasExporter.ts';
 
 interface MotionReelViewportProps {
   reelConfig: MotionReelData;
   theme: ThemePalette;
   selectedSceneId?: string | null;
   isExporting?: boolean;
+  activeVideoSlide?: SlideData | null;
   onSelectScene?: (sceneId: string) => void;
   onToggleSfx?: () => void;
   onSyncFromCarousel?: () => void;
   onRestoreCarousel?: () => void;
   onOpenExportModal?: () => void;
+  onUploadVideoFile?: (file: File) => void;
+  onSwitchToVideoCardReel?: () => void;
 }
 
 const SCENE_COLORS = [
@@ -44,13 +50,18 @@ export const MotionReelViewport: React.FC<MotionReelViewportProps> = ({
   theme,
   selectedSceneId,
   isExporting = false,
+  activeVideoSlide = null,
   onSelectScene,
   onToggleSfx,
   onSyncFromCarousel,
   onRestoreCarousel,
   onOpenExportModal,
+  onUploadVideoFile,
+  onSwitchToVideoCardReel,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const videoInputRef = useRef<HTMLInputElement | null>(null);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [isPlaying, setIsPlaying] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
   const [speed, setSpeed] = useState<number>(1);
@@ -197,10 +208,48 @@ export const MotionReelViewport: React.FC<MotionReelViewportProps> = ({
   );
 
   return (
-    <div className="w-full h-full flex flex-col items-center justify-between gap-2">
+    <div
+      onDragOver={(e) => {
+        if (!onUploadVideoFile) return;
+        e.preventDefault();
+        setIsDraggingOver(true);
+      }}
+      onDragLeave={() => setIsDraggingOver(false)}
+      onDrop={(e) => {
+        if (!onUploadVideoFile) return;
+        e.preventDefault();
+        setIsDraggingOver(false);
+        const file = e.dataTransfer?.files?.[0];
+        if (file && isVideoFile(file)) {
+          onUploadVideoFile(file);
+        }
+      }}
+      className="w-full h-full flex flex-col items-center justify-between gap-2"
+    >
+      {onUploadVideoFile && (
+        <input
+          ref={videoInputRef}
+          type="file"
+          data-testid="reel-viewport-video-input"
+          accept=".mp4,.webm,.mov,video/mp4,video/webm,video/quicktime"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) onUploadVideoFile(file);
+            e.target.value = '';
+          }}
+        />
+      )}
+
       {/* 9:16 Live Motion Canvas Container */}
       <div className="flex-1 min-h-0 flex items-center justify-center w-full">
-        <div className="relative h-full max-h-[580px] aspect-[9/16] rounded-2xl overflow-hidden border border-white/15 shadow-2xl bg-[#080A12] group">
+        <div
+          className={`relative h-full max-h-[580px] aspect-[9/16] rounded-2xl overflow-hidden border shadow-2xl bg-[#080A12] group transition-all ${
+            isDraggingOver
+              ? 'border-cyan-400 ring-2 ring-cyan-400/40'
+              : 'border-white/15'
+          }`}
+        >
           <canvas
             ref={canvasRef}
             width={MOTION_W}
@@ -320,6 +369,30 @@ export const MotionReelViewport: React.FC<MotionReelViewportProps> = ({
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
+            {onUploadVideoFile && (
+              <button
+                type="button"
+                data-testid="reel-viewport-upload-video-btn"
+                onClick={() => videoInputRef.current?.click()}
+                className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-400/35 text-[10px] font-sans font-semibold text-emerald-200 transition-colors cursor-pointer"
+                title="Upload a video (.mp4, .webm, .mov) to turn into a 9:16 Reel"
+              >
+                <Upload className="w-2.5 h-2.5" />
+                <span>Upload Video</span>
+              </button>
+            )}
+            {activeVideoSlide?.videoUrl && onSwitchToVideoCardReel && (
+              <button
+                type="button"
+                data-testid="reel-viewport-video-card-btn"
+                onClick={onSwitchToVideoCardReel}
+                className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/35 text-[10px] font-sans font-semibold text-cyan-200 transition-colors cursor-pointer"
+                title="View uploaded video live in 9:16 MARROK card frame"
+              >
+                <Video className="w-2.5 h-2.5" />
+                <span>Video Clip</span>
+              </button>
+            )}
             {onSyncFromCarousel && (
               <button
                 type="button"

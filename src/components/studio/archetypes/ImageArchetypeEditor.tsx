@@ -30,6 +30,7 @@ import {
   isVideoUrl,
   isVideoSlide,
   getSlideMediaUrl,
+  getCanvasDimensionSpec,
 } from '../../../lib/canvas/constants.ts';
 import {
   trackAndReplaceBlobUrl,
@@ -84,6 +85,8 @@ export const ImageArchetypeEditor: React.FC<ImageArchetypeEditorProps> = ({
 
   const isMemeMode =
     carousel?.postFormat === 'meme' || Boolean(currentSlide.standaloneMeme);
+  const activeDimSpec = getCanvasDimensionSpec(carousel?.dimensionPreset);
+  const videoDimLabel = `${activeDimSpec.width}×${activeDimSpec.height}`;
 
   const applySlideBatchUpdates = (updates: Partial<SlideData>) => {
     if (onUpdateSlideFields) {
@@ -118,7 +121,7 @@ export const ImageArchetypeEditor: React.FC<ImageArchetypeEditorProps> = ({
             totalSlides === 1) &&
           !carousel?.dimensionPreset
         ) {
-          onUpdateCarouselField('dimensionPreset', 'ig-3:4');
+          onUpdateCarouselField('dimensionPreset', 'tiktok-9:16');
         }
         applySlideBatchUpdates({
           type: targetType,
@@ -484,14 +487,14 @@ export const ImageArchetypeEditor: React.FC<ImageArchetypeEditorProps> = ({
                 <Video className="w-4 h-4 text-cyan-400" />
                 <div>
                   <span className="text-xs font-bold text-white block">
-                    Video Preview & 1080×1440 MP4 Export
+                    Video Preview &amp; {videoDimLabel} MP4 Export ({activeDimSpec.aspectRatioLabel})
                   </span>
                   <span className="text-[10px] text-slate-400 font-mono block">
                     {currentSlide.videoFileName || 'Active Video Track'}
                     {currentSlide.videoDuration
                       ? ` · ${currentSlide.videoDuration.toFixed(1)}s`
                       : ''}{' '}
-                    · Corner registration marks & @MARROK badge layered above video
+                    · Corner registration marks &amp; @MARROK badge layered above video
                   </span>
                 </div>
               </div>
@@ -642,7 +645,7 @@ export const ImageArchetypeEditor: React.FC<ImageArchetypeEditorProps> = ({
                     ) : (
                       <>
                         <Download className="w-3.5 h-3.5" />
-                        <span>Export 1080×1440 MP4</span>
+                        <span>Export {videoDimLabel} MP4</span>
                       </>
                     )}
                   </button>
@@ -654,7 +657,7 @@ export const ImageArchetypeEditor: React.FC<ImageArchetypeEditorProps> = ({
             {isExportingVideo && (
               <div data-testid="video-export-progress-bar" className="space-y-1">
                 <div className="flex items-center justify-between text-[10px] font-mono text-cyan-200">
-                  <span>{videoExportStage || 'Encoding 1080×1440 MP4 frames...'}</span>
+                  <span>{videoExportStage || `Encoding ${videoDimLabel} MP4 frames...`}</span>
                   <span>{Math.round(videoExportProgress)}%</span>
                 </div>
                 <div className="w-full h-2 rounded-full bg-black/60 overflow-hidden border border-white/10">

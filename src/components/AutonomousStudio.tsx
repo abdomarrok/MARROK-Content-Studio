@@ -71,6 +71,7 @@ import {
   switchCarouselPostFormat,
   resolveEffectivePostFormat,
   filterRelevantHookVariants,
+  snapshotFormatDraft,
 } from '../lib/studio/formatWorkspace.ts';
 import { runQAChecks, type PreExportCheckId } from '../lib/qaChecks.ts';
 import { runPlatformRiskChecks } from '../lib/riskChecks.ts';
@@ -215,7 +216,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   const [isExpanded, setIsExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<'text' | 'radar' | 'youtube' | 'upload'>('text');
 
-  // Photo analysis suggestion ref for media ingestion
+  // Photo & Video analysis suggestion refs for media ingestion
   const handleAnalyzePhotoCaptionRef = useRef<
     (
       imageDataUrlOverride?: string,
@@ -223,6 +224,9 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       fileNameOverride?: string,
       modeOverride?: 'meme' | 'graphic'
     ) => Promise<void>
+  >(async () => {});
+  const handleGenerateFromVideoRef = useRef<
+    (sourceOverride?: File | string) => Promise<void>
   >(async () => {});
 
   // Media Ingestion Hook
@@ -266,6 +270,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     setInspectorTab,
     onAnalyzePhotoCaption: (dataUrl, mime, name, mode) =>
       handleAnalyzePhotoCaptionRef.current(dataUrl, mime, name, mode),
+    onAnalyzeVideoFile: (file) => handleGenerateFromVideoRef.current(file),
   });
 
   // Intelligent Feed Cadence Analysis for Live Context via custom hook
@@ -1448,19 +1453,33 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           prev.slides.length
         );
         const nextCategory = result.category || prev.category;
-        return {
+        const nextHookVariants =
+          result.hookVariants && result.hookVariants.length > 0
+            ? result.hookVariants
+            : filterRelevantHookVariants(prev.hookVariants, newSlides, nextCategory);
+        const updatedCarousel: CarouselData = {
           ...prev,
           category: nextCategory,
           caption: result.caption || prev.caption,
-          hookVariants:
-            result.hookVariants && result.hookVariants.length > 0
-              ? result.hookVariants
-              : filterRelevantHookVariants(prev.hookVariants, newSlides, nextCategory),
+          hookVariants: nextHookVariants,
           slides: newSlides,
         };
+        if (prev.postFormat === 'reel' || activePostFormat === 'reel') {
+          updatedCarousel.reelConfig = convertCarouselToMotionReel(
+            updatedCarousel,
+            theme,
+            prev.reelConfig?.templateId || activeReelConfig.templateId || 'marrok-slides',
+            prev.reelConfig?.languageMode || activeReelConfig.languageMode || 'bilingual'
+          );
+        }
+        return updatedCarousel;
       });
 
-      onShowToast('✨ Generated bilingual slide text & social caption from your video!');
+      onShowToast(
+        activePostFormat === 'reel'
+          ? '✨ Extracted video keyframes into 9:16 Reel scenes & bilingual caption!'
+          : '✨ Generated bilingual slide text & social caption from your video!'
+      );
     } catch (err) {
       console.error('Video text & caption generation failed:', err);
       onShowToast('Generated fallback slide text & caption from video metadata.');
@@ -1469,6 +1488,51 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       setPipelineStatus(null);
     }
   };
+  handleGenerateFromVideoRef.current = handleGenerateFromVideo;
+
+  const activeVideoSlide = useMemo(
+    () => carousel.slides.find((s) => isVideoSlide(s)) || null,
+    [carousel.slides]
+  );
+
+  const handleSwitchToVideoCardReel = useCallback(() => {
+    const videoSlideIdx = carousel.slides.findIndex((s) => isVideoSlide(s));
+    const targetSlide =
+      (videoSlideIdx >= 0 ? carousel.slides[videoSlideIdx] : carousel.slides[0]) ||
+      carousel.slides[0];
+    if (!targetSlide) return;
+
+    applyDeckUpdate((prev) => {
+      const prevFormat = resolveEffectivePostFormat(prev);
+      const nextDrafts =
+        prevFormat !== 'single'
+          ? snapshotFormatDraft(prev.formatDrafts, prevFormat, prev.slides, currentSlideIndexRef.current)
+          : prev.formatDrafts;
+      const singleVideoSlide: SlideData = sanitizeSlide(
+        {
+          ...targetSlide,
+          type: 'poster',
+          mediaType: 'video',
+          imageFrameMode: targetSlide.imageFrameMode === 'standard' ? 'standard' : 'hero',
+          imageFit: targetSlide.imageFit || 'contain',
+          imageBgStyle: targetSlide.imageBgStyle || 'white',
+          brandWatermark: targetSlide.brandWatermark || 'bottom-right',
+        },
+        0,
+        1
+      );
+      return {
+        ...prev,
+        postFormat: 'single',
+        dimensionPreset: 'tiktok-9:16',
+        formatDrafts: nextDrafts,
+        slides: [singleVideoSlide],
+      };
+    });
+    changeSlide(0, 1);
+    setInspectorTab('visual');
+    onShowToast('🎬 Opened 9:16 (1080×1920) Video Clip Stage — ready to edit or export MP4!');
+  }, [applyDeckUpdate, carousel.slides, changeSlide, currentSlideIndexRef, onShowToast]);
 
   // Meme / Photo AI Vision Caption & Optional Slide Headline Suggestion Generator
   const [isAnalyzingPhoto, setIsAnalyzingPhoto] = useState(false);
@@ -1949,6 +2013,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
               theme={theme}
               selectedSceneId={selectedMotionSceneId}
               isExporting={isMotionExportOpen}
+              activeVideoSlide={activeVideoSlide}
               onSelectScene={(sceneId) => setSelectedMotionSceneId(sceneId)}
               onToggleSfx={() => {
                 applyDeckUpdate((prev) => ({
@@ -1965,6 +2030,10 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
               }}
               onRestoreCarousel={() => handleSwitchPostFormat('carousel')}
               onOpenExportModal={() => setIsMotionExportOpen(true)}
+              onUploadVideoFile={(file) => {
+                void handleImageFile(file);
+              }}
+              onSwitchToVideoCardReel={handleSwitchToVideoCardReel}
             />
           ) : (
             <>
@@ -2462,6 +2531,19 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 }}
                 onSyncReelFromCarousel={(tplId, langMode) => {
                   handleSyncReelFromCarousel(tplId, langMode);
+                }}
+                activeVideoSlide={activeVideoSlide}
+                isExportingVideo={isExportingVideo}
+                videoExportProgress={videoExportProgress}
+                onUploadVideoFile={(file) => {
+                  void handleImageFile(file);
+                }}
+                onAnalyzeUploadedVideo={() => {
+                  void handleGenerateFromVideo();
+                }}
+                onSwitchToVideoCardReel={handleSwitchToVideoCardReel}
+                onExportVideoCardMp4={() => {
+                  void handleExportSingleSlideVideoMp4(30);
                 }}
                 onShowToast={onShowToast}
               />

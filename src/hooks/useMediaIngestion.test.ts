@@ -108,4 +108,57 @@ describe('useMediaIngestion', () => {
       'Please select a valid image or video file (PNG, JPG, WebP, MP4, WebM, MOV).'
     );
   });
+
+  it('attaches an uploaded MP4 video in reel mode, sets 9:16 preset, closes overlay drawer, and triggers AI video analysis', async () => {
+    const onShowToast = vi.fn();
+    const setIsExpanded = vi.fn();
+    const setInspectorTab = vi.fn();
+    const onAnalyzeVideoFile = vi.fn().mockResolvedValue(undefined);
+    let updatedCarousel = DEFAULT_STARTER_DECK;
+    const applyDeckUpdate = vi.fn((updater: (prev: typeof DEFAULT_STARTER_DECK) => typeof DEFAULT_STARTER_DECK) => {
+      updatedCarousel = updater(updatedCarousel);
+    });
+
+    const originalCreateObjectURL = URL.createObjectURL;
+    URL.createObjectURL = vi.fn(() => 'blob:http://localhost:3000/test-reel-video');
+
+    try {
+      const { result } = renderHook(() =>
+        useMediaIngestion({
+          activePostFormat: 'reel',
+          carousel: DEFAULT_STARTER_DECK,
+          currentSlideIndexRef: { current: 0 },
+          applyDeckUpdate,
+          changeSlide: vi.fn(),
+          onShowToast,
+          isExpanded: true,
+          setIsExpanded,
+          setActiveTab: vi.fn(),
+          setInspectorTab,
+          onAnalyzePhotoCaption: vi.fn().mockResolvedValue(undefined),
+          onAnalyzeVideoFile,
+        })
+      );
+
+      const videoFile = new File(['fake-mp4-binary'], 'demo-reel.mp4', { type: 'video/mp4' });
+      await act(async () => {
+        await result.current.handleImageFile(videoFile);
+      });
+
+      expect(applyDeckUpdate).toHaveBeenCalled();
+      expect(updatedCarousel.dimensionPreset).toBe('tiktok-9:16');
+      expect(updatedCarousel.slides[0].mediaType).toBe('video');
+      expect(updatedCarousel.slides[0].videoUrl).toBe('blob:http://localhost:3000/test-reel-video');
+      expect(updatedCarousel.slides[0].videoFileName).toBe('demo-reel.mp4');
+      expect(setIsExpanded).toHaveBeenCalledWith(false);
+      expect(setInspectorTab).toHaveBeenCalledWith('copy');
+      expect(onAnalyzeVideoFile).toHaveBeenCalledWith(
+        videoFile,
+        'blob:http://localhost:3000/test-reel-video',
+        expect.any(String)
+      );
+    } finally {
+      URL.createObjectURL = originalCreateObjectURL;
+    }
+  });
 });

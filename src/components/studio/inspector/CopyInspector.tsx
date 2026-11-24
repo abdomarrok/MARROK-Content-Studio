@@ -67,6 +67,13 @@ export interface CopyInspectorProps {
   onSelectMotionScene?: (sceneId: string | null) => void;
   onChangeReelConfig?: (updated: MotionReelData) => void;
   onSyncReelFromCarousel?: (templateId?: MotionTemplateId, langMode?: 'en' | 'ar' | 'bilingual') => void;
+  activeVideoSlide?: SlideData | null;
+  isExportingVideo?: boolean;
+  videoExportProgress?: number;
+  onUploadVideoFile?: (file: File) => void;
+  onAnalyzeUploadedVideo?: () => void;
+  onSwitchToVideoCardReel?: () => void;
+  onExportVideoCardMp4?: () => void;
   onShowToast: (msg: string) => void;
 }
 
@@ -108,6 +115,13 @@ export const CopyInspector: React.FC<CopyInspectorProps> = ({
   onSelectMotionScene,
   onChangeReelConfig,
   onSyncReelFromCarousel,
+  activeVideoSlide = null,
+  isExportingVideo = false,
+  videoExportProgress = 0,
+  onUploadVideoFile,
+  onAnalyzeUploadedVideo,
+  onSwitchToVideoCardReel,
+  onExportVideoCardMp4,
   onShowToast,
 }) => {
   if (activePostFormat === 'reel' && activeReelConfig && onSelectMotionScene && onChangeReelConfig && onSyncReelFromCarousel) {
@@ -119,6 +133,14 @@ export const CopyInspector: React.FC<CopyInspectorProps> = ({
         onSelectScene={onSelectMotionScene}
         onChangeReelConfig={onChangeReelConfig}
         onSyncFromCarousel={onSyncReelFromCarousel}
+        activeVideoSlide={activeVideoSlide}
+        isGeneratingFromVideo={isGeneratingFromVideo}
+        isExportingVideo={isExportingVideo}
+        videoExportProgress={videoExportProgress}
+        onUploadVideoFile={onUploadVideoFile}
+        onAnalyzeUploadedVideo={onAnalyzeUploadedVideo}
+        onSwitchToVideoCardReel={onSwitchToVideoCardReel}
+        onExportVideoCardMp4={onExportVideoCardMp4}
         onShowToast={onShowToast}
       />
     );

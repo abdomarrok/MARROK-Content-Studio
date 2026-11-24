@@ -64,7 +64,7 @@ export const INGEST_TABS = [
   { id: 'text' as const, label: 'Notes / Blog / Code', shortLabel: 'Notes', icon: FileText },
   { id: 'radar' as const, label: 'Topic Radar & URL Gather', shortLabel: 'Radar', icon: Radar },
   { id: 'youtube' as const, label: 'YouTube Summary', shortLabel: 'YouTube', icon: Youtube },
-  { id: 'upload' as const, label: 'Screenshot / Image OCR', shortLabel: 'Image OCR', icon: ImageIcon },
+  { id: 'upload' as const, label: 'Video / Image Upload', shortLabel: 'Media', icon: ImageIcon },
 ];
 
 export const DOMAIN_CATEGORIES = [
@@ -208,6 +208,7 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
         onChange={(e) => {
           const file = e.target.files?.[0];
           if (file) onImageFile(file);
+          e.target.value = '';
         }}
       />
 
@@ -339,7 +340,7 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
           </button>
         </div>
 
-        {/* Mobile Quick Meme Upload / Mode Button */}
+        {/* Direct Top-Bar Media / Video Upload Button by Post Format */}
         {activePostFormat === 'meme' ? (
           <button
             type="button"
@@ -351,6 +352,30 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
           >
             <Upload className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
             <span>Upload Meme</span>
+          </button>
+        ) : activePostFormat === 'reel' ? (
+          <button
+            type="button"
+            data-testid="top-bar-video-upload-btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isGenerating}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 min-h-[34px] rounded-xl border border-cyan-400/40 bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-100 hover:text-white text-xs font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0"
+            title="Upload a video (.mp4, .webm, .mov) to turn into a 9:16 Reel with MARROK frame & AI captions"
+          >
+            <Upload className="w-3.5 h-3.5 text-cyan-300 shrink-0" />
+            <span>Upload Video</span>
+          </button>
+        ) : activePostFormat === 'single' ? (
+          <button
+            type="button"
+            data-testid="top-bar-media-upload-btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isGenerating}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 min-h-[34px] rounded-xl border border-cyan-400/35 bg-cyan-500/12 hover:bg-cyan-500/22 text-cyan-100 hover:text-white text-xs font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0"
+            title="Upload a video (.mp4, .webm, .mov) or photo for your Single-Slide post"
+          >
+            <Upload className="w-3.5 h-3.5 text-cyan-300 shrink-0" />
+            <span>Upload Video / Image</span>
           </button>
         ) : (
           <button
@@ -774,12 +799,12 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
                     className="border-2 border-dashed border-white/20 rounded-xl p-4 text-center hover:border-cyan-400/50 hover:bg-white/[0.02] transition-all cursor-pointer bg-black/30"
                   >
                     <div className="flex flex-col items-center justify-center space-y-1">
-                      <ImageIcon className="w-5 h-5" style={{ color: theme.accent }} />
+                      <Film className="w-5 h-5" style={{ color: theme.accent }} />
                       <div className="text-xs font-bold text-white">
-                        Drop screenshot image or click to browse
+                        Drop video (.mp4, .webm, .mov) or image (.png, .jpg, .webp) — or click to browse
                       </div>
                       <p className="text-[11px] text-slate-400">
-                        Supports PNG, JPG, WebP (or press Ctrl+V anywhere).
+                        Automatically extracts video keyframes for 9:16 Reel / Video Card + AI bilingual caption (or press Ctrl+V).
                       </p>
                     </div>
                   </div>
