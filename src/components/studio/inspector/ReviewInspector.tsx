@@ -4,7 +4,6 @@ import {
   CarouselData,
   ThemePalette,
 } from '../../../types.ts';
-import type { ExportBundleMode } from '../../../lib/canvas/exporter.ts';
 import { QAReport, PreExportCheckId } from '../../../lib/qaChecks.ts';
 import { RiskReport } from '../../../lib/riskChecks.ts';
 import { PublishChecklist } from '../PublishChecklist.tsx';
@@ -26,10 +25,7 @@ export interface ReviewInspectorProps {
   onToggleOfficialBrandIcon?: (brandKey: string, enabled: boolean) => void;
   onUpdateCreator?: (creator: string) => void;
   onSelectDimensionPreset?: (preset: CanvasDimensionPreset) => void;
-  onExportZip?: (exportMode: ExportBundleMode) => void;
-  onDownloadSingleSlide?: (preset: CanvasDimensionPreset) => void;
   onOpenPublishScheduleModal?: (tab?: 'single' | 'bulk' | 'storage') => void;
-  isExportingZip?: boolean;
   onShowToast?: (msg: string) => void;
 }
 

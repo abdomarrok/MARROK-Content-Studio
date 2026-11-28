@@ -16,7 +16,6 @@ import {
 } from 'lucide-react';
 import { CanvasDimensionPreset, CarouselData, ThemePalette } from '../../types.ts';
 import { getCanvasDimensionSpec } from '../../lib/canvas/constants.ts';
-import type { ExportBundleMode } from '../../lib/canvas/exporter.ts';
 import { isThirdPartySource, getAttributionCredit, isValidCreatorCredit } from '../../lib/riskChecks.ts';
 import { QAReport, runPreExportChecklist, PreExportCheckId } from '../../lib/qaChecks.ts';
 import { RiskReport } from '../../lib/riskChecks.ts';
@@ -38,12 +37,9 @@ export interface PublishChecklistProps {
   onUpdateCreator?: (creator: string) => void;
   onJumpToSlide?: (slideIndex: number) => void;
   onSelectDimensionPreset?: (preset: CanvasDimensionPreset) => void;
-  onExportZip?: (exportMode: ExportBundleMode) => void;
-  onDownloadSingleSlide?: (preset: CanvasDimensionPreset) => void;
   onOpenPublishScheduleModal?: (tab?: 'single' | 'bulk' | 'storage') => void;
   onAutoFixPreExportCheck?: (checkId: PreExportCheckId, slideIndex?: number) => void;
   onToggleOfficialBrandIcon?: (brandKey: string, enabled: boolean) => void;
-  isExportingZip?: boolean;
   onShowToast?: (msg: string) => void;
 }
 
@@ -63,7 +59,6 @@ export interface PublishBlockersResult {
 
 export function getPublishBlockers(
   carousel: CarouselData,
-  isOfflineDraft: boolean,
   isReviewed: boolean,
   qaReport: QAReport,
   riskReport?: RiskReport,
@@ -160,12 +155,9 @@ export const PublishChecklist: React.FC<PublishChecklistProps> = ({
   onUpdateCreator,
   onJumpToSlide,
   onSelectDimensionPreset,
-  onExportZip,
-  onDownloadSingleSlide,
   onOpenPublishScheduleModal,
   onAutoFixPreExportCheck,
   onToggleOfficialBrandIcon,
-  isExportingZip = false,
   onShowToast,
 }) => {
   const [isSourcesExpanded, setIsSourcesExpanded] = useState(false);
@@ -203,7 +195,7 @@ export const PublishChecklist: React.FC<PublishChecklistProps> = ({
     structureStatus,
     contentQualityStatus,
     blockersCount: unifiedBlockersCount,
-  } = getPublishBlockers(carousel, isOfflineDraft, isReviewed, qaReport, riskReport, theme);
+  } = getPublishBlockers(carousel, isReviewed, qaReport, riskReport, theme);
 
   const blockersCount = unifiedBlockersCount;
   const contentQualityCheck = preExportChecks.find((c) => c.id === 'contentQuality');

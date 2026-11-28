@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Film,
   Plus,
@@ -15,7 +15,9 @@ import {
   Sparkles,
   Download,
   Loader2,
+  ArrowUpRight,
 } from 'lucide-react';
+import { fetchAuthedJson, HttpClientError } from '../../../lib/network/httpClient.ts';
 import {
   MotionBrandConfig,
   MotionReelData,
@@ -52,6 +54,38 @@ interface MotionReelInspectorProps {
   onAnalyzeUploadedVideo?: () => void;
   onSwitchToVideoCardReel?: () => void;
   onExportVideoCardMp4?: () => void;
+  onOpenInFilmStudio?: (projectId: string) => void;
+}
+
+function deriveFilmStudioSlugFromReel(reelConfig: MotionReelData): { id: string; name: string } {
+  const firstScene = reelConfig.scenes?.[0];
+  const rawTitle = (
+    firstScene?.enTitle ||
+    firstScene?.text ||
+    firstScene?.label ||
+    reelConfig.brand?.name ||
+    'marrok-reel'
+  )
+    .replace(/\|/g, ' ')
+    .trim();
+
+  const slugCore = rawTitle
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 46)
+    .replace(/-+$/g, '');
+
+  const id = `reel-${slugCore || reelConfig.templateId || 'motion'}`
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/--+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 62);
+
+  const validId = /^[a-z0-9][a-z0-9-]{0,62}$/.test(id) ? id : 'marrok-promoted-reel';
+  const cleanName = rawTitle ? `${rawTitle.slice(0, 48)} (9:16 Reel)` : 'MARROK Promoted 9:16 Reel';
+  return { id: validId, name: cleanName };
 }
 
 const DOT_COLORS = [
@@ -80,10 +114,81 @@ export const MotionReelInspector: React.FC<MotionReelInspectorProps> = ({
   onAnalyzeUploadedVideo,
   onSwitchToVideoCardReel,
   onExportVideoCardMp4,
+  onOpenInFilmStudio,
 }) => {
   const [activeSection, setActiveSection] = useState<'scenes' | 'templates' | 'brand'>('scenes');
   const [isDraggingVideo, setIsDraggingVideo] = useState(false);
+  const [filmStudioAvailable, setFilmStudioAvailable] = useState(false);
+  const [isPromotingToFilmStudio, setIsPromotingToFilmStudio] = useState(false);
   const videoInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    const controller = new AbortController();
+    const checkFilmStudioCapabilities = async () => {
+      try {
+        const data = await fetchAuthedJson<{
+          serverAvailable?: boolean;
+          localRenderAvailable?: boolean;
+        }>('/api/video-studio/capabilities', {
+          cache: 'no-store',
+          timeoutMs: 10_000,
+          signal: controller.signal,
+          contextLabel: 'Film Studio capabilities',
+        });
+        if (isMounted) {
+          setFilmStudioAvailable(Boolean(data?.serverAvailable ?? data?.localRenderAvailable));
+        }
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        // 404 is expected on serverless deployments where the local Film Studio router is not mounted
+        const isExpectedUnavailable =
+          err instanceof HttpClientError && (err.status === 404 || err.status === 401);
+        if (!isExpectedUnavailable) {
+          console.warn('[MotionReelInspector] Film Studio capability check failed:', err);
+        }
+        if (isMounted) setFilmStudioAvailable(false);
+      }
+    };
+    void checkFilmStudioCapabilities();
+    return () => {
+      isMounted = false;
+      controller.abort();
+    };
+  }, []);
+
+  const handlePromoteToFilmStudio = async () => {
+    if (isPromotingToFilmStudio || !filmStudioAvailable) return;
+    setIsPromotingToFilmStudio(true);
+    try {
+      const { id, name } = deriveFilmStudioSlugFromReel(reelConfig);
+      const template = getMotionTemplate(reelConfig.templateId);
+      const sceneHtml = template.toHTML(reelConfig);
+
+      const data = await fetchAuthedJson<{
+        project?: { config?: { id?: string } };
+      }>('/api/video-studio/projects/from-reel', {
+        method: 'POST',
+        timeoutMs: 25_000,
+        body: {
+          id,
+          name,
+          reelConfig,
+          sceneHtml,
+          overwrite: true,
+        },
+        contextLabel: 'Promote Reel to Film Studio',
+      });
+      const createdId = data?.project?.config?.id || id;
+      onShowToast(`✓ Opened "${createdId}" in Film Studio (1080×1920 · 60fps)`);
+      onOpenInFilmStudio?.(createdId);
+    } catch (err) {
+      console.warn('[MotionReelInspector] Promote to Film Studio failed:', err);
+      onShowToast(`⚠️ ${err instanceof Error ? err.message : 'Could not promote Reel to Film Studio'}`);
+    } finally {
+      setIsPromotingToFilmStudio(false);
+    }
+  };
 
   const updateBrand = (updates: Partial<MotionBrandConfig>) => {
     onChangeReelConfig({
@@ -406,6 +511,30 @@ export const MotionReelInspector: React.FC<MotionReelInspectorProps> = ({
             <RefreshCw className="w-3 h-3" />
             <span>Sync from Slides</span>
           </button>
+
+          {filmStudioAvailable && (
+            <button
+              type="button"
+              data-testid="reel-promote-to-film-studio-btn"
+              disabled={isPromotingToFilmStudio}
+              onClick={() => void handlePromoteToFilmStudio()}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#121A21] hover:bg-white/[0.1] disabled:opacity-50 border border-[#1E2833] text-[11px] font-semibold text-white transition-colors cursor-pointer"
+              title="Promote this 9:16 Motion Reel into a deterministic Film Studio project (1080×1920 @ 60fps with Act Voiceovers & audio mix)"
+            >
+              {isPromotingToFilmStudio ? (
+                <>
+                  <Loader2 className="w-3 h-3 animate-spin" style={{ color: theme.accent }} />
+                  <span>Promoting…</span>
+                </>
+              ) : (
+                <>
+                  <Film className="w-3 h-3" style={{ color: theme.accent }} />
+                  <span>Open in Film Studio</span>
+                  <ArrowUpRight className="w-3 h-3 text-slate-400" />
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
 

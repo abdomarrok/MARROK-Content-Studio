@@ -3,7 +3,7 @@
 **Document Version:** 1.1.0  
 **Verification Date:** November 2026  
 **Auditor:** Senior Software Architect & Engineering Lead  
-**Scope:** Complete Codebase, Test Suite (35 Test Suites), Local Express Film Studio, Serverless Backend & Build Artifacts  
+**Scope:** Complete Codebase, Test Suite (61 Test Suites / 471 Tests), Local Express Film Studio, Serverless Backend & Build Artifacts  
 
 ---
 
@@ -137,13 +137,13 @@ The MARROK Content Studio is a high-grade, production-deployed web application c
    - `api/config.ts`
    - `api/constants.ts`
    - `api/db/postgres.ts`
-   - `api/freeAiFallback.ts`
    - `api/index.ts`
    - `api/prompts/systemPrompt.ts`
    - `api/controllers/generateController.ts`
    - `api/controllers/imageController.ts`
    - `api/controllers/mediaController.ts`
    - `api/controllers/postsController.ts`
+   - `api/controllers/proxyController.ts`
    - `api/controllers/publishController.ts`
    **Rule:** Never create new `.ts` files inside `/api/` without deleting or combining existing ones.
 
@@ -164,6 +164,6 @@ The codebase passes all regression and architecture boundary tests:
 ```bash
 npm test
 ```
-- **Test Files:** 61 passed (61) — 470 tests passed
+- **Test Files:** 61 passed (61) — 471 tests passed
 - **Pass Rate:** 100%
 

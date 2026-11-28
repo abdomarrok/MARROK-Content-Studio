@@ -52,9 +52,12 @@ interface GroundingSupportItem {
   groundingChunkIndices?: number[];
 }
 
+type GeminiGenerateContentParams = Parameters<GoogleGenAI['models']['generateContent']>[0];
+type GeminiGenerateContentResult = Awaited<ReturnType<GoogleGenAI['models']['generateContent']>>;
+
 export interface GoogleGenAIClientLike {
   models: {
-    generateContent: (args: any) => Promise<any>;
+    generateContent: (args: GeminiGenerateContentParams) => Promise<GeminiGenerateContentResult>;
   };
 }
 
@@ -70,8 +73,7 @@ export function setGoogleGenAICtorForTesting(ctor: GoogleGenAICtor | null): void
 }
 
 function createGoogleGenAIClient(apiKey: string): GoogleGenAIClientLike {
-  const Ctor: GoogleGenAICtor =
-    customGoogleGenAICtorForTesting || (GoogleGenAI as unknown as GoogleGenAICtor);
+  const Ctor: GoogleGenAICtor = customGoogleGenAICtorForTesting || GoogleGenAI;
   return new Ctor({
     apiKey,
     httpOptions: {
@@ -1135,12 +1137,20 @@ ${JSON.stringify(
   2
 )}`;
 
+      interface SyncedSlideJsonItem {
+        index?: unknown;
+        arTitle?: unknown;
+        coverTeaserAr?: unknown;
+        arBody?: unknown;
+      }
+
       const parseDeckSyncPayload = (rawText: string) => {
         const cleanText = rawText.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-        const parsed = JSON.parse(cleanText);
+        const parsed = JSON.parse(cleanText) as { slides?: SyncedSlideJsonItem[] } | null;
         if (!parsed || !Array.isArray(parsed.slides) || parsed.slides.length === 0) return null;
+        const parsedSlides = parsed.slides;
         return normalizedSlides.map((src) => {
-          const match = parsed.slides.find((item: any) => Number(item?.index) === src.index) || parsed.slides[src.index];
+          const match = parsedSlides.find((item) => Number(item?.index) === src.index) || parsedSlides[src.index];
           const isSlide1 = src.index === 0;
           const arTitle = sanitizeSyncedArabicField(match?.arTitle, true, isSlide1 ? 68 : 48) || src.existingArTitle;
           let coverTeaserAr = src.coverTeaserEn
@@ -1262,8 +1272,14 @@ ${JSON.stringify(
     const arBody = String(slide.arBody || '').slice(0, 500);
     const coverTeaserEn = String(slide.coverTeaserEn || '').slice(0, 140);
     const coverTeaserAr = String(slide.coverTeaserAr || '').slice(0, 140);
-    const rawTakeaways = Array.isArray(slide.takeaways) ? slide.takeaways.slice(0, 5) : [];
-    const takeawaysEn = rawTakeaways.map((t: any) => String(t?.en || '').slice(0, 120));
+    interface RawTakeawayItem {
+      en?: unknown;
+      ar?: unknown;
+    }
+    const rawTakeaways: RawTakeawayItem[] = Array.isArray(slide.takeaways)
+      ? (slide.takeaways.slice(0, 5) as RawTakeawayItem[])
+      : [];
+    const takeawaysEn = rawTakeaways.map((t) => String(t?.en || '').slice(0, 120));
 
     const modeInstructions: Record<string, string> = {
       punchy:
@@ -1326,7 +1342,7 @@ arBody: ${arBody}`;
         const nextArBody = enBody ? sanitizeSyncedArabicField(parsed.arBody, false, 155) || arBody : '';
         const nextTakeaways =
           rawTakeaways.length > 0
-            ? rawTakeaways.map((t: any, idx: number) => ({
+            ? rawTakeaways.map((t, idx: number) => ({
                 en: String(t?.en || ''),
                 ar:
                   Array.isArray(parsed.takeawaysAr) && typeof parsed.takeawaysAr[idx] === 'string'

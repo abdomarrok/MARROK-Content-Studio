@@ -10,9 +10,12 @@ import {
   createVideoPreviewToken,
   getVideoStudioJobsSize,
   MAX_COMPLETED_JOBS,
+  MAX_REEL_SCENE_HTML_BYTES,
   registerVideoStudioRoutes,
   resetVideoStudioJobsForTest,
 } from '../../video-studio/studio/expressRouter.mjs';
+import { getMotionTemplate } from '../lib/motion/index.ts';
+import type { MotionReelData } from '../types.ts';
 import {
   loadProjectConfig,
   ProjectValidationError,
@@ -510,6 +513,191 @@ describe('Video Studio Core Engine & Express Integration', () => {
         expect(JSON.parse(savedText)).toEqual({ hello: 'video-studio-raw-upload' });
       } finally {
         await fs.rm(testAssetPath, { force: true }).catch(() => {});
+      }
+    });
+
+    it('promotes Create -> Reel into a validated 1080x1920 Film Studio project with deterministic window.renderAt scene.html and enforces preview write isolation', async () => {
+      const testProjectId = 'reel-vitest-promoted';
+      const promotedPaths = getProjectPaths(testProjectId);
+
+      const sampleReelConfig: MotionReelData = {
+        templateId: 'marrok-slides',
+        duration: 13.5,
+        languageMode: 'bilingual',
+        sfxEnabled: true,
+        sfxProfile: 'warm-foley',
+        defaultTransition: 'auto',
+        brand: {
+          name: 'MARROK',
+          accentColor: '#37E2C0',
+          bgColor: '#080D11',
+          textColor: '#FFFFFF',
+          font: 'Cairo',
+          direction: 'rtl',
+        },
+        scenes: [
+          {
+            id: 'scene-1',
+            label: 'Slide 01 · Hook',
+            text: 'WHY GIT FAILS AUTONOMOUS AGENTS',
+            enTitle: 'WHY GIT FAILS AUTONOMOUS AGENTS',
+            enBody: 'Version control assumes human commit cadence, not millisecond agent swarms.',
+            arTitle: 'لماذا يفشل Git مع الوكلاء المستقلين',
+            arBody: 'أنظمة التحكم في الإصدارات صممت للبشر.',
+            slideType: 'hub',
+            from: 0,
+            to: 4.5,
+            springK: 220,
+            springD: 20,
+          },
+          {
+            id: 'scene-2',
+            label: 'Slide 02 · Takeaways',
+            text: 'Kernel Isolation | Zero-Trust Mesh | Instant Scale',
+            enTitle: 'CORE ARCHITECTURAL PILLARS',
+            slideType: 'row',
+            from: 4.5,
+            to: 9.0,
+            springK: 210,
+            springD: 22,
+          },
+          {
+            id: 'scene-3',
+            label: 'Slide 03 · CTA',
+            text: 'FOLLOW @MARROK',
+            enTitle: 'FOLLOW @MARROK',
+            enBody: 'Deep engineering breakdowns every week.',
+            slideType: 'cta',
+            from: 9.0,
+            to: 13.5,
+            springK: 220,
+            springD: 20,
+          },
+        ],
+      };
+
+      const compiledSceneHtml = getMotionTemplate('marrok-slides').toHTML(sampleReelConfig);
+      expect(compiledSceneHtml).toContain('window.renderAt = (t, dt) =>');
+      expect(compiledSceneHtml).toContain('window.seek = (t) =>');
+      expect(compiledSceneHtml).toContain("__params.get('render') === '1' || __params.get('embed') === '1'");
+      expect(compiledSceneHtml).toContain("msg.type === 'studio:scrub'");
+      expect(compiledSceneHtml).toContain('window.__STUDIO_READY__');
+
+      try {
+        // 1. Deploy preview write isolation blocks POST /api/video-studio/projects/from-reel with 403
+        process.env.DEPLOY_CONTEXT = 'deploy-preview';
+        process.env.ALLOW_PREVIEW_WRITES = 'false';
+        const previewBlockedRes = await fetch(`${baseUrl}/api/video-studio/projects/from-reel`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${bearerToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            id: testProjectId,
+            name: 'Vitest Promoted Reel',
+            reelConfig: sampleReelConfig,
+            sceneHtml: compiledSceneHtml,
+          }),
+        });
+        expect(previewBlockedRes.status).toBe(403);
+
+        delete process.env.DEPLOY_CONTEXT;
+        delete process.env.ALLOW_PREVIEW_WRITES;
+
+        // 2. Rejects invalid slug (path traversal) with 400
+        const badSlugRes = await fetch(`${baseUrl}/api/video-studio/projects/from-reel`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${bearerToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            id: '../bad-slug',
+            reelConfig: sampleReelConfig,
+            sceneHtml: compiledSceneHtml,
+          }),
+        });
+        expect(badSlugRes.status).toBe(400);
+
+        // 3. Rejects HTML missing window.renderAt with 400
+        const nonDeterministicHtmlRes = await fetch(`${baseUrl}/api/video-studio/projects/from-reel`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${bearerToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            id: testProjectId,
+            reelConfig: sampleReelConfig,
+            sceneHtml: '<!doctype html><html><body>No renderAt</body></html>',
+          }),
+        });
+        expect(nonDeterministicHtmlRes.status).toBe(400);
+
+        // 4. Rejects oversized sceneHtml (> MAX_REEL_SCENE_HTML_BYTES) with 413
+        const oversizedHtml = `<!doctype html><script>window.renderAt=()=>{};//${'a'.repeat(
+          MAX_REEL_SCENE_HTML_BYTES + 128
+        )}</script>`;
+        const oversizedRes = await fetch(`${baseUrl}/api/video-studio/projects/from-reel`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${bearerToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            id: testProjectId,
+            reelConfig: sampleReelConfig,
+            sceneHtml: oversizedHtml,
+          }),
+        });
+        expect(oversizedRes.status).toBe(413);
+
+        // 5. Valid promotion creates native 1080x1920 @ 60fps project with verticalExport.enabled=false and acts[].text
+        const promoteRes = await fetch(`${baseUrl}/api/video-studio/projects/from-reel`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${bearerToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            id: testProjectId,
+            name: 'Why Git Fails Autonomous Agents (9:16 Reel)',
+            reelConfig: sampleReelConfig,
+            sceneHtml: compiledSceneHtml,
+            overwrite: true,
+          }),
+        });
+        expect(promoteRes.status).toBe(201);
+        const promoteBody = await promoteRes.json();
+        expect(promoteBody.ok).toBe(true);
+
+        const cfg = promoteBody.project.config;
+        expect(cfg.id).toBe(testProjectId);
+        expect(cfg.video.width).toBe(1080);
+        expect(cfg.video.height).toBe(1920);
+        expect(cfg.video.fps).toBe(60);
+        expect(cfg.video.durationSec).toBe(13.5);
+        expect(cfg.video.verticalExport.enabled).toBe(false);
+        expect(cfg.video.verticalExport.mode).toBe('native');
+
+        expect(cfg.acts).toHaveLength(3);
+        expect(cfg.acts[0].id).toBe('act1');
+        expect(cfg.acts[0].startSec).toBe(0);
+        expect(cfg.acts[0].maxDurationSec).toBeGreaterThan(0);
+        expect(cfg.acts[0].startSec + cfg.acts[0].maxDurationSec).toBeLessThanOrEqual(cfg.video.durationSec);
+        expect(cfg.acts[0].text).toContain('WHY GIT FAILS AUTONOMOUS AGENTS');
+        expect(cfg.acts[1].startSec).toBe(4.5);
+        expect(cfg.acts[2].startSec).toBe(9.0);
+
+        // Verify disk files validate cleanly via loadProjectConfig
+        const { config: diskCfg } = await loadProjectConfig(testProjectId);
+        expect(diskCfg.video.width).toBe(1080);
+        expect(diskCfg.video.height).toBe(1920);
+        const diskHtml = await fs.readFile(promotedPaths.scenePath, 'utf8');
+        expect(diskHtml).toContain('window.renderAt');
+      } finally {
+        await fs.rm(promotedPaths.root, { recursive: true, force: true }).catch(() => {});
       }
     });
   });

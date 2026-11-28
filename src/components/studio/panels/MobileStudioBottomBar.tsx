@@ -199,6 +199,7 @@ export const MobileStudioBottomBar: React.FC<MobileStudioBottomBarProps> = ({
                         type="button"
                         data-testid="mobile-undo-btn"
                         disabled={!canUndo}
+                        onMouseDown={(e) => e.preventDefault()}
                         onClick={() => {
                           onUndo();
                           onSetIsMoreMenuOpen(false);
@@ -214,6 +215,7 @@ export const MobileStudioBottomBar: React.FC<MobileStudioBottomBarProps> = ({
                         type="button"
                         data-testid="mobile-redo-btn"
                         disabled={!canRedo}
+                        onMouseDown={(e) => e.preventDefault()}
                         onClick={() => {
                           onRedo();
                           onSetIsMoreMenuOpen(false);

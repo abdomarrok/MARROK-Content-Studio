@@ -54,8 +54,8 @@ import { useStudioHistory } from './hooks/useStudioHistory.ts';
 import {
   checkClientAuthSession,
   clearClientSessionToken,
-  withClientAuthHeaders,
 } from './lib/security/clientSessionToken.ts';
+import { fetchAuthedJson } from './lib/network/httpClient.ts';
 
 const MAX_HISTORY_STEPS = 30;
 
@@ -63,6 +63,7 @@ export default function App() {
   const hasRestoredLocalDraftRef = useRef(false);
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [activeFilmProjectId, setActiveFilmProjectId] = useState<string | null>(null);
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3200);
@@ -73,6 +74,10 @@ export default function App() {
     state: carousel,
     canUndo,
     canRedo,
+    historyRestoreVersion,
+    isComparingBefore,
+    toggleCompareBefore,
+    beforeEditsStateRef,
     setState: pushCarouselHistory,
     replaceStateWithoutHistory: setCarousel,
     undo: handleUndo,
@@ -233,13 +238,13 @@ export default function App() {
 
   const handleLogout = useCallback(async () => {
     try {
-      await fetch('/api/auth/logout', {
+      await fetchAuthedJson('/api/auth/logout', {
         method: 'POST',
-        credentials: 'include',
-        headers: withClientAuthHeaders(),
+        timeoutMs: 10_000,
+        contextLabel: 'Auth logout',
       });
-    } catch {
-      // ignore
+    } catch (err) {
+      console.warn('[Auth] Logout request failed; clearing local session anyway:', err);
     }
     clearClientSessionToken();
     setAuthStatus('unauthenticated');
@@ -258,8 +263,8 @@ export default function App() {
           refreshVaultPosts(false);
         }
       })
-      .catch(() => {
-        // Non-fatal in offline mode
+      .catch((err) => {
+        console.warn('[PublishStatus] Background status check skipped:', err);
       });
     const handleFocus = () => refreshVaultPosts(false);
     window.addEventListener('focus', handleFocus);
@@ -449,12 +454,7 @@ export default function App() {
   const qaReport = runQAChecks(carousel);
   const riskReport = runPlatformRiskChecks(carousel);
   const isReviewed = Boolean(carousel.sourceMeta?.userReviewed);
-  const isOfflineDraft = Boolean(
-    carousel.sourceMeta?.isFallback ||
-    carousel.sourceMeta?.engine === 'offline' ||
-    carousel.sourceMeta?.engine === 'offline-synthesizer'
-  );
-  const blockers = getPublishBlockers(carousel, isOfflineDraft, isReviewed, qaReport, riskReport);
+  const blockers = getPublishBlockers(carousel, isReviewed, qaReport, riskReport);
   const isPosted = savedPosts.find((p) => p.id === carousel.id)?.postStatus === 'posted';
   const deckStatus: 'posted' | 'ready' | 'draft' = isPosted
     ? 'posted'
@@ -535,6 +535,7 @@ export default function App() {
           >
             <VideoStudioWorkspace
               theme={currentPalette}
+              initialProjectId={activeFilmProjectId}
               onShowToast={showToast}
               onAuthRequired={() => setAuthStatus('unauthenticated')}
             />
@@ -584,16 +585,18 @@ export default function App() {
               activeSlideIndex={activeSlideIndex}
               onSlideChange={setActiveSlideIndex}
               onUpdateCarousel={handleUpdateCarousel}
+              canUndo={canUndo}
+              canRedo={canRedo}
+              historyRestoreVersion={historyRestoreVersion}
+              onUndo={handleUndo}
+              onRedo={handleRedo}
+              isComparingBefore={isComparingBefore}
+              onToggleCompareBefore={toggleCompareBefore}
+              beforeEditsCarousel={beforeEditsStateRef.current}
               onSelectTheme={handleSelectPalette}
               onOpenThemeCustomizer={() => setIsThemeCustomizerOpen(true)}
               onOpenContactSheet={() => setIsContactSheetOpen(true)}
-              onOpenSavedPostsDrawer={() => {
-                refreshVaultPosts(false);
-                setPublishHubTab('draft');
-                setActivePhase('publish');
-              }}
               onSaveValidPost={handleSaveValidPost}
-              isSavingPost={isSavingPost}
               onShowToast={showToast}
               savedPosts={savedPosts}
               onOpenPublishScheduleModal={(tab) => {
@@ -601,6 +604,10 @@ export default function App() {
                 void handleSaveValidPost(existing?.postStatus || 'validated', true);
                 setPublishHubTab(tab || 'single');
                 setActivePhase('publish');
+              }}
+              onOpenInFilmStudio={(projectId) => {
+                setActiveFilmProjectId(projectId);
+                setActivePhase('video');
               }}
             />
           </>

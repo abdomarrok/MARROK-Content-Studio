@@ -206,49 +206,49 @@ export function synthesizeUniversalCarousel(rawInput: string, options: Universal
 
   if (isScionOrVcs) {
     return finalizeSynthesizedDeckSlides(
-      buildVcsStory(coreSubject, { brand, brandUrl, targetCount, metrics })
+      buildVcsStory({ brand, brandUrl, targetCount, metrics })
     );
   }
 
   if (isContainerOrCloud) {
     return finalizeSynthesizedDeckSlides(
-      buildContainerStory(coreSubject, { brand, brandUrl, targetCount, metrics })
+      buildContainerStory({ brand, brandUrl, targetCount, metrics })
     );
   }
 
   if (isRedisOrCache) {
     return finalizeSynthesizedDeckSlides(
-      buildCacheStory(coreSubject, { brand, brandUrl, targetCount, metrics })
+      buildCacheStory({ brand, brandUrl, targetCount, metrics })
     );
   }
 
   if (isSecurity) {
     return finalizeSynthesizedDeckSlides(
-      buildSecurityStory(coreSubject, { brand, brandUrl, targetCount, metrics })
+      buildSecurityStory({ brand, brandUrl, targetCount, metrics })
     );
   }
 
   if (isKernelOrEbpf) {
     return finalizeSynthesizedDeckSlides(
-      buildKernelStory(coreSubject, { brand, brandUrl, targetCount, metrics })
+      buildKernelStory({ brand, brandUrl, targetCount, metrics })
     );
   }
 
   if (isAiOrLlm) {
     return finalizeSynthesizedDeckSlides(
-      buildAiStory(coreSubject, { brand, brandUrl, targetCount, metrics })
+      buildAiStory({ brand, brandUrl, targetCount, metrics })
     );
   }
 
   if (isDatabase) {
     return finalizeSynthesizedDeckSlides(
-      buildDatabaseStory(coreSubject, { brand, brandUrl, targetCount, metrics })
+      buildDatabaseStory({ brand, brandUrl, targetCount, metrics })
     );
   }
 
   if (entities.isComparative) {
     return finalizeSynthesizedDeckSlides(
-      buildComparativeStory(coreSubject, entities, metrics, { brand, brandUrl, targetCount, domainCategory })
+      buildComparativeStory(entities, metrics, { brand, brandUrl, targetCount, domainCategory })
     );
   }
 

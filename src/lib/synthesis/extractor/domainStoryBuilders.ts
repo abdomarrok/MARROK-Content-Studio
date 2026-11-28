@@ -17,7 +17,7 @@ import { selectWinningHookMetric, trimSlides } from './metricsScanner.ts';
 /**
  * VCS & Scion Story: Monorepo scale, virtual filesystem, lockless merges, and tradeoffs.
  */
-export function buildVcsStory(subject: string, opts: StoryOptions): SlideData[] {
+export function buildVcsStory(opts: StoryOptions): SlideData[] {
   return [
     {
       type: 'hub',
@@ -124,7 +124,7 @@ export function buildVcsStory(subject: string, opts: StoryOptions): SlideData[] 
 /**
  * Docker & Container Story: Multi-stage build optimization, attack surface reduction, and debugging scratch images.
  */
-export function buildContainerStory(subject: string, opts: StoryOptions): SlideData[] {
+export function buildContainerStory(opts: StoryOptions): SlideData[] {
   return [
     {
       type: 'hub',
@@ -231,7 +231,7 @@ export function buildContainerStory(subject: string, opts: StoryOptions): SlideD
 /**
  * In-Memory & Redis Story: In-memory access, multi-threading, active clustering, and RAM trade-offs.
  */
-export function buildCacheStory(subject: string, opts: StoryOptions): SlideData[] {
+export function buildCacheStory(opts: StoryOptions): SlideData[] {
   return [
     {
       type: 'hub',
@@ -338,7 +338,7 @@ export function buildCacheStory(subject: string, opts: StoryOptions): SlideData[
 /**
  * Cybersecurity & Zero-Trust Story: Perimeter flaws, service identity, and blast radius isolation.
  */
-export function buildSecurityStory(subject: string, opts: StoryOptions): SlideData[] {
+export function buildSecurityStory(opts: StoryOptions): SlideData[] {
   return [
     {
       type: 'hub',
@@ -445,7 +445,7 @@ export function buildSecurityStory(subject: string, opts: StoryOptions): SlideDa
 /**
  * Linux Kernel & eBPF Story: Syscall boundary, in-kernel execution, verifier constraints, and telemetry.
  */
-export function buildKernelStory(subject: string, opts: StoryOptions): SlideData[] {
+export function buildKernelStory(opts: StoryOptions): SlideData[] {
   return [
     {
       type: 'hub',
@@ -552,7 +552,7 @@ export function buildKernelStory(subject: string, opts: StoryOptions): SlideData
 /**
  * AI & LLM Inference Story: Attention complexity, KV-cache paging, quantization, and memory bandwidth bounds.
  */
-export function buildAiStory(subject: string, opts: StoryOptions): SlideData[] {
+export function buildAiStory(opts: StoryOptions): SlideData[] {
   return [
     {
       type: 'hub',
@@ -659,7 +659,7 @@ export function buildAiStory(subject: string, opts: StoryOptions): SlideData[] {
 /**
  * Databases & PgBouncer Story: Connection limits, transaction pooling, and session state caveats.
  */
-export function buildDatabaseStory(subject: string, opts: StoryOptions): SlideData[] {
+export function buildDatabaseStory(opts: StoryOptions): SlideData[] {
   return [
     {
       type: 'hub',
@@ -767,7 +767,6 @@ export function buildDatabaseStory(subject: string, opts: StoryOptions): SlideDa
  * Comparative Story: Two entities/technologies directly compared.
  */
 export function buildComparativeStory(
-  subject: string,
   entities: ExtractedEntities,
   metrics: ExtractedMetric[],
   opts: StoryOptions

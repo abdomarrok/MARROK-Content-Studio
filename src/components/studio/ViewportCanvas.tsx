@@ -61,12 +61,10 @@ const TEXT_ALIGNABLE_ELEMENTS: GraphicalElementId[] = [
 
 interface ViewportCanvasProps {
   stageOverlayMode?: StageOverlayMode;
-  onSetStageOverlayMode?: (mode: StageOverlayMode) => void;
   carousel: CarouselData;
   currentSlideIndex: number;
   theme: ThemePalette;
   showSafeZones: boolean;
-  onToggleSafeZones: () => void;
   onPreviousSlide: () => void;
   onNextSlide: () => void;
   canvasRef?: React.RefObject<HTMLCanvasElement | null>;
@@ -85,9 +83,7 @@ export const ViewportCanvas: React.FC<ViewportCanvasProps> = ({
   currentSlideIndex,
   theme,
   showSafeZones,
-  onToggleSafeZones,
   stageOverlayMode,
-  onSetStageOverlayMode,
   onPreviousSlide,
   onNextSlide,
   canvasRef: externalCanvasRef,

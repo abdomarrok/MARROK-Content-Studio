@@ -34,7 +34,7 @@ import {
   type GathererQualityGateResult,
 } from '../qaChecks.ts';
 import { saveValidPost, syncLocalVaultAfterManage } from '../storage/postsVaultClient.ts';
-import { withClientAuthHeaders } from '../security/clientSessionToken.ts';
+import { fetchAuthedJson } from '../network/httpClient.ts';
 import {
   buildGroundedFitLine,
   buildProposedHook,
@@ -261,44 +261,41 @@ async function flushPendingTriageOperations(): Promise<void> {
     for (const item of pendingSyncs) {
       try {
         const parsed = parseTriageSignature(item.topicSignature);
-        const res = await fetch('/api/gather/triage', {
-          method: 'POST',
-          credentials: 'include',
-          headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({
-            topicId: item.topicId,
-            topicSignature: parsed.title || item.topicSignature,
-            canonicalUrl: item.canonicalUrl || parsed.canonicalUrl,
-            clusteredUrls: item.clusteredUrls,
-            sourceDomain: item.sourceDomain,
-            domainCategory: item.domainCategory,
-            action: item.action,
-            reason: item.reason,
-            snoozeUntil: item.snoozeUntil,
-          }),
+        const data = await fetchAuthedJson<{ decision?: TriageDecisionRecord }>(
+          '/api/gather/triage',
+          {
+            method: 'POST',
+            timeoutMs: 15_000,
+            contextLabel: 'Sync pending triage decision',
+            body: {
+              topicId: item.topicId,
+              topicSignature: parsed.title || item.topicSignature,
+              canonicalUrl: item.canonicalUrl || parsed.canonicalUrl,
+              clusteredUrls: item.clusteredUrls,
+              sourceDomain: item.sourceDomain,
+              domainCategory: item.domainCategory,
+              action: item.action,
+              reason: item.reason,
+              snoozeUntil: item.snoozeUntil,
+            },
+          }
+        );
+        const confirmed = normalizeTriageRecord({
+          ...(data?.decision || item),
+          canonicalUrl:
+            data?.decision?.canonicalUrl || item.canonicalUrl || parsed.canonicalUrl || undefined,
+          clusteredUrls: data?.decision?.clusteredUrls || item.clusteredUrls,
+          pendingSync: false,
         });
-        if (res.ok) {
-          const data = (await res.json().catch(() => ({}))) as {
-            decision?: TriageDecisionRecord;
-          };
-          const confirmed = normalizeTriageRecord({
-            ...(data?.decision || item),
-            canonicalUrl:
-              data?.decision?.canonicalUrl || item.canonicalUrl || parsed.canonicalUrl || undefined,
-            clusteredUrls: data?.decision?.clusteredUrls || item.clusteredUrls,
-            pendingSync: false,
-          });
-          const nextLocal = [
-            confirmed,
-            ...getLocalTriageDecisions().filter(
-              (d) => d.id !== item.id && d.id !== confirmed.id
-            ),
-          ].slice(0, 300);
-          saveLocalTriageDecisions(nextLocal);
-        } else {
-          stillPending.push(item);
-        }
-      } catch {
+        const nextLocal = [
+          confirmed,
+          ...getLocalTriageDecisions().filter(
+            (d) => d.id !== item.id && d.id !== confirmed.id
+          ),
+        ].slice(0, 300);
+        saveLocalTriageDecisions(nextLocal);
+      } catch (err) {
+        console.warn('[GatherClient] Pending triage sync deferred:', err);
         stillPending.push(item);
       }
     }
@@ -309,15 +306,13 @@ async function flushPendingTriageOperations(): Promise<void> {
     const stillPendingUndos: string[] = [];
     for (const id of pendingUndos) {
       try {
-        const res = await fetch(`/api/gather/triage/${encodeURIComponent(id)}`, {
+        await fetchAuthedJson(`/api/gather/triage/${encodeURIComponent(id)}`, {
           method: 'DELETE',
-          credentials: 'include',
-          headers: withClientAuthHeaders({ Accept: 'application/json' }),
+          timeoutMs: 15_000,
+          contextLabel: 'Sync pending triage undo',
         });
-        if (!res.ok) {
-          stillPendingUndos.push(id);
-        }
-      } catch {
+      } catch (err) {
+        console.warn('[GatherClient] Pending triage undo deferred:', err);
         stillPendingUndos.push(id);
       }
     }
@@ -381,15 +376,14 @@ export async function fetchTriageDecisions(): Promise<TriageDecisionRecord[]> {
   const pendingUndos = getPendingTriageUndos();
 
   try {
-    const res = await fetch('/api/gather/triage?limit=250', {
-      method: 'GET',
-      credentials: 'include',
-      headers: withClientAuthHeaders({ Accept: 'application/json' }),
-    });
-    if (!res.ok) {
-      return mergeTriageDecisionLists([], local, pendingSyncs, pendingUndos);
-    }
-    const data = (await res.json()) as { ok?: boolean; decisions?: TriageDecisionRecord[] };
+    const data = await fetchAuthedJson<{ ok?: boolean; decisions?: TriageDecisionRecord[] }>(
+      '/api/gather/triage?limit=250',
+      {
+        method: 'GET',
+        timeoutMs: 15_000,
+        contextLabel: 'Fetch triage decisions',
+      }
+    );
     const serverList = Array.isArray(data?.decisions) ? data.decisions : [];
     const merged = mergeTriageDecisionLists(serverList, local, pendingSyncs, pendingUndos);
     saveLocalTriageDecisions(merged);
@@ -398,7 +392,8 @@ export async function fetchTriageDecisions(): Promise<TriageDecisionRecord[]> {
       void flushPendingTriageOperations();
     }
     return merged;
-  } catch {
+  } catch (err) {
+    console.warn('[GatherClient] Failed to fetch remote triage decisions, using local cache:', err);
     return mergeTriageDecisionLists([], local, pendingSyncs, pendingUndos);
   }
 }
@@ -457,44 +452,44 @@ export async function logTriageDecision(payload: {
   ]);
 
   try {
-    const res = await fetch('/api/gather/triage', {
-      method: 'POST',
-      credentials: 'include',
-      headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        ...payload,
-        topicSignature: cleanTitle,
-        canonicalUrl: canonicalUrl || undefined,
-        clusteredUrls: clusteredUrls && clusteredUrls.length > 0 ? clusteredUrls : undefined,
-      }),
+    const data = await fetchAuthedJson<{ ok?: boolean; decision?: TriageDecisionRecord }>(
+      '/api/gather/triage',
+      {
+        method: 'POST',
+        timeoutMs: 15_000,
+        contextLabel: 'Log triage decision',
+        body: {
+          ...payload,
+          topicSignature: cleanTitle,
+          canonicalUrl: canonicalUrl || undefined,
+          clusteredUrls: clusteredUrls && clusteredUrls.length > 0 ? clusteredUrls : undefined,
+        },
+      }
+    );
+    const saved: TriageDecisionRecord = normalizeTriageRecord({
+      ...(data?.decision || optimisticRecord),
+      topicSignature: data?.decision?.topicSignature || encodedSignature,
+      canonicalUrl: data?.decision?.canonicalUrl || canonicalUrl || undefined,
+      clusteredUrls:
+        data?.decision?.clusteredUrls ||
+        (clusteredUrls && clusteredUrls.length > 0 ? clusteredUrls : undefined),
+      pendingSync: false,
     });
-    if (res.ok) {
-      const data = (await res.json()) as { ok?: boolean; decision?: TriageDecisionRecord };
-      const saved: TriageDecisionRecord = normalizeTriageRecord({
-        ...(data?.decision || optimisticRecord),
-        topicSignature: data?.decision?.topicSignature || encodedSignature,
-        canonicalUrl: data?.decision?.canonicalUrl || canonicalUrl || undefined,
-        clusteredUrls:
-          data?.decision?.clusteredUrls ||
-          (clusteredUrls && clusteredUrls.length > 0 ? clusteredUrls : undefined),
-        pendingSync: false,
-      });
-      const merged = [
-        saved,
-        ...getLocalTriageDecisions().filter(
-          (d) => d.id !== optimisticRecord.id && d.id !== saved.id
-        ),
-      ].slice(0, 300);
-      saveLocalTriageDecisions(merged);
-      savePendingTriageSyncs(
-        getPendingTriageSyncs().filter(
-          (d) => d.id !== optimisticRecord.id && d.id !== saved.id
-        )
-      );
-      return saved;
-    }
-  } catch {
-    // Keep optimisticRecord queued in pendingSync for automatic retry
+    const merged = [
+      saved,
+      ...getLocalTriageDecisions().filter(
+        (d) => d.id !== optimisticRecord.id && d.id !== saved.id
+      ),
+    ].slice(0, 300);
+    saveLocalTriageDecisions(merged);
+    savePendingTriageSyncs(
+      getPendingTriageSyncs().filter(
+        (d) => d.id !== optimisticRecord.id && d.id !== saved.id
+      )
+    );
+    return saved;
+  } catch (err) {
+    console.warn('[GatherClient] Remote triage persistence deferred (queued locally):', err);
   }
 
   return optimisticRecord;
@@ -512,16 +507,14 @@ export async function undoTriageDecision(id: string): Promise<void> {
 
   savePendingTriageUndos([...getPendingTriageUndos(), id]);
   try {
-    const res = await fetch(`/api/gather/triage/${encodeURIComponent(id)}`, {
+    await fetchAuthedJson(`/api/gather/triage/${encodeURIComponent(id)}`, {
       method: 'DELETE',
-      credentials: 'include',
-      headers: withClientAuthHeaders({ Accept: 'application/json' }),
+      timeoutMs: 15_000,
+      contextLabel: 'Undo triage decision',
     });
-    if (res.ok) {
-      savePendingTriageUndos(getPendingTriageUndos().filter((item) => item !== id));
-    }
-  } catch {
-    // Keep in pendingUndos so next fetchTriageDecisions retries DELETE
+    savePendingTriageUndos(getPendingTriageUndos().filter((item) => item !== id));
+  } catch (err) {
+    console.warn('[GatherClient] Remote triage undo deferred (queued for retry):', err);
   }
 }
 
@@ -637,17 +630,14 @@ export async function fetchTopicRadar(options?: {
   }
 
   const query = params.toString();
-  const res = await fetch(`/api/gather/radar${query ? `?${query}` : ''}`, {
-    method: 'GET',
-    credentials: 'include',
-    headers: withClientAuthHeaders({ Accept: 'application/json' }),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Failed to fetch topic radar (${res.status})`);
-  }
-
-  return (await res.json()) as TopicRadarResponse;
+  return await fetchAuthedJson<TopicRadarResponse>(
+    `/api/gather/radar${query ? `?${query}` : ''}`,
+    {
+      method: 'GET',
+      timeoutMs: 25_000,
+      contextLabel: 'Fetch topic radar',
+    }
+  );
 }
 
 /**
@@ -660,18 +650,12 @@ export async function extractArticleFromUrl(url: string): Promise<ExtractUrlResp
     throw new Error(validation.error);
   }
 
-  const res = await fetch('/api/gather/extract-url', {
+  return await fetchAuthedJson<ExtractUrlResponse>('/api/gather/extract-url', {
     method: 'POST',
-    credentials: 'include',
-    headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ url: validation.normalizedUrl }),
+    body: { url: validation.normalizedUrl },
+    timeoutMs: 30_000,
+    contextLabel: 'Extract URL',
   });
-
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(data?.error || `Failed to extract URL (${res.status})`);
-  }
-  return data as ExtractUrlResponse;
 }
 
 function normalizeWords(str: string): string[] {
@@ -1271,7 +1255,7 @@ export async function generateGatheredCandidatesInBackground(
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
-    const cadence = analyzePostHistoryCadence(rollingHistory, undefined, {
+    const cadence = analyzePostHistoryCadence(rollingHistory, {
       prompt: topic.synthesisPrompt,
       category: topic.domainCategory,
     });
@@ -1606,7 +1590,9 @@ export async function acceptGatheredCandidatesToDrafts(
         sourceDomain: candidate.topic.sourceDomain || candidate.topic.sourceName || 'unknown',
         domainCategory: candidate.topic.domainCategory || 'DISTRIBUTED SYSTEMS',
         action: 'draft',
-      }).catch(() => {});
+      }).catch((err) => {
+        console.warn('[GatherClient] Failed to record draft triage decision:', err);
+      });
       candidateDeckCache.delete(candidate.topic.id);
     } catch (err) {
       failedCandidates.push({
@@ -1651,7 +1637,7 @@ export async function synthesizeGatheredTopicsForReview(
 
     try {
       const meta = deriveTopicScoringMetadata(topic);
-      const cadence = analyzePostHistoryCadence(workingHistory, undefined, {
+      const cadence = analyzePostHistoryCadence(workingHistory, {
         prompt: topic.synthesisPrompt,
         category: topic.domainCategory,
       });
@@ -1674,7 +1660,8 @@ export async function synthesizeGatheredTopicsForReview(
             categoryHint: topic.domainCategory,
             postFormat: targetFormat === 'single' ? 'single' : 'carousel',
           });
-        } catch {
+        } catch (err) {
+          console.warn('[GatherClient] AI pipeline failed for gathered topic, falling back to local synthesizer:', err);
           deck = synthesizeCarousel({
             prompt: topic.synthesisPrompt,
             categoryHint: topic.domainCategory,
@@ -1822,7 +1809,8 @@ export async function diversifySavedPostVisuals(
       userReviewed: post.deck?.sourceMeta?.userReviewed,
       verifiedNumbers: post.verifiedNumbers ?? post.deck?.sourceMeta?.verifiedNumbers,
     });
-  } catch {
+  } catch (err) {
+    console.warn('[GatherClient] Failed to persist diversified visuals remotely, returning local record:', err);
     return updatedRecord;
   }
 }
@@ -1868,8 +1856,8 @@ export async function resynthesizeSavedPostWithDeepAi(
         scrapedBrand = extracted.topic.brand || scrapedBrand;
         scrapedBrandUrl = extracted.topic.brandUrl || scrapedBrandUrl;
       }
-    } catch {
-      // Fallback to existing post context if upstream URL is unreachable
+    } catch (err) {
+      console.warn('[GatherClient] Source URL scrape unavailable, using existing post context:', err);
     }
   }
 
@@ -1902,7 +1890,8 @@ export async function resynthesizeSavedPostWithDeepAi(
     if (targetFormat === 'single' && upgradedDeck.slides.length > 1) {
       upgradedDeck = condenseCarouselToSingleSlide(upgradedDeck);
     }
-  } catch {
+  } catch (err) {
+    console.warn('[GatherClient] Deep AI re-synthesis failed, using local synthesizer fallback:', err);
     upgradedDeck = synthesizeCarousel({
       prompt: synthesisPrompt,
       categoryHint: post.category || post.deck?.category,
@@ -1970,7 +1959,8 @@ export async function resynthesizeSavedPostWithDeepAi(
       publishTargets: post.publishTargets ?? saved.publishTargets,
       postedAt: post.postedAt ?? saved.postedAt,
     };
-  } catch {
+  } catch (err) {
+    console.warn('[GatherClient] Failed to persist re-synthesized post remotely, returning local record:', err);
     return updatedRecord;
   }
 }
@@ -2017,8 +2007,8 @@ export async function regenerateSingleCandidateSlideWithAi(
           synthesisPrompt: extracted.topic.synthesisPrompt || enrichedTopic.synthesisPrompt,
         };
       }
-    } catch {
-      // Proceed with existing summary if offline
+    } catch (err) {
+      console.warn('[GatherClient] Article scrape skipped during single-slide regen:', err);
     }
   }
 
@@ -2040,7 +2030,8 @@ export async function regenerateSingleCandidateSlideWithAi(
       categoryHint: enrichedTopic.domainCategory,
       postFormat: candidate.postFormat === 'single' ? 'single' : 'carousel',
     });
-  } catch {
+  } catch (err) {
+    console.warn('[GatherClient] Single-slide AI regen fell back to local synthesizer:', err);
     freshDeck = synthesizeCarousel({
       prompt: targetedPrompt,
       categoryHint: enrichedTopic.domainCategory,

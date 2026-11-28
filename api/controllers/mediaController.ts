@@ -665,15 +665,26 @@ async function fetchLobstersHottest(limit = 7, rotation = 0): Promise<GatheredTo
       },
     });
     if (!res.ok) return [];
-    const items = (await res.json()) as any[];
+    interface LobstersStoryItem {
+      short_id?: string;
+      title?: unknown;
+      url?: unknown;
+      score?: unknown;
+      tags?: unknown;
+      description?: unknown;
+      created_at?: string;
+      submitter_user?: { username?: string };
+    }
+    const items = (await res.json()) as LobstersStoryItem[];
     const results: GatheredTopicItem[] = [];
 
     for (const item of (items || []).slice(0, 22)) {
       if (!item?.title || !item?.url) continue;
       if (rotation % 2 === 1 && Number(item.score || 0) < 3) continue;
       const title = String(item.title).trim();
+      const itemUrl = String(item.url);
       const tags = Array.isArray(item.tags) ? item.tags.join(', ') : '';
-      const { brand, brandUrl } = deriveBrandFromUrl(item.url, 'Lobsters');
+      const { brand, brandUrl } = deriveBrandFromUrl(itemUrl, 'Lobsters');
       const rawDesc = item.description ? stripHtmlToCleanText(String(item.description), 450) : '';
       const summary =
         rawDesc ||
@@ -832,7 +843,25 @@ async function fetchRedditTechTrends(limit = 7, rotation = 0): Promise<GatheredT
       }
     );
     if (!res.ok) return [];
-    const json = (await res.json()) as any;
+    interface RedditListingPost {
+      id?: string;
+      stickied?: boolean;
+      title?: unknown;
+      url?: unknown;
+      permalink?: string;
+      subreddit_name_prefixed?: string;
+      selftext?: unknown;
+      ups?: number;
+      num_comments?: number;
+      author?: string;
+      created_utc?: number;
+    }
+    interface RedditListingResponse {
+      data?: {
+        children?: Array<{ data?: RedditListingPost }>;
+      };
+    }
+    const json = (await res.json()) as RedditListingResponse;
     const children = json?.data?.children || [];
     const results: GatheredTopicItem[] = [];
 
@@ -1136,7 +1165,19 @@ async function fetchGitHubTrendingRepos(limit = 6, rotation = 0): Promise<Gather
       }
     );
     if (res.ok) {
-      const data = (await res.json()) as any;
+      interface GitHubSearchRepo {
+        id?: number;
+        name?: string;
+        full_name?: string;
+        html_url?: string;
+        stargazers_count?: number;
+        language?: string | null;
+        description?: string | null;
+        topics?: string[];
+        owner?: { login?: string };
+        created_at?: string;
+      }
+      const data = (await res.json()) as { items?: GitHubSearchRepo[] };
       const repos = Array.isArray(data?.items) ? data.items : [];
       const results: GatheredTopicItem[] = [];
 
@@ -1742,7 +1783,7 @@ export async function runAutopilotForTopic(
   }
 
   let deck: CarouselData = sanitizeFullCarousel(structuredClone(genResult.deck));
-  const cadenceAnalysis = analyzePostHistoryCadence(existingPosts, deck.theme, {
+  const cadenceAnalysis = analyzePostHistoryCadence(existingPosts, {
     prompt: topic.title,
     category: topic.domainCategory,
   });
@@ -1768,6 +1809,14 @@ export async function runAutopilotForTopic(
     (isSearchGrounded ||
       (topic.extractedMetrics.length > 0 && numericAudit.verifiedCount > 0));
 
+  const resolvedEngine: NonNullable<CarouselData['sourceMeta']>['engine'] =
+    genResult.engine === 'grounded' ||
+    genResult.engine === 'ungrounded' ||
+    genResult.engine === 'offline' ||
+    genResult.engine === 'offline-synthesizer'
+      ? genResult.engine
+      : 'ungrounded';
+
   deck.sourceMeta = {
     ...deck.sourceMeta,
     type: 'article',
@@ -1780,7 +1829,7 @@ export async function runAutopilotForTopic(
     extractedSourceMetrics: topic.extractedMetrics,
     numericDiscrepancies: numericAudit.discrepancies,
     isFallback: isOffline,
-    engine: (genResult.engine as any) || 'ungrounded',
+    engine: resolvedEngine,
     model: genResult.model,
     status: groundingVerified ? 'verified_live' : 'unverified_draft',
     groundingVerified,

@@ -31,6 +31,261 @@ const execFileAsync = promisify(execFile);
 const SESSION_COOKIE_NAME = '__Host-marrok_session';
 export const MAX_COMPLETED_JOBS = 50;
 export const PREVIEW_TOKEN_TTL_SECONDS = 3600; // 1 hour
+export const MAX_REEL_SCENE_HTML_BYTES = 512 * 1024; // 512 KB cap for promoted Reel scene.html
+
+function toTitleCaseSlug(slug) {
+  return String(slug || '')
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function cleanVoLine(str) {
+  return String(str || '')
+    .replace(/\|/g, ', ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function deriveReelActNarrationText(scene, languageMode, index) {
+  if (!scene || typeof scene !== 'object') {
+    return `Act ${index + 1}`;
+  }
+  const enTitle = cleanVoLine(scene.enTitle);
+  const enBody = cleanVoLine(scene.enBody);
+  const arTitle = cleanVoLine(scene.arTitle);
+  const arBody = cleanVoLine(scene.arBody);
+  const primaryText = cleanVoLine(scene.text);
+  const ctaText = cleanVoLine(scene.ctaText);
+  const label = cleanVoLine(scene.label);
+
+  const joinParts = (title, body) => {
+    if (title && body) {
+      return /[.?!؟]$/.test(title) ? `${title} ${body}` : `${title}. ${body}`;
+    }
+    return title || body || '';
+  };
+
+  let candidate = '';
+  if (languageMode === 'ar') {
+    candidate = joinParts(arTitle, arBody) || primaryText || joinParts(enTitle, enBody) || ctaText || label;
+  } else if (languageMode === 'en') {
+    candidate = joinParts(enTitle, enBody) || primaryText || joinParts(arTitle, arBody) || ctaText || label;
+  } else {
+    candidate = joinParts(enTitle, enBody) || joinParts(arTitle, arBody) || primaryText || ctaText || label;
+  }
+  return candidate || `Act ${index + 1}`;
+}
+
+/**
+ * Promote a Create -> Reel (MotionReelData + compiled deterministic scene.html) into a
+ * native 9:16 (1080x1920 @ 60fps, verticalExport.enabled=false) Film Studio project.
+ */
+export async function createProjectFromReel({ id, name, reelConfig, sceneHtml, overwrite = false }) {
+  const projectId = assertValidProjectId(String(id || '').trim());
+  const paths = getProjectPaths(projectId);
+
+  if (!overwrite) {
+    try {
+      await fs.access(paths.root);
+      const err = new Error(`Project "${projectId}" already exists at ${paths.root}`);
+      err.statusCode = 409;
+      throw err;
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+  }
+
+  if (!reelConfig || typeof reelConfig !== 'object' || Array.isArray(reelConfig)) {
+    throw new ProjectValidationError('reelConfig must be a non-null object', ['reelConfig must be an object']);
+  }
+
+  if (typeof sceneHtml !== 'string' || !sceneHtml.trim()) {
+    throw new ProjectValidationError('sceneHtml must be a non-empty HTML string', ['sceneHtml is required']);
+  }
+
+  const htmlBytes = Buffer.byteLength(sceneHtml, 'utf8');
+  if (htmlBytes > MAX_REEL_SCENE_HTML_BYTES) {
+    const err = new Error(`sceneHtml exceeds maximum allowed size (${MAX_REEL_SCENE_HTML_BYTES} bytes).`);
+    err.statusCode = 413;
+    throw err;
+  }
+
+  if (!sceneHtml.includes('window.renderAt')) {
+    throw new ProjectValidationError(
+      'sceneHtml must expose window.renderAt(t, dt) for deterministic Film Studio capture',
+      ['sceneHtml missing window.renderAt']
+    );
+  }
+
+  const rawScenes =
+    Array.isArray(reelConfig.scenes) && reelConfig.scenes.length > 0
+      ? reelConfig.scenes
+      : [
+          {
+            id: 'scene-1',
+            label: 'Act 1 — Opening Hook',
+            from: 0,
+            to: Number(reelConfig.duration) || 15,
+            text: name || toTitleCaseSlug(projectId),
+          },
+        ];
+
+  const maxSceneTo = rawScenes.reduce((acc, s) => Math.max(acc, Number(s?.to) || 0), 0);
+  const rawDur = Number(reelConfig.duration);
+  const durationSec = Number(
+    Math.max(
+      2,
+      Math.min(
+        120,
+        Number.isFinite(rawDur) && rawDur >= maxSceneTo && rawDur > 0
+          ? rawDur
+          : Math.max(rawDur || 0, maxSceneTo, 4)
+      )
+    ).toFixed(2)
+  );
+
+  const languageMode =
+    reelConfig.languageMode === 'ar' || reelConfig.languageMode === 'en'
+      ? reelConfig.languageMode
+      : 'bilingual';
+
+  const acts = [];
+  const sfx = [];
+  const fallbackSlot = durationSec / rawScenes.length;
+
+  for (let i = 0; i < rawScenes.length; i++) {
+    const scene = rawScenes[i] || {};
+    const actId = `act${i + 1}`;
+    const label =
+      typeof scene.label === 'string' && scene.label.trim()
+        ? scene.label.trim()
+        : `Act ${i + 1}`;
+
+    const rawFrom = Number(scene.from);
+    const startSec = Number(
+      Math.max(
+        0,
+        Math.min(
+          durationSec - 0.25,
+          Number.isFinite(rawFrom) && rawFrom >= 0 ? rawFrom : i * fallbackSlot
+        )
+      ).toFixed(2)
+    );
+
+    const nextFrom =
+      i + 1 < rawScenes.length && Number.isFinite(Number(rawScenes[i + 1]?.from))
+        ? Number(rawScenes[i + 1].from)
+        : durationSec;
+    const rawTo = Number(scene.to);
+    const targetEnd = Math.min(
+      durationSec,
+      Number.isFinite(rawTo) && rawTo > startSec
+        ? rawTo
+        : Math.max(startSec + 0.5, nextFrom > startSec ? nextFrom : startSec + fallbackSlot)
+    );
+
+    const windowSec = Math.max(0.25, targetEnd - startSec);
+    const maxDurationSec = Number(
+      Math.max(
+        0.25,
+        Math.min(durationSec - startSec, windowSec > 1.2 ? windowSec - 0.15 : windowSec)
+      ).toFixed(2)
+    );
+
+    const text = deriveReelActNarrationText(scene, languageMode, i);
+    const voiceOverride =
+      scene.voiceOverride && typeof scene.voiceOverride === 'object' && !Array.isArray(scene.voiceOverride)
+        ? scene.voiceOverride
+        : null;
+
+    acts.push({
+      id: actId,
+      label,
+      startSec,
+      maxDurationSec,
+      text,
+      voiceOverride,
+    });
+
+    if (i > 0 && i <= 6 && startSec > 0 && startSec <= durationSec) {
+      const isLast = i === rawScenes.length - 1;
+      sfx.push({
+        id: isLast ? `shimmer-${i}` : `whoosh-${i}`,
+        source: 'dsp',
+        dspPreset: isLast ? 'shimmer' : 'whoosh',
+        file: isLast ? 'audio/shimmer.wav' : 'audio/whoosh.wav',
+        atSec: Number(Math.max(0, Math.min(durationSec, startSec)).toFixed(2)),
+        volume: isLast ? 0.18 : 0.15,
+      });
+    }
+  }
+
+  const rawBg = typeof reelConfig?.brand?.bgColor === 'string' ? reelConfig.brand.bgColor.trim() : '';
+  const backgroundColor = /^#[0-9a-fA-F]{6}$/.test(rawBg) ? rawBg : '#080D11';
+
+  const fadeOutDurationSec = Number(Math.min(1.5, Math.max(0.4, durationSec * 0.1)).toFixed(2));
+  const fadeOutStartSec = Number(Math.max(0, durationSec - fadeOutDurationSec).toFixed(2));
+  const swellAtSec = Number((durationSec * 0.62).toFixed(2));
+
+  const rawConfig = {
+    id: projectId,
+    name: (name && String(name).trim()) || toTitleCaseSlug(projectId),
+    video: {
+      width: 1080,
+      height: 1920,
+      fps: 60,
+      durationSec,
+      crf: 16,
+      preset: 'slow',
+      verticalExport: {
+        enabled: false,
+        mode: 'native',
+        backgroundColor,
+      },
+    },
+    voice: {
+      provider: 'elevenlabs',
+      voiceId: 'XrExE9yKIg1WjnnlVkGX',
+      modelId: 'eleven_multilingual_v2',
+      seed: 4242,
+      settings: {
+        stability: 0.55,
+        similarity_boost: 0.78,
+        style: 0.12,
+        use_speaker_boost: true,
+      },
+    },
+    acts,
+    music: {
+      source: 'dsp',
+      file: 'audio/music.wav',
+      gainDb: -14,
+      fadeOutStartSec,
+      fadeOutDurationSec,
+      swellAtSec,
+      ducking: {
+        threshold: 0.03,
+        ratio: 8,
+        attackMs: 20,
+        releaseMs: 500,
+      },
+    },
+    sfx,
+  };
+
+  // Validate generated project.json against schema.mjs BEFORE writing to disk
+  const validated = validateProjectConfig(rawConfig, projectId);
+
+  await fs.mkdir(paths.assetsDir, { recursive: true });
+  await fs.mkdir(paths.audioDir, { recursive: true });
+  await fs.mkdir(paths.outputDir, { recursive: true });
+  await fs.writeFile(paths.configPath, JSON.stringify(validated, null, 2) + '\n', 'utf8');
+  await fs.writeFile(paths.scenePath, sceneHtml, 'utf8');
+
+  return { config: validated, paths };
+}
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -499,7 +754,7 @@ function startBackgroundJob(projectId, type, opts = {}) {
         result = await inspectProjectQa(config, paths);
       } else if (type === 'build') {
         result = await runBuildPipeline(projectId, {
-          vertical: opts.vertical !== undefined ? Boolean(opts.vertical) : true,
+          vertical: opts.vertical !== undefined ? Boolean(opts.vertical) : undefined,
           fast: Boolean(opts.fast),
           force: Boolean(opts.force),
           onProgress,
@@ -655,6 +910,22 @@ export function registerVideoStudioRoutes(app) {
         id: String(body.id || '').trim(),
         name: body.name ? String(body.name) : undefined,
         durationSec: body.durationSec !== undefined ? Number(body.durationSec) : undefined,
+      });
+      res.status(201).json({ ok: true, project: await getFullProjectDetails(config.id) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  api.post('/projects/from-reel', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const { config } = await createProjectFromReel({
+        id: String(body.id || '').trim(),
+        name: body.name ? String(body.name) : undefined,
+        reelConfig: body.reelConfig,
+        sceneHtml: body.sceneHtml,
+        overwrite: Boolean(body.overwrite),
       });
       res.status(201).json({ ok: true, project: await getFullProjectDetails(config.id) });
     } catch (error) {

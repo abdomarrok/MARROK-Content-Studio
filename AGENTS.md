@@ -8,7 +8,7 @@
 ## Commands
 - Install: `npm install` (`.npmrc` sets `legacy-peer-deps=true`; `package-lock.json` is the only lockfile).
 - `npm run dev` — Express + Vite on `http://localhost:3000`, binds `0.0.0.0` (`PORT` overrides).
-- `npm run lint` / `npm run typecheck` — both `tsc --noEmit`. `npm test` — Vitest (jsdom, `isolate: false`; 61 specs / 470 tests). Single file: `npx vitest run src/lib/qaAndRiskChecks.test.ts`; filter: `npm test -- <pattern>`; watch: `npm run test:watch`.
+- `npm run lint` / `npm run typecheck` — both `tsc --noEmit` (with `noUnusedParameters: true`). `npm test` — Vitest (jsdom, `isolate: false`; 61 specs / 471 tests). Single file: `npx vitest run src/lib/qaAndRiskChecks.test.ts`; filter: `npm test -- <pattern>`; watch: `npm run test:watch`.
 - `npm run test:e2e` — Playwright (`e2e/smoke.spec.ts`), auto-starts `npx tsx server.ts` on `:3000`, mobile 390px + desktop projects. Excluded from Vitest and not run by CI.
 - `npm run build` — production bundle -> `dist/`. `npm run preview`, `npm run clean` as defined.
 - `npm run start` — does **not** set `NODE_ENV`; without it it runs Vite middleware, not `dist/`. Production: `$env:NODE_ENV='production'; npm run start` (PowerShell).
@@ -63,7 +63,7 @@
 - `src/components/studio/`: `ViewportCanvas` (instant render, external toolbar dock `viewport-external-toolbar-dock`, 150ms text debounce, auto `imageAspectRatio`, selection sync, collision-clamped drag, keyboard nudge), `InlineSlideEditor` (`syncSlideVisualFromText`, `fitSlideTextLimits`, meme vs graphic-photo workflows), archetype editors, `PublishingHubWorkspace.tsx`/`PostManagerPanel.tsx` (**Inbox -> Draft -> Schedule**, list/7-14d calendar/bulk schedule/publish now, mandatory `Human Reviewed` + `Claims & Numbers Verified`, `>2/day` warning), and `studio/motion/`.
 - `src/lib/gather/gatherClient.ts` + `WeeklyProgramReviewPanel.tsx`: topic radar (`/api/gather/radar`), SSRF-safe `/api/gather/extract-url`, Telegram webhook, 4-factor scoring (freshness/engagement/clientRelevance/platformRisk), "Already Covered" vault dedup, lazy Slide 1 hook + `hydrateCandidateDeckOnDemand`, editable `Marrok angle`, Draft-only acceptance.
 - `api/index.ts` = Express app: startup config (`api/config.ts`), security headers, per-IP rate limiter, 4.5 MB JSON, strict CORS, auth gate. Controllers in `api/controllers/`; prompts/schema in `api/prompts/systemPrompt.ts`; Postgres pool in `api/db/postgres.ts` (falls back to ephemeral `/tmp` + browser IndexedDB when offline).
-- `docs/ARCHITECTURE.md`, `docs/AUDIT.md`, `docs/UX_AUDIT.md`, `docs/ADR/001-004`, and `specs/*.md` are design context; trust `server.ts`, `api/*`, and `src/lib/*` first.
+- `docs/ARCHITECTURE.md`, `docs/ADR/001-004`, and `specs/*.md` are design context; trust `server.ts`, `api/*`, and `src/lib/*` first.
 
 ## AI generation & publishing cascade
 - `.env` keys: `DATABASE_URL` (or `POSTGRES_URL`/`NETLIFY_DATABASE_URL`/`..._UNPOOLED`), `GEMINI_API_KEY`, `GEMINI_API_KEY_BACKUP`/`_2`, `GEMINI_API_KEYS` (comma pool), Cloudinary, `BUFFER_API_KEY`, `ZERNIO_API_KEY`, Telegram, `ALLOWED_ORIGINS`, `APP_URL`, session/auth vars, `FREE_BACKUP_AI_ENABLED`, `RATE_LIMIT_RPM`, `GEMINI_*_MODELS`. See `.env.example`. Client Gemini keys: `x-gemini-key`/`x-gemini-api-key`, `x-gemini-backup-key`, body `apiKey`/`backupApiKey`; stored in `localStorage` as `marrok_custom_gemini_key` / `_backup`.

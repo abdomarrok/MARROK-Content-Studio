@@ -153,12 +153,14 @@ interface ProjectDetails {
 
 interface VideoStudioWorkspaceProps {
   theme?: ThemePalette;
+  initialProjectId?: string | null;
   onShowToast: (msg: string) => void;
   onAuthRequired?: () => void;
 }
 
 export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
   theme = DEFAULT_PALETTES.teal,
+  initialProjectId = null,
   onShowToast,
   onAuthRequired,
 }) => {
@@ -172,7 +174,7 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
 
   const [previewToken, setPreviewToken] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [selectedId, setSelectedId] = useState<string>('marrok-brand-film');
+  const [selectedId, setSelectedId] = useState<string>(initialProjectId || 'marrok-brand-film');
   const [details, setDetails] = useState<ProjectDetails | null>(null);
   const [draftConfig, setDraftConfig] = useState<ProjectConfig | null>(null);
   const [activeTab, setActiveTab] = useState<'script' | 'build'>('script');
@@ -285,6 +287,11 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
       const data = (await res.json()) as ProjectDetails;
       setDetails(data);
       setDraftConfig(structuredClone(data.config));
+      if (data.config?.video) {
+        setPreviewAspect(
+          data.config.video.height > data.config.video.width ? '9:16' : '16:9'
+        );
+      }
       if (data.previewToken) {
         setPreviewToken(data.previewToken);
       }
@@ -360,15 +367,18 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
       const listData = await listRes.json();
       const items: ProjectSummary[] = listData.projects || [];
       setProjects(items);
-      const initial = items.find((p) => p.id === 'marrok-brand-film')?.id || items[0]?.id;
-      if (initial) {
-        setSelectedId(initial);
-        await loadProjectDetails(initial);
+      const preferred =
+        (initialProjectId && items.find((p) => p.id === initialProjectId)?.id) ||
+        items.find((p) => p.id === 'marrok-brand-film')?.id ||
+        items[0]?.id;
+      if (preferred) {
+        setSelectedId(preferred);
+        await loadProjectDetails(preferred);
       }
     } catch {
       setCapabilities({ checked: true, serverAvailable: false, ffmpegAvailable: false });
     }
-  }, [authFetch, loadProjectDetails]);
+  }, [authFetch, initialProjectId, loadProjectDetails]);
 
   useEffect(() => {
     void loadWorkspaceInit();
@@ -903,6 +913,8 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
 
           <div className="p-4 flex-1 flex flex-col justify-between gap-3">
             <div
+              data-testid="film-studio-stage-container"
+              data-aspect={previewAspect}
               className={`relative bg-[#080d11] rounded-lg overflow-hidden border border-[#1E2833] mx-auto w-full ${
                 previewAspect === '9:16' ? 'max-w-[300px] aspect-[9/16]' : 'aspect-video'
               }`}

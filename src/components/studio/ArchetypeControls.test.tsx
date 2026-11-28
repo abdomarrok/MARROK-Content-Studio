@@ -420,7 +420,6 @@ describe('ArchetypeControls visual layout editors & smart content-aware defaults
         currentSlideIndex={0}
         theme={DEFAULT_PALETTES.emerald ? DEFAULT_PALETTES.emerald : Object.values(DEFAULT_PALETTES)[0]}
         showSafeZones={false}
-        onToggleSafeZones={() => {}}
         onPreviousSlide={() => {}}
         onNextSlide={() => {}}
         onUpdateSlideField={onUpdateSlideField}
@@ -473,7 +472,6 @@ describe('ArchetypeControls visual layout editors & smart content-aware defaults
         currentSlideIndex={0}
         theme={Object.values(DEFAULT_PALETTES)[0]}
         showSafeZones={false}
-        onToggleSafeZones={() => {}}
         onPreviousSlide={() => {}}
         onNextSlide={() => {}}
         onUpdateSlideField={onUpdateSlideField}

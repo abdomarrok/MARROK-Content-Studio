@@ -12,7 +12,7 @@ import type {
 import { renderSlideToCanvas } from '../canvas/renderSlide.ts';
 import { syncLocalVaultAfterManage } from '../storage/postsVaultClient.ts';
 import { isEligibleOverduePromotion } from './schedulePredicate.ts';
-import { withClientAuthHeaders } from '../security/clientSessionToken.ts';
+import { fetchAuthedJson, HttpClientError } from '../network/httpClient.ts';
 
 export type WeeklyCadencePreset = 'mon-wed-fri' | 'tue-thu-sat' | 'weekdays' | 'daily';
 
@@ -534,7 +534,6 @@ export async function uploadDeckSlidesForPublishing(
     const endIdx = Math.min(i + CHUNK_SIZE, slides.length);
     onProgress?.(`Uploading slides ${startIdx}${endIdx > startIdx ? `–${endIdx}` : ''} of ${slides.length} (${preset})...`);
 
-    let res: Response | null = null;
     let lastChunkErr: Error | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       if (attempt > 0) {
@@ -542,22 +541,24 @@ export async function uploadDeckSlidesForPublishing(
         await new Promise((r) => setTimeout(r, 600 * attempt));
       }
       try {
-        res = await fetch('/api/publish/upload-media', {
+        const data = await fetchAuthedJson<UploadPublishMediaResponse>('/api/publish/upload-media', {
           method: 'POST',
-          credentials: 'include',
-          headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({ postId, slides: chunk }),
+          body: { postId, slides: chunk },
+          timeoutMs: 30_000,
+          contextLabel: `Media upload for slide ${startIdx}`,
         });
-        const data = await parseApiResponseJson<UploadPublishMediaResponse>(
-          res,
-          `Media upload for slide ${startIdx}`
-        );
         allUrls.push(...(data.urls || []));
         allPublicIds.push(...(data.publicIds || []));
         if (data.provider) provider = data.provider;
         lastChunkErr = null;
         break;
       } catch (err) {
+        if (err instanceof HttpClientError && err.isHtmlResponse) {
+          lastChunkErr = new Error(
+            'Cloudinary media staging is not configured or server proxy returned an HTML page. Configure CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in your environment variables to enable direct social publishing.'
+          );
+          break;
+        }
         lastChunkErr =
           err instanceof Error
             ? err
@@ -567,7 +568,7 @@ export async function uploadDeckSlidesForPublishing(
           errMsg.includes('cloudinary') ||
           errMsg.includes('html page') ||
           errMsg.includes('staging') ||
-          (res && res.status < 500 && res.status !== 429)
+          (err instanceof HttpClientError && err.status >= 400 && err.status < 500)
         ) {
           break;
         }
@@ -592,24 +593,22 @@ export async function uploadDeckSlidesForPublishing(
  * and triggers an automatic cleanup sweep of expired scheduled Cloudinary assets.
  */
 export async function fetchPublishStatus(): Promise<PublishStatusResponse> {
-  const res = await fetch('/api/publish/status', {
+  return await fetchAuthedJson<PublishStatusResponse>('/api/publish/status', {
     method: 'GET',
-    credentials: 'include',
-    headers: withClientAuthHeaders({ Accept: 'application/json' }),
+    timeoutMs: 20_000,
+    contextLabel: 'Fetch publish status',
   });
-  return await parseApiResponseJson<PublishStatusResponse>(res, 'Fetch publish status');
 }
 
 /**
  * Fetches trending licensed tracks from Zernio's TikTok Commercial Music Library.
  */
 export async function fetchTikTokCommercialMusic(): Promise<TikTokMusicCatalogResponse> {
-  const res = await fetch('/api/publish/tiktok-music', {
+  return await fetchAuthedJson<TikTokMusicCatalogResponse>('/api/publish/tiktok-music', {
     method: 'GET',
-    credentials: 'include',
-    headers: withClientAuthHeaders({ Accept: 'application/json' }),
+    timeoutMs: 20_000,
+    contextLabel: 'Fetch TikTok music catalog',
   });
-  return await parseApiResponseJson<TikTokMusicCatalogResponse>(res, 'Fetch TikTok music catalog');
 }
 
 /**
@@ -628,14 +627,12 @@ export async function dispatchPostPublish(
       'Review Safety Gate: Mark "Human Reviewed" and verify all claims & numbers before publishing or scheduling.'
     );
   }
-  const res = await fetch('/api/publish/dispatch', {
+  const data = await fetchAuthedJson<DispatchPublishResponse>('/api/publish/dispatch', {
     method: 'POST',
-    credentials: 'include',
-    headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify(payload),
+    body: payload,
+    timeoutMs: 30_000,
+    contextLabel: 'Publish dispatch',
   });
-
-  const data = await parseApiResponseJson<DispatchPublishResponse>(res, 'Publish dispatch');
   if (data.post) {
     await syncLocalVaultAfterManage({ updatedPost: data.post });
   }
@@ -709,14 +706,12 @@ export function derivePostLifecycleStage(
 export async function managePublishedPost(
   payload: ManagePublishedPostPayload
 ): Promise<ManagePublishedPostResponse> {
-  const res = await fetch('/api/publish/manage-post', {
+  const data = await fetchAuthedJson<ManagePublishedPostResponse>('/api/publish/manage-post', {
     method: 'POST',
-    credentials: 'include',
-    headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify(payload),
+    body: payload,
+    timeoutMs: 25_000,
+    contextLabel: 'Post management action',
   });
-
-  const data = await parseApiResponseJson<ManagePublishedPostResponse>(res, 'Post management action');
   await syncLocalVaultAfterManage({
     updatedPost: data.post,
     deletedId: data.deletedId,
@@ -738,14 +733,12 @@ export async function cleanupPublishedCloudinaryMedia(options?: {
   remainingStagedCount: number;
   cleanedCloudinaryPostsCount: number;
 }> {
-  const res = await fetch('/api/publish/cleanup-media', {
+  return await fetchAuthedJson('/api/publish/cleanup-media', {
     method: 'POST',
-    credentials: 'include',
-    headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify(options || {}),
+    body: options || {},
+    timeoutMs: 25_000,
+    contextLabel: 'Cloudinary cleanup',
   });
-
-  return await parseApiResponseJson(res, 'Cloudinary cleanup');
 }
 
 /**

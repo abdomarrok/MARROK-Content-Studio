@@ -132,7 +132,6 @@ describe('Content Quality Engine, Footer Safe Ceiling & 3-Source Verification', 
     const risk = runPlatformRiskChecks(pollutedDeck, 'Tech Humor');
     const blockers = getPublishBlockers(
       pollutedDeck,
-      false,
       true,
       qa,
       risk,

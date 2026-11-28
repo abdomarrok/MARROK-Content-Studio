@@ -187,7 +187,6 @@ export function isPostPublishedOrDue(post: SavedPostRecord, nowMs: number = Date
  */
 export function analyzePostHistoryCadence(
   posts: SavedPostRecord[] = [],
-  activeThemeId?: string,
   topicContext?: { prompt?: string; category?: string }
 ): ThemeCadenceAnalysis {
   const nowMs = Date.now();
@@ -359,9 +358,8 @@ export function analyzePostHistoryCadence(
  */
 export function getSmartNextPalette(
   posts: SavedPostRecord[] = [],
-  currentThemeId?: string,
   topicContext?: { prompt?: string; category?: string }
 ): ThemePalette {
-  const analysis = analyzePostHistoryCadence(posts, currentThemeId, topicContext);
+  const analysis = analyzePostHistoryCadence(posts, topicContext);
   return analysis.recommendedPalette;
 }

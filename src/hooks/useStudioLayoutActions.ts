@@ -174,6 +174,7 @@ export function useStudioLayoutActions({
   );
 
   const handleAutoFitCurrentSlide = useCallback(() => {
+    let didChange = false;
     applyDeckUpdate((prev) => {
       const targetIndex = Math.min(currentSlideIndex, prev.slides.length - 1);
       const slide = prev.slides[targetIndex];
@@ -182,8 +183,7 @@ export function useStudioLayoutActions({
       const enTitleLimit = isHook ? CHAR_LIMITS.hookTitle : CHAR_LIMITS.enTitle;
       const arTitleLimit = isHook ? CHAR_LIMITS.hookArTitle : CHAR_LIMITS.arTitle;
 
-      const newSlides = [...prev.slides];
-      newSlides[targetIndex] = sanitizeSlide(
+      const fittedSlide = sanitizeSlide(
         {
           ...slide,
           enTitle: autoFitTextToLimits(autoPolishHeadline(slide.enTitle || ''), enTitleLimit),
@@ -194,9 +194,24 @@ export function useStudioLayoutActions({
         targetIndex,
         prev.slides.length
       );
+
+      if (
+        (fittedSlide.enTitle || '') === (slide.enTitle || '') &&
+        (fittedSlide.arTitle || '') === (slide.arTitle || '') &&
+        (fittedSlide.enBody || '') === (slide.enBody || '') &&
+        (fittedSlide.arBody || '') === (slide.arBody || '')
+      ) {
+        return prev;
+      }
+
+      didChange = true;
+      const newSlides = [...prev.slides];
+      newSlides[targetIndex] = fittedSlide;
       return { ...prev, slides: newSlides };
     });
-    onShowToast('Auto-fitted title and body copy within character limits');
+    if (didChange) {
+      onShowToast('Auto-fitted title and body copy within character limits');
+    }
   }, [currentSlideIndex, applyDeckUpdate, onShowToast]);
 
   const handleResetSlideLayoutOverrides = useCallback(() => {

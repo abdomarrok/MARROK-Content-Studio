@@ -86,8 +86,6 @@ export interface StudioCommandBarProps {
   pipelineStatus: string | null;
   activePostFormat: PostFormat;
   onSwitchPostFormat: (format: PostFormat) => void;
-  engineBadge: { label: string; cls: string };
-  onInspectEngine: () => void;
   isExpanded: boolean;
   onSetIsExpanded: React.Dispatch<React.SetStateAction<boolean>>;
   isSheetOpen: boolean;
@@ -143,8 +141,6 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
   pipelineStatus,
   activePostFormat,
   onSwitchPostFormat,
-  engineBadge,
-  onInspectEngine,
   isExpanded,
   onSetIsExpanded,
   isSheetOpen,

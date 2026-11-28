@@ -23,9 +23,11 @@ export function isValidProjectId(id) {
 
 export function assertValidProjectId(id) {
   if (!isValidProjectId(id)) {
-    throw new Error(
+    const err = new Error(
       `Invalid project id "${id}". Use lowercase alphanumeric characters and hyphens only (e.g. "marrok-brand-film").`
     );
+    err.statusCode = 400;
+    throw err;
   }
   return id;
 }
@@ -35,15 +37,21 @@ export function assertValidProjectId(id) {
  */
 export function resolveProjectRelative(projectRoot, relPath) {
   if (typeof relPath !== 'string' || !relPath.trim()) {
-    throw new Error('Expected a non-empty relative path.');
+    const err = new Error('Expected a non-empty relative path.');
+    err.statusCode = 400;
+    throw err;
   }
   if (path.isAbsolute(relPath)) {
-    throw new Error(`Path must be relative to the project folder, got absolute path: ${relPath}`);
+    const err = new Error(`Path must be relative to the project folder, got absolute path: ${relPath}`);
+    err.statusCode = 400;
+    throw err;
   }
   const normalizedRoot = path.resolve(projectRoot);
   const resolved = path.resolve(normalizedRoot, relPath);
   if (resolved !== normalizedRoot && !resolved.startsWith(normalizedRoot + path.sep)) {
-    throw new Error(`Path escapes project directory: ${relPath}`);
+    const err = new Error(`Path escapes project directory: ${relPath}`);
+    err.statusCode = 400;
+    throw err;
   }
   return resolved;
 }

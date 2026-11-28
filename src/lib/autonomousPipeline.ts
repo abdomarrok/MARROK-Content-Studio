@@ -18,6 +18,7 @@ import {
 import { parseCarouselData } from './validation/carousel';
 import { parseImageDataUrl } from './validation/image';
 import { createRequestDeadline } from './network/requestDeadline';
+import { getCustomGeminiHeaders } from './network/httpClient';
 import { withClientAuthHeaders } from './security/clientSessionToken';
 
 const GENERATION_REQUEST_TIMEOUT_MS = 90000;
@@ -210,15 +211,10 @@ export async function runAutonomousPipeline(
   );
   let rawCarousel: CarouselData | null = null;
 
-  const customKey = typeof window !== 'undefined' ? localStorage.getItem('marrok_custom_gemini_key') : null;
-  const backupKey = typeof window !== 'undefined' ? localStorage.getItem('marrok_custom_gemini_backup_key') : null;
-  const requestHeaders: Record<string, string> = withClientAuthHeaders({ 'Content-Type': 'application/json' });
-  if (customKey) {
-    requestHeaders['x-gemini-key'] = customKey;
-  }
-  if (backupKey) {
-    requestHeaders['x-gemini-backup-key'] = backupKey;
-  }
+  const requestHeaders: Record<string, string> = withClientAuthHeaders({
+    'Content-Type': 'application/json',
+    ...getCustomGeminiHeaders(),
+  });
 
   const generationPayload: Record<string, unknown> = {
     prompt: rawInput,

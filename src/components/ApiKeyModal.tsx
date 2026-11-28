@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Key, Check, ShieldCheck, X, ExternalLink, RotateCcw } from 'lucide-react';
+import { fetchJsonWithTimeout } from '../lib/network/httpClient';
 
 interface ApiKeyModalProps {
   isOpen: boolean;
@@ -21,16 +22,31 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
   const [serverKeyCount, setServerKeyCount] = useState(1);
 
   useEffect(() => {
-    const savedPrimary = localStorage.getItem('marrok_custom_gemini_key') || '';
-    const savedBackup = localStorage.getItem('marrok_custom_gemini_backup_key') || '';
+    if (!isOpen) return;
+
+    let savedPrimary = '';
+    let savedBackup = '';
+    try {
+      savedPrimary = localStorage.getItem('marrok_custom_gemini_key') || '';
+      savedBackup = localStorage.getItem('marrok_custom_gemini_backup_key') || '';
+    } catch {
+      // Browser storage unavailable (e.g., restricted iframe sandbox)
+    }
     setKeyInput(savedPrimary);
     setBackupKeyInput(savedBackup);
     setHasCustomKey(Boolean(savedPrimary || savedBackup));
 
+    let active = true;
+    const controller = new AbortController();
+
     // Check server key status
-    fetch('/api/health')
-      .then((res) => res.json())
+    fetchJsonWithTimeout<{ hasApiKey?: boolean; apiKeyCount?: number }>('/api/health', {
+      timeoutMs: 10_000,
+      signal: controller.signal,
+      contextLabel: 'Health check',
+    })
       .then((data) => {
+        if (!active) return;
         if (typeof data.hasApiKey === 'boolean') {
           setServerHasKey(data.hasApiKey);
         }
@@ -38,7 +54,15 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
           setServerKeyCount(data.apiKeyCount);
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        console.warn('[ApiKeyModal] Failed to query /api/health:', err);
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -47,16 +71,22 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
     const trimmedPrimary = keyInput.trim();
     const trimmedBackup = backupKeyInput.trim();
 
-    if (trimmedPrimary) {
-      localStorage.setItem('marrok_custom_gemini_key', trimmedPrimary);
-    } else {
-      localStorage.removeItem('marrok_custom_gemini_key');
-    }
+    try {
+      if (trimmedPrimary) {
+        localStorage.setItem('marrok_custom_gemini_key', trimmedPrimary);
+      } else {
+        localStorage.removeItem('marrok_custom_gemini_key');
+      }
 
-    if (trimmedBackup) {
-      localStorage.setItem('marrok_custom_gemini_backup_key', trimmedBackup);
-    } else {
-      localStorage.removeItem('marrok_custom_gemini_backup_key');
+      if (trimmedBackup) {
+        localStorage.setItem('marrok_custom_gemini_backup_key', trimmedBackup);
+      } else {
+        localStorage.removeItem('marrok_custom_gemini_backup_key');
+      }
+    } catch (err) {
+      console.warn('[ApiKeyModal] Browser storage unavailable:', err);
+      onShowToast('Browser storage is blocked in this preview; keys could not be saved.');
+      return;
     }
 
     const anyKey = trimmedPrimary || trimmedBackup || null;
@@ -74,8 +104,12 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
   };
 
   const handleClear = () => {
-    localStorage.removeItem('marrok_custom_gemini_key');
-    localStorage.removeItem('marrok_custom_gemini_backup_key');
+    try {
+      localStorage.removeItem('marrok_custom_gemini_key');
+      localStorage.removeItem('marrok_custom_gemini_backup_key');
+    } catch (err) {
+      console.warn('[ApiKeyModal] Failed to clear browser storage:', err);
+    }
     setKeyInput('');
     setBackupKeyInput('');
     setHasCustomKey(false);

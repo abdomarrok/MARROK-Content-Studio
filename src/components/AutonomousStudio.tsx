@@ -14,7 +14,7 @@ import {
   Redo2,
   Eye,
 } from 'lucide-react';
-import { withClientAuthHeaders } from '../lib/security/clientSessionToken.ts';
+import { fetchAuthedJson, HttpClientError } from '../lib/network/httpClient.ts';
 import {
   CarouselData,
   CoverStyle,
@@ -35,7 +35,6 @@ import {
 } from '../types.ts';
 import { analyzePostHistoryCadence, normalizeThemeId } from '../lib/theme/cadenceEngine.ts';
 import {
-  downloadSingleSlidePng,
   getCanvasDimensionSpec,
   isVideoSlide,
   analyzeVideoForSlideAndCaption,
@@ -130,16 +129,23 @@ interface AutonomousStudioProps {
   activeSlideIndex?: number;
   onSlideChange?: (index: number) => void;
   onUpdateCarousel: React.Dispatch<React.SetStateAction<CarouselData>>;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  historyRestoreVersion?: number;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  isComparingBefore?: boolean;
+  onToggleCompareBefore?: (active?: boolean) => void;
+  beforeEditsCarousel?: CarouselData;
   onSelectTheme: (palette: ThemePalette) => void;
   onOpenThemeCustomizer: () => void;
   onOpenContactSheet?: () => void;
   onOpenPreviewDrawer?: (tab?: 'simulator' | 'polish') => void;
-  onOpenSavedPostsDrawer?: () => void;
   onSaveValidPost?: (status: SavedPostStatus, allowOverride?: boolean) => Promise<void>;
-  isSavingPost?: boolean;
   onShowToast: (msg: string) => void;
   savedPosts?: SavedPostRecord[];
   onOpenPublishScheduleModal?: (tab?: 'single' | 'bulk' | 'storage') => void;
+  onOpenInFilmStudio?: (projectId: string) => void;
 }
 
 import {
@@ -150,11 +156,9 @@ import { UnderCanvasDeliveryDock } from './studio/panels/UnderCanvasDeliveryDock
 import { MobileStudioBottomBar } from './studio/panels/MobileStudioBottomBar.tsx';
 import { useSlideNavigation } from '../hooks/useSlideNavigation.ts';
 import { useThemeCadence } from '../hooks/useThemeCadence.ts';
-import { useDeckHistory } from '../hooks/useDeckHistory.ts';
 import { useStudioLayoutActions } from '../hooks/useStudioLayoutActions.ts';
 import { useExportActions } from '../hooks/useExportActions.ts';
 import { useMediaIngestion } from '../hooks/useMediaIngestion.ts';
-import { StudioProvider } from '../context/StudioContext.tsx';
 
 export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   carousel,
@@ -162,16 +166,23 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   activeSlideIndex,
   onSlideChange,
   onUpdateCarousel,
+  canUndo = false,
+  canRedo = false,
+  historyRestoreVersion = 0,
+  onUndo,
+  onRedo,
+  isComparingBefore = false,
+  onToggleCompareBefore,
+  beforeEditsCarousel,
   onSelectTheme,
   onOpenThemeCustomizer,
   onOpenContactSheet,
   onOpenPreviewDrawer,
-  onOpenSavedPostsDrawer,
   onSaveValidPost,
-  isSavingPost = false,
   onShowToast,
   savedPosts = [],
   onOpenPublishScheduleModal,
+  onOpenInFilmStudio,
 }) => {
   // Navigation Hook
   const {
@@ -184,22 +195,29 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     onSlideChange,
   });
 
-  // Undo / Redo & Compare-Before History Hook
-  const {
-    isComparingBefore,
-    setIsComparingBefore,
-    beforeEditsDeckRef,
-    deckRevisionRef,
-    canUndo,
-    canRedo,
-    applyDeckUpdate,
-    handleUndo,
-    handleRedo,
-  } = useDeckHistory({
-    carousel,
-    onUpdateCarousel,
-    onShowToast,
-  });
+  // Single-source-of-truth Undo/Redo & Compare-Before wired from App.tsx's useStudioHistory
+  const deckRevisionRef = useRef<number>(0);
+  const applyDeckUpdate = useCallback(
+    (updater: (prev: CarouselData) => CarouselData) => {
+      deckRevisionRef.current += 1;
+      onUpdateCarousel(updater);
+    },
+    [onUpdateCarousel]
+  );
+  const handleUndo = useCallback(() => {
+    deckRevisionRef.current += 1;
+    onUndo?.();
+  }, [onUndo]);
+  const handleRedo = useCallback(() => {
+    deckRevisionRef.current += 1;
+    onRedo?.();
+  }, [onRedo]);
+  const setIsComparingBefore = useCallback(
+    (active: boolean) => {
+      onToggleCompareBefore?.(active);
+    },
+    [onToggleCompareBefore]
+  );
 
   const activePostFormat: PostFormat = resolveEffectivePostFormat(carousel);
 
@@ -530,7 +548,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
 
       // Cadence-Aware Auto-Theme Routing:
       // Avoids consecutive duplicate colors and applies topic-harmonic resolution based on posted history
-      const cadenceAnalysis = analyzePostHistoryCadence(savedPosts, theme.id, {
+      const cadenceAnalysis = analyzePostHistoryCadence(savedPosts, {
         prompt: query,
         category: generated.category || (categoryHint !== 'auto' ? categoryHint : undefined),
       });
@@ -1199,17 +1217,6 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   const [isSyncingArabic, setIsSyncingArabic] = useState(false);
   const [isSyncingAllArabic, setIsSyncingAllArabic] = useState(false);
 
-  const buildClientAiHeaders = (): Record<string, string> => {
-    const headers: Record<string, string> = withClientAuthHeaders({ 'Content-Type': 'application/json' });
-    if (typeof window !== 'undefined') {
-      const customKey = localStorage.getItem('marrok_custom_gemini_key');
-      const backupKey = localStorage.getItem('marrok_custom_gemini_backup_key');
-      if (customKey) headers['x-gemini-key'] = customKey;
-      if (backupKey) headers['x-gemini-backup-key'] = backupKey;
-    }
-    return headers;
-  };
-
   const handleSyncCurrentSlideArabic = async () => {
     const targetIndex = Math.min(currentSlideIndex, carousel.slides.length - 1);
     const targetSlide = carousel.slides[targetIndex];
@@ -1221,22 +1228,24 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     setIsSyncingArabic(true);
     try {
       const isCoverSlide = targetIndex === 0 && carousel.slides.length > 1 && activePostFormat === 'carousel';
-      const res = await fetch('/api/refine-slide', {
+      const data = await fetchAuthedJson<{
+        engine?: string;
+        arTitle?: string;
+        coverTeaserAr?: string;
+        arBody?: string;
+        takeaways?: SlideData['takeaways'];
+      }>('/api/refine-slide', {
         method: 'POST',
-        credentials: 'include',
-        headers: buildClientAiHeaders(),
-        body: JSON.stringify({
+        includeGeminiKeys: true,
+        timeoutMs: 75_000,
+        contextLabel: 'AI Arabic slide sync',
+        body: {
           mode: 'sync_ar',
           slide: targetSlide,
           category: carousel.category || 'SOFTWARE ARCHITECTURE',
           isCover: isCoverSlide,
-        }),
+        },
       });
-      if (!res.ok) {
-        onShowToast('Live AI translation unavailable right now — please try again shortly.');
-        return;
-      }
-      const data = await res.json();
       if (!data || data.engine === 'offline') {
         onShowToast('Live AI translation temporarily unavailable — keeping current Arabic.');
         return;
@@ -1267,8 +1276,13 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         return { ...prev, slides: nextSlides };
       });
       onShowToast(`Synced Arabic for Slide ${targetIndex + 1} from English.`);
-    } catch {
-      onShowToast('Could not reach AI translation service.');
+    } catch (err) {
+      console.warn('[AutonomousStudio] Arabic slide sync failed:', err);
+      onShowToast(
+        err instanceof HttpClientError
+          ? 'Live AI translation unavailable right now — please try again shortly.'
+          : 'Could not reach AI translation service.'
+      );
     } finally {
       setIsSyncingArabic(false);
     }
@@ -1278,29 +1292,35 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     if (!carousel.slides.length) return;
     setIsSyncingAllArabic(true);
     try {
-      const res = await fetch('/api/refine-slide', {
+      interface SyncedArabicSlide {
+        index?: number;
+        arTitle?: string;
+        coverTeaserAr?: string;
+        arBody?: string;
+      }
+      const data = await fetchAuthedJson<{
+        engine?: string;
+        slides?: SyncedArabicSlide[];
+      }>('/api/refine-slide', {
         method: 'POST',
-        credentials: 'include',
-        headers: buildClientAiHeaders(),
-        body: JSON.stringify({
+        includeGeminiKeys: true,
+        timeoutMs: 90_000,
+        contextLabel: 'AI Arabic deck sync',
+        body: {
           mode: 'sync_ar_deck',
           slides: carousel.slides,
           category: carousel.category || 'SOFTWARE ARCHITECTURE',
-        }),
+        },
       });
-      if (!res.ok) {
-        onShowToast('Live AI translation unavailable right now — please try again shortly.');
-        return;
-      }
-      const data = await res.json();
       if (!data || data.engine === 'offline' || !Array.isArray(data.slides)) {
         onShowToast('Live AI translation temporarily unavailable — try again in a moment.');
         return;
       }
+      const syncedSlides = data.slides;
       applyDeckUpdate((prev) => {
         const isMultiCarousel = prev.slides.length > 1 && activePostFormat === 'carousel';
         const nextSlides = prev.slides.map((slide, idx) => {
-          const synced = data.slides.find((item: any) => Number(item?.index) === idx) || data.slides[idx];
+          const synced = syncedSlides.find((item) => Number(item?.index) === idx) || syncedSlides[idx];
           if (!synced) return slide;
           const isSlide1Cover = idx === 0 && isMultiCarousel && !slide.standaloneMeme;
           return {
@@ -1324,8 +1344,13 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         return { ...prev, slides: nextSlides };
       });
       onShowToast(`Synced Arabic across all ${carousel.slides.length} slides.`);
-    } catch {
-      onShowToast('Could not reach AI translation service.');
+    } catch (err) {
+      console.warn('[AutonomousStudio] Arabic deck sync failed:', err);
+      onShowToast(
+        err instanceof HttpClientError
+          ? 'Live AI translation unavailable right now — please try again shortly.'
+          : 'Could not reach AI translation service.'
+      );
     } finally {
       setIsSyncingAllArabic(false);
     }
@@ -1355,19 +1380,12 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   );
   const dynamicHashtags = useMemo(() => deriveTopicHashtags(carousel), [carousel]);
   const publishBlockers = useMemo(
-    () => getPublishBlockers(carousel, isOfflineDraft, isReviewed, qaReport, riskReport, theme),
-    [carousel, isOfflineDraft, isReviewed, qaReport, riskReport, theme]
+    () => getPublishBlockers(carousel, isReviewed, qaReport, riskReport, theme),
+    [carousel, isReviewed, qaReport, riskReport, theme]
   );
   const blockersCount = publishBlockers.blockersCount;
   const isBlocked = blockersCount > 0 && !overrideExportBlock;
   const hasContentQualityBlocker = publishBlockers.contentQualityStatus === 'BLOCK';
-
-  const engineBadge =
-    carousel.sourceMeta?.engine === 'grounded' || carousel.sourceMeta?.status === 'verified_live'
-      ? { label: 'Live Grounded', cls: 'text-emerald-400' }
-      : isOfflineDraft
-      ? { label: 'Offline Draft', cls: 'text-amber-400' }
-      : { label: 'AI Synthesized', cls: 'text-cyan-400' };
 
   const {
     isExportingZip,
@@ -1638,7 +1656,8 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
       setCopiedType('caption');
       onShowToast('Copied EN + AR caption and hashtags to clipboard!');
       setTimeout(() => setCopiedType(null), 2000);
-    } catch {
+    } catch (err) {
+      console.warn('[AutonomousStudio] Failed to copy caption to clipboard:', err);
       onShowToast('Failed to copy caption.');
     }
   };
@@ -1687,8 +1706,15 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     ? `${currentSlideIndex}|${currentSlide.enTitle || ''}|${currentSlide.arTitle || ''}|${currentSlide.enBody || ''}|${currentSlide.arBody || ''}|${activePostFormat}|${Boolean(currentSlide.manualLayoutLocked)}`
     : '';
 
+  const lastSeenRestoreVersionRef = useRef<number>(historyRestoreVersion);
+
   useEffect(() => {
     if (!currentSlideEvalKey) return;
+    if (historyRestoreVersion !== lastSeenRestoreVersionRef.current) {
+      lastSeenRestoreVersionRef.current = historyRestoreVersion;
+      lastAutoEvalKeyRef.current = currentSlideEvalKey;
+      return;
+    }
     if (!lastAutoEvalKeyRef.current) {
       lastAutoEvalKeyRef.current = currentSlideEvalKey;
       return;
@@ -1742,7 +1768,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     }, 350);
 
     return () => window.clearTimeout(timer);
-  }, [currentSlideEvalKey, currentSlideIndex, isGenerating, isReimaginingVisual]);
+  }, [currentSlideEvalKey, currentSlideIndex, historyRestoreVersion, isGenerating, isReimaginingVisual]);
 
   const handleUpdateSatLabel = (index: number, value: string) => {
     const currentLabels = [...smartCurrentVisuals.satLabels];
@@ -1834,7 +1860,8 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
   };
 
   const activeOverridesCount = Object.keys(currentSlide.layoutOverrides || {}).length;
-  const displayedCarousel = isComparingBefore ? beforeEditsDeckRef.current : carousel;
+  const displayedCarousel =
+    isComparingBefore && beforeEditsCarousel ? beforeEditsCarousel : carousel;
 
   const mobileSheetHeightClass =
     mobileSheetSnap === 'peek'
@@ -1858,45 +1885,8 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
     }
   };
 
-  const updateCurrentSlideInContext = useCallback(
-    (updater: (slide: SlideData) => SlideData) => {
-      applyDeckUpdate((prev) => {
-        const targetIndex = Math.min(currentSlideIndexRef.current, prev.slides.length - 1);
-        if (targetIndex < 0 || !prev.slides[targetIndex]) return prev;
-        const nextSlides = [...prev.slides];
-        nextSlides[targetIndex] = updater(nextSlides[targetIndex]);
-        return { ...prev, slides: nextSlides };
-      });
-    },
-    [applyDeckUpdate, currentSlideIndexRef]
-  );
-
-  const studioContextValue = React.useMemo(
-    () => ({
-      carousel,
-      currentSlide,
-      currentSlideIndex,
-      theme,
-      activePostFormat,
-      changeSlide,
-      updateCurrentSlide: updateCurrentSlideInContext,
-      updateCarousel: onUpdateCarousel,
-    }),
-    [
-      carousel,
-      currentSlide,
-      currentSlideIndex,
-      theme,
-      activePostFormat,
-      changeSlide,
-      updateCurrentSlideInContext,
-      onUpdateCarousel,
-    ]
-  );
-
   return (
-    <StudioProvider value={studioContextValue}>
-      <div className="w-full lg:flex-1 lg:min-h-0 flex flex-col gap-3 animate-fade-in">
+    <div className="w-full lg:flex-1 lg:min-h-0 flex flex-col gap-3 animate-fade-in">
       {/* 1. Compact Command Bar with Overlay Ingestion Drawer */}
       <StudioCommandBar
         promptInput={promptInput}
@@ -1909,8 +1899,6 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
         pipelineStatus={pipelineStatus}
         activePostFormat={activePostFormat}
         onSwitchPostFormat={handleSwitchPostFormat}
-        engineBadge={engineBadge}
-        onInspectEngine={() => setInspectorTab("review")}
         isExpanded={isExpanded}
         onSetIsExpanded={setIsExpanded}
         isSheetOpen={isSheetOpen}
@@ -2044,8 +2032,6 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                   theme={theme}
                   showSafeZones={showSafeZones}
                   stageOverlayMode={stageOverlayMode}
-                  onSetStageOverlayMode={setStageOverlayMode}
-                  onToggleSafeZones={() => setShowSafeZones(!showSafeZones)}
                   onPreviousSlide={() => changeSlide((prev) => Math.max(0, prev - 1))}
                   onNextSlide={() => changeSlide((prev) => Math.min(carousel.slides.length - 1, prev + 1))}
                   canvasRef={canvasRef}
@@ -2177,6 +2163,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 <button
                   type="button"
                   disabled={!canUndo}
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={handleUndo}
                   className="p-1 rounded-md bg-white/[0.04] text-slate-300 hover:text-white border border-white/10 disabled:opacity-35 cursor-pointer"
                   title="Undo last edit"
@@ -2186,6 +2173,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 <button
                   type="button"
                   disabled={!canRedo}
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={handleRedo}
                   className="p-1 rounded-md bg-white/[0.04] text-slate-300 hover:text-white border border-white/10 disabled:opacity-35 cursor-pointer"
                   title="Redo edit"
@@ -2545,6 +2533,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                 onExportVideoCardMp4={() => {
                   void handleExportSingleSlideVideoMp4(30);
                 }}
+                onOpenInFilmStudio={onOpenInFilmStudio}
                 onShowToast={onShowToast}
               />
             )}
@@ -2697,21 +2686,7 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
                     });
                   }}
                   onSelectDimensionPreset={handleSelectDimensionPreset}
-                  onExportZip={handleExportZip}
-                  onDownloadSingleSlide={(preset) => {
-                    const spec = getCanvasDimensionSpec(preset);
-                    downloadSingleSlidePng(
-                      carousel,
-                      currentSlideIndex,
-                      undefined,
-                      theme,
-                      carousel.visualOptions,
-                      preset
-                    );
-                    onShowToast(`Downloaded Slide ${currentSlideIndex + 1} (${spec.label}) JPG (Q92)`);
-                  }}
                   onOpenPublishScheduleModal={onOpenPublishScheduleModal}
-                  isExportingZip={isExportingZip}
                   onShowToast={onShowToast}
                 />
 
@@ -2809,7 +2784,6 @@ export const AutonomousStudio: React.FC<AutonomousStudioProps> = ({
           />
         </Suspense>
       )}
-      </div>
-    </StudioProvider>
+    </div>
   );
 };

@@ -178,8 +178,39 @@ function draw(t) {
   }
   drawMarrokFooter(g, CONFIG, t, activeIdx, SCENES.length);
 }
-window.seek = (t) => { draw(t); return true; };
-if (!navigator.webdriver) {
+window.seek = (t) => {
+  const c = clamp(Number(t) || 0, 0, DUR);
+  draw(c);
+  return true;
+};
+window.renderAt = (t, dt) => {
+  const c = clamp(Number(t) || 0, 0, DUR);
+  const step = Number(dt) || 1 / 60;
+  draw(c);
+  return { t: c, dt: step, totalFrames: Math.round(DUR * 60) };
+};
+window.exportBundledHTML = () => {
+  const html = '<!doctype html>\\n' + document.documentElement.outerHTML;
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = ((CONFIG.brand && CONFIG.brand.name) || 'MARROK') + '_MotionReel_1080x1920.html';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+};
+window.addEventListener('message', (event) => {
+  const msg = event && event.data;
+  if (msg && typeof msg === 'object' && msg.type === 'studio:scrub') {
+    window.renderAt(msg.t, msg.dt);
+  }
+});
+const __params = new URLSearchParams(window.location.search || '');
+const __isControlled = __params.get('render') === '1' || __params.get('embed') === '1';
+window.__STUDIO_READY__ = Promise.resolve().then(() => window.renderAt(0, 1 / 60));
+if (!__isControlled && !navigator.webdriver) {
   const t0 = performance.now();
   (function loop() { draw(((performance.now() - t0) / 1000) % DUR); requestAnimationFrame(loop); })();
 }

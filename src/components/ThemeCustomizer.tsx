@@ -24,8 +24,8 @@ export const ThemeCustomizer: React.FC<ThemeCustomizerProps> = ({
   const [customColors, setCustomColors] = useState<ThemePalette>(currentPalette);
 
   const cadenceAnalysis = useMemo(() => {
-    return analyzePostHistoryCadence(savedPosts, currentPalette.id);
-  }, [savedPosts, currentPalette.id]);
+    return analyzePostHistoryCadence(savedPosts);
+  }, [savedPosts]);
 
   if (!isOpen) return null;
 

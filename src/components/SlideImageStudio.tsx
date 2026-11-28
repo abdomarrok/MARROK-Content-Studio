@@ -18,6 +18,7 @@ import {
 import { SlideData, ThemePalette } from '../types';
 import { parseImageDataUrl } from '../lib/validation/image';
 import { createRequestDeadline } from '../lib/network/requestDeadline';
+import { getCustomGeminiHeaders } from '../lib/network/httpClient';
 import { withClientAuthHeaders } from '../lib/security/clientSessionToken';
 
 const IMAGE_REQUEST_TIMEOUT_MS = 50000;
@@ -132,15 +133,10 @@ export const SlideImageStudio: React.FC<SlideImageStudioProps> = ({
     setIsGenerating(true);
     setErrorMsg(null);
 
-    const customKey = typeof window !== 'undefined' ? localStorage.getItem('marrok_custom_gemini_key') : null;
-    const backupKey = typeof window !== 'undefined' ? localStorage.getItem('marrok_custom_gemini_backup_key') : null;
-    const requestHeaders: Record<string, string> = withClientAuthHeaders({ 'Content-Type': 'application/json' });
-    if (customKey) {
-      requestHeaders['x-gemini-key'] = customKey;
-    }
-    if (backupKey) {
-      requestHeaders['x-gemini-backup-key'] = backupKey;
-    }
+    const requestHeaders: Record<string, string> = withClientAuthHeaders({
+      'Content-Type': 'application/json',
+      ...getCustomGeminiHeaders(),
+    });
 
     try {
       const payload: Record<string, unknown> = {

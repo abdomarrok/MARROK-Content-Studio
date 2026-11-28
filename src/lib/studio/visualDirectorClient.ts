@@ -1,5 +1,6 @@
 import type { PostFormat, SlideData } from '../../types.ts';
 import { withClientAuthHeaders } from '../security/clientSessionToken.ts';
+import { getCustomGeminiHeaders } from '../network/httpClient.ts';
 import {
   getSlideCatalogId,
   materializeLayoutForSlide,
@@ -43,14 +44,10 @@ export async function requestAiVisualDirection(
     .map((s, idx) => (idx === slideIndex ? null : `S${idx + 1}:${getSlideCatalogId(s)}`))
     .filter((item): item is string => Boolean(item));
 
-  const customKey =
-    typeof window !== 'undefined' ? localStorage.getItem('marrok_custom_gemini_key') : null;
-  const backupKey =
-    typeof window !== 'undefined' ? localStorage.getItem('marrok_custom_gemini_backup_key') : null;
-
-  const headers = withClientAuthHeaders({ 'Content-Type': 'application/json' });
-  if (customKey) headers['x-gemini-key'] = customKey;
-  if (backupKey) headers['x-gemini-backup-key'] = backupKey;
+  const headers = withClientAuthHeaders({
+    'Content-Type': 'application/json',
+    ...getCustomGeminiHeaders(),
+  });
 
   try {
     const res = await fetchFn('/api/direct-visual', {
@@ -85,6 +82,7 @@ export async function requestAiVisualDirection(
     if (err instanceof DOMException && err.name === 'AbortError') {
       throw err;
     }
+    console.warn('[visualDirector] AI visual direction failed; falling back to deck-aware engine:', err);
   }
 
   // Client offline fallback: pick next best non-excluded deck-aware layout

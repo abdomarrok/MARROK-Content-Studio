@@ -162,4 +162,58 @@ describe('useStudioLayoutActions', () => {
       expect.stringContaining('1 Cascade-Locked slide(s) protected')
     );
   });
+
+  it('keeps deck reference unchanged on handleAutoFitCurrentSlide when copy is already within limits', () => {
+    let currentDeck: CarouselData = {
+      ...DEFAULT_STARTER_DECK,
+      slides: [
+        {
+          ...DEFAULT_STARTER_DECK.slides[0],
+          enTitle: 'Clean Headline.',
+          arTitle: 'عنوان واضح',
+          enBody: 'Short clean body copy.',
+          arBody: 'نص عربي مختصر وواضح.',
+        },
+      ],
+    };
+    const initialRef = currentDeck;
+    const applyDeckUpdate = vi.fn((updater) => {
+      currentDeck = updater(currentDeck);
+    });
+    const onShowToast = vi.fn();
+
+    const { result } = renderHook(() =>
+      useStudioLayoutActions({
+        carousel: currentDeck,
+        currentSlideIndex: 0,
+        applyDeckUpdate,
+        onShowToast,
+      })
+    );
+
+    act(() => {
+      result.current.handleAutoFitCurrentSlide();
+    });
+
+    expect(currentDeck).toBe(initialRef);
+    expect(onShowToast).not.toHaveBeenCalled();
+
+    // When copy actually exceeds limits or needs polishing, it updates and toasts
+    currentDeck = {
+      ...currentDeck,
+      slides: [
+        {
+          ...currentDeck.slides[0],
+          enTitle: 'A very long headline that definitely exceeds the hook character limit by quite a lot of extra words',
+        },
+      ],
+    };
+    const longRef = currentDeck;
+    act(() => {
+      result.current.handleAutoFitCurrentSlide();
+    });
+
+    expect(currentDeck).not.toBe(longRef);
+    expect(onShowToast).toHaveBeenCalledWith('Auto-fitted title and body copy within character limits');
+  });
 });

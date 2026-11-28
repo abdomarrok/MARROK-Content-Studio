@@ -309,7 +309,7 @@ describe('Permanent Core Engine Characterization Fixtures', () => {
 
   describe('4. Universal Extractor Story Builder Invariants', () => {
     it('builds container story with canonical sequence', () => {
-      const story = buildContainerStory('Docker Multi-Stage Builds', {
+      const story = buildContainerStory({
         brand: 'MARROK',
         brandUrl: 'marrok.org',
         targetCount: 8,

@@ -74,6 +74,7 @@ export interface CopyInspectorProps {
   onAnalyzeUploadedVideo?: () => void;
   onSwitchToVideoCardReel?: () => void;
   onExportVideoCardMp4?: () => void;
+  onOpenInFilmStudio?: (projectId: string) => void;
   onShowToast: (msg: string) => void;
 }
 
@@ -122,6 +123,7 @@ export const CopyInspector: React.FC<CopyInspectorProps> = ({
   onAnalyzeUploadedVideo,
   onSwitchToVideoCardReel,
   onExportVideoCardMp4,
+  onOpenInFilmStudio,
   onShowToast,
 }) => {
   if (activePostFormat === 'reel' && activeReelConfig && onSelectMotionScene && onChangeReelConfig && onSyncReelFromCarousel) {
@@ -141,6 +143,7 @@ export const CopyInspector: React.FC<CopyInspectorProps> = ({
         onAnalyzeUploadedVideo={onAnalyzeUploadedVideo}
         onSwitchToVideoCardReel={onSwitchToVideoCardReel}
         onExportVideoCardMp4={onExportVideoCardMp4}
+        onOpenInFilmStudio={onOpenInFilmStudio}
         onShowToast={onShowToast}
       />
     );

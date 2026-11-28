@@ -174,6 +174,7 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 type="button"
                 data-testid="header-undo-btn"
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={onUndo}
                 disabled={!canUndo}
                 className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/[0.06] disabled:opacity-30 transition-colors cursor-pointer"
@@ -185,6 +186,7 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 type="button"
                 data-testid="header-redo-btn"
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={onRedo}
                 disabled={!canRedo}
                 className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/[0.06] disabled:opacity-30 transition-colors cursor-pointer"
@@ -303,6 +305,7 @@ export const Header: React.FC<HeaderProps> = ({
                     <div className="flex items-center gap-1 px-1 py-1">
                       <button
                         type="button"
+                        onMouseDown={(e) => e.preventDefault()}
                         onClick={() => {
                           onUndo?.();
                           setIsWorkspaceMenuOpen(false);
@@ -315,6 +318,7 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                       <button
                         type="button"
+                        onMouseDown={(e) => e.preventDefault()}
                         onClick={() => {
                           onRedo?.();
                           setIsWorkspaceMenuOpen(false);

@@ -76,7 +76,7 @@ describe('cadenceEngine', () => {
       category: 'AI AGENTS & MODELS',
     };
 
-    const analysis = analyzePostHistoryCadence(posts, 'violet', topicContext);
+    const analysis = analyzePostHistoryCadence(posts, topicContext);
 
     // Primary preference for this topic is violet
     expect(analysis.topicMatch?.preferredThemeId).toBe('violet');
@@ -100,7 +100,7 @@ describe('cadenceEngine', () => {
       category: 'REVERSE ENGINEERING',
     };
 
-    const analysis = analyzePostHistoryCadence(posts, 'blueprint', topicContext);
+    const analysis = analyzePostHistoryCadence(posts, topicContext);
     expect(analysis.topicMatch?.preferredThemeId).toBe('cyber');
     expect(analysis.topicMatch?.wasHarmonized).toBe(false);
     expect(analysis.recommendedThemeId).toBe('cyber');
@@ -135,7 +135,7 @@ describe('cadenceEngine', () => {
     const posts: SavedPostRecord[] = [
       createMockPost('p1', 'amber', '2026-11-03T10:00:00Z', 'posted', 'Post 1'),
     ];
-    const palette = getSmartNextPalette(posts, 'amber');
+    const palette = getSmartNextPalette(posts);
     expect(palette).toBeDefined();
     expect(palette.id).not.toBe('amber');
     expect(palette.accent).toBeDefined();

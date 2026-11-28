@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Globe, Image as ImageIcon, Upload, Link, X, Check, Loader2, Sparkles } from 'lucide-react';
 import { ThemePalette } from '../types';
-import { withClientAuthHeaders } from '../lib/security/clientSessionToken';
+import { fetchAuthedJson } from '../lib/network/httpClient';
 import { getBundledOfficialLogoDataUrl, listBundledTechIcons } from '../lib/bundledTechSvgs';
 
 interface MediaItem {
@@ -44,22 +44,26 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({
     if (!isOpen) return;
 
     let active = true;
+    const controller = new AbortController();
     setIsLoading(true);
     setErrorMsg(null);
 
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/search-media?q=${encodeURIComponent(searchQuery)}`, {
-          credentials: 'include',
-          headers: withClientAuthHeaders({ Accept: 'application/json' }),
+        const data = await fetchAuthedJson<{
+          icons?: MediaItem[];
+          images?: MediaItem[];
+        }>(`/api/search-media?q=${encodeURIComponent(searchQuery)}`, {
+          timeoutMs: 15_000,
+          signal: controller.signal,
+          contextLabel: 'Media Search API',
         });
-        if (!res.ok) throw new Error('Search failed');
-        const data = await res.json();
         if (active) {
           setIcons(data.icons || []);
           setImages(data.images || []);
         }
       } catch (err) {
+        if (controller.signal.aborted) return;
         console.warn('Failed to search media:', err);
         if (active) setErrorMsg('Could not fetch external media. Check your network connection.');
       } finally {
@@ -70,6 +74,7 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({
     return () => {
       active = false;
       clearTimeout(timer);
+      controller.abort();
     };
   }, [isOpen, searchQuery]);
 

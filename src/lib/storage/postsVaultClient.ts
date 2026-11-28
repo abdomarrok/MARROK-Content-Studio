@@ -8,7 +8,7 @@ import { parseCarouselData } from '../validation/carousel.ts';
 import { sanitizeFullCarousel } from '../textSanitizer.ts';
 import { runQAChecks } from '../qaChecks.ts';
 import { findNonPersistableBlobVideoSlides } from '../media/blobUrlRegistry.ts';
-import { withClientAuthHeaders } from '../security/clientSessionToken.ts';
+import { fetchAuthedJson, HttpClientError } from '../network/httpClient.ts';
 
 const IDB_NAME = 'marrok_posts_vault_v1';
 const IDB_STORE = 'saved_posts';
@@ -33,21 +33,12 @@ function isNonFallbackHttpStatus(status: number): boolean {
   return (status >= 400 && status < 500) || status === 503;
 }
 
-async function readApiErrorPayload(
-  res: Response,
-  fallbackMessage: string
-): Promise<{ message: string; code?: string }> {
-  try {
-    const payload = (await res.json()) as {
-      error?: string;
-      details?: string[];
-      code?: string;
-    };
-    const errMsg = payload?.error || fallbackMessage;
-    const details = Array.isArray(payload?.details) && payload.details[0] ? ` (${payload.details[0]})` : '';
-    return { message: `${errMsg}${details}`, code: payload?.code };
-  } catch {
-    return { message: `${fallbackMessage} (HTTP ${res.status})` };
+function rethrowVaultApiErrorIfNonFallback(err: unknown): void {
+  if (err instanceof VaultApiError) {
+    throw err;
+  }
+  if (err instanceof HttpClientError && isNonFallbackHttpStatus(err.status)) {
+    throw new VaultApiError(err.message, err.status, err.code);
   }
 }
 
@@ -318,21 +309,16 @@ function buildPostsEndpointUrl(options?: VaultPageQueryOptions): string {
 }
 
 async function fetchPostsPageRaw(options?: VaultPageQueryOptions): Promise<RawPostsApiResponse> {
-  const res = await fetch(buildPostsEndpointUrl(options), {
-    method: 'GET',
-    credentials: 'include',
-    headers: withClientAuthHeaders({ Accept: 'application/json' }),
-  });
-
-  if (!res.ok) {
-    const { message, code } = await readApiErrorPayload(res, 'Failed to load Vault posts');
-    if (isNonFallbackHttpStatus(res.status)) {
-      throw new VaultApiError(message, res.status, code);
-    }
-    throw new Error(message);
+  try {
+    return await fetchAuthedJson<RawPostsApiResponse>(buildPostsEndpointUrl(options), {
+      method: 'GET',
+      timeoutMs: 20_000,
+      contextLabel: 'Failed to load Vault posts',
+    });
+  } catch (err) {
+    rethrowVaultApiErrorIfNonFallback(err);
+    throw err;
   }
-
-  return (await res.json()) as RawPostsApiResponse;
 }
 
 /**
@@ -432,13 +418,13 @@ export async function loadVaultPosts(): Promise<VaultLoadResult> {
 
     // Sync ONLY genuine offline-created/edited drafts back up to the authoritative server
     if (pendingOfflineDrafts.length > 0 && merged.length > serverPosts.length) {
-      fetch('/api/posts', {
+      fetchAuthedJson('/api/posts', {
         method: 'POST',
-        credentials: 'include',
-        headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ syncPosts: merged, deletedIds: deletedIdsArray }),
-      }).catch(() => {
-        // Non-blocking background sync
+        body: { syncPosts: merged, deletedIds: deletedIdsArray },
+        timeoutMs: 20_000,
+        contextLabel: 'Background Vault sync',
+      }).catch((syncErr) => {
+        console.warn('[PostsVaultClient] Background offline draft sync failed:', syncErr);
       });
     }
 
@@ -523,11 +509,11 @@ export async function saveValidPost(params: SaveValidPostParams): Promise<SavedP
   };
 
   try {
-    const res = await fetch('/api/posts', {
+    const payload = await fetchAuthedJson<{ post: SavedPostRecord }>('/api/posts', {
       method: 'POST',
-      credentials: 'include',
-      headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
+      timeoutMs: 25_000,
+      contextLabel: 'Failed to validate and save post',
+      body: {
         id: reviewedDeck.id,
         deck: reviewedDeck,
         postStatus: params.postStatus || 'validated',
@@ -536,18 +522,8 @@ export async function saveValidPost(params: SaveValidPostParams): Promise<SavedP
         ...(resolvedVerifiedNumbers !== undefined
           ? { verifiedNumbers: resolvedVerifiedNumbers }
           : {}),
-      }),
+      },
     });
-
-    if (!res.ok) {
-      const { message, code } = await readApiErrorPayload(res, 'Failed to validate and save post');
-      if (isNonFallbackHttpStatus(res.status)) {
-        throw new VaultApiError(message, res.status, code);
-      }
-      throw new Error(message);
-    }
-
-    const payload = (await res.json()) as { post: SavedPostRecord };
     const savedPost: SavedPostRecord = {
       ...payload.post,
       offlineDraft: false,
@@ -562,9 +538,8 @@ export async function saveValidPost(params: SaveValidPostParams): Promise<SavedP
 
     return savedPost;
   } catch (err) {
-    if (err instanceof VaultApiError) {
-      throw err;
-    }
+    rethrowVaultApiErrorIfNonFallback(err);
+    console.warn('[PostsVaultClient] Save request failed (network/5xx), persisting offline local draft:', err);
 
     // Network error or transient 5xx (500/502/504): honest offline local draft fallback
     const nowIso = new Date().toISOString();
@@ -623,31 +598,22 @@ export async function updateSavedPostStatus(
   const existing = currentLocal.find((p) => p.id === id);
 
   try {
-    const res = await fetch(`/api/posts/${encodeURIComponent(id)}/status`, {
-      method: 'PATCH',
-      credentials: 'include',
-      headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ postStatus }),
-    });
-
-    if (!res.ok) {
-      const { message, code } = await readApiErrorPayload(res, 'Failed to update post status');
-      if (isNonFallbackHttpStatus(res.status)) {
-        throw new VaultApiError(message, res.status, code);
+    const data = await fetchAuthedJson<{ post: SavedPostRecord }>(
+      `/api/posts/${encodeURIComponent(id)}/status`,
+      {
+        method: 'PATCH',
+        body: { postStatus },
+        timeoutMs: 20_000,
+        contextLabel: 'Failed to update post status',
       }
-      throw new Error(message);
-    }
-
-    const data = (await res.json()) as { post: SavedPostRecord };
+    );
     const updatedPost: SavedPostRecord = { ...data.post, offlineDraft: false };
     const updatedList = [updatedPost, ...currentLocal.filter((p) => p.id !== id)];
     await writeLocalVault(updatedList);
     return updatedPost;
   } catch (err) {
-    if (err instanceof VaultApiError) {
-      throw err;
-    }
-    // Fallback to offline local update ONLY on network error or transient 5xx outage
+    rethrowVaultApiErrorIfNonFallback(err);
+    console.warn('[PostsVaultClient] Status update failed (network/5xx), applying offline local update:', err);
   }
 
   if (!existing) {
@@ -668,12 +634,14 @@ export async function updateSavedPostStatus(
 
   const deletedIdsArray = Array.from(readDeletedIds());
 
-  fetch('/api/posts', {
+  fetchAuthedJson('/api/posts', {
     method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ syncPosts: updatedList, deletedIds: deletedIdsArray }),
-  }).catch(() => {});
+    body: { syncPosts: updatedList, deletedIds: deletedIdsArray },
+    timeoutMs: 20_000,
+    contextLabel: 'Background status sync',
+  }).catch((syncErr) => {
+    console.warn('[PostsVaultClient] Background offline status sync failed:', syncErr);
+  });
 
   return updatedRecord;
 }
@@ -684,24 +652,14 @@ export async function updateSavedPostStatus(
  */
 export async function deleteSavedPost(id: string): Promise<SavedPostRecord[]> {
   try {
-    const res = await fetch(`/api/posts/${encodeURIComponent(id)}`, {
+    await fetchAuthedJson(`/api/posts/${encodeURIComponent(id)}`, {
       method: 'DELETE',
-      credentials: 'include',
-      headers: withClientAuthHeaders(),
+      timeoutMs: 20_000,
+      contextLabel: 'Failed to delete saved post',
     });
-
-    if (!res.ok) {
-      const { message, code } = await readApiErrorPayload(res, 'Failed to delete saved post');
-      if (isNonFallbackHttpStatus(res.status)) {
-        throw new VaultApiError(message, res.status, code);
-      }
-      throw new Error(message);
-    }
   } catch (err) {
-    if (err instanceof VaultApiError) {
-      throw err;
-    }
-    // Continue removing locally on transient network/5xx outage
+    rethrowVaultApiErrorIfNonFallback(err);
+    console.warn('[PostsVaultClient] Delete request failed (network/5xx), removing locally:', err);
   }
 
   const deletedIds = readDeletedIds();
@@ -814,26 +772,18 @@ export async function importVaultJson(jsonText: string): Promise<SavedPostRecord
   await writeLocalVault(merged);
 
   try {
-    const res = await fetch('/api/posts', {
+    await fetchAuthedJson('/api/posts', {
       method: 'POST',
-      credentials: 'include',
-      headers: withClientAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
+      timeoutMs: 25_000,
+      contextLabel: 'Failed to sync imported Vault posts',
+      body: {
         syncPosts: merged,
         deletedIds: Array.from(readDeletedIds()),
-      }),
+      },
     });
-    if (!res.ok) {
-      const { message, code } = await readApiErrorPayload(res, 'Failed to sync imported Vault posts');
-      if (isNonFallbackHttpStatus(res.status)) {
-        throw new VaultApiError(message, res.status, code);
-      }
-    }
   } catch (err) {
-    if (err instanceof VaultApiError) {
-      throw err;
-    }
-    // Non-fatal if offline (network/5xx)
+    rethrowVaultApiErrorIfNonFallback(err);
+    console.warn('[PostsVaultClient] Imported Vault posts saved locally; remote sync deferred:', err);
   }
 
   return merged;

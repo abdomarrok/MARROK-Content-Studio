@@ -16,7 +16,6 @@ export interface UseThemeCadenceOptions {
 export interface UseThemeCadenceReturn {
   cadence: ThemeCadenceAnalysis;
   resolveNextHarmoniousPalette: (
-    requestedThemeId?: string,
     overrideContext?: { prompt?: string; category?: string }
   ) => ThemePalette;
 }
@@ -27,34 +26,28 @@ export interface UseThemeCadenceReturn {
  */
 export function useThemeCadence({
   savedPosts,
-  activeThemeId,
   prompt = '',
   category = 'auto',
 }: UseThemeCadenceOptions): UseThemeCadenceReturn {
   const cadence = useMemo(
     () =>
-      analyzePostHistoryCadence(savedPosts, activeThemeId, {
+      analyzePostHistoryCadence(savedPosts, {
         prompt,
         category,
       }),
-    [savedPosts, activeThemeId, prompt, category]
+    [savedPosts, prompt, category]
   );
 
   const resolveNextHarmoniousPalette = useCallback(
     (
-      requestedThemeId?: string,
       overrideContext?: { prompt?: string; category?: string }
     ): ThemePalette => {
-      return getSmartNextPalette(
-        savedPosts,
-        requestedThemeId || activeThemeId,
-        {
-          prompt: overrideContext?.prompt ?? prompt,
-          category: overrideContext?.category ?? category,
-        }
-      );
+      return getSmartNextPalette(savedPosts, {
+        prompt: overrideContext?.prompt ?? prompt,
+        category: overrideContext?.category ?? category,
+      });
     },
-    [activeThemeId, savedPosts, prompt, category]
+    [savedPosts, prompt, category]
   );
 
   return {
