@@ -1,19 +1,28 @@
 declare module '*video-studio/studio/expressRouter.mjs' {
-  import type { Express } from 'express';
+  import type { Express, Request } from 'express';
+  import type { AuthConfigStatus } from './lib/security/sessionAuth.ts';
+  export interface VideoStudioAuthOptions {
+    getAuthConfig?: () => AuthConfigStatus;
+    verifySessionRequest?: (
+      req: Request,
+      authCfg: AuthConfigStatus,
+      candidateTokens?: string[]
+    ) => Promise<boolean>;
+  }
   export const MAX_COMPLETED_JOBS: number;
   export const MAX_REEL_SCENE_HTML_BYTES: number;
   export function createVideoPreviewToken(sessionSecret: string, ttlSeconds?: number, nowMs?: number): string;
-  export function verifyVideoPreviewOrSessionToken(token: string, authCfg: any, nowMs?: number): boolean;
+  export function verifyVideoPreviewToken(token: string, sessionSecret: string, nowMs?: number): boolean;
   export function resetVideoStudioJobsForTest(): void;
   export function getVideoStudioJobsSize(): number;
   export function createProjectFromReel(params: {
     id: string;
     name?: string;
-    reelConfig: any;
+    reelConfig: unknown;
     sceneHtml: string;
     overwrite?: boolean;
-  }): Promise<{ config: any; paths: any }>;
-  export function registerVideoStudioRoutes(app: Express): void;
+  }): Promise<{ config: unknown; paths: unknown }>;
+  export function registerVideoStudioRoutes(app: Express, authOptions?: VideoStudioAuthOptions): void;
 }
 
 declare module '*video-studio/engine/schema.mjs' {

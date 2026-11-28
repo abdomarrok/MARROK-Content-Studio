@@ -366,6 +366,23 @@ export async function verifySessionCookieValue(
   return payload;
 }
 
+export async function verifySessionRequestOrTokens(
+  headers: { cookie?: string | null; authorization?: string | null },
+  config: AuthConfigStatus,
+  pool?: pg.Pool | null,
+  candidateTokens: string[] = []
+): Promise<boolean> {
+  if (await verifySessionCookieValue(headers.cookie, config, pool, Date.now(), headers.authorization)) {
+    return true;
+  }
+  for (const token of candidateTokens) {
+    if (token && (await verifySessionCookieValue(undefined, config, pool, Date.now(), `Bearer ${token}`))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function checkLoginLockout(
   key: string,
   pool?: pg.Pool | null,

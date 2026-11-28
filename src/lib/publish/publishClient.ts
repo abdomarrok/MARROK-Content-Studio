@@ -35,7 +35,7 @@ export interface PublishStatusResponse {
   channels: BufferChannelInfo[];
 }
 
-export interface UploadPublishMediaResponse {
+interface UploadPublishMediaResponse {
   postId: string;
   urls: string[];
   publicIds: string[];
@@ -54,14 +54,14 @@ export interface TikTokCommercialTrack {
   rank: number;
 }
 
-export interface TikTokMusicCatalogResponse {
+interface TikTokMusicCatalogResponse {
   configured: boolean;
   accountId: string | null;
   username?: string;
   tracks: TikTokCommercialTrack[];
 }
 
-export interface DispatchPublishPayload {
+interface DispatchPublishPayload {
   postId?: string;
   deck?: CarouselData;
   title?: string;
@@ -96,7 +96,7 @@ export interface ChannelDispatchResult {
   reusedFromOutbox?: boolean;
 }
 
-export interface DispatchPublishResponse {
+interface DispatchPublishResponse {
   ok: boolean;
   idempotentReplay?: boolean;
   recoveredFromInterrupt?: boolean;
@@ -154,7 +154,7 @@ export const DEFAULT_METRICOOL_TEMPLATE_OPTIONS: MetricoolTemplateOptions = {
   brandName: 'Marrok',
 };
 
-export interface MetricoolCsvRowInput {
+interface MetricoolCsvRowInput {
   id?: string;
   postTitle?: string;
   text: string;
@@ -169,7 +169,7 @@ export interface MetricoolCsvRowInput {
   templateOptions?: Partial<MetricoolTemplateOptions>;
 }
 
-export interface ScheduledSlotAssignment {
+interface ScheduledSlotAssignment {
   index: number;
   isoDate: string;
   datePart: string; // YYYY-MM-DD
@@ -420,7 +420,7 @@ export function buildMetricoolCsvRowFromDeck(params: {
 /**
  * Renders all slides of a CarouselData deck to Q95 JPEG data URLs at the requested dimension preset.
  */
-export async function renderDeckSlidesToDataUrls(
+async function renderDeckSlidesToDataUrls(
   carousel: CarouselData,
   preset: CanvasDimensionPreset = 'ig-4:5',
   customPalette?: ThemePalette,
@@ -641,9 +641,9 @@ export async function dispatchPostPublish(
 
 export type PostLifecycleStage = 'draft' | 'scheduled' | 'posted' | 'attention';
 
-export type PostManageAction = 'reschedule' | 'unschedule' | 'cancelAndDelete';
+type PostManageAction = 'reschedule' | 'unschedule' | 'cancelAndDelete';
 
-export interface ManagePublishedPostPayload {
+interface ManagePublishedPostPayload {
   postId: string;
   action: PostManageAction;
   scheduledFor?: string;
@@ -653,7 +653,7 @@ export interface ManagePublishedPostPayload {
   verifyNumbers?: boolean;
 }
 
-export interface ManagePublishedPostResponse {
+interface ManagePublishedPostResponse {
   ok: boolean;
   action: PostManageAction;
   deletedId?: string;
@@ -820,7 +820,7 @@ export function formatLocalDateTimeParts(
 /**
  * Returns tomorrow's date in the user's local timezone formatted as YYYY-MM-DD.
  */
-export function getLocalTomorrowDateStr(now: Date = new Date()): string {
+function getLocalTomorrowDateStr(now: Date = new Date()): string {
   const tomorrow = new Date(now);
   tomorrow.setDate(tomorrow.getDate() + 1);
   return getLocalTodayDateStr(tomorrow);
@@ -966,7 +966,7 @@ export function computeWeeklyScheduleSlots(
 export const DAILY_PEAK_TIME_SLOTS = ['10:00', '12:00', '18:00'] as const;
 export type PeakTimeSlot = (typeof DAILY_PEAK_TIME_SLOTS)[number];
 
-export type PeakProgramDensity =
+type PeakProgramDensity =
   | '3x-daily' // 10:00, 12:00, 18:00
   | '2x-daily' // 12:00, 18:00
   | '1x-18'    // 18:00 daily
@@ -1083,7 +1083,7 @@ export function computePeakProgramScheduleSlots(
   return slots;
 }
 
-export interface CadenceOverloadDay {
+interface CadenceOverloadDay {
   datePart: string;
   count: number;
   titles: string[];

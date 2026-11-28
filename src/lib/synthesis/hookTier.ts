@@ -2,14 +2,14 @@ import type { CarouselData, CoverStyle, HookFramework, HookVariant, SlideData, S
 import { extractCleanSubject } from '../text/headlines.ts';
 import { sanitizeCoverTeaserText } from '../text/sanitizer.ts';
 
-export const PROVEN_HOOK_FRAMEWORKS: readonly HookFramework[] = [
+const PROVEN_HOOK_FRAMEWORKS: readonly HookFramework[] = [
   'Contrarian',
   'Specific Metric',
   'Mistake Callout',
   'Curiosity Gap',
 ] as const;
 
-export const BANNED_HOOK_CLICHE_PATTERNS: readonly RegExp[] = [
+const BANNED_HOOK_CLICHE_PATTERNS: readonly RegExp[] = [
   /\bultimate\s+guide\b/gi,
   /\bunlock(?:ing|ed|s)?\b/gi,
   /\bgame[- ]?chang(?:ing|er|ers)\b/gi,
@@ -18,7 +18,7 @@ export const BANNED_HOOK_CLICHE_PATTERNS: readonly RegExp[] = [
   /\bin\s+today'?s\s+fast[- ]?paced\b/gi,
 ];
 
-export const GENERIC_HOOK_FILLER_PATTERNS: readonly RegExp[] = [
+const GENERIC_HOOK_FILLER_PATTERNS: readonly RegExp[] = [
   /\bshifts?\s+the\s+model\b/gi,
   /\bshifts?\s+real[- ]world\s+outcomes\b/gi,
   /المقارنة\s+الحقيقية\s+في/gi,
@@ -65,7 +65,7 @@ const DANGLING_TRAILING_WORDS = new Set([
   'instead',
 ]);
 
-export interface HookScoreBreakdown {
+interface HookScoreBreakdown {
   score: number;
   wordCount: number;
   subheadlineWordCount: number;
@@ -82,7 +82,7 @@ export function countHeadlineWords(text: string | undefined): number {
     .filter(Boolean).length;
 }
 
-export function containsBannedHookCliche(text: string | undefined): boolean {
+function containsBannedHookCliche(text: string | undefined): boolean {
   if (!text) return false;
   return BANNED_HOOK_CLICHE_PATTERNS.some((re) => {
     re.lastIndex = 0;
@@ -90,7 +90,7 @@ export function containsBannedHookCliche(text: string | undefined): boolean {
   });
 }
 
-export function containsGenericHookFiller(text: string | undefined): boolean {
+function containsGenericHookFiller(text: string | undefined): boolean {
   if (!text) return false;
   return GENERIC_HOOK_FILLER_PATTERNS.some((re) => {
     re.lastIndex = 0;
@@ -98,7 +98,7 @@ export function containsGenericHookFiller(text: string | undefined): boolean {
   });
 }
 
-export function containsEmoji(text: string | undefined): boolean {
+function containsEmoji(text: string | undefined): boolean {
   if (!text) return false;
   EMOJI_STRIP_RE.lastIndex = 0;
   return EMOJI_STRIP_RE.test(text);
@@ -108,7 +108,7 @@ export function containsEmoji(text: string | undefined): boolean {
  * Strips emojis, colons (":"), and banned clichés from slide / hook copy.
  * Preserves URL protocols if ever present outside slide headlines.
  */
-export function stripNegativeSlideConstraints(
+function stripNegativeSlideConstraints(
   text: string | undefined,
   options: { stripColons?: boolean; stripCliches?: boolean } = {}
 ): string {
@@ -133,7 +133,7 @@ export function stripNegativeSlideConstraints(
 /**
  * Keeps optional Slide 1 sub-headline strictly under 8 words (< 8 words) with zero negative constraints.
  */
-export function clampOptionalSubheadline(text: string | undefined, maxWords: number = 7): string {
+function clampOptionalSubheadline(text: string | undefined, maxWords: number = 7): string {
   const clean = stripNegativeSlideConstraints(text, { stripColons: true, stripCliches: true });
   if (!clean) return '';
   const words = clean.split(/\s+/).filter(Boolean);
@@ -245,7 +245,7 @@ interface Slide2AnchorSignals {
 const PASSIVE_ATTRIBUTION_RE =
   /^(?:discovered|reported|disclosed|published|announced|found|identified|revealed|spotted|uncovered)\s+by\b|^(?:the\s+)?(?:security\s+)?research(?:ers?|\s+team)\s+(?:at|from)\b/i;
 
-export function isPassiveAttributionClause(text: string | undefined): boolean {
+function isPassiveAttributionClause(text: string | undefined): boolean {
   if (!text) return false;
   return PASSIVE_ATTRIBUTION_RE.test(text.trim());
 }
@@ -451,7 +451,7 @@ function extractBodyContextSignals(slides: SlideData[], rawSourceText: string = 
   };
 }
 
-export function inferHookFramework(variant: Pick<HookVariant, 'framework' | 'tag' | 'enTitle'>): HookFramework {
+function inferHookFramework(variant: Pick<HookVariant, 'framework' | 'tag' | 'enTitle'>): HookFramework {
   if (variant.framework && PROVEN_HOOK_FRAMEWORKS.includes(variant.framework)) {
     return variant.framework;
   }
@@ -686,7 +686,7 @@ export function clampCoverTeaser(
   return /[.?!؟]$/.test(finalStr) ? finalStr : `${finalStr}.`.slice(0, maxChars);
 }
 
-export function inferCoverStyleForHook(
+function inferCoverStyleForHook(
   framework?: HookFramework | string,
   slide?: Partial<SlideData>,
   coverArchetype?: SlideType

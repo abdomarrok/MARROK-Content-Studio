@@ -5,28 +5,11 @@ import http from 'node:http';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
-import { ENGINE_DIR, parseCliArgs, resolveFfmpegBinaries } from './paths.mjs';
+import { ENGINE_DIR, MIME_TYPES, parseCliArgs, resolveFfmpegBinaries } from './paths.mjs';
 import { loadProjectConfig } from './schema.mjs';
 
-const MIME_TYPES = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'application/javascript; charset=utf-8',
-  '.mjs': 'application/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.jfif': 'image/jpeg',
-  '.webp': 'image/webp',
-  '.wav': 'audio/wav',
-  '.mp3': 'audio/mpeg',
-  '.mp4': 'video/mp4',
-  '.woff2': 'font/woff2',
-};
-
 function startEphemeralServer(projectRoot) {
+  const normalizedRoot = path.resolve(projectRoot);
   return new Promise((resolve, reject) => {
     const server = http.createServer(async (req, res) => {
       try {
@@ -37,15 +20,15 @@ function startEphemeralServer(projectRoot) {
           const prefix = pathname.startsWith('/video-engine/') ? '/video-engine/' : '/engine/';
           const rel = pathname.slice(prefix.length);
           filePath = path.resolve(ENGINE_DIR, rel);
-          if (!filePath.startsWith(ENGINE_DIR)) {
+          if (filePath !== ENGINE_DIR && !filePath.startsWith(ENGINE_DIR + path.sep)) {
             res.writeHead(403);
             res.end('Forbidden');
             return;
           }
         } else {
           const rel = pathname === '/' ? 'scene.html' : pathname.replace(/^\/+/, '');
-          filePath = path.resolve(projectRoot, rel);
-          if (!filePath.startsWith(projectRoot)) {
+          filePath = path.resolve(normalizedRoot, rel);
+          if (filePath !== normalizedRoot && !filePath.startsWith(normalizedRoot + path.sep)) {
             res.writeHead(403);
             res.end('Forbidden');
             return;

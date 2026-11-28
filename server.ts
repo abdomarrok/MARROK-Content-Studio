@@ -1,7 +1,10 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
 import express from 'express';
+import { getServerConfig } from './api/config.ts';
+import { getPostgresPool } from './api/db/postgres.ts';
 import app from './api/index.ts';
+import { getAuthConfigStatus, verifySessionRequestOrTokens } from './src/lib/security/sessionAuth.ts';
 import { registerVideoStudioRoutes } from './video-studio/studio/expressRouter.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -12,7 +15,13 @@ async function startServer() {
   const isDev = process.env.NODE_ENV !== 'production';
 
   // Local-only Video Studio API + scoped iframe preview routes (stays outside Vercel/Netlify /api)
-  registerVideoStudioRoutes(app);
+  registerVideoStudioRoutes(app, {
+    getAuthConfig: getAuthConfigStatus,
+    verifySessionRequest: (req, authCfg, candidateTokens) => {
+      const dbUrl = getServerConfig().databaseUrl;
+      return verifySessionRequestOrTokens(req.headers, authCfg, dbUrl ? getPostgresPool(dbUrl) : null, candidateTokens);
+    },
+  });
 
   if (isDev) {
     const { createServer: createViteServer } = await import('vite');

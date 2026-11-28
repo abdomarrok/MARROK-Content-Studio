@@ -33,7 +33,7 @@ import {
   evaluateGathererCandidateQuality,
   type GathererQualityGateResult,
 } from '../qaChecks.ts';
-import { saveValidPost, syncLocalVaultAfterManage } from '../storage/postsVaultClient.ts';
+import { saveValidPost } from '../storage/postsVaultClient.ts';
 import { fetchAuthedJson } from '../network/httpClient.ts';
 import {
   buildGroundedFitLine,
@@ -125,7 +125,7 @@ export interface GatheredCandidatePost {
   summaryOnlyWarning?: string;
 }
 
-export interface TopicRadarResponse {
+interface TopicRadarResponse {
   ok: boolean;
   cached: boolean;
   fetchedAt: string;
@@ -135,7 +135,7 @@ export interface TopicRadarResponse {
   warning?: string;
 }
 
-export interface ExtractUrlResponse {
+interface ExtractUrlResponse {
   ok: boolean;
   topic: GatheredTopicItem;
   rawTextLength: number;
@@ -333,7 +333,7 @@ export function getLocalTriageDecisions(): TriageDecisionRecord[] {
   }
 }
 
-export function saveLocalTriageDecisions(records: TriageDecisionRecord[]): void {
+function saveLocalTriageDecisions(records: TriageDecisionRecord[]): void {
   try {
     localStorage.setItem(TRIAGE_DECISIONS_KEY, JSON.stringify(records.slice(0, 300)));
   } catch {
@@ -349,25 +349,6 @@ export function clearLocalTriageDecisions(): void {
   } catch {
     // Ignore
   }
-}
-
-export function isCandidateSkipped(
-  topicId: string,
-  decisions: TriageDecisionRecord[]
-): boolean {
-  const latest = decisions.find((d) => d.topicId === topicId);
-  return latest?.action === 'skip';
-}
-
-export function isCandidateSnoozed(
-  topicId: string,
-  decisions: TriageDecisionRecord[],
-  nowMs = Date.now()
-): boolean {
-  const latest = decisions.find((d) => d.topicId === topicId);
-  if (!latest || latest.action !== 'snooze' || !latest.snoozeUntil) return false;
-  const until = Date.parse(latest.snoozeUntil);
-  return Number.isFinite(until) && until > nowMs;
 }
 
 export async function fetchTriageDecisions(): Promise<TriageDecisionRecord[]> {
@@ -560,24 +541,7 @@ export function getDismissedGatherTopicIds(): Set<string> {
   return dismissed;
 }
 
-export function dismissGatherTopicId(topicId: string): void {
-  candidateDeckCache.delete(topicId);
-  // Persist locally as a triage decision record with action 'skip'
-  const decisions = getLocalTriageDecisions();
-  if (!decisions.some((d) => d.topicId === topicId)) {
-    decisions.unshift({
-      id: `triage_local_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      topicId,
-      sourceDomain: 'local',
-      domainCategory: 'DISTRIBUTED SYSTEMS',
-      action: 'skip',
-      createdAt: new Date().toISOString(),
-    });
-    saveLocalTriageDecisions(decisions);
-  }
-}
-
-export function clearDismissedGatherTopicIds(): void {
+function clearDismissedGatherTopicIds(): void {
   try {
     localStorage.removeItem(DISMISSED_TOPICS_KEY);
   } catch {
@@ -705,7 +669,7 @@ export function isTopicAlreadyInVault(
   return null;
 }
 
-export function deriveSourceDomain(url: string, fallbackSource?: string): string {
+function deriveSourceDomain(url: string, fallbackSource?: string): string {
   try {
     const parsed = new URL(url);
     return parsed.hostname.replace(/^www\./i, '');
@@ -714,7 +678,7 @@ export function deriveSourceDomain(url: string, fallbackSource?: string): string
   }
 }
 
-export function deriveTopicScoringMetadata(
+function deriveTopicScoringMetadata(
   topic: GatheredTopicItem,
   options?: {
     isVaultDuplicate?: boolean;
@@ -1346,7 +1310,7 @@ export async function hydrateCandidateDeckOnDemand(
   });
 }
 
-export interface AcceptCandidatesResult {
+interface AcceptCandidatesResult {
   scheduledPosts: SavedPostRecord[];
   draftPosts: SavedPostRecord[];
   failedCandidates: Array<{ title: string; error: string }>;
@@ -1357,7 +1321,7 @@ export interface AcceptCandidatesResult {
  * Upgrades a gathered candidate post on demand by scraping full article text from its source URL
  * and running `runAutonomousPipeline`, while keeping `userReviewed: false` & `verifiedNumbers: false`.
  */
-export async function synthesizeCandidateWithFullAi(
+async function synthesizeCandidateWithFullAi(
   candidate: GatheredCandidatePost,
   options?: {
     onStatus?: (msg: string) => void;
@@ -1609,7 +1573,7 @@ export async function acceptGatheredCandidatesToDrafts(
   };
 }
 
-export interface BatchGatherResult {
+interface BatchGatherResult {
   createdPosts: SavedPostRecord[];
   failedTopics: Array<{ title: string; error: string }>;
 }
@@ -1772,197 +1736,6 @@ export function isBoilerplateOrLowSignalDeck(deck?: CarouselData | null): boolea
   }
 
   return boilerplateMatches >= 2;
-}
-
-/**
- * Diversifies a SavedPostRecord's visual archetypes and schematic variants across Slides 2-7
- * in-place and persists the updated record to the Vault.
- */
-export async function diversifySavedPostVisuals(
-  post: SavedPostRecord
-): Promise<SavedPostRecord> {
-  if (!post.deck || !Array.isArray(post.deck.slides) || post.deck.slides.length <= 2) {
-    return post;
-  }
-
-  const diversifiedSlides = diversifyDeckArchetypesAndVisuals(post.deck.slides, {
-    dynamicCover: true,
-  });
-  const updatedDeck: CarouselData = {
-    ...post.deck,
-    slides: diversifiedSlides,
-  };
-
-  const updatedRecord: SavedPostRecord = {
-    ...post,
-    deck: updatedDeck,
-    updatedAt: new Date().toISOString(),
-  };
-
-  await syncLocalVaultAfterManage({ updatedPost: updatedRecord });
-  try {
-    return await saveValidPost({
-      deck: updatedDeck,
-      postStatus: post.postStatus,
-      title: post.title,
-      allowOverride: true,
-      userReviewed: post.deck?.sourceMeta?.userReviewed,
-      verifiedNumbers: post.verifiedNumbers ?? post.deck?.sourceMeta?.verifiedNumbers,
-    });
-  } catch (err) {
-    console.warn('[GatherClient] Failed to persist diversified visuals remotely, returning local record:', err);
-    return updatedRecord;
-  }
-}
-
-/**
- * Re-synthesizes an existing Vault post by scraping its primary source URL (if available)
- * or extracting its embedded context, running the Full AI pipeline (with upgraded NLP fallback
- * + visual diversification), and saving the upgraded deck back to the same Vault record.
- */
-export async function resynthesizeSavedPostWithDeepAi(
-  post: SavedPostRecord,
-  options?: {
-    onStatus?: (msg: string) => void;
-  }
-): Promise<SavedPostRecord> {
-  const targetFormat: PostFormat =
-    post.deck?.postFormat || (post.slideCount === 1 ? 'single' : 'carousel');
-  const rawSourceUrl =
-    post.deck?.sourceMeta?.url ||
-    post.deck?.sourceMeta?.groundingSources?.[0]?.url ||
-    (post.deck?.brandUrl && /^https?:\/\//i.test(post.deck.brandUrl) ? post.deck.brandUrl : '');
-
-  let synthesisPrompt = '';
-  let scrapedTitle = post.title.replace(/\s*\(Cloudflare\.?$/i, '').trim();
-  let scrapedAuthor =
-    post.creatorHandle || post.deck?.sourceMeta?.creator || post.deck?.brand || 'MARROK';
-  let scrapedBrand = post.deck?.brand || 'MARROK';
-  let scrapedBrandUrl = post.deck?.brandUrl || 'marrok.org';
-
-  if (
-    rawSourceUrl &&
-    /^https?:\/\//i.test(rawSourceUrl) &&
-    !rawSourceUrl.includes('news.ycombinator.com') &&
-    !rawSourceUrl.includes('marrok.org')
-  ) {
-    try {
-      options?.onStatus?.(`Scraping full article from ${rawSourceUrl}...`);
-      const extracted = await extractArticleFromUrl(rawSourceUrl);
-      if (extracted?.ok && extracted.topic?.synthesisPrompt) {
-        synthesisPrompt = extracted.topic.synthesisPrompt;
-        scrapedTitle = extracted.topic.title || scrapedTitle;
-        scrapedAuthor = extracted.topic.author || extracted.topic.sourceName || scrapedAuthor;
-        scrapedBrand = extracted.topic.brand || scrapedBrand;
-        scrapedBrandUrl = extracted.topic.brandUrl || scrapedBrandUrl;
-      }
-    } catch (err) {
-      console.warn('[GatherClient] Source URL scrape unavailable, using existing post context:', err);
-    }
-  }
-
-  if (!synthesisPrompt) {
-    const existingFacts = (post.deck?.facts || [])
-      .map((f) => f.text)
-      .filter((t) => t && !t.startsWith('Primary architectural domain:') && !t.startsWith('Brand attribution:'))
-      .join('\n• ');
-    const captionContext = (post.deck?.caption || '').replace(/⚡[^\n]*\n?/g, '').slice(0, 2400);
-
-    synthesisPrompt = [
-      `Technical Topic: ${scrapedTitle}`,
-      `Category: ${post.category || post.deck?.category || 'DISTRIBUTED SYSTEMS'}`,
-      rawSourceUrl ? `Source URL: ${rawSourceUrl}` : '',
-      existingFacts ? `Key Engineering Facts:\n• ${existingFacts}` : '',
-      captionContext ? `Technical Summary & Engineering Context:\n${captionContext}` : '',
-    ]
-      .filter(Boolean)
-      .join('\n');
-  }
-
-  let upgradedDeck: CarouselData;
-  try {
-    options?.onStatus?.(`Synthesizing deep technical deck for "${scrapedTitle.slice(0, 36)}"...`);
-    upgradedDeck = await runAutonomousPipeline(synthesisPrompt, {
-      categoryHint: post.category || post.deck?.category,
-      postFormat: targetFormat === 'single' ? 'single' : 'carousel',
-      onProgress: options?.onStatus,
-    });
-    if (targetFormat === 'single' && upgradedDeck.slides.length > 1) {
-      upgradedDeck = condenseCarouselToSingleSlide(upgradedDeck);
-    }
-  } catch (err) {
-    console.warn('[GatherClient] Deep AI re-synthesis failed, using local synthesizer fallback:', err);
-    upgradedDeck = synthesizeCarousel({
-      prompt: synthesisPrompt,
-      categoryHint: post.category || post.deck?.category,
-      postFormat: targetFormat === 'single' ? 'single' : 'carousel',
-    });
-    if (targetFormat === 'single' && upgradedDeck.slides.length > 1) {
-      upgradedDeck = condenseCarouselToSingleSlide(upgradedDeck);
-    }
-  }
-
-  if (upgradedDeck.slides.length > 2) {
-    upgradedDeck = {
-      ...upgradedDeck,
-      slides: diversifyDeckArchetypesAndVisuals(upgradedDeck.slides, { dynamicCover: true }),
-    };
-  }
-
-  const finalDeck: CarouselData = {
-    ...upgradedDeck,
-    id: post.id,
-    theme: post.deck?.theme || upgradedDeck.theme || 'blueprint',
-    category: post.category || upgradedDeck.category || 'DISTRIBUTED SYSTEMS',
-    brand: 'MARROK',
-    brandUrl: 'marrok.org',
-    channel: scrapedBrand !== 'MARROK' ? scrapedBrand : post.deck?.channel || scrapedAuthor,
-    postFormat: targetFormat,
-    sourceMeta: {
-      ...upgradedDeck.sourceMeta,
-      title: scrapedTitle,
-      creator: scrapedAuthor,
-      channel: post.deck?.sourceMeta?.channel || scrapedAuthor,
-      url: rawSourceUrl || upgradedDeck.sourceMeta?.url,
-      published: post.deck?.sourceMeta?.published || new Date().toISOString(),
-      marrokAngle: post.deck?.sourceMeta?.marrokAngle,
-      userReviewed: false,
-      verifiedNumbers: false,
-    },
-  };
-
-  const finalTitle = finalDeck.slides[0]?.enTitle || scrapedTitle;
-  const updatedRecord: SavedPostRecord = {
-    ...post,
-    title: finalTitle,
-    slideCount: finalDeck.slides.length,
-    qaPassed: true,
-    humanApproved: false,
-    verifiedNumbers: false,
-    updatedAt: new Date().toISOString(),
-    deck: finalDeck,
-  };
-
-  await syncLocalVaultAfterManage({ updatedPost: updatedRecord });
-  try {
-    const saved = await saveValidPost({
-      deck: finalDeck,
-      postStatus: post.postStatus,
-      title: finalTitle,
-      allowOverride: true,
-      userReviewed: false,
-      verifiedNumbers: false,
-    });
-    return {
-      ...saved,
-      scheduledFor: post.scheduledFor ?? saved.scheduledFor,
-      publishTargets: post.publishTargets ?? saved.publishTargets,
-      postedAt: post.postedAt ?? saved.postedAt,
-    };
-  } catch (err) {
-    console.warn('[GatherClient] Failed to persist re-synthesized post remotely, returning local record:', err);
-    return updatedRecord;
-  }
 }
 
 /**

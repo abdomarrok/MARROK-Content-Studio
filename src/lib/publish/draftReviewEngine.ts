@@ -167,8 +167,9 @@ export function extractDraftClaimEvidence(post: SavedPostRecord): DraftClaimEvid
   };
 
   // 1. Persisted metricEvidence from Inbox or previous Draft verification edits
-  for (let i = 0; i < (meta?.metricEvidence || []).length; i++) {
-    const ev = meta!.metricEvidence![i];
+  const persistedEvidence = meta?.metricEvidence ?? [];
+  for (let i = 0; i < persistedEvidence.length; i++) {
+    const ev = persistedEvidence[i];
     const cleanLabel = sanitizeFeedDisplayText(ev.label, 64);
     if (!isMeaningfulMetricLabel(cleanLabel)) continue;
     const key = normalizeMetricKey(cleanLabel);
@@ -188,8 +189,9 @@ export function extractDraftClaimEvidence(post: SavedPostRecord): DraftClaimEvid
   }
 
   // 2. Extracted facts with numbers/claims
-  for (let i = 0; i < (post.deck?.facts || []).length; i++) {
-    const fact = post.deck!.facts![i];
+  const deckFacts = post.deck?.facts ?? [];
+  for (let i = 0; i < deckFacts.length; i++) {
+    const fact = deckFacts[i];
     if (fact.type !== 'number' && !QUANTITATIVE_METRIC_RE.test(fact.text || '')) continue;
     QUANTITATIVE_METRIC_RE.lastIndex = 0;
     const cleanLabel = sanitizeFeedDisplayText(fact.text, 64);
@@ -263,8 +265,9 @@ export function extractDraftClaimEvidence(post: SavedPostRecord): DraftClaimEvid
   });
 
   // 4. Fallback to extractedSourceMetrics if deck slides had no numeric tokens yet
-  for (let i = 0; i < (meta?.extractedSourceMetrics || []).length; i++) {
-    const m = sanitizeFeedDisplayText(meta!.extractedSourceMetrics![i], 52);
+  const extractedSourceMetrics = meta?.extractedSourceMetrics ?? [];
+  for (let i = 0; i < extractedSourceMetrics.length; i++) {
+    const m = sanitizeFeedDisplayText(extractedSourceMetrics[i], 52);
     if (!isMeaningfulMetricLabel(m)) continue;
     const key = normalizeMetricKey(m);
     if (seenByKey.has(key)) continue;

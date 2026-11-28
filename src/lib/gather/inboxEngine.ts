@@ -562,7 +562,9 @@ export function clusterSimilarTopics<T extends InboxTopicLike>(
 
     if (matchedBucket) {
       matchedBucket.items.push(item);
-      tokens.forEach((t) => matchedBucket!.tokens.add(t));
+      for (const t of tokens) {
+        matchedBucket.tokens.add(t);
+      }
     } else {
       buckets.push({
         canonicalUrl: canonUrl,

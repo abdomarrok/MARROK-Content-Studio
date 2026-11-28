@@ -216,8 +216,9 @@ export function computeSlideLayoutAwareness(
 
   // Takeaway reservation (suppressed in tall Hero Meme Frame / Full Meme mode so the meme has clean vertical space)
   const isHeroImage = isHeroImageSlide(slide);
-  const hasTakeaways = !isHeroImage && !isFullMeme && Boolean(slide.takeaways && slide.takeaways.length > 0);
-  const takeawayCount = hasTakeaways ? Math.min(3, slide.takeaways!.length) : 0;
+  const slideTakeaways = slide.takeaways ?? [];
+  const hasTakeaways = !isHeroImage && !isFullMeme && slideTakeaways.length > 0;
+  const takeawayCount = hasTakeaways ? Math.min(3, slideTakeaways.length) : 0;
   const baseTakeawayRowH = (takeawayCount === 1 ? 104 : takeawayCount === 2 ? 100 : 96) * takeawaysScale;
   const takeawayRowH = isCompactAspect
     ? Math.max(70, Math.round(baseTakeawayRowH * Math.max(0.82, spec.graphicScale)))

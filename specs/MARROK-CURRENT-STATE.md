@@ -1,9 +1,9 @@
 # MARROK Content Studio — Current State Specification
 
-**Document Version:** 1.1.0  
+**Document Version:** 1.2.0  
 **Verification Date:** November 2026  
 **Auditor:** Senior Software Architect & Engineering Lead  
-**Scope:** Complete Codebase, Test Suite (61 Test Suites / 471 Tests), Local Express Film Studio, Serverless Backend & Build Artifacts  
+**Scope:** Complete Codebase, Test Suite (60 Test Suites / 476 Tests), Local Express Film Studio, Serverless Backend & Build Artifacts  
 
 ---
 
@@ -95,38 +95,37 @@ The MARROK Content Studio is a high-grade, production-deployed web application c
 - **Neon PostgreSQL:**
   - Fully implemented with `pg.Pool`, SSL mode, idempotent table creation (`saved_posts`), and atomic upserts.
   - Active when `DATABASE_URL` is configured in environment.
-  - When `DATABASE_URL` is omitted, system gracefully falls back to local JSON storage (`data/saved-posts.json`) and client-side IndexedDB.
+  - When `DATABASE_URL` is omitted, system gracefully falls back to ephemeral `/tmp` JSON storage and client-side IndexedDB (`src/lib/storage/postsVaultClient.ts`).
 
 ### 3.3 Cloudinary Staging & Auto-Cleanup
-- **Cloud Staging:**
+- **Cloud Staging (`src/lib/publish/cloudinarySigning.ts` + `api/controllers/publishController.ts`):**
   - Active when `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET` are provided.
+  - SHA-1 request signing is isolated in strictly server-only `src/lib/publish/cloudinarySigning.ts` (never bundled into client assets).
   - Automatically sweeps and destroys assets $1\text{ hour}$ after scheduled delivery.
   - When secrets are absent, falls back to ephemeral public HTTPS hosting.
 
 ---
 
-## 4. Verified Architectural Regressions & Bottlenecks
+## 4. Post-Refactor Architecture & Resolved Bottlenecks
 
-### 4.1 Broken Dynamic Import Splitting (Critical Bundle Bloat)
-- **Vite Warning:** `[INEFFECTIVE_DYNAMIC_IMPORT]`
-- **Root Cause:**
-  - `src/components/studio/index.ts` re-exports `PublishingHubWorkspace` and `SavedPostsDrawer`.
-  - `src/components/studio/motion/index.ts` re-exports `MotionExportModal`.
-  - Because `AutonomousStudio.tsx` and other modules import utilities from these barrels, Rollup is forced to bundle `PublishingHubWorkspace` and motion video exporters directly into the main entry bundle (`index-CHsvqh7i.js` = 984 kB).
-- **Remediation:** Remove heavy components from the barrel files and import them directly by path in dynamic `React.lazy()` declarations.
+### 4.1 Clean Route & Modal Code Splitting
+- Heavy workspaces (`PublishingHubWorkspace`, `VideoStudioWorkspace`, `SavedPostsDrawer`, `MotionExportModal`, `ThemeCustomizer`, `SlideImageStudio`, `MediaSearchModal`, `ApiKeyModal`, `ContactSheetModal`) emit as separate lazy Vite chunks with zero `[INEFFECTIVE_DYNAMIC_IMPORT]` or Node-builtin externalization warnings.
+- Legacy bundled sample-post JSON seeds have been retired; Vault persistence uses Neon PostgreSQL with honest IndexedDB fallback (`src/lib/storage/postsVaultClient.ts`).
 
-### 4.2 1.46MB Bundled Sample Posts Chunk
-- **File:** `dist/assets/bundledSavedPosts-CuQ1xdcj.js` (1,465 kB).
-- **Root Cause:** `src/lib/storage/vaultStorage.ts` statically imports `data/saved-posts.json` as an offline seed.
-- **Remediation:** Convert `samplePosts` import to an asynchronous dynamic import that loads only when local storage is detected to be empty.
+### 4.2 Decomposed Studio & Server Modules
+- **Create Workspace (`src/components/AutonomousStudio.tsx`, 1,164 LOC):** Decomposed into cohesive feature hooks and stage UI:
+  - `src/hooks/useStudioHistory.ts` (single Undo/Redo + before-edits comparison stack)
+  - `src/hooks/useAutonomousGeneration.ts` (AI generation orchestration & pipeline hydration)
+  - `src/hooks/useVisualDirectorActions.ts` (auto-layout watcher, slide/diagram CRUD, visual director actions)
+  - `src/hooks/useBilingualSlideSync.ts` (Arabic slide/deck sync, vision photo captioning, video storyboard switching)
+  - `src/components/studio/panels/StudioStageConsole.tsx` (under-canvas slide strip, delivery bar, fallback banner)
+- **Film Studio (`src/components/studio/video/VideoStudioWorkspace.tsx`, 395 LOC):** Controller state, polling, and job actions extracted into `src/components/studio/video/useVideoStudioController.ts` and inspector forms into `VideoStudioInspectorPanels.tsx`. Express routes (`video-studio/studio/expressRouter.mjs`, 1,035 LOC) reuse canonical session auth injected from `server.ts` (`src/lib/security/sessionAuth.ts`).
+- **Archetype & Review Panels:** `ArchetypeControls.tsx` (`736 LOC`) and `WeeklyProgramReviewPanel.tsx` (`879 LOC`).
+- **Server-Safe Shared Helpers:** Pure text/HTML/scoring/Telegram helpers live in `src/lib/gather/topicTextScoring.ts` (reducing `api/controllers/mediaController.ts` to 2,451 LOC), staging/quota/fingerprint helpers live in `src/lib/publish/publishOutbox.ts`, and SHA-1 Cloudinary signing lives in server-only `src/lib/publish/cloudinarySigning.ts` (reducing `api/controllers/publishController.ts` to 3,284 LOC).
+- **Unified HTTP Client (`src/lib/network/httpClient.ts`):** Authenticated client API calls standardize on `fetchAuthedJson`.
 
-### 4.3 Monolithic Component Complexity
-- **`AutonomousStudio.tsx`:** 3,624 lines of code, 42 `useState` hooks, 18 `useEffect` hooks. Contains canvas viewport, prompt radar, image generator, audio mixer, and publishing triggers.
-- **`ArchetypeControls.tsx`:** 1,861 lines of code combining configuration interfaces for 9 archetypes and 9 diagram schematic layouts into a single file.
-- **`WeeklyProgramReviewPanel.tsx`:** 1,712 lines of code combining RSS readers, draft review queues, and multi-day scheduling.
-
-### 4.4 Mobile Layout Clamping
-- On viewports with width $< 768\text{px}$, the combination of fixed header, 1080x1920 canvas scaling, and floating action dock causes the bottom 15% of the slide to be clipped below the fold.
+### 4.3 Remaining Tracked UX Item
+- **Mobile Viewport Tuning:** Small mobile screens (`< 768px`) should continue to be spot-checked whenever adding controls to the bottom stage console or floating toolbar dock.
 
 ---
 
@@ -153,8 +152,8 @@ The MARROK Content Studio is a high-grade, production-deployed web application c
 3. **Mobile Readability Floor:**
    Title, body, and diagram label elements must never be scaled below $24\text{px}$ ($\ge 22\text{px}$ for footers), regardless of content length. If copy exceeds available clearance, it must be truncated with an ellipsis or reformatted via layout awareness.
 
-4. **Node/Browser Decoupling:**
-   Shared utility files (e.g. `src/lib/publish/tiktokTitle.ts`) must remain pure string utilities with zero browser or canvas imports so they compile cleanly in Vercel's Node.js runtime without DOM errors.
+4. **Node/Browser Decoupling & Type Hygiene (`src/test/architectureBoundary.test.ts`):**
+   Shared utility files (e.g. `src/lib/publish/tiktokTitle.ts`, `src/lib/gather/topicTextScoring.ts`) stay pure with zero browser or canvas imports, while server-only crypto modules (`src/lib/publish/cloudinarySigning.ts`) are banned from client `src/components/` and `src/hooks/`. Production `src/` and `api/` code enforces zero explicit `any` and zero non-null (`!.`) assertions.
 
 ---
 
@@ -162,8 +161,8 @@ The MARROK Content Studio is a high-grade, production-deployed web application c
 
 The codebase passes all regression and architecture boundary tests:
 ```bash
-npm test
+npm run lint && npm run video:lint && npm test && npm run build
 ```
-- **Test Files:** 61 passed (61) — 471 tests passed
+- **Test Files:** 60 passed (60) — 476 tests passed
 - **Pass Rate:** 100%
 

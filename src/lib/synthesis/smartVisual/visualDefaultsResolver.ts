@@ -320,8 +320,9 @@ export function resolveSmartSlideVisuals(
     : ['server', 'cpu', 'database'];
 
   const diagramNodes: DiagramNode[] = (() => {
-    const rawNodes = hasCustomNodes
-      ? slide.diagramNodes!.slice(0, 3).map((n, i) => ({
+    const rawNodes =
+      hasCustomNodes && slide.diagramNodes
+        ? slide.diagramNodes.slice(0, 3).map((n, i) => ({
           label: n.label || phrases[i] || `Stage 0${i + 1}`,
           sublabel: !isGenericPlaceholderValue(n.sublabel) ? n.sublabel : variantMeta.subs[i],
           status: n.status || variantMeta.statuses[i],

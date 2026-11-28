@@ -1,7 +1,6 @@
 import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
 import type {
-  BufferChannelInfo,
   PublishOutboxOperation,
   PublishOutboxPayloadSnapshot,
   PublishOutboxRecord,
@@ -30,7 +29,9 @@ import {
 } from '../../src/lib/publish/schedulePredicate.ts';
 import { stripLeadingDuplicateTikTokTitle } from '../../src/lib/publish/tiktokTitle.ts';
 import { fetchJsonWithTimeout } from '../../src/lib/network/httpClient.ts';
+import { signCloudinaryParams } from '../../src/lib/publish/cloudinarySigning.ts';
 import {
+  DEFAULT_CONNECTED_CHANNELS,
   DEFAULT_OUTBOX_LEASE_MS,
   DEFAULT_OUTBOX_MAX_ATTEMPTS,
   OutboxPersistenceUnavailableError,
@@ -42,77 +43,25 @@ import {
   claimLocalOutboxDispatch,
   classifyProviderFailure,
   collectOutboxRemoteIds,
+  computeDispatchFingerprint,
+  computeFreePlanQuotaStats,
   finalizeOutboxRecord,
   isOperationConfirmedSuccess,
   isZernioOperationReconcilable,
   parseRetryAfterHeaderMs,
   queryLocalOutboxDispatches,
   toOutboxSummary,
+  validateStagingSlideDataUrl,
   type ClaimOutboxDispatchOutcome,
   type ClaimOutboxDispatchParams,
 } from '../../src/lib/publish/publishOutbox.ts';
 
-/**
- * Default channel definitions matching the user's connected Buffer Free (3/3) and Metricool Free accounts.
- */
-export const DEFAULT_CONNECTED_CHANNELS: BufferChannelInfo[] = [
-  {
-    id: '6acf76d3778b240e2f07701c',
-    name: 'Instagram',
-    service: 'instagram',
-    handle: '@marrok_org',
-    queuedCount: 0,
-    queueLimit: 10,
-    provider: 'buffer',
-  },
-  {
-    id: '6acf780f778b240e2f07795c',
-    name: 'Facebook Page',
-    service: 'facebook',
-    handle: 'Marrok (Algiers)',
-    queuedCount: 0,
-    queueLimit: 10,
-    provider: 'buffer',
-  },
-  {
-    id: '6acf76aa778b240e2f076ef0',
-    name: 'LinkedIn Page',
-    service: 'linkedin',
-    handle: 'Marrok',
-    queuedCount: 0,
-    queueLimit: 10,
-    provider: 'buffer',
-  },
-  {
-    id: 'metricool_tt_marrok',
-    name: 'TikTok',
-    service: 'tiktok',
-    handle: '@Marrok',
-    queuedCount: 0,
-    queueLimit: 20,
-    provider: 'metricool',
-  },
-];
-
-/**
- * Generates a Cloudinary SHA-1 signature for signed upload and destroy requests.
- * Sorts parameter keys alphabetically, formats as key=value&..., and appends apiSecret.
- */
-export function signCloudinaryParams(
-  params: Record<string, string | number>,
-  apiSecret: string
-): string {
-  const serialized = Object.keys(params)
-    .filter((k) => params[k] !== undefined && params[k] !== null && params[k] !== '')
-    .sort()
-    .map((k) => `${k}=${params[k]}`)
-    .join('&');
-
-  return crypto
-    .createHash('sha1')
-    .update(`${serialized}${apiSecret}`)
-    .digest('hex');
-}
+export {
+  computeDispatchFingerprint,
+  computeFreePlanQuotaStats,
+  signCloudinaryParams,
+  validateStagingSlideDataUrl,
+};
 
 export function isCloudinaryConfigured(config: ServerConfig = getServerConfig()): boolean {
   return Boolean(
@@ -263,50 +212,6 @@ export async function destroyCloudinaryAsset(
   }
 }
 
-export const ALLOWED_STAGING_MIME_TYPES = new Set([
-  'image/jpeg',
-  'image/jpg',
-  'image/png',
-  'image/webp',
-]);
-export const MAX_STAGING_SLIDE_BYTES = 4 * 1024 * 1024; // 4 MB per slide
-
-export function validateStagingSlideDataUrl(
-  dataUrl: string
-): { ok: true; mimeType: string; bytes: number } | { ok: false; status: number; error: string } {
-  const match = /^data:([^;]+);base64,([A-Za-z0-9+/=\s]+)$/i.exec(dataUrl.trim());
-  if (!match) {
-    return {
-      ok: false,
-      status: 415,
-      error: 'Unsupported slide media format: expected base64 data:image/(jpeg|png|webp) URL.',
-    };
-  }
-  const mimeType = match[1].toLowerCase().trim();
-  if (!ALLOWED_STAGING_MIME_TYPES.has(mimeType)) {
-    return {
-      ok: false,
-      status: 415,
-      error: `Unsupported slide MIME type "${mimeType}". Allowed: image/jpeg, image/png, image/webp.`,
-    };
-  }
-  const cleanB64 = match[2].replace(/\s+/g, '');
-  const buf = Buffer.from(cleanB64, 'base64');
-  if (buf.byteLength === 0) {
-    return { ok: false, status: 400, error: 'Slide image payload is empty.' };
-  }
-  if (buf.byteLength > MAX_STAGING_SLIDE_BYTES) {
-    return {
-      ok: false,
-      status: 413,
-      error: `Slide image exceeds maximum staging size of ${Math.round(
-        MAX_STAGING_SLIDE_BYTES / (1024 * 1024)
-      )} MB.`,
-    };
-  }
-  return { ok: true, mimeType, bytes: buf.byteLength };
-}
-
 /**
  * Sweeps Vault posts and destroys staged Cloudinary assets for posts that have:
  * 1. Already been published immediately (postStatus === 'posted' && !scheduledFor)
@@ -419,72 +324,6 @@ export async function sweepExpiredCloudinaryAssets(options?: {
     promotedPostIds,
     remainingStagedCount,
     updatedPosts,
-  };
-}
-
-/**
- * Compute monthly Metricool usage & per-channel Buffer queue counts from Vault records.
- */
-export function computeFreePlanQuotaStats(posts: SavedPostRecord[]) {
-  const now = new Date();
-  const currentMonthKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
-
-  let metricoolUsedThisMonth = 0;
-  let stagedCloudinarySlidesCount = 0;
-  let cleanedCloudinaryPostsCount = 0;
-
-  const activeBufferQueueByService: Record<PublishTargetPlatform, number> = {
-    instagram: 0,
-    facebook: 0,
-    linkedin: 0,
-    tiktok: 0,
-  };
-
-  for (const post of posts) {
-    if (post.cloudinaryCleanedAt) {
-      cleanedCloudinaryPostsCount += 1;
-    } else if (post.cloudinaryPublicIds && post.cloudinaryPublicIds.length > 0) {
-      stagedCloudinarySlidesCount += post.cloudinaryPublicIds.length;
-    }
-
-    const postMonth =
-      post.countedInMetricoolMonth ||
-      (post.postedAt ? post.postedAt.slice(0, 7) : post.updatedAt.slice(0, 7));
-
-    if (
-      postMonth === currentMonthKey &&
-      (post.countedInMetricoolMonth === currentMonthKey ||
-        post.publishTargets?.includes('tiktok'))
-    ) {
-      metricoolUsedThisMonth += 1;
-    }
-
-    // Count future scheduled posts in Buffer's 10-slot rolling queue
-    if (post.scheduledFor && Date.parse(post.scheduledFor) > Date.now()) {
-      for (const target of post.publishTargets || []) {
-        if (activeBufferQueueByService[target] !== undefined) {
-          activeBufferQueueByService[target] += 1;
-        }
-      }
-    }
-  }
-
-  const channels: BufferChannelInfo[] = DEFAULT_CONNECTED_CHANNELS.map((ch) => ({
-    ...ch,
-    queuedCount:
-      ch.provider === 'metricool'
-        ? metricoolUsedThisMonth
-        : activeBufferQueueByService[ch.service] || 0,
-  }));
-
-  return {
-    currentMonthKey,
-    metricoolUsedThisMonth,
-    metricoolMonthlyLimit: 20,
-    bufferQueueLimitPerChannel: 10,
-    stagedCloudinarySlidesCount,
-    cleanedCloudinaryPostsCount,
-    channels,
   };
 }
 
@@ -1559,53 +1398,6 @@ interface ChannelExecutionResultItem {
   reusedFromOutbox?: boolean;
 }
 
-function normalizeDeterministicValue(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(normalizeDeterministicValue);
-  }
-  if (value && typeof value === 'object') {
-    const sorted: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      const val = (value as Record<string, unknown>)[key];
-      if (val !== undefined) {
-        sorted[key] = normalizeDeterministicValue(val);
-      }
-    }
-    return sorted;
-  }
-  return value;
-}
-
-export function computeDispatchFingerprint(input: {
-  postId?: string;
-  title?: string;
-  mode: string;
-  dueAt?: string;
-  timezone?: string;
-  targets: string[];
-  text: string;
-  imageUrls: string[];
-  tiktokImageUrls: string[];
-  tiktokSettings?: Record<string, unknown>;
-}): string {
-  const normalizedTargets = [...input.targets].map((t) => String(t).toLowerCase()).sort();
-  const payload = JSON.stringify({
-    postId: String(input.postId || input.title || '').trim(),
-    mode: String(input.mode || 'addToQueue'),
-    dueAt: String(input.dueAt || '').trim(),
-    timezone: String(input.timezone || '').trim(),
-    targets: normalizedTargets,
-    text: String(input.text || '').trim(),
-    imageUrls: (input.imageUrls || []).map((u) => String(u).trim()),
-    tiktokImageUrls: (input.tiktokImageUrls || []).map((u) => String(u).trim()),
-    tiktokSettings:
-      input.tiktokSettings && typeof input.tiktokSettings === 'object'
-        ? normalizeDeterministicValue(input.tiktokSettings)
-        : null,
-  });
-  return crypto.createHash('sha256').update(payload).digest('hex').slice(0, 32);
-}
-
 function buildChannelResultsFromOutboxRecord(
   outbox: PublishOutboxRecord,
   isReplay = false
@@ -2496,9 +2288,10 @@ async function executeOutboxDispatchTargets(params: {
       },
     };
 
+    const savedRecordId = savedRecord.id;
     nextPosts = [
       savedRecord,
-      ...params.existingPosts.filter((p) => p.id !== savedRecord!.id),
+      ...params.existingPosts.filter((p) => p.id !== savedRecordId),
     ];
 
     try {

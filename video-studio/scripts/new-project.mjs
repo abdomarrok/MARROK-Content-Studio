@@ -1,16 +1,14 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { assertValidProjectId, getProjectPaths, parseCliArgs, TEMPLATES_DIR } from '../engine/paths.mjs';
+import {
+  assertValidProjectId,
+  getProjectPaths,
+  parseCliArgs,
+  TEMPLATES_DIR,
+  toTitleCaseSlug,
+} from '../engine/paths.mjs';
 import { validateProjectConfig } from '../engine/schema.mjs';
-
-function toTitleCase(slug) {
-  return slug
-    .split('-')
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-}
 
 /**
  * Scaffold a new video project under projects/<id>/ from templates/starter-project/.
@@ -31,7 +29,7 @@ export async function createProjectFromTemplate({ id, name, durationSec }) {
   const templateDir = path.join(TEMPLATES_DIR, 'starter-project');
   const rawConfig = JSON.parse(await fs.readFile(path.join(templateDir, 'project.json'), 'utf8'));
   rawConfig.id = id;
-  rawConfig.name = (name && String(name).trim()) || toTitleCase(id);
+  rawConfig.name = (name && String(name).trim()) || toTitleCaseSlug(id);
 
   if (durationSec !== undefined && durationSec !== null && durationSec !== '') {
     const dur = Number(durationSec);

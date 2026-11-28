@@ -277,7 +277,7 @@ export function synthesizeMusicWav(sampleRate = SAMPLE_RATE, options = {}) {
   return encodeWav24Stereo(left, right, sampleRate);
 }
 
-export function synthesizeTypingWav(sampleRate = SAMPLE_RATE) {
+function synthesizeTypingWav(sampleRate = SAMPLE_RATE) {
   const durationSec = 1.5;
   const numFrames = Math.round(durationSec * sampleRate);
   const left = new Float32Array(numFrames);
@@ -333,7 +333,7 @@ export function synthesizeTypingWav(sampleRate = SAMPLE_RATE) {
   return encodeWav24Stereo(left, right, sampleRate);
 }
 
-export function synthesizeWhooshWav(sampleRate = SAMPLE_RATE) {
+function synthesizeWhooshWav(sampleRate = SAMPLE_RATE) {
   const durationSec = 1.0;
   const numFrames = Math.round(durationSec * sampleRate);
   const left = new Float32Array(numFrames);
@@ -383,7 +383,7 @@ export function synthesizeWhooshWav(sampleRate = SAMPLE_RATE) {
   return encodeWav24Stereo(left, right, sampleRate);
 }
 
-export function synthesizeUiClickWav(sampleRate = SAMPLE_RATE) {
+function synthesizeUiClickWav(sampleRate = SAMPLE_RATE) {
   const durationSec = 0.25;
   const numFrames = Math.round(durationSec * sampleRate);
   const left = new Float32Array(numFrames);
@@ -412,7 +412,7 @@ export function synthesizeUiClickWav(sampleRate = SAMPLE_RATE) {
   return encodeWav24Stereo(left, right, sampleRate);
 }
 
-export function synthesizeSyncChimeWav(sampleRate = SAMPLE_RATE) {
+function synthesizeSyncChimeWav(sampleRate = SAMPLE_RATE) {
   const durationSec = 1.0;
   const numFrames = Math.round(durationSec * sampleRate);
   const left = new Float32Array(numFrames);
@@ -461,7 +461,7 @@ export function synthesizeSyncChimeWav(sampleRate = SAMPLE_RATE) {
   return encodeWav24Stereo(left, right, sampleRate);
 }
 
-export function synthesizeShimmerWav(sampleRate = SAMPLE_RATE) {
+function synthesizeShimmerWav(sampleRate = SAMPLE_RATE) {
   const durationSec = 1.2;
   const numFrames = Math.round(durationSec * sampleRate);
   const left = new Float32Array(numFrames);
@@ -523,7 +523,7 @@ export const DSP_SYNTHESIZERS = {
   'shimmer.wav': synthesizeShimmerWav,
 };
 
-export function resolveSfxSynth(sfxItem) {
+function resolveSfxSynth(sfxItem) {
   const candidates = [
     sfxItem?.dspPreset,
     sfxItem?.id,

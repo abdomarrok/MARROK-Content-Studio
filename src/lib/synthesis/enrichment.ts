@@ -45,11 +45,12 @@ export function enrichCarouselDiagrams(
         targetCount: 5,
       });
 
-      const satLabels = existingValid
-        ? slide.satLabels!.slice(0, 5)
-        : quoted.satLabels.length > 0
-        ? quoted.satLabels
-        : slide.satLabels;
+      const satLabels =
+        existingValid && slide.satLabels
+          ? slide.satLabels.slice(0, 5)
+          : quoted.satLabels.length > 0
+          ? quoted.satLabels
+          : slide.satLabels;
 
       return {
         ...slide,

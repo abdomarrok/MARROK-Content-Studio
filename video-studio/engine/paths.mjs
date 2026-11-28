@@ -15,6 +15,32 @@ export const TEMPLATES_DIR = path.join(VIDEO_STUDIO_ROOT, 'templates');
 export const PROJECTS_DIR = path.join(VIDEO_STUDIO_ROOT, 'projects');
 export const STUDIO_DIR = path.join(VIDEO_STUDIO_ROOT, 'studio');
 
+export const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.jfif': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
+  '.mp4': 'video/mp4',
+  '.woff2': 'font/woff2',
+};
+
+export function toTitleCaseSlug(slug) {
+  return String(slug || '')
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 const PROJECT_ID_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 export function isValidProjectId(id) {

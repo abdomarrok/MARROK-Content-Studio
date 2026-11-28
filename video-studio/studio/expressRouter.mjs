@@ -16,9 +16,11 @@ import {
   ENGINE_DIR,
   getProjectPaths,
   listProjectIds,
+  MIME_TYPES,
   PROJECTS_DIR,
   resolveFfmpegBinaries,
   resolveProjectRelative,
+  toTitleCaseSlug,
 } from '../engine/paths.mjs';
 import { inspectProjectQa } from '../engine/qa-inspect.mjs';
 import { renderProjectVideo } from '../engine/render-video.mjs';
@@ -28,18 +30,9 @@ import { createProjectFromTemplate } from '../scripts/new-project.mjs';
 
 const execFileAsync = promisify(execFile);
 
-const SESSION_COOKIE_NAME = '__Host-marrok_session';
 export const MAX_COMPLETED_JOBS = 50;
 export const PREVIEW_TOKEN_TTL_SECONDS = 3600; // 1 hour
 export const MAX_REEL_SCENE_HTML_BYTES = 512 * 1024; // 512 KB cap for promoted Reel scene.html
-
-function toTitleCaseSlug(slug) {
-  return String(slug || '')
-    .split('-')
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-}
 
 function cleanVoLine(str) {
   return String(str || '')
@@ -287,23 +280,6 @@ export async function createProjectFromReel({ id, name, reelConfig, sceneHtml, o
   return { config: validated, paths };
 }
 
-const MIME_TYPES = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'application/javascript; charset=utf-8',
-  '.mjs': 'application/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.jfif': 'image/jpeg',
-  '.webp': 'image/webp',
-  '.wav': 'audio/wav',
-  '.mp3': 'audio/mpeg',
-  '.mp4': 'video/mp4',
-};
-
 const jobs = new Map();
 
 export function resetVideoStudioJobsForTest() {
@@ -343,32 +319,6 @@ function findActiveJob() {
   return null;
 }
 
-function toBase64Url(input) {
-  const buf = typeof input === 'string' ? Buffer.from(input, 'utf8') : input;
-  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-}
-
-function fromBase64Url(input) {
-  const str = String(input || '');
-  const padded = str.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((str.length + 3) % 4);
-  return Buffer.from(padded, 'base64');
-}
-
-function constantTimeEqualText(a, b) {
-  const hashA = crypto.createHash('sha256').update(String(a || ''), 'utf8').digest();
-  const hashB = crypto.createHash('sha256').update(String(b || ''), 'utf8').digest();
-  return crypto.timingSafeEqual(hashA, hashB);
-}
-
-function getRuntimeAuthConfig() {
-  const username = String(process.env.ADMIN_USERNAME || '').trim();
-  const passwordHash = String(process.env.ADMIN_PASSWORD_HASH || '').trim();
-  const sessionSecret = String(process.env.SESSION_SECRET || '').trim();
-  const validHash = /^scrypt\$[0-9a-f]{16,}\$[0-9a-f]{128}$/i.test(passwordHash);
-  const configured = Boolean(username && validHash && sessionSecret.length >= 16);
-  return { configured, username, sessionSecret };
-}
-
 /**
  * Generates a short-lived HMAC-signed path-scoped preview token (`vprev.<exp>.<sig>`)
  * so `<iframe src="/video-projects/s/:token/:id/scene.html">` works even when third-party
@@ -384,107 +334,51 @@ export function createVideoPreviewToken(
   }
   const exp = Math.floor(nowMs / 1000) + Math.max(30, Math.floor(ttlSeconds));
   const payload = `vprev.${exp}`;
-  const sig = crypto.createHmac('sha256', sessionSecret).update(payload).digest();
-  return `${payload}.${toBase64Url(sig)}`;
+  const sig = crypto.createHmac('sha256', sessionSecret).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
 }
 
-export function verifyVideoPreviewOrSessionToken(
-  token,
-  authCfg = getRuntimeAuthConfig(),
-  nowMs = Date.now()
-) {
-  if (!token || typeof token !== 'string' || !authCfg.configured) {
+/**
+ * Verifies a path-scoped preview token (`vprev.<exp>.<sig>`) using constant-time HMAC comparison.
+ */
+export function verifyVideoPreviewToken(token, sessionSecret, nowMs = Date.now()) {
+  if (!token || typeof token !== 'string' || !sessionSecret || sessionSecret.length < 16) {
     return false;
   }
-  const trimmed = token.trim();
-  const parts = trimmed.split('.');
-
-  // 1. Short-lived path-scoped preview token: vprev.<exp>.<sig>
-  if (parts.length === 3 && parts[0] === 'vprev') {
-    const exp = Number.parseInt(parts[1], 10);
-    if (!Number.isFinite(exp) || nowMs >= exp * 1000) {
-      return false;
-    }
-    let actualSig;
-    try {
-      actualSig = fromBase64Url(parts[2]);
-    } catch {
-      return false;
-    }
-    const expectedSig = crypto
-      .createHmac('sha256', authCfg.sessionSecret)
-      .update(`vprev.${parts[1]}`)
-      .digest();
-    return (
-      actualSig.length === expectedSig.length &&
-      crypto.timingSafeEqual(actualSig, expectedSig)
-    );
+  const parts = token.trim().split('.');
+  if (parts.length !== 3 || parts[0] !== 'vprev') {
+    return false;
   }
-
-  // 2. Standard signed session token: <payloadBase64Url>.<sigBase64Url>
-  if (parts.length === 2 && parts[0] && parts[1]) {
-    let actualSig;
-    try {
-      actualSig = fromBase64Url(parts[1]);
-    } catch {
-      return false;
-    }
-    const expectedSig = crypto
-      .createHmac('sha256', authCfg.sessionSecret)
-      .update(parts[0])
-      .digest();
-    if (
-      actualSig.length !== expectedSig.length ||
-      !crypto.timingSafeEqual(actualSig, expectedSig)
-    ) {
-      return false;
-    }
-    try {
-      const parsed = JSON.parse(fromBase64Url(parts[0]).toString('utf8'));
-      if (
-        !parsed ||
-        typeof parsed.sub !== 'string' ||
-        typeof parsed.exp !== 'number' ||
-        nowMs >= parsed.exp * 1000
-      ) {
-        return false;
-      }
-      return constantTimeEqualText(parsed.sub, authCfg.username);
-    } catch {
-      return false;
-    }
+  const exp = Number.parseInt(parts[1], 10);
+  if (!Number.isFinite(exp) || nowMs >= exp * 1000) {
+    return false;
   }
-
-  return false;
+  const actualSig = Buffer.from(parts[2], 'base64url');
+  const expectedSig = crypto
+    .createHmac('sha256', sessionSecret)
+    .update(`vprev.${parts[1]}`)
+    .digest();
+  return (
+    actualSig.length === expectedSig.length &&
+    crypto.timingSafeEqual(actualSig, expectedSig)
+  );
 }
 
-function parseCookieToken(cookieHeader) {
-  if (!cookieHeader || typeof cookieHeader !== 'string') return '';
-  for (const pair of cookieHeader.split(';')) {
-    const idx = pair.indexOf('=');
-    if (idx <= 0) continue;
-    const key = pair.slice(0, idx).trim();
-    if (key !== SESSION_COOKIE_NAME) continue;
-    const rawVal = pair.slice(idx + 1).trim();
-    try {
-      return decodeURIComponent(rawVal);
-    } catch {
-      return rawVal;
-    }
+async function authorizeVideoProjectPreview(req, pathToken = '', authBridge = null) {
+  if (
+    !authBridge ||
+    typeof authBridge.getAuthConfig !== 'function' ||
+    typeof authBridge.verifySessionRequest !== 'function'
+  ) {
+    return {
+      ok: false,
+      status: 503,
+      error: 'Server authentication verifier is not configured (fail closed).',
+    };
   }
-  return '';
-}
 
-function extractBearerToken(authHeader) {
-  if (!authHeader || typeof authHeader !== 'string') return '';
-  const trimmed = authHeader.trim();
-  if (!/^bearer\s+/i.test(trimmed)) return '';
-  return trimmed.replace(/^bearer\s+/i, '').trim();
-}
-
-function authorizeVideoProjectPreview(req, pathToken = '') {
-  const authCfg = getRuntimeAuthConfig();
-  if (!authCfg.configured) {
+  const authCfg = authBridge.getAuthConfig();
+  if (!authCfg?.configured) {
     return {
       ok: false,
       status: 503,
@@ -493,14 +387,17 @@ function authorizeVideoProjectPreview(req, pathToken = '') {
   }
 
   const queryToken = typeof req.query?.token === 'string' ? req.query.token : '';
-  const cookieToken = parseCookieToken(req.headers.cookie);
-  const bearerToken = extractBearerToken(req.headers.authorization);
+  const pathOrQueryTokens = [pathToken, queryToken].filter(Boolean);
 
-  const candidates = [pathToken, queryToken, cookieToken, bearerToken].filter(Boolean);
-  for (const candidate of candidates) {
-    if (verifyVideoPreviewOrSessionToken(candidate, authCfg)) {
+  for (const candidate of pathOrQueryTokens) {
+    if (verifyVideoPreviewToken(candidate, authCfg.sessionSecret)) {
       return { ok: true, status: 200 };
     }
+  }
+
+  const sessionValid = await authBridge.verifySessionRequest(req, authCfg, pathOrQueryTokens);
+  if (sessionValid) {
+    return { ok: true, status: 200 };
   }
 
   return {
@@ -612,7 +509,7 @@ async function buildProjectSummary(id) {
   }
 }
 
-async function getFullProjectDetails(projectId) {
+async function getFullProjectDetails(projectId, getAuthConfig) {
   const { config, paths } = await loadProjectConfig(projectId);
   const manifest = await readCacheManifest(paths.cacheManifestPath);
   const actsCache = manifest.acts || {};
@@ -681,10 +578,10 @@ async function getFullProjectDetails(projectId) {
     // no qa report yet
   }
 
-  const authCfg = getRuntimeAuthConfig();
+  const authCfg = typeof getAuthConfig === 'function' ? getAuthConfig() : null;
   return {
     config,
-    previewToken: authCfg.configured ? createVideoPreviewToken(authCfg.sessionSecret) : null,
+    previewToken: authCfg?.configured ? createVideoPreviewToken(authCfg.sessionSecret) : null,
     stems: {
       acts: actStems,
       music: musicStem,
@@ -810,9 +707,9 @@ function sendError(res, error) {
   });
 }
 
-async function handleServeVideoProjectPreview(req, res, pathToken = '') {
+async function handleServeVideoProjectPreview(req, res, pathToken = '', authBridge = null) {
   try {
-    const auth = authorizeVideoProjectPreview(req, pathToken);
+    const auth = await authorizeVideoProjectPreview(req, pathToken, authBridge);
     if (!auth.ok) {
       return res.status(auth.status).json({ error: auth.error });
     }
@@ -845,8 +742,15 @@ async function handleServeVideoProjectPreview(req, res, pathToken = '') {
 /**
  * Mount Video Studio local API routes (protected by api/index.ts auth gate)
  * and authenticated preview routes (/video-projects/s/:token/:id/* & /video-projects/:id/*).
+ * Callers must inject canonical session verification from src/lib/security/sessionAuth.ts.
  */
-export function registerVideoStudioRoutes(app) {
+export function registerVideoStudioRoutes(app, authOptions = {}) {
+  const authBridge = {
+    getAuthConfig: typeof authOptions?.getAuthConfig === 'function' ? authOptions.getAuthConfig : null,
+    verifySessionRequest:
+      typeof authOptions?.verifySessionRequest === 'function' ? authOptions.verifySessionRequest : null,
+  };
+
   fs.mkdir(PROJECTS_DIR, { recursive: true }).catch(() => {});
 
   // Restricted static SDK route (strictly serves motion-sdk.js only)
@@ -860,12 +764,12 @@ export function registerVideoStudioRoutes(app) {
 
   // Path-scoped token preview route so relative ./assets/* URLs inside scene.html inherit :token automatically
   app.get('/video-projects/s/:token/:id/*', async (req, res) => {
-    return handleServeVideoProjectPreview(req, res, req.params.token);
+    return handleServeVideoProjectPreview(req, res, req.params.token, authBridge);
   });
 
   // Session cookie / Bearer token preview route
   app.get('/video-projects/:id/*', async (req, res) => {
-    return handleServeVideoProjectPreview(req, res, '');
+    return handleServeVideoProjectPreview(req, res, '', authBridge);
   });
 
   // Authenticated API routes (automatically guarded by api/index.ts auth middleware)
@@ -880,12 +784,12 @@ export function registerVideoStudioRoutes(app) {
       ffmpegAvailable = false;
     }
     const ids = await listProjectIds();
-    const authCfg = getRuntimeAuthConfig();
+    const authCfg = authBridge.getAuthConfig ? authBridge.getAuthConfig() : null;
     res.json({
       serverAvailable: true,
       localRenderAvailable: true,
       ffmpegAvailable,
-      previewToken: authCfg.configured ? createVideoPreviewToken(authCfg.sessionSecret) : null,
+      previewToken: authCfg?.configured ? createVideoPreviewToken(authCfg.sessionSecret) : null,
       projectsCount: ids.length,
     });
   });
@@ -911,7 +815,7 @@ export function registerVideoStudioRoutes(app) {
         name: body.name ? String(body.name) : undefined,
         durationSec: body.durationSec !== undefined ? Number(body.durationSec) : undefined,
       });
-      res.status(201).json({ ok: true, project: await getFullProjectDetails(config.id) });
+      res.status(201).json({ ok: true, project: await getFullProjectDetails(config.id, authBridge.getAuthConfig) });
     } catch (error) {
       sendError(res, error);
     }
@@ -927,7 +831,7 @@ export function registerVideoStudioRoutes(app) {
         sceneHtml: body.sceneHtml,
         overwrite: Boolean(body.overwrite),
       });
-      res.status(201).json({ ok: true, project: await getFullProjectDetails(config.id) });
+      res.status(201).json({ ok: true, project: await getFullProjectDetails(config.id, authBridge.getAuthConfig) });
     } catch (error) {
       sendError(res, error);
     }
@@ -936,7 +840,7 @@ export function registerVideoStudioRoutes(app) {
   api.get('/projects/:id', async (req, res) => {
     try {
       const projectId = assertValidProjectId(req.params.id);
-      res.json(await getFullProjectDetails(projectId));
+      res.json(await getFullProjectDetails(projectId, authBridge.getAuthConfig));
     } catch (error) {
       sendError(res, error);
     }
@@ -948,7 +852,7 @@ export function registerVideoStudioRoutes(app) {
       const { paths } = await loadProjectConfig(projectId);
       const validated = validateProjectConfig(req.body || {}, projectId);
       await fs.writeFile(paths.configPath, JSON.stringify(validated, null, 2) + '\n', 'utf8');
-      res.json({ ok: true, project: await getFullProjectDetails(projectId) });
+      res.json({ ok: true, project: await getFullProjectDetails(projectId, authBridge.getAuthConfig) });
     } catch (error) {
       sendError(res, error);
     }
@@ -969,7 +873,7 @@ export function registerVideoStudioRoutes(app) {
         ok: true,
         voResults,
         masterDurationSec: mix.wavInfo.durationSec,
-        project: await getFullProjectDetails(projectId),
+        project: await getFullProjectDetails(projectId, authBridge.getAuthConfig),
       });
     } catch (error) {
       sendError(res, error);
@@ -985,7 +889,7 @@ export function registerVideoStudioRoutes(app) {
       res.json({
         ok: true,
         masterDurationSec: mix.wavInfo.durationSec,
-        project: await getFullProjectDetails(projectId),
+        project: await getFullProjectDetails(projectId, authBridge.getAuthConfig),
       });
     } catch (error) {
       sendError(res, error);

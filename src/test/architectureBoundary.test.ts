@@ -201,4 +201,179 @@ describe('Architecture Governance & Boundary Enforcement', () => {
       expect(totalFiles).toBe(11); // Currently exactly 11 files
     });
   });
+
+  describe('5. Type Safety & Client Bundle Hygiene Guards', () => {
+    /**
+     * Strips single-line comments, block comments, string literals, and template literal
+     * static spans while preserving newlines and `${...}` expression bodies so line numbers
+     * stay accurate and copy/comments containing the word "any" never cause false positives.
+     */
+    function stripCommentsAndStrings(source: string): string {
+      let out = '';
+      let i = 0;
+      const len = source.length;
+      const templateExprBraceStack: number[] = [];
+
+      while (i < len) {
+        const ch = source[i];
+        const next = source[i + 1];
+
+        // Single-line comment
+        if (ch === '/' && next === '/') {
+          out += '  ';
+          i += 2;
+          while (i < len && source[i] !== '\n') {
+            out += ' ';
+            i += 1;
+          }
+          continue;
+        }
+
+        // Block comment
+        if (ch === '/' && next === '*') {
+          out += '  ';
+          i += 2;
+          while (i < len) {
+            if (source[i] === '*' && source[i + 1] === '/') {
+              out += '  ';
+              i += 2;
+              break;
+            }
+            out += source[i] === '\n' ? '\n' : ' ';
+            i += 1;
+          }
+          continue;
+        }
+
+        // Single or double quoted string
+        if (ch === "'" || ch === '"') {
+          const quote = ch;
+          out += ' ';
+          i += 1;
+          while (i < len) {
+            if (source[i] === '\\') {
+              out += '  ';
+              i += 2;
+              continue;
+            }
+            if (source[i] === quote) {
+              out += ' ';
+              i += 1;
+              break;
+            }
+            out += source[i] === '\n' ? '\n' : ' ';
+            i += 1;
+          }
+          continue;
+        }
+
+        // Template literal start or resume after closing `}` of `${...}`
+        const resumingTemplate =
+          ch === '}' &&
+          templateExprBraceStack.length > 0 &&
+          templateExprBraceStack[templateExprBraceStack.length - 1] === 0;
+
+        if (ch === '`' || resumingTemplate) {
+          if (resumingTemplate) {
+            templateExprBraceStack.pop();
+            out += '}';
+            i += 1;
+          } else {
+            out += ' ';
+            i += 1;
+          }
+          while (i < len) {
+            if (source[i] === '\\') {
+              out += '  ';
+              i += 2;
+              continue;
+            }
+            if (source[i] === '$' && source[i + 1] === '{') {
+              templateExprBraceStack.push(0);
+              out += ' {';
+              i += 2;
+              break;
+            }
+            if (source[i] === '`') {
+              out += ' ';
+              i += 1;
+              break;
+            }
+            out += source[i] === '\n' ? '\n' : ' ';
+            i += 1;
+          }
+          continue;
+        }
+
+        if (ch === '{' && templateExprBraceStack.length > 0) {
+          templateExprBraceStack[templateExprBraceStack.length - 1] += 1;
+        } else if (ch === '}' && templateExprBraceStack.length > 0) {
+          templateExprBraceStack[templateExprBraceStack.length - 1] -= 1;
+        }
+
+        out += ch;
+        i += 1;
+      }
+
+      return out;
+    }
+
+    it('enforces zero explicit any annotations or casts across production src/ and api/ files', async () => {
+      const candidateFiles = [
+        ...(await getSourceFiles(srcDir)),
+        ...(await getSourceFiles(apiDir)),
+      ].filter((file) => {
+        const norm = normalizePath(file);
+        return (
+          !norm.includes('/src/test/') &&
+          !norm.endsWith('.test.ts') &&
+          !norm.endsWith('.test.tsx') &&
+          !norm.endsWith('.d.ts')
+        );
+      });
+
+      const explicitAnyRe = /:\s*any\b|\bas\s+any\b|<any>/;
+      const violations: string[] = [];
+
+      for (const file of candidateFiles) {
+        const raw = await fs.readFile(file, 'utf-8');
+        const cleaned = stripCommentsAndStrings(raw);
+        const lines = cleaned.split('\n');
+        for (let idx = 0; idx < lines.length; idx += 1) {
+          if (explicitAnyRe.test(lines[idx])) {
+            violations.push(`${path.relative(rootDir, file)}:${idx + 1} (${lines[idx].trim()})`);
+          }
+        }
+      }
+
+      expect(
+        violations,
+        `Found explicit \`any\` in production code:\n${violations.join('\n')}`
+      ).toEqual([]);
+    });
+
+    it('enforces zero node:crypto imports inside client-bundled src/components/ and src/hooks/ files', async () => {
+      const clientFiles = [
+        ...(await getSourceFiles(path.resolve(srcDir, 'components'))),
+        ...(await getSourceFiles(path.resolve(srcDir, 'hooks'))),
+      ].filter((file) => {
+        const norm = normalizePath(file);
+        return !norm.endsWith('.test.ts') && !norm.endsWith('.test.tsx');
+      });
+
+      const violations: string[] = [];
+
+      for (const file of clientFiles) {
+        const content = await fs.readFile(file, 'utf-8');
+        if (/(?:import|from)\s+['"](?:node:)?crypto['"]/.test(content)) {
+          violations.push(path.relative(rootDir, file));
+        }
+      }
+
+      expect(
+        violations,
+        `Client UI components/hooks must not import node:crypto: ${violations.join(', ')}`
+      ).toEqual([]);
+    });
+  });
 });

@@ -5,7 +5,13 @@ import path from 'node:path';
 import express from 'express';
 import type { Server } from 'node:http';
 import { app as baseApiApp } from '../../api/index.ts';
-import { hashPasswordScrypt, resetAuthStateForTest } from '../lib/security/sessionAuth.ts';
+import {
+  getAuthConfigStatus,
+  hashPasswordScrypt,
+  resetAuthStateForTest,
+  revokeSessionToken,
+  verifySessionRequestOrTokens,
+} from '../lib/security/sessionAuth.ts';
 import {
   createVideoPreviewToken,
   getVideoStudioJobsSize,
@@ -268,7 +274,11 @@ describe('Video Studio Core Engine & Express Integration', () => {
 
       const testApp = express();
       testApp.use(baseApiApp);
-      registerVideoStudioRoutes(testApp);
+      registerVideoStudioRoutes(testApp, {
+        getAuthConfig: getAuthConfigStatus,
+        verifySessionRequest: (req, authCfg, candidateTokens) =>
+          verifySessionRequestOrTokens(req.headers, authCfg, null, candidateTokens),
+      });
 
       await new Promise<void>((resolve) => {
         server = testApp.listen(0, '127.0.0.1', () => {
@@ -399,6 +409,23 @@ describe('Video Studio Core Engine & Express Integration', () => {
         `${baseUrl}/video-projects/s/${validPreviewToken}/marrok-brand-film/output/final-16x9.mp4`
       );
       expect(blockedOutput.status).toBe(403);
+
+      // Revoked session tokens are rejected on /video-projects/* via the canonical sessionAuth verifier
+      const tempLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'video-tester', password: 'test-password-123!' }),
+      });
+      const tempToken = (await tempLoginRes.json()).token as string;
+      const beforeRevoke = await fetch(`${baseUrl}/video-projects/marrok-brand-film/scene.html?embed=1`, {
+        headers: { Authorization: `Bearer ${tempToken}` },
+      });
+      expect(beforeRevoke.status).toBe(200);
+      await revokeSessionToken(tempToken, process.env.SESSION_SECRET!);
+      const afterRevoke = await fetch(`${baseUrl}/video-projects/marrok-brand-film/scene.html?embed=1`, {
+        headers: { Authorization: `Bearer ${tempToken}` },
+      });
+      expect(afterRevoke.status).toBe(401);
     });
 
     it('enforces ALLOW_PREVIEW_WRITES deploy-preview write isolation on mutating /api/video-studio/* requests', async () => {
