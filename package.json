@@ -18,7 +18,14 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "hash-password": "node scripts/hash-password.mjs",
-    "benchmark": "tsx scripts/benchmark-core-engines.ts"
+    "benchmark": "tsx scripts/benchmark-core-engines.ts",
+    "video:studio": "node video-studio/studio/server.mjs",
+    "video:new": "node video-studio/scripts/new-project.mjs",
+    "video:audio": "node video-studio/engine/audio-vo.mjs",
+    "video:render": "node video-studio/engine/render-video.mjs",
+    "video:build": "node video-studio/engine/build-pipeline.mjs",
+    "video:qa": "node video-studio/engine/qa-inspect.mjs",
+    "video:lint": "node video-studio/scripts/lint-check.mjs"
   },
   "dependencies": {
     "@google/genai": "3.3.0",

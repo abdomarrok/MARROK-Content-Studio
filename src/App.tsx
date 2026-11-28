@@ -20,6 +20,11 @@ const PublishingHubWorkspace = lazy(() =>
     default: m.PublishingHubWorkspace,
   }))
 );
+const VideoStudioWorkspace = lazy(() =>
+  import('./components/studio/video/VideoStudioWorkspace').then((m) => ({
+    default: m.VideoStudioWorkspace,
+  }))
+);
 import {
   CarouselData,
   DEFAULT_PALETTES,
@@ -146,7 +151,7 @@ export default function App() {
   }, [carousel]);
 
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
-  const [activePhase, setActivePhase] = useState<'studio' | 'publish'>('studio');
+  const [activePhase, setActivePhase] = useState<'studio' | 'publish' | 'video'>('studio');
   const [publishHubTab, setPublishHubTab] = useState<
     'inbox' | 'draft' | 'schedule' | 'single' | 'program' | 'posts' | 'bulk' | 'storage'
   >('draft');
@@ -518,6 +523,19 @@ export default function App() {
               onShowToast={showToast}
               onExportVaultJson={handleExportVault}
               onImportVaultJson={handleImportVault}
+            />
+          </Suspense>
+        ) : activePhase === 'video' ? (
+          <Suspense
+            fallback={
+              <div className="flex-1 flex items-center justify-center text-xs font-mono text-slate-400">
+                Loading Video Studio...
+              </div>
+            }
+          >
+            <VideoStudioWorkspace
+              onShowToast={showToast}
+              onAuthRequired={() => setAuthStatus('unauthenticated')}
             />
           </Suspense>
         ) : (

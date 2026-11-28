@@ -3,5 +3,9 @@
 !.env.example
 specs/
 specs/**
+video-studio/
+video-studio/**
+*.mp4
+*.wav
 *.log
 .DS_Store

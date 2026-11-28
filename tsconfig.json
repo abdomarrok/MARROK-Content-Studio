@@ -26,5 +26,5 @@
     "noFallthroughCasesInSwitch": true,
     "noImplicitReturns": true
   },
-  "exclude": ["dist"]
+  "exclude": ["dist", "video-studio"]
 }

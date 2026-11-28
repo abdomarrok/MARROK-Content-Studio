@@ -1,0 +1,151 @@
+{
+  "id": "marrok-brand-film",
+  "name": "MARROK Corporate Brand Film",
+  "video": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 60,
+    "durationSec": 37,
+    "crf": 16,
+    "preset": "slow",
+    "verticalExport": {
+      "enabled": true,
+      "mode": "padded",
+      "backgroundColor": "#0D0D0D"
+    }
+  },
+  "voice": {
+    "provider": "elevenlabs",
+    "voiceId": "XrExE9yKIg1WjnnlVkGX",
+    "modelId": "eleven_multilingual_v2",
+    "seed": 4242,
+    "settings": {
+      "stability": 0.55,
+      "similarity_boost": 0.78,
+      "style": 0.12,
+      "use_speaker_boost": true
+    }
+  },
+  "acts": [
+    {
+      "id": "act1",
+      "label": "Act 1 — The Idea",
+      "startSec": 0.5,
+      "maxDurationSec": 3.4,
+      "text": "Every ambitious business starts with an idea.",
+      "voiceOverride": null
+    },
+    {
+      "id": "act2",
+      "label": "Act 2 — The Partner",
+      "startSec": 4.5,
+      "maxDurationSec": 5.6,
+      "text": "Turning it into technology requires more than code. It takes a partner.",
+      "voiceOverride": null
+    },
+    {
+      "id": "act3",
+      "label": "Act 3 — Real-World Scale",
+      "startSec": 11.0,
+      "maxDurationSec": 5.2,
+      "text": "At Marrok, we engineer digital products built for real-world scale.",
+      "voiceOverride": null
+    },
+    {
+      "id": "act4",
+      "label": "Act 4 — Connected Intelligence",
+      "startSec": 17.0,
+      "maxDurationSec": 5.6,
+      "text": "Connecting your systems, automating your workflows, and simplifying complexity.",
+      "voiceOverride": null
+    },
+    {
+      "id": "act5",
+      "label": "Act 5 — End-to-End Craft",
+      "startSec": 23.5,
+      "maxDurationSec": 6.6,
+      "text": "From custom software and mobile apps, to design, AI, and seamless integration.",
+      "voiceOverride": null
+    },
+    {
+      "id": "act6",
+      "label": "Act 6 — MARROK Finale",
+      "startSec": 31.0,
+      "maxDurationSec": 5.6,
+      "text": "Simplify. Automate. Grow. Marrok — الفِكْرَة مِنْ عَنْدَك، والتِّكْنُولُوجْيا عْلِينا.",
+      "voiceOverride": null
+    }
+  ],
+  "music": {
+    "source": "dsp",
+    "file": "audio/music.wav",
+    "gainDb": -14,
+    "fadeOutStartSec": 35.5,
+    "fadeOutDurationSec": 1.5,
+    "swellAtSec": 23.0,
+    "ducking": {
+      "threshold": 0.04,
+      "ratio": 4,
+      "attackMs": 20,
+      "releaseMs": 260
+    }
+  },
+  "sfx": [
+    {
+      "id": "typing",
+      "source": "dsp",
+      "dspPreset": "typing",
+      "file": "audio/typing.wav",
+      "atSec": 0.5,
+      "volumeDb": -4
+    },
+    {
+      "id": "whoosh-1",
+      "source": "dsp",
+      "dspPreset": "whoosh",
+      "file": "audio/whoosh.wav",
+      "atSec": 4.0,
+      "volumeDb": -5
+    },
+    {
+      "id": "whoosh-2",
+      "source": "dsp",
+      "dspPreset": "whoosh",
+      "file": "audio/whoosh.wav",
+      "atSec": 30.5,
+      "volumeDb": -5
+    },
+    {
+      "id": "ui-click-1",
+      "source": "dsp",
+      "dspPreset": "ui-click",
+      "file": "audio/ui-click.wav",
+      "atSec": 12.0,
+      "volumeDb": -4
+    },
+    {
+      "id": "ui-click-2",
+      "source": "dsp",
+      "dspPreset": "ui-click",
+      "file": "audio/ui-click.wav",
+      "atSec": 13.6,
+      "volumeDb": -4
+    },
+    {
+      "id": "sync-chime",
+      "source": "dsp",
+      "dspPreset": "sync-chime",
+      "file": "audio/sync-chime.wav",
+      "atSec": 18.5,
+      "volumeDb": -5
+    },
+    {
+      "id": "shimmer",
+      "source": "dsp",
+      "dspPreset": "shimmer",
+      "file": "audio/shimmer.wav",
+      "atSec": 34.5,
+      "volumeDb": -4
+    }
+  ]
+}

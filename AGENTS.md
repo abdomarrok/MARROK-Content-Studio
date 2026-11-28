@@ -2,7 +2,7 @@
 
 ## Quick facts
 - React 19 + TypeScript 7, Vite 8, Tailwind v4, Express (`server.ts` + `api/index.ts`), `@google/genai`; single npm package `marrok-content-studio`, no workspaces. Node `>=22` (`.nvmrc` = 22).
-- Path alias `@/*` -> repo root (tsconfig + vite). HTTP flow: `server.ts` -> Express `api/index.ts` + Vite middleware (dev when `NODE_ENV !== 'production'`) or `dist/` static (prod). UI flow: `src/main.tsx` -> `src/App.tsx` (`AuthGateModal`, lazy modals) -> Phase 1 `src/components/AutonomousStudio.tsx` or Phase 2 `src/components/studio/PublishingHubWorkspace.tsx`.
+- Path alias `@/*` -> repo root (tsconfig + vite). HTTP flow: `server.ts` -> Express `api/index.ts` + Vite middleware (dev when `NODE_ENV !== 'production'`) or `dist/` static (prod). UI flow: `src/main.tsx` -> `src/App.tsx` (`AuthGateModal`, lazy modals) -> Phase 1 `src/components/AutonomousStudio.tsx`, Phase 2 `src/components/studio/PublishingHubWorkspace.tsx`, or Phase 3 `src/components/studio/video/VideoStudioWorkspace.tsx` (local Express Video Studio).
 - Shared types `src/types.ts`; palettes `src/lib/theme/palettes.ts`; feed color cadence `src/lib/theme/cadenceEngine.ts`. Five canvas presets (`tiktok-9:16`, `ig-4:5`, `ig-3:4`, `ig-1:1`, `ig-9:16`) and four post formats (`PostFormat = 'carousel' | 'single' | 'meme' | 'reel'`).
 
 ## Commands
@@ -13,6 +13,14 @@
 - `npm run build` — production bundle -> `dist/`. `npm run preview`, `npm run clean` as defined.
 - `npm run start` — does **not** set `NODE_ENV`; without it it runs Vite middleware, not `dist/`. Production: `$env:NODE_ENV='production'; npm run start` (PowerShell).
 - `npm run hash-password` — masked scrypt hash for `ADMIN_PASSWORD_HASH`.
+- **Merged Video Studio (`video-studio/`)**:
+  - `npm run video:new -- <id> [--name "..."] [--duration 15]` — scaffold a new deterministic video project under `video-studio/projects/<id>/`.
+  - `npm run video:audio -- --project <id> [--act <actId>] [--force]` — SHA-256 cached ElevenLabs/Gemini VO + procedural DSP stems + FFmpeg `apad` + `asplit=2` mix (`audio/master.wav`).
+  - `npm run video:render -- --project <id> [--fast]` — Playwright Chromium -> FFmpeg silent MP4 (`--fast` uses 720p/30fps).
+  - `npm run video:build -- --project <id> [--vertical]` — full VO -> DSP -> Mix -> Render -> Mux -> 9:16 Vertical -> QA pipeline.
+  - `npm run video:qa -- --project <id>` — `ffprobe` validation + `output/qa-sheet.png` contact sheet.
+  - `npm run video:lint` — syntax & inline `<script>` checks across `video-studio/`.
+  - Video Studio Express routes (`video-studio/studio/expressRouter.mjs`) mount **only** in `server.ts` (never in `api/`) so `/api` remains at 11 files for Vercel Hobby limits while still enforcing `api/index.ts`'s fail-closed auth gate. See `video-studio/AGENTS.md` and `specs/video-studio-merge.md`.
 - Before finishing run `npm run lint` + `npm test` (add `npm run build` for bundling/import regressions). CI (`.github/workflows/ci.yml`) runs install, lint, test, build on Node from `.nvmrc`.
 
 ## Auth & security gate

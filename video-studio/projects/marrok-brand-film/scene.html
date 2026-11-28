@@ -1,0 +1,1612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MARROK — Brand Film</title>
+  <meta name="description" content="Standalone six-act MARROK corporate brand film preview and deterministic 1920x1080 60fps renderer." />
+  <meta property="og:title" content="MARROK — Brand Film" />
+  <meta property="og:description" content="Standalone six-act MARROK corporate brand film preview and deterministic 1920x1080 60fps renderer." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg-studio: #0d0e11;
+      --paper: #f6f6f3;
+      --paper-pure: #ffffff;
+      --obsidian: #0a0b0f;
+      --obsidian-surface: #13151c;
+      --ink: #111216;
+      --ink-muted: #5b606e;
+      --cobalt: #2845e8;
+      --cobalt-soft: rgba(40, 69, 232, 0.14);
+      --line-dark: rgba(17, 18, 22, 0.12);
+      --line-light: rgba(255, 255, 255, 0.12);
+      --font-display: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-body: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg-studio);
+      color: #f4f5f7;
+      font-family: var(--font-body);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body.render-mode {
+      background: #000000;
+    }
+
+    body.render-mode #studio-chrome,
+    body.render-mode #caption-bar,
+    body.render-mode #assets-drawer,
+    body.render-mode #toast,
+    body.embed-mode #studio-chrome,
+    body.embed-mode #caption-bar,
+    body.embed-mode #assets-drawer,
+    body.embed-mode #toast {
+      display: none !important;
+    }
+
+    #viewport {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding-bottom: 72px;
+    }
+
+    body.embed-mode #viewport {
+      padding-bottom: 0;
+    }
+
+    body.render-mode #viewport {
+      padding-bottom: 0;
+      align-items: flex-start;
+      justify-content: flex-start;
+    }
+
+    #stage-scaler {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      transform-origin: center center;
+      box-shadow: 0 32px 100px rgba(0, 0, 0, 0.65);
+      background: #000000;
+    }
+
+    body.render-mode #stage-scaler {
+      transform-origin: top left;
+      transform: none !important;
+      box-shadow: none;
+    }
+
+    #stage {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      background: var(--paper);
+      color: var(--ink);
+    }
+
+    .act-layer {
+      position: absolute;
+      inset: 0;
+      width: 1920px;
+      height: 1080px;
+      display: none;
+      opacity: 0;
+      overflow: hidden;
+    }
+
+    /* ================= ACT 1: THE IDEA (0.0s - 4.0s) ================= */
+    #act1-layer {
+      background: #d8cfc3;
+    }
+
+    #act1-camera {
+      position: absolute;
+      inset: 0;
+      transform-origin: 52.5% 48.5%;
+      will-change: transform;
+    }
+
+    #act1-desk-img {
+      position: absolute;
+      inset: 0;
+      width: 1920px;
+      height: 1080px;
+      object-fit: cover;
+      display: block;
+    }
+
+    /* Measured exact white monitor screen bounds inside heroDesk (1920x1080 cover: 636,343 -> 1282,712) */
+    #act1-screen {
+      position: absolute;
+      left: 637px;
+      top: 344px;
+      width: 645px;
+      height: 368px;
+      background: #fbfbfa;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 32px 34px;
+      overflow: hidden;
+    }
+
+    .screen-top-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: #7c8291;
+      letter-spacing: 0.04em;
+    }
+
+    .screen-prompt-box {
+      border: 1.5px solid rgba(17, 18, 22, 0.14);
+      background: #ffffff;
+      border-radius: 12px;
+      padding: 22px 26px;
+      min-height: 112px;
+      display: flex;
+      align-items: center;
+      box-shadow: 0 12px 30px rgba(17, 18, 22, 0.05);
+    }
+
+    #act1-typed-text {
+      font-family: var(--font-display);
+      font-size: 29px;
+      font-weight: 600;
+      line-height: 1.3;
+      color: var(--ink);
+      letter-spacing: -0.02em;
+    }
+
+    #act1-cursor {
+      display: inline-block;
+      width: 3px;
+      height: 32px;
+      background: var(--cobalt);
+      margin-left: 4px;
+      vertical-align: -5px;
+    }
+
+    .screen-bottom-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+      color: #7c8291;
+    }
+
+    .screen-enter-btn {
+      background: var(--cobalt);
+      color: #ffffff;
+      font-family: var(--font-display);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 8px 18px;
+      border-radius: 8px;
+    }
+
+    /* ================= ACT 2: THE PARTNER (4.0s - 10.5s) ================= */
+    #act2-layer {
+      background: var(--paper);
+    }
+
+    .act2-grid {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      grid-template-columns: 1020px 900px;
+    }
+
+    .act2-copy {
+      padding: 150px 96px 120px 136px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      border-right: 1px solid var(--line-dark);
+    }
+
+    .kicker {
+      font-family: var(--font-mono);
+      font-size: 18px;
+      color: var(--cobalt);
+      letter-spacing: 0.06em;
+    }
+
+    .act2-headline {
+      font-family: var(--font-display);
+      font-size: 86px;
+      font-weight: 700;
+      line-height: 1.03;
+      letter-spacing: -0.035em;
+      color: var(--ink);
+      margin-top: 28px;
+    }
+
+    .act2-sub {
+      font-size: 30px;
+      line-height: 1.48;
+      color: var(--ink-muted);
+      max-width: 680px;
+      margin-top: 34px;
+    }
+
+    .act2-meta {
+      display: flex;
+      gap: 28px;
+      font-family: var(--font-mono);
+      font-size: 16px;
+      color: var(--ink-muted);
+      padding-top: 32px;
+      border-top: 1px solid var(--line-dark);
+    }
+
+    .act2-media-wrap {
+      position: relative;
+      overflow: hidden;
+      background: #1c1a18;
+    }
+
+    #act2-art-img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform-origin: center center;
+    }
+
+    /* ================= ACT 3: REAL-WORLD SCALE (10.5s - 16.5s) ================= */
+    #act3-layer {
+      background: var(--obsidian);
+      color: #f4f5f8;
+    }
+
+    .act3-shell {
+      position: absolute;
+      inset: 84px 120px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .act3-header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      padding-bottom: 36px;
+      border-bottom: 1px solid var(--line-light);
+    }
+
+    .act3-title {
+      font-family: var(--font-display);
+      font-size: 64px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.05;
+    }
+
+    .act3-workspace {
+      display: grid;
+      grid-template-columns: 420px 1fr;
+      gap: 32px;
+      height: 670px;
+      margin-top: 40px;
+    }
+
+    .act3-panel {
+      background: var(--obsidian-surface);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      padding: 36px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .act3-control-row {
+      padding: 22px 24px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.02);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+      transition: none;
+    }
+
+    .act3-control-row.active {
+      border-color: var(--cobalt);
+      background: rgba(40, 69, 232, 0.16);
+    }
+
+    .act3-toggle-track {
+      width: 56px;
+      height: 30px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.16);
+      position: relative;
+    }
+
+    .act3-control-row.active .act3-toggle-track {
+      background: var(--cobalt);
+    }
+
+    .act3-toggle-knob {
+      position: absolute;
+      top: 4px;
+      left: 4px;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #ffffff;
+    }
+
+    .act3-control-row.active .act3-toggle-knob {
+      left: 30px;
+    }
+
+    .act3-metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+      margin-top: 28px;
+    }
+
+    .act3-metric {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      border-radius: 12px;
+      padding: 28px;
+    }
+
+    .act3-metric-label {
+      font-size: 16px;
+      color: #9ba3b4;
+      margin-bottom: 12px;
+    }
+
+    .act3-metric-val {
+      font-family: var(--font-mono);
+      font-size: 44px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      color: #ffffff;
+    }
+
+    .act3-bars {
+      display: flex;
+      align-items: flex-end;
+      gap: 14px;
+      height: 210px;
+      padding-top: 24px;
+    }
+
+    .act3-bar {
+      flex: 1;
+      border-radius: 6px 6px 0 0;
+      background: rgba(255, 255, 255, 0.14);
+      transform-origin: bottom center;
+    }
+
+    .act3-bar.accent {
+      background: var(--cobalt);
+    }
+
+    #act3-pointer {
+      position: absolute;
+      width: 30px;
+      height: 30px;
+      pointer-events: none;
+      z-index: 20;
+      left: 0;
+      top: 0;
+    }
+
+    #act3-ripple {
+      position: absolute;
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      border: 2.5px solid #6b84ff;
+      pointer-events: none;
+      opacity: 0;
+      z-index: 19;
+      margin-left: -36px;
+      margin-top: -36px;
+    }
+
+    /* ================= ACT 4: CONNECTED INTELLIGENCE (16.5s - 23.0s) ================= */
+    #act4-layer {
+      background: #07090d;
+      color: #ffffff;
+    }
+
+    #act4-ai-img {
+      position: absolute;
+      inset: 0;
+      width: 1920px;
+      height: 1080px;
+      object-fit: cover;
+      transform-origin: center center;
+    }
+
+    .act4-scrim {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, rgba(7, 9, 14, 0.86) 0%, rgba(7, 9, 14, 0.42) 55%, rgba(7, 9, 14, 0.28) 100%);
+    }
+
+    .act4-content {
+      position: absolute;
+      left: 136px;
+      top: 160px;
+      width: 780px;
+      z-index: 5;
+    }
+
+    .act4-headline {
+      font-family: var(--font-display);
+      font-size: 80px;
+      font-weight: 700;
+      line-height: 1.05;
+      letter-spacing: -0.035em;
+      margin-top: 24px;
+    }
+
+    .act4-pillars {
+      margin-top: 52px;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+    }
+
+    .act4-pillar-item {
+      display: flex;
+      align-items: baseline;
+      gap: 20px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+      font-size: 26px;
+      color: #e4e7f0;
+    }
+
+    .act4-pillar-idx {
+      font-family: var(--font-mono);
+      font-size: 18px;
+      color: #7c95ff;
+    }
+
+    #act4-sync-ring {
+      position: absolute;
+      left: 1210px;
+      top: 520px;
+      width: 340px;
+      height: 340px;
+      margin-left: -170px;
+      margin-top: -170px;
+      border-radius: 50%;
+      border: 1.5px solid rgba(124, 149, 255, 0.72);
+      box-shadow: 0 0 60px rgba(40, 69, 232, 0.35);
+      pointer-events: none;
+    }
+
+    /* ================= ACT 5: END-TO-END CRAFT (23.0s - 30.5s) ================= */
+    #act5-layer {
+      background: #fafafa;
+      color: var(--ink);
+    }
+
+    .act5-grid-bg {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(to right, rgba(17, 18, 22, 0.045) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(17, 18, 22, 0.045) 1px, transparent 1px);
+      background-size: 120px 120px;
+    }
+
+    .act5-layout {
+      position: relative;
+      z-index: 2;
+      width: 1920px;
+      height: 1080px;
+      display: grid;
+      grid-template-columns: 880px 1fr;
+      align-items: center;
+      padding: 0 120px;
+      gap: 80px;
+    }
+
+    .act5-sculpture-box {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 760px;
+    }
+
+    #act5-nodes-img {
+      width: 680px;
+      height: 680px;
+      object-fit: contain;
+      filter: drop-shadow(0 44px 48px rgba(17, 18, 22, 0.14));
+      will-change: transform;
+    }
+
+    .act5-list {
+      display: flex;
+      flex-direction: column;
+      gap: 36px;
+    }
+
+    .act5-heading {
+      font-family: var(--font-display);
+      font-size: 72px;
+      font-weight: 700;
+      line-height: 1.05;
+      letter-spacing: -0.035em;
+    }
+
+    .act5-cap-row {
+      padding: 26px 0;
+      border-top: 1px solid var(--line-dark);
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+    }
+
+    .act5-cap-title {
+      font-family: var(--font-display);
+      font-size: 36px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+
+    .act5-cap-sub {
+      font-size: 21px;
+      color: var(--ink-muted);
+    }
+
+    /* ================= ACT 6: FINALE (30.5s - 37.0s) ================= */
+    #act6-layer {
+      background: #ffffff;
+      color: var(--ink);
+    }
+
+    .act6-center {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+    }
+
+    .act6-brand-lockup {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 44px;
+      padding: 24px 48px;
+      overflow: hidden;
+    }
+
+    #act6-logo-img {
+      width: 196px;
+      height: 196px;
+      object-fit: contain;
+    }
+
+    .act6-wordmark {
+      font-family: var(--font-display);
+      font-size: 132px;
+      font-weight: 800;
+      letter-spacing: 0.16em;
+      color: var(--ink);
+      line-height: 1;
+    }
+
+    #act6-shimmer {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 180px;
+      left: -240px;
+      background: linear-gradient(108deg, transparent 15%, rgba(255, 255, 255, 0.78) 50%, transparent 85%);
+      mix-blend-mode: overlay;
+      -webkit-mask-image: linear-gradient(to bottom, transparent, black 22%, black 78%, transparent);
+      mask-image: linear-gradient(to bottom, transparent, black 22%, black 78%, transparent);
+      transform: skewX(-18deg);
+      pointer-events: none;
+    }
+
+    .act6-motto {
+      margin-top: 44px;
+      font-family: var(--font-display);
+      font-size: 36px;
+      font-weight: 600;
+      letter-spacing: -0.015em;
+      color: var(--ink);
+    }
+
+    .act6-tagline {
+      margin-top: 16px;
+      font-size: 26px;
+      color: var(--ink-muted);
+    }
+
+    /* ================= PREVIEW CHROME (HIDDEN IN ?render=1) ================= */
+    #caption-bar {
+      position: fixed;
+      left: 50%;
+      bottom: 88px;
+      transform: translateX(-50%);
+      max-width: 780px;
+      padding: 10px 20px;
+      border-radius: 8px;
+      background: rgba(13, 14, 17, 0.86);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #f4f5f7;
+      font-size: 15px;
+      line-height: 1.45;
+      text-align: center;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 150ms ease;
+      z-index: 40;
+    }
+
+    #caption-bar.visible {
+      opacity: 1;
+    }
+
+    #studio-chrome {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 72px;
+      background: #12141a;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 0 20px;
+      z-index: 50;
+    }
+
+    .ctrl-btn {
+      background: rgba(255, 255, 255, 0.06);
+      color: #f4f5f7;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 7px;
+      padding: 7px 12px;
+      font-family: var(--font-body);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .ctrl-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+    }
+
+    .ctrl-btn.primary {
+      background: var(--cobalt);
+      border-color: var(--cobalt);
+      color: #ffffff;
+    }
+
+    .ctrl-btn.active {
+      background: rgba(40, 69, 232, 0.25);
+      border-color: #6b84ff;
+      color: #ffffff;
+    }
+
+    #scrubber {
+      flex: 1;
+      accent-color: var(--cobalt);
+      cursor: pointer;
+    }
+
+    #timecode {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
+      color: #c5cad6;
+      min-width: 112px;
+      text-align: right;
+    }
+
+    .act-jumps {
+      display: flex;
+      gap: 6px;
+    }
+
+    #assets-drawer {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      width: 340px;
+      background: #151821;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 12px;
+      padding: 18px;
+      z-index: 60;
+      display: none;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+    }
+
+    #assets-drawer.open {
+      display: block;
+    }
+
+    .asset-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: 13px;
+    }
+
+    #toast {
+      position: fixed;
+      top: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #171a24;
+      color: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      padding: 9px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 160ms ease;
+      z-index: 70;
+    }
+
+    #toast.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="viewport">
+    <div id="stage-scaler">
+      <div id="stage" data-testid="brand-film-stage">
+        <!-- ACT 1: 0.0s - 4.0s -->
+        <section id="act1-layer" class="act-layer" aria-label="Act 1">
+          <div id="act1-camera">
+            <img id="act1-desk-img" data-asset-img="heroDesk" alt="Minimal sunlit workspace with monitor" />
+            <div id="act1-screen">
+              <div class="screen-top-row">
+                <span>MARROK WORKSPACE</span>
+                <span>01 / BRIEF</span>
+              </div>
+              <div class="screen-prompt-box">
+                <div><span id="act1-typed-text"></span><span id="act1-cursor"></span></div>
+              </div>
+              <div class="screen-bottom-row">
+                <span>From concept to production architecture</span>
+                <span class="screen-enter-btn" id="act1-submit-pill">Continue</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ACT 2: 4.0s - 10.5s -->
+        <section id="act2-layer" class="act-layer" aria-label="Act 2">
+          <div class="act2-grid">
+            <div class="act2-copy">
+              <div>
+                <div class="kicker" id="act2-kicker">02 · ENGINEERING PARTNERSHIP</div>
+                <h1 class="act2-headline" id="act2-headline">More than code.<br />It takes a partner.</h1>
+                <p class="act2-sub" id="act2-sub">Turning ambitious ideas into resilient technology demands architectural clarity, shared ownership, and disciplined craft.</p>
+              </div>
+              <div class="act2-meta" id="act2-meta">
+                <span>Product Strategy</span>
+                <span>·</span>
+                <span>Technical Architecture</span>
+                <span>·</span>
+                <span>Dedicated Delivery</span>
+              </div>
+            </div>
+            <div class="act2-media-wrap">
+              <img id="act2-art-img" data-asset-img="designArt" alt="Architectural travertine arches with cobalt glass ribbon" />
+            </div>
+          </div>
+        </section>
+
+        <!-- ACT 3: 10.5s - 16.5s -->
+        <section id="act3-layer" class="act-layer" aria-label="Act 3">
+          <div class="act3-shell">
+            <div class="act3-header" id="act3-header">
+              <div>
+                <div class="kicker" style="color: #7c95ff;">03 · DIGITAL PRODUCTS AT SCALE</div>
+                <h2 class="act3-title">Built for real-world scale.</h2>
+              </div>
+              <div style="font-family: var(--font-mono); font-size: 18px; color: #9ba3b4;">MARROK ENGINE · PRODUCTION</div>
+            </div>
+            <div class="act3-workspace">
+              <div class="act3-panel" id="act3-left-panel">
+                <div>
+                  <div style="font-size: 16px; color: #9ba3b4; margin-bottom: 24px;">Deployment Controls</div>
+                  <div class="act3-control-row" id="act3-ctrl-scale">
+                    <div>
+                      <div style="font-size: 20px; font-weight: 600;">Elastic Scale</div>
+                      <div style="font-size: 14px; color: #9ba3b4; margin-top: 4px;">Multi-region active routing</div>
+                    </div>
+                    <div class="act3-toggle-track"><div class="act3-toggle-knob"></div></div>
+                  </div>
+                  <div class="act3-control-row" id="act3-ctrl-auto">
+                    <div>
+                      <div style="font-size: 20px; font-weight: 600;">Automated Pipeline</div>
+                      <div style="font-size: 14px; color: #9ba3b4; margin-top: 4px;">Zero-downtime verification</div>
+                    </div>
+                    <div class="act3-toggle-track"><div class="act3-toggle-knob"></div></div>
+                  </div>
+                </div>
+                <div style="font-family: var(--font-mono); font-size: 15px; color: #7c95ff;" id="act3-state-note">Standby configuration</div>
+              </div>
+              <div class="act3-panel" id="act3-right-panel">
+                <div>
+                  <div style="font-size: 16px; color: #9ba3b4;">Live Product Telemetry</div>
+                  <div class="act3-metrics-grid">
+                    <div class="act3-metric">
+                      <div class="act3-metric-label">Reliability</div>
+                      <div class="act3-metric-val" id="act3-m1">99.90%</div>
+                    </div>
+                    <div class="act3-metric">
+                      <div class="act3-metric-label">Median Latency</div>
+                      <div class="act3-metric-val" id="act3-m2">42 ms</div>
+                    </div>
+                    <div class="act3-metric">
+                      <div class="act3-metric-label">Throughput</div>
+                      <div class="act3-metric-val" id="act3-m3">1.4k/s</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="act3-bars" id="act3-bars">
+                  <div class="act3-bar" style="height: 38%;"></div>
+                  <div class="act3-bar" style="height: 46%;"></div>
+                  <div class="act3-bar" style="height: 54%;"></div>
+                  <div class="act3-bar" style="height: 62%;"></div>
+                  <div class="act3-bar accent" style="height: 76%;"></div>
+                  <div class="act3-bar accent" style="height: 88%;"></div>
+                  <div class="act3-bar accent" style="height: 96%;"></div>
+                  <div class="act3-bar accent" style="height: 92%;"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="act3-ripple"></div>
+          <svg id="act3-pointer" viewBox="0 0 28 28" fill="none" aria-hidden="true">
+            <path d="M5 3L22 14.2L14.2 16.4L10.6 24L5 3Z" fill="#FFFFFF" stroke="#0A0B0F" stroke-width="2" />
+          </svg>
+        </section>
+
+        <!-- ACT 4: 16.5s - 23.0s -->
+        <section id="act4-layer" class="act-layer" aria-label="Act 4">
+          <img id="act4-ai-img" data-asset-img="aiArt" alt="Optical cobalt glass prisms refracting light" />
+          <div class="act4-scrim"></div>
+          <div id="act4-sync-ring"></div>
+          <div class="act4-content">
+            <div class="kicker" style="color: #88a0ff;">04 · SYSTEMS & AUTOMATION</div>
+            <h2 class="act4-headline" id="act4-headline">Simplifying<br />complexity.</h2>
+            <div class="act4-pillars">
+              <div class="act4-pillar-item" id="act4-p1">
+                <span class="act4-pillar-idx">01</span>
+                <span>Connecting core business systems</span>
+              </div>
+              <div class="act4-pillar-item" id="act4-p2">
+                <span class="act4-pillar-idx">02</span>
+                <span>Automating critical operational workflows</span>
+              </div>
+              <div class="act4-pillar-item" id="act4-p3">
+                <span class="act4-pillar-idx">03</span>
+                <span>Turning fragmented data into clear action</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ACT 5: 23.0s - 30.5s -->
+        <section id="act5-layer" class="act-layer" aria-label="Act 5">
+          <div class="act5-grid-bg"></div>
+          <div class="act5-layout">
+            <div class="act5-sculpture-box">
+              <img id="act5-nodes-img" data-asset-img="nodes3d" alt="Interlocking brushed aluminum and dark glass geometric sculpture" />
+            </div>
+            <div class="act5-list">
+              <div>
+                <div class="kicker">05 · INTEGRATED CAPABILITIES</div>
+                <h2 class="act5-heading" id="act5-heading">One unified<br />engineering stack.</h2>
+              </div>
+              <div>
+                <div class="act5-cap-row" id="act5-r1">
+                  <span class="act5-cap-title">Custom Software & Mobile</span>
+                  <span class="act5-cap-sub">Web · iOS · Android</span>
+                </div>
+                <div class="act5-cap-row" id="act5-r2">
+                  <span class="act5-cap-title">Product Design & AI</span>
+                  <span class="act5-cap-sub">Interfaces · Applied Intelligence</span>
+                </div>
+                <div class="act5-cap-row" id="act5-r3">
+                  <span class="act5-cap-title">Seamless Integration</span>
+                  <span class="act5-cap-sub">APIs · Cloud · Automation</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ACT 6: 30.5s - 37.0s -->
+        <section id="act6-layer" class="act-layer" aria-label="Act 6">
+          <div class="act6-center">
+            <div class="act6-brand-lockup" id="act6-lockup">
+              <img id="act6-logo-img" data-asset-img="logo" alt="MARROK geometric monogram" />
+              <div class="act6-wordmark">MARROK</div>
+              <div id="act6-shimmer"></div>
+            </div>
+            <div class="act6-motto" id="act6-motto">Simplify. Automate. Grow.</div>
+            <div class="act6-tagline" id="act6-tagline">Engineering what’s next.</div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div id="caption-bar" role="status" aria-live="polite"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <aside id="assets-drawer" aria-label="Stage assets">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <strong style="font-size:14px;">Stage Assets (5)</strong>
+      <button type="button" class="ctrl-btn" id="btn-close-assets">Close</button>
+    </div>
+    <div id="assets-list"></div>
+    <div style="margin-top:14px;display:flex;gap:8px;">
+      <button type="button" class="ctrl-btn primary" id="btn-export-html" style="width:100%;">Export Bundled HTML</button>
+    </div>
+  </aside>
+
+  <footer id="studio-chrome" aria-label="Film transport controls">
+    <button type="button" class="ctrl-btn primary" id="btn-play">Play</button>
+    <button type="button" class="ctrl-btn" id="btn-step-back" aria-label="Step back one frame">-1f</button>
+    <button type="button" class="ctrl-btn" id="btn-step-fwd" aria-label="Step forward one frame">+1f</button>
+    <input type="range" id="scrubber" min="0" max="37" step="0.0166667" value="0" aria-label="Timeline scrubber" />
+    <div id="timecode">00.00s / 37.00s</div>
+    <div class="act-jumps" id="act-jumps">
+      <button type="button" class="ctrl-btn" data-act="0" data-start="0" data-end="4">Act 1</button>
+      <button type="button" class="ctrl-btn" data-act="1" data-start="4" data-end="10.5">Act 2</button>
+      <button type="button" class="ctrl-btn" data-act="2" data-start="10.5" data-end="16.5">Act 3</button>
+      <button type="button" class="ctrl-btn" data-act="3" data-start="16.5" data-end="23">Act 4</button>
+      <button type="button" class="ctrl-btn" data-act="4" data-start="23" data-end="30.5">Act 5</button>
+      <button type="button" class="ctrl-btn" data-act="5" data-start="30.5" data-end="37">Act 6</button>
+    </div>
+    <button type="button" class="ctrl-btn active" id="btn-captions">Captions</button>
+    <button type="button" class="ctrl-btn" id="btn-assets">Assets</button>
+  </footer>
+
+  <script>
+    (function () {
+      const DURATION = 37.0;
+      const FPS = 60;
+      const TOTAL_FRAMES = 2220;
+      const params = new URLSearchParams(window.location.search);
+      const IS_RENDER_MODE = params.get('render') === '1';
+      const IS_EMBED_MODE = params.get('embed') === '1';
+
+      if (IS_RENDER_MODE) {
+        document.body.classList.add('render-mode');
+      }
+      if (IS_EMBED_MODE) {
+        document.body.classList.add('embed-mode');
+      }
+
+      const ASSET_META = [
+        { key: 'logo', label: 'MARROK Logo', cutout: true },
+        { key: 'heroDesk', label: 'Hero Desk (Act 1)', cutout: false },
+        { key: 'designArt', label: 'Design Sculpture (Act 2)', cutout: false },
+        { key: 'aiArt', label: 'Optical Prisms (Act 4)', cutout: false },
+        { key: 'nodes3d', label: '3D Nodes (Act 5)', cutout: true },
+      ];
+
+      const DEFAULT_PATHS = {
+        logo: './assets/52997ef7-be0b-4fdf-8975-07856ea48856.jfif',
+        heroDesk: './assets/Gemini_Generated_Image_i46w55i46w55i46w.jfif',
+        designArt: './assets/Gemini_Generated_Image_i46w55i46w55i46w%20(1).jfif',
+        aiArt: './assets/Gemini_Generated_Image_i46w55i46w55i46w%20(2).jfif',
+        nodes3d: './assets/Gemini_Generated_Image_i46w55i46w55i46w%20(3).jfif',
+      };
+
+      const preloaded = window.__PRELOADED_ASSETS__ || {};
+      const ASSETS = {
+        logo: preloaded.logo || DEFAULT_PATHS.logo,
+        heroDesk: preloaded.heroDesk || DEFAULT_PATHS.heroDesk,
+        designArt: preloaded.designArt || DEFAULT_PATHS.designArt,
+        aiArt: preloaded.aiArt || DEFAULT_PATHS.aiArt,
+        nodes3d: preloaded.nodes3d || DEFAULT_PATHS.nodes3d,
+      };
+
+      const ASSET_LOADED_STATE = {
+        logo: false,
+        heroDesk: false,
+        designArt: false,
+        aiArt: false,
+        nodes3d: false,
+      };
+
+      const VO_CUES = [
+        { start: 0.5, end: 3.9, text: 'Every ambitious business starts with an idea.' },
+        { start: 4.5, end: 10.1, text: 'Turning it into technology requires more than code. It takes a partner.' },
+        { start: 11.0, end: 16.2, text: 'At Marrok, we engineer digital products built for real-world scale.' },
+        { start: 17.0, end: 22.6, text: 'Connecting your systems, automating your workflows, and simplifying complexity.' },
+        { start: 23.5, end: 30.1, text: 'From custom software and mobile apps, to design, AI, and seamless integration.' },
+        { start: 31.0, end: 36.6, text: 'Simplify. Automate. Grow. Marrok — الفِكْرَة مِنْ عَنْدَك، والتِّكْنُولُوجْيا عْلِينا.' },
+      ];
+
+      function clamp(v, min, max) {
+        return Math.min(max, Math.max(min, v));
+      }
+
+      function lerp(a, b, t) {
+        return a + (b - a) * t;
+      }
+
+      function progress(t, start, end) {
+        if (end <= start) return t >= start ? 1 : 0;
+        return clamp((t - start) / (end - start), 0, 1);
+      }
+
+      function easeOutCubic(p) {
+        const c = clamp(p, 0, 1);
+        return 1 - Math.pow(1 - c, 3);
+      }
+
+      function easeInOutCubic(p) {
+        const c = clamp(p, 0, 1);
+        return c < 0.5 ? 4 * c * c * c : 1 - Math.pow(-2 * c + 2, 3) / 2;
+      }
+
+      function processWhiteToTransparent(src, threshold) {
+        return new Promise((resolve) => {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => {
+            try {
+              const canvas = document.createElement('canvas');
+              canvas.width = img.naturalWidth;
+              canvas.height = img.naturalHeight;
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0);
+              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              const data = imageData.data;
+              const cut = threshold || 242;
+              for (let i = 0; i < data.length; i += 4) {
+                const r = data[i];
+                const g = data[i + 1];
+                const b = data[i + 2];
+                const minC = Math.min(r, g, b);
+                if (minC >= cut) {
+                  data[i + 3] = 0;
+                } else if (minC >= cut - 24) {
+                  const alphaFactor = (cut - minC) / 24;
+                  data[i + 3] = Math.round(data[i + 3] * alphaFactor);
+                }
+              }
+              ctx.putImageData(imageData, 0, 0);
+              resolve(canvas.toDataURL('image/png'));
+            } catch {
+              resolve(src);
+            }
+          };
+          img.onerror = () => resolve(src);
+          img.src = src;
+        });
+      }
+
+      async function applyAssetsToDOM() {
+        const loadPromises = [];
+        for (const meta of ASSET_META) {
+          const rawSrc = ASSETS[meta.key];
+          const finalSrc = meta.cutout
+            ? await processWhiteToTransparent(rawSrc, meta.key === 'logo' ? 236 : 244)
+            : rawSrc;
+          const nodes = document.querySelectorAll(`[data-asset-img="${meta.key}"]`);
+          nodes.forEach((el) => {
+            loadPromises.push(
+              new Promise((resolve) => {
+                el.onload = () => {
+                  ASSET_LOADED_STATE[meta.key] = true;
+                  resolve();
+                };
+                el.onerror = () => resolve();
+              })
+            );
+            el.src = finalSrc;
+          });
+        }
+        await Promise.all(loadPromises);
+        renderAssetsDrawer();
+      }
+
+      const stageScaler = document.getElementById('stage-scaler');
+      const actLayers = [
+        document.getElementById('act1-layer'),
+        document.getElementById('act2-layer'),
+        document.getElementById('act3-layer'),
+        document.getElementById('act4-layer'),
+        document.getElementById('act5-layer'),
+        document.getElementById('act6-layer'),
+      ];
+
+      // Act 1 refs
+      const act1Camera = document.getElementById('act1-camera');
+      const act1Typed = document.getElementById('act1-typed-text');
+      const act1Cursor = document.getElementById('act1-cursor');
+      const act1Submit = document.getElementById('act1-submit-pill');
+      const ACT1_PHRASE = 'Every ambitious business starts with an idea.';
+
+      // Act 2 refs
+      const act2Kicker = document.getElementById('act2-kicker');
+      const act2Headline = document.getElementById('act2-headline');
+      const act2Sub = document.getElementById('act2-sub');
+      const act2Meta = document.getElementById('act2-meta');
+      const act2Art = document.getElementById('act2-art-img');
+
+      // Act 3 refs
+      const act3CtrlScale = document.getElementById('act3-ctrl-scale');
+      const act3CtrlAuto = document.getElementById('act3-ctrl-auto');
+      const act3StateNote = document.getElementById('act3-state-note');
+      const act3M1 = document.getElementById('act3-m1');
+      const act3M2 = document.getElementById('act3-m2');
+      const act3M3 = document.getElementById('act3-m3');
+      const act3Bars = document.querySelectorAll('#act3-bars .act3-bar');
+      const act3Pointer = document.getElementById('act3-pointer');
+      const act3Ripple = document.getElementById('act3-ripple');
+
+      // Act 4 refs
+      const act4Img = document.getElementById('act4-ai-img');
+      const act4Headline = document.getElementById('act4-headline');
+      const act4P1 = document.getElementById('act4-p1');
+      const act4P2 = document.getElementById('act4-p2');
+      const act4P3 = document.getElementById('act4-p3');
+      const act4Ring = document.getElementById('act4-sync-ring');
+
+      // Act 5 refs
+      const act5Nodes = document.getElementById('act5-nodes-img');
+      const act5Heading = document.getElementById('act5-heading');
+      const act5R1 = document.getElementById('act5-r1');
+      const act5R2 = document.getElementById('act5-r2');
+      const act5R3 = document.getElementById('act5-r3');
+
+      // Act 6 refs
+      const act6Lockup = document.getElementById('act6-lockup');
+      const act6Shimmer = document.getElementById('act6-shimmer');
+      const act6Motto = document.getElementById('act6-motto');
+      const act6Tagline = document.getElementById('act6-tagline');
+
+      // Studio UI refs
+      const btnPlay = document.getElementById('btn-play');
+      const btnStepBack = document.getElementById('btn-step-back');
+      const btnStepFwd = document.getElementById('btn-step-fwd');
+      const scrubber = document.getElementById('scrubber');
+      const timecode = document.getElementById('timecode');
+      const actJumpBtns = Array.from(document.querySelectorAll('#act-jumps button'));
+      const btnCaptions = document.getElementById('btn-captions');
+      const btnAssets = document.getElementById('btn-assets');
+      const btnCloseAssets = document.getElementById('btn-close-assets');
+      const btnExportHtml = document.getElementById('btn-export-html');
+      const assetsDrawer = document.getElementById('assets-drawer');
+      const assetsList = document.getElementById('assets-list');
+      const captionBar = document.getElementById('caption-bar');
+      const toastEl = document.getElementById('toast');
+
+      let currentTime = 0;
+      let isPlaying = false;
+      let playTimer = null;
+      let captionsEnabled = true;
+      let toastTimer = null;
+
+      function showToast(msg) {
+        if (IS_RENDER_MODE) return;
+        toastEl.textContent = msg;
+        toastEl.classList.add('visible');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toastEl.classList.remove('visible'), 2200);
+      }
+
+      function fitStageToViewport() {
+        if (IS_RENDER_MODE) {
+          stageScaler.style.transform = 'scale(1)';
+          return;
+        }
+        const availW = IS_EMBED_MODE ? window.innerWidth : window.innerWidth - 32;
+        const availH = IS_EMBED_MODE ? window.innerHeight : window.innerHeight - 104;
+        const scale = Math.min(availW / 1920, availH / 1080, 1);
+        stageScaler.style.transform = `scale(${Math.max(0.15, scale)})`;
+      }
+
+      function setLayerVisibility(index, opacity) {
+        const layer = actLayers[index];
+        if (opacity <= 0.001) {
+          layer.style.display = 'none';
+          layer.style.opacity = '0';
+        } else {
+          layer.style.display = 'block';
+          layer.style.opacity = opacity.toFixed(4);
+        }
+      }
+
+      function renderAt(rawT, dt) {
+        const t = clamp(Number(rawT) || 0, 0, DURATION);
+        currentTime = t;
+
+        // Crossfade act opacities aligned to 4.0, 10.5, 16.5, 23.0, 30.5, 37.0
+        const a1Op = t < 4.25 ? 1 - progress(t, 3.75, 4.2) : 0;
+        const a2Op = t >= 3.75 && t <= 10.8 ? progress(t, 3.8, 4.25) * (1 - progress(t, 10.2, 10.65)) : 0;
+        const a3Op = t >= 10.2 && t <= 16.8 ? progress(t, 10.25, 10.65) * (1 - progress(t, 16.2, 16.65)) : 0;
+        const a4Op = t >= 16.2 && t <= 23.3 ? progress(t, 16.25, 16.65) * (1 - progress(t, 22.7, 23.15)) : 0;
+        const a5Op = t >= 22.7 && t <= 30.8 ? progress(t, 22.75, 23.15) * (1 - progress(t, 30.25, 30.65)) : 0;
+        const a6Op = t >= 30.25 ? progress(t, 30.3, 30.8) : 0;
+
+        setLayerVisibility(0, a1Op);
+        setLayerVisibility(1, a2Op);
+        setLayerVisibility(2, a3Op);
+        setLayerVisibility(3, a4Op);
+        setLayerVisibility(4, a5Op);
+        setLayerVisibility(5, a6Op);
+
+        // --- ACT 1: Sunlit desk push-in + deterministic typing 0.5s - 2.4s ---
+        if (a1Op > 0) {
+          const push = lerp(1.0, 1.07, easeOutCubic(progress(t, 0, 3.5)));
+          const zoomOut = lerp(0, 0.24, easeInOutCubic(progress(t, 3.55, 4.1)));
+          act1Camera.style.transform = `scale(${(push + zoomOut).toFixed(4)})`;
+
+          const typeProg = progress(t, 0.5, 2.35);
+          const chars = Math.floor(typeProg * ACT1_PHRASE.length);
+          act1Typed.textContent = ACT1_PHRASE.slice(0, chars);
+          const blink = Math.floor(t * 2.5) % 2 === 0 || (t >= 0.5 && t <= 2.35);
+          act1Cursor.style.opacity = blink ? '1' : '0.15';
+          act1Submit.style.opacity = (0.35 + 0.65 * easeOutCubic(progress(t, 2.4, 2.8))).toFixed(3);
+        }
+
+        // --- ACT 2: Architectural editorial + travertine/cobalt sculpture ---
+        if (a2Op > 0) {
+          const pIn = easeOutCubic(progress(t, 4.1, 5.2));
+          const pSub = easeOutCubic(progress(t, 4.8, 5.9));
+          const pMeta = easeOutCubic(progress(t, 5.5, 6.4));
+          act2Kicker.style.opacity = pIn.toFixed(3);
+          act2Headline.style.opacity = pIn.toFixed(3);
+          act2Headline.style.transform = `translateY(${lerp(32, 0, pIn).toFixed(1)}px)`;
+          act2Sub.style.opacity = pSub.toFixed(3);
+          act2Sub.style.transform = `translateY(${lerp(24, 0, pSub).toFixed(1)}px)`;
+          act2Meta.style.opacity = pMeta.toFixed(3);
+          const artScale = lerp(1.12, 1.02, easeOutCubic(progress(t, 4.0, 10.4)));
+          act2Art.style.transform = `scale(${artScale.toFixed(4)})`;
+        }
+
+        // --- ACT 3: Real-world scale + two UI clicks at 12.0s and 13.6s ---
+        if (a3Op > 0) {
+          const clicked1 = t >= 12.0;
+          const clicked2 = t >= 13.6;
+          act3CtrlScale.classList.toggle('active', clicked1);
+          act3CtrlAuto.classList.toggle('active', clicked2);
+
+          if (!clicked1) {
+            act3StateNote.textContent = 'Standby configuration';
+          } else if (!clicked2) {
+            act3StateNote.textContent = 'Elastic multi-region routing active';
+          } else {
+            act3StateNote.textContent = 'Full production scale deployed';
+          }
+
+          // Deterministic pointer trajectory: moves to Toggle 1 at 12.0s, Toggle 2 at 13.6s
+          let px = 640, py = 620;
+          if (t < 12.0) {
+            const mp = easeInOutCubic(progress(t, 11.0, 11.95));
+            px = lerp(740, 480, mp);
+            py = lerp(660, 422, mp);
+          } else if (t < 13.6) {
+            const mp = easeInOutCubic(progress(t, 12.45, 13.55));
+            px = lerp(480, 480, mp);
+            py = lerp(422, 534, mp);
+          } else {
+            const mp = easeOutCubic(progress(t, 14.0, 15.2));
+            px = lerp(480, 960, mp);
+            py = lerp(534, 490, mp);
+          }
+          act3Pointer.style.transform = `translate(${px.toFixed(1)}px, ${py.toFixed(1)}px)`;
+
+          // Click ripples synced to ui-click.wav timestamps (12.0s and 13.6s)
+          const r1 = progress(t, 12.0, 12.55);
+          const r2 = progress(t, 13.6, 14.15);
+          if (t >= 12.0 && t < 12.55) {
+            act3Ripple.style.left = '480px';
+            act3Ripple.style.top = '422px';
+            act3Ripple.style.opacity = (1 - r1).toFixed(3);
+            act3Ripple.style.transform = `scale(${lerp(0.35, 1.5, easeOutCubic(r1)).toFixed(3)})`;
+          } else if (t >= 13.6 && t < 14.15) {
+            act3Ripple.style.left = '480px';
+            act3Ripple.style.top = '534px';
+            act3Ripple.style.opacity = (1 - r2).toFixed(3);
+            act3Ripple.style.transform = `scale(${lerp(0.35, 1.5, easeOutCubic(r2)).toFixed(3)})`;
+          } else {
+            act3Ripple.style.opacity = '0';
+          }
+
+          const mProg1 = easeOutCubic(progress(t, 12.0, 13.1));
+          const mProg2 = easeOutCubic(progress(t, 13.6, 14.9));
+          act3M1.textContent = `${lerp(99.90, 99.99, mProg1).toFixed(2)}%`;
+          act3M2.textContent = `${Math.round(lerp(42, 14, mProg2))} ms`;
+          act3M3.textContent = `${lerp(1.4, 8.6, mProg2).toFixed(1)}k/s`;
+
+          act3Bars.forEach((bar, idx) => {
+            const bProg = easeOutCubic(progress(t, 10.7 + idx * 0.09, 12.2 + idx * 0.14));
+            const boost = clicked2 ? lerp(1, 1.15, mProg2) : 1;
+            bar.style.transform = `scaleY(${clamp(bProg * boost, 0.05, 1.15).toFixed(3)})`;
+          });
+        }
+
+        // --- ACT 4: Optical prisms + sync ring lock at 18.5s (sync-chime.wav) ---
+        if (a4Op > 0) {
+          const imgScale = lerp(1.08, 1.0, easeOutCubic(progress(t, 16.5, 23.0)));
+          act4Img.style.transform = `scale(${imgScale.toFixed(4)})`;
+
+          const hIn = easeOutCubic(progress(t, 16.8, 17.8));
+          act4Headline.style.opacity = hIn.toFixed(3);
+          act4Headline.style.transform = `translateY(${lerp(28, 0, hIn).toFixed(1)}px)`;
+
+          [act4P1, act4P2, act4P3].forEach((el, idx) => {
+            const p = easeOutCubic(progress(t, 17.5 + idx * 0.85, 18.3 + idx * 0.85));
+            el.style.opacity = p.toFixed(3);
+            el.style.transform = `translateX(${lerp(-24, 0, p).toFixed(1)}px)`;
+          });
+
+          const syncP = easeOutCubic(progress(t, 18.5, 19.6));
+          const pulse = t >= 18.5 ? 1 + Math.sin((t - 18.5) * 2.2) * 0.025 : 1;
+          act4Ring.style.opacity = (syncP * 0.85).toFixed(3);
+          act4Ring.style.transform = `scale(${(lerp(1.45, 1.0, syncP) * pulse).toFixed(4)})`;
+        }
+
+        // --- ACT 5: Spatial 3D nodes cutout + integrated stack (music swell at 23.0s) ---
+        if (a5Op > 0) {
+          const entry = easeOutCubic(progress(t, 23.0, 24.4));
+          const floatY = Math.sin((t - 23.0) * 1.4) * 10;
+          const rot = lerp(-6, 5, progress(t, 23.0, 30.5));
+          const sc = lerp(0.88, 1.02, entry);
+          act5Nodes.style.opacity = entry.toFixed(3);
+          act5Nodes.style.transform = `translateY(${(lerp(42, 0, entry) + floatY).toFixed(1)}px) scale(${sc.toFixed(4)}) rotate(${rot.toFixed(2)}deg)`;
+
+          const hP = easeOutCubic(progress(t, 23.3, 24.3));
+          act5Heading.style.opacity = hP.toFixed(3);
+          act5Heading.style.transform = `translateY(${lerp(26, 0, hP).toFixed(1)}px)`;
+
+          [act5R1, act5R2, act5R3].forEach((el, idx) => {
+            const p = easeOutCubic(progress(t, 24.2 + idx * 1.15, 25.1 + idx * 1.15));
+            el.style.opacity = p.toFixed(3);
+            el.style.transform = `translateY(${lerp(24, 0, p).toFixed(1)}px)`;
+          });
+        }
+
+        // --- ACT 6: MARROK logo finale + specular shimmer at 34.5s (shimmer.wav) ---
+        if (a6Op > 0) {
+          const lockP = easeOutCubic(progress(t, 30.7, 32.0));
+          const mottoP = easeOutCubic(progress(t, 31.3, 32.4));
+          const tagP = easeOutCubic(progress(t, 32.5, 33.6));
+
+          act6Lockup.style.opacity = lockP.toFixed(3);
+          act6Lockup.style.transform = `scale(${lerp(0.94, 1.0, lockP).toFixed(4)})`;
+          act6Motto.style.opacity = mottoP.toFixed(3);
+          act6Motto.style.transform = `translateY(${lerp(20, 0, mottoP).toFixed(1)}px)`;
+          act6Tagline.style.opacity = tagP.toFixed(3);
+          act6Tagline.style.transform = `translateY(${lerp(16, 0, tagP).toFixed(1)}px)`;
+
+          const shimP = progress(t, 34.5, 35.7);
+          if (t >= 34.5 && t <= 35.7) {
+            act6Shimmer.style.opacity = (Math.sin(shimP * Math.PI) * 0.95).toFixed(3);
+            act6Shimmer.style.left = `${lerp(-280, 1120, easeInOutCubic(shimP)).toFixed(1)}px`;
+          } else {
+            act6Shimmer.style.opacity = '0';
+          }
+        }
+
+        // Update studio preview chrome
+        if (!IS_RENDER_MODE && !IS_EMBED_MODE) {
+          scrubber.value = t.toFixed(4);
+          timecode.textContent = `${t.toFixed(2).padStart(5, '0')}s / ${DURATION.toFixed(2)}s`;
+
+          actJumpBtns.forEach((btn) => {
+            const s = Number(btn.dataset.start);
+            const e = Number(btn.dataset.end);
+            const active = t >= s && (t < e || (e === DURATION && t <= DURATION));
+            btn.classList.toggle('active', active);
+          });
+
+          const cue = VO_CUES.find((c) => t >= c.start && t <= c.end);
+          if (captionsEnabled && cue) {
+            captionBar.textContent = cue.text;
+            captionBar.classList.add('visible');
+          } else {
+            captionBar.classList.remove('visible');
+          }
+        }
+
+        return { t, dt: dt || 1 / FPS, totalFrames: TOTAL_FRAMES };
+      }
+
+      function setPlaying(nextPlaying) {
+        isPlaying = nextPlaying;
+        btnPlay.textContent = isPlaying ? 'Pause' : 'Play';
+        if (playTimer) {
+          clearInterval(playTimer);
+          playTimer = null;
+        }
+        if (isPlaying) {
+          if (currentTime >= DURATION - 0.02) currentTime = 0;
+          const step = 1 / FPS;
+          playTimer = setInterval(() => {
+            const nextT = currentTime + step;
+            if (nextT >= DURATION) {
+              renderAt(DURATION, step);
+              setPlaying(false);
+            } else {
+              renderAt(nextT, step);
+            }
+          }, 1000 / FPS);
+        }
+      }
+
+      function renderAssetsDrawer() {
+        assetsList.innerHTML = '';
+        ASSET_META.forEach((meta) => {
+          const row = document.createElement('div');
+          row.className = 'asset-row';
+          row.innerHTML = `<span>${meta.label}</span>`;
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'image/*';
+          input.style.display = 'none';
+          input.onchange = () => {
+            const file = input.files && input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async () => {
+              ASSETS[meta.key] = String(reader.result);
+              await applyAssetsToDOM();
+              showToast(`Updated ${meta.label}`);
+            };
+            reader.readAsDataURL(file);
+          };
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'ctrl-btn';
+          btn.textContent = 'Replace';
+          btn.onclick = () => input.click();
+          row.appendChild(btn);
+          row.appendChild(input);
+          assetsList.appendChild(row);
+        });
+      }
+
+      async function toDataUri(url) {
+        if (url.startsWith('data:')) return url;
+        const resp = await fetch(url);
+        const blob = await resp.blob();
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(String(reader.result));
+          reader.readAsDataURL(blob);
+        });
+      }
+
+      async function exportBundledHTML() {
+        showToast('Bundling assets into standalone HTML...');
+        const bundled = {};
+        for (const meta of ASSET_META) {
+          bundled[meta.key] = await toDataUri(ASSETS[meta.key]);
+        }
+        const cloneDoc = document.documentElement.cloneNode(true);
+        const preloadScript = document.createElement('script');
+        preloadScript.textContent = `window.__PRELOADED_ASSETS__ = ${JSON.stringify(bundled)};`;
+        const head = cloneDoc.querySelector('head');
+        head.appendChild(preloadScript);
+        const htmlText = '<!DOCTYPE html>\n' + cloneDoc.outerHTML;
+        const blob = new Blob([htmlText], { type: 'text/html;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'marrok-brand-film-bundled.html';
+        a.click();
+        URL.revokeObjectURL(a.href);
+        showToast('Exported marrok-brand-film-bundled.html');
+      }
+
+      // Wire preview controls
+      btnPlay.addEventListener('click', () => setPlaying(!isPlaying));
+      btnStepBack.addEventListener('click', () => {
+        setPlaying(false);
+        renderAt(currentTime - 1 / FPS, 1 / FPS);
+      });
+      btnStepFwd.addEventListener('click', () => {
+        setPlaying(false);
+        renderAt(currentTime + 1 / FPS, 1 / FPS);
+      });
+      scrubber.addEventListener('input', () => {
+        setPlaying(false);
+        renderAt(Number(scrubber.value), 1 / FPS);
+      });
+      actJumpBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          setPlaying(false);
+          renderAt(Number(btn.dataset.start), 1 / FPS);
+        });
+      });
+      btnCaptions.addEventListener('click', () => {
+        captionsEnabled = !captionsEnabled;
+        btnCaptions.classList.toggle('active', captionsEnabled);
+        renderAt(currentTime, 1 / FPS);
+      });
+      btnAssets.addEventListener('click', () => assetsDrawer.classList.toggle('open'));
+      btnCloseAssets.addEventListener('click', () => assetsDrawer.classList.remove('open'));
+      btnExportHtml.addEventListener('click', exportBundledHTML);
+
+      window.addEventListener('keydown', (e) => {
+        if (IS_RENDER_MODE || IS_EMBED_MODE) return;
+        if (e.code === 'Space') {
+          e.preventDefault();
+          setPlaying(!isPlaying);
+        } else if (e.code === 'ArrowLeft') {
+          e.preventDefault();
+          setPlaying(false);
+          renderAt(currentTime - (e.shiftKey ? 0.5 : 1 / FPS), 1 / FPS);
+        } else if (e.code === 'ArrowRight') {
+          e.preventDefault();
+          setPlaying(false);
+          renderAt(currentTime + (e.shiftKey ? 0.5 : 1 / FPS), 1 / FPS);
+        }
+      });
+
+      window.addEventListener('message', (event) => {
+        const msg = event && event.data;
+        if (msg && msg.type === 'studio:scrub') {
+          renderAt(msg.t, msg.dt);
+        }
+      });
+
+      window.addEventListener('resize', fitStageToViewport);
+
+      // Expose deterministic API for render-video.mjs and parent Studio sync
+      window.renderAt = renderAt;
+      window.fitStageToViewport = fitStageToViewport;
+      window.exportBundledHTML = exportBundledHTML;
+      window.MARROK_FILM = { DURATION, FPS, TOTAL_FRAMES, ASSET_META, ASSET_LOADED_STATE, renderAt };
+
+      fitStageToViewport();
+      window.__STUDIO_READY__ = applyAssetsToDOM().then(() => renderAt(0, 1 / FPS));
+    })();
+  </script>
+</body>
+</html>

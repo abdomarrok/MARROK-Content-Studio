@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Starter Project — Motion Stage</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #0d0d0d;
+      color: #f4f5f7;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body.render-mode #studio-chrome,
+    body.embed-mode #studio-chrome {
+      display: none !important;
+    }
+
+    #viewport {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding-bottom: 64px;
+    }
+
+    body.render-mode #viewport,
+    body.embed-mode #viewport {
+      padding-bottom: 0;
+    }
+
+    body.render-mode #viewport {
+      align-items: flex-start;
+      justify-content: flex-start;
+    }
+
+    #stage-scaler {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      transform-origin: center center;
+      background: #0d0d0d;
+    }
+
+    body.render-mode #stage-scaler {
+      transform-origin: top left;
+      transform: none !important;
+    }
+
+    #stage {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      background: radial-gradient(circle at 75% 22%, rgba(54, 75, 222, 0.28), transparent 55%), #0d0d0d;
+    }
+
+    .act {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 120px;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 1280px;
+      background: rgba(26, 26, 46, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 28px;
+      padding: 72px 84px;
+      backdrop-filter: blur(18px);
+    }
+
+    body.aspect-9x16 .act {
+      padding: 72px;
+    }
+
+    body.aspect-9x16 .card {
+      padding: 56px 48px;
+    }
+
+    .kicker {
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: #6b82ff;
+      margin-bottom: 24px;
+    }
+
+    .headline {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      font-size: 84px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.06;
+      color: #ffffff;
+    }
+
+    body.aspect-9x16 .headline {
+      font-size: 62px;
+    }
+
+    .sub {
+      margin-top: 28px;
+      font-size: 32px;
+      line-height: 1.45;
+      color: #b8bed4;
+      max-width: 960px;
+    }
+
+    .pill-row {
+      margin-top: 44px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+    }
+
+    .pill {
+      padding: 16px 28px;
+      border-radius: 14px;
+      background: rgba(54, 75, 222, 0.18);
+      border: 1px solid rgba(107, 130, 255, 0.42);
+      font-size: 24px;
+      font-weight: 600;
+      color: #eef1ff;
+    }
+
+    #studio-chrome {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 60px;
+      background: #14141c;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 0 20px;
+    }
+
+    .btn {
+      padding: 7px 14px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      background: #1f2030;
+      color: #fff;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .btn.primary {
+      background: #364bde;
+      border-color: #364bde;
+    }
+
+    #scrubber { flex: 1; accent-color: #364bde; }
+    #timecode { font-variant-numeric: tabular-nums; font-size: 13px; color: #b7becd; }
+  </style>
+</head>
+<body>
+  <div id="viewport">
+    <div id="stage-scaler">
+      <div id="stage">
+        <section class="act" id="act1">
+          <div class="card">
+            <div class="kicker">Act 01 · Clarity</div>
+            <h1 class="headline" id="act1-title"></h1>
+            <p class="sub" id="act1-sub">Deterministic frame-accurate motion built for broadcast delivery.</p>
+          </div>
+        </section>
+
+        <section class="act" id="act2">
+          <div class="card">
+            <div class="kicker">Act 02 · Architecture</div>
+            <h1 class="headline">Engineered Flow</h1>
+            <div class="pill-row">
+              <div class="pill" id="pill-1">1920 × 1080 · 60fps</div>
+              <div class="pill" id="pill-2">9:16 Vertical Ready</div>
+              <div class="pill" id="pill-3">Sidechain Mastered</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="act" id="act3">
+          <div class="card" style="text-align:center;">
+            <div class="kicker">Act 03 · Launch</div>
+            <h1 class="headline" id="act3-title">Build. Automate. Launch.</h1>
+            <p class="sub" style="margin-inline:auto;">Studio Ready</p>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <footer id="studio-chrome">
+    <button type="button" class="btn primary" id="btn-play">Play</button>
+    <input type="range" id="scrubber" min="0" max="15" step="0.016667" value="0" />
+    <span id="timecode">00.00s / 15.00s</span>
+  </footer>
+
+  <script src="/engine/motion-sdk.js"></script>
+  <script>
+    (function () {
+      const DURATION = 15;
+      const FPS = 60;
+      const act1 = document.getElementById('act1');
+      const act2 = document.getElementById('act2');
+      const act3 = document.getElementById('act3');
+      const act1Title = document.getElementById('act1-title');
+      const act1Sub = document.getElementById('act1-sub');
+      const pills = [document.getElementById('pill-1'), document.getElementById('pill-2'), document.getElementById('pill-3')];
+      const act3Title = document.getElementById('act3-title');
+      const scrubber = document.getElementById('scrubber');
+      const timecode = document.getElementById('timecode');
+      const btnPlay = document.getElementById('btn-play');
+
+      function setAct(el, op) {
+        if (op <= 0.001) {
+          el.style.display = 'none';
+          el.style.opacity = '0';
+        } else {
+          el.style.display = 'flex';
+          el.style.opacity = op.toFixed(4);
+        }
+      }
+
+      const sdk = window.StudioSDK.init({
+        duration: DURATION,
+        fps: FPS,
+        render(t) {
+          const S = window.StudioSDK;
+          const a1 = t < 5.0 ? 1 - S.actProgress(t, 4.5, 5.0) : 0;
+          const a2 = t >= 4.5 && t <= 10.2 ? S.actProgress(t, 4.5, 5.0) * (1 - S.actProgress(t, 9.6, 10.1)) : 0;
+          const a3 = t >= 9.6 ? S.actProgress(t, 9.6, 10.2) : 0;
+
+          setAct(act1, a1);
+          setAct(act2, a2);
+          setAct(act3, a3);
+
+          if (a1 > 0) {
+            act1Title.textContent = S.typewriter('Every bold product begins with clarity.', S.actProgress(t, 0.3, 2.6));
+            const subP = S.easeOutCubic(S.actProgress(t, 1.4, 2.5));
+            act1Sub.style.opacity = subP.toFixed(3);
+            act1Sub.style.transform = `translateY(${S.lerp(24, 0, subP).toFixed(1)}px)`;
+          }
+
+          if (a2 > 0) {
+            pills.forEach((pill, i) => {
+              const p = S.easeOutExpo(S.stagger(t, 5.0, i, 0.45, 0.7));
+              pill.style.opacity = p.toFixed(3);
+              pill.style.transform = `translateY(${S.lerp(28, 0, p).toFixed(1)}px)`;
+            });
+          }
+
+          if (a3 > 0) {
+            const s = S.springDeterministic(Math.max(0, t - 9.8), 160, 16);
+            act3Title.style.transform = `scale(${S.lerp(0.92, 1.0, s).toFixed(4)})`;
+          }
+
+          if (!window.STUDIO_SCENE_META.isRenderMode && !window.STUDIO_SCENE_META.isEmbedMode) {
+            scrubber.value = t.toFixed(4);
+            timecode.textContent = `${t.toFixed(2).padStart(5, '0')}s / ${DURATION.toFixed(2)}s`;
+          }
+        },
+      });
+
+      let timer = null;
+      let playing = false;
+      const setPlaying = (next) => {
+        playing = next;
+        btnPlay.textContent = playing ? 'Pause' : 'Play';
+        if (timer) {
+          clearInterval(timer);
+          timer = null;
+        }
+        if (playing) {
+          timer = setInterval(() => {
+            const nextT = window.STUDIO_SCENE_META.getCurrentTime() + 1 / FPS;
+            if (nextT >= DURATION) {
+              sdk.renderAt(DURATION, 1 / FPS);
+              setPlaying(false);
+            } else {
+              sdk.renderAt(nextT, 1 / FPS);
+            }
+          }, 1000 / FPS);
+        }
+      };
+
+      btnPlay.addEventListener('click', () => setPlaying(!playing));
+      scrubber.addEventListener('input', () => {
+        setPlaying(false);
+        sdk.renderAt(Number(scrubber.value), 1 / FPS);
+      });
+    })();
+  </script>
+</body>
+</html>

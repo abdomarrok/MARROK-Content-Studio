@@ -1,0 +1,87 @@
+{
+  "id": "starter-project",
+  "name": "Starter Brand Film",
+  "video": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 60,
+    "durationSec": 15,
+    "crf": 16,
+    "preset": "slow",
+    "verticalExport": {
+      "enabled": true,
+      "mode": "padded",
+      "backgroundColor": "#0D0D0D"
+    }
+  },
+  "voice": {
+    "provider": "elevenlabs",
+    "voiceId": "XrExE9yKIg1WjnnlVkGX",
+    "modelId": "eleven_multilingual_v2",
+    "seed": 4242,
+    "settings": {
+      "stability": 0.55,
+      "similarity_boost": 0.78,
+      "style": 0.12,
+      "use_speaker_boost": true
+    }
+  },
+  "acts": [
+    {
+      "id": "act1",
+      "label": "Act 1 — Opening Hook",
+      "startSec": 0.5,
+      "maxDurationSec": 3.8,
+      "text": "Every bold product begins with clarity.",
+      "voiceOverride": null
+    },
+    {
+      "id": "act2",
+      "label": "Act 2 — Core Motion",
+      "startSec": 5.0,
+      "maxDurationSec": 4.2,
+      "text": "Precision engineering, unified into one effortless flow.",
+      "voiceOverride": null
+    },
+    {
+      "id": "act3",
+      "label": "Act 3 — Finale",
+      "startSec": 10.0,
+      "maxDurationSec": 4.2,
+      "text": "Build faster. Scale cleaner. Launch with confidence.",
+      "voiceOverride": null
+    }
+  ],
+  "music": {
+    "source": "dsp",
+    "file": "audio/music.wav",
+    "gainDb": -14,
+    "fadeOutStartSec": 13.5,
+    "fadeOutDurationSec": 1.5,
+    "swellAtSec": 9.5,
+    "ducking": {
+      "threshold": 0.03,
+      "ratio": 8,
+      "attackMs": 20,
+      "releaseMs": 500
+    }
+  },
+  "sfx": [
+    {
+      "id": "whoosh-in",
+      "source": "dsp",
+      "dspPreset": "whoosh",
+      "file": "audio/whoosh.wav",
+      "atSec": 4.7,
+      "volume": 0.16
+    },
+    {
+      "id": "shimmer-end",
+      "source": "dsp",
+      "dspPreset": "shimmer",
+      "file": "audio/shimmer.wav",
+      "atSec": 11.2,
+      "volume": 0.2
+    }
+  ]
+}

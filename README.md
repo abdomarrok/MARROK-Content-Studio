@@ -198,6 +198,13 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 | `npm run build` | Compiles production bundle with Vite into `/dist` |
 | `npm run start` | Launches server (`NODE_ENV=production npm run start` serves `/dist`) |
 | `npm run clean` | Cleans build artifacts |
+| `npm run video:studio` | Starts the standalone local Video Studio server |
+| `npm run video:new` | Scaffolds a new deterministic video project under `video-studio/projects/` |
+| `npm run video:audio` | Generates voiceovers (with hash cache), DSP stems, and `master.wav` |
+| `npm run video:render` | Renders deterministic video frames via Playwright and FFmpeg |
+| `npm run video:build` | Runs audio generation, video render, muxing, and QA checks |
+| `npm run video:qa` | Verifies audio/video streams and generates `qa-sheet.png` |
+| `npm run video:lint` | Runs syntax and HTML script checks across `video-studio/` |
 
 ---
 

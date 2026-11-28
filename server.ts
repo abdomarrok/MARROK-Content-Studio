@@ -2,6 +2,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import express from 'express';
 import app from './api/index.ts';
+import { registerVideoStudioRoutes } from './video-studio/studio/expressRouter.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -9,6 +10,9 @@ const PORT = Number(process.env.PORT) || 3000;
 
 async function startServer() {
   const isDev = process.env.NODE_ENV !== 'production';
+
+  // Local-only Video Studio API + scoped iframe preview routes (stays outside Vercel/Netlify /api)
+  registerVideoStudioRoutes(app);
 
   if (isDev) {
     const { createServer: createViteServer } = await import('vite');

@@ -14,6 +14,7 @@ import {
   FolderOpen,
   LogOut,
   KeyRound,
+  Film,
 } from 'lucide-react';
 import { ThemePalette } from '../types.ts';
 
@@ -34,9 +35,9 @@ interface HeaderProps {
   deckStatus?: 'draft' | 'ready' | 'posted';
   onSaveToVault?: () => void;
   isSavingPost?: boolean;
-  activePhase?: 'studio' | 'publish';
+  activePhase?: 'studio' | 'publish' | 'video';
   isPeakProgramActive?: boolean;
-  onPhaseChange?: (phase: 'studio' | 'publish') => void;
+  onPhaseChange?: (phase: 'studio' | 'publish' | 'video') => void;
   onOpenPeakProgram?: () => void;
   authenticatedUser?: string | null;
   onLogout?: () => void;
@@ -141,6 +142,19 @@ export const Header: React.FC<HeaderProps> = ({
                     · {pendingReviewCount}
                   </span>
                 )}
+              </button>
+              <button
+                type="button"
+                onClick={() => onPhaseChange('video')}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  activePhase === 'video'
+                    ? 'bg-[#364BDE]/30 text-indigo-100'
+                    : 'text-slate-400 hover:text-indigo-200'
+                }`}
+                title="Open Multi-Project Deterministic Video & Audio Studio"
+              >
+                <Film className="w-3.5 h-3.5 text-[#6b82ff] shrink-0" />
+                <span>Video Studio</span>
               </button>
             </div>
           )}
