@@ -529,11 +529,12 @@ export default function App() {
           <Suspense
             fallback={
               <div className="flex-1 flex items-center justify-center text-xs font-mono text-slate-400">
-                Loading Video Studio...
+                Loading Film Studio...
               </div>
             }
           >
             <VideoStudioWorkspace
+              theme={currentPalette}
               onShowToast={showToast}
               onAuthRequired={() => setAuthStatus('unauthenticated')}
             />

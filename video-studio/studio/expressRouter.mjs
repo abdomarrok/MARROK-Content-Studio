@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -27,6 +28,10 @@ import { createProjectFromTemplate } from '../scripts/new-project.mjs';
 
 const execFileAsync = promisify(execFile);
 
+const SESSION_COOKIE_NAME = '__Host-marrok_session';
+export const MAX_COMPLETED_JOBS = 50;
+export const PREVIEW_TOKEN_TTL_SECONDS = 3600; // 1 hour
+
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
@@ -45,6 +50,210 @@ const MIME_TYPES = {
 };
 
 const jobs = new Map();
+
+export function resetVideoStudioJobsForTest() {
+  for (const job of jobs.values()) {
+    if (job.status === 'running' && job.controller) {
+      job.controller.abort();
+    }
+  }
+  jobs.clear();
+}
+
+export function getVideoStudioJobsSize() {
+  return jobs.size;
+}
+
+function pruneCompletedJobs() {
+  const completedIds = [];
+  for (const [id, job] of jobs.entries()) {
+    if (job.status !== 'running') {
+      completedIds.push(id);
+    }
+  }
+  while (completedIds.length > MAX_COMPLETED_JOBS) {
+    const oldestId = completedIds.shift();
+    if (oldestId) {
+      jobs.delete(oldestId);
+    }
+  }
+}
+
+function findActiveJob() {
+  for (const job of jobs.values()) {
+    if (job.status === 'running') {
+      return job;
+    }
+  }
+  return null;
+}
+
+function toBase64Url(input) {
+  const buf = typeof input === 'string' ? Buffer.from(input, 'utf8') : input;
+  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function fromBase64Url(input) {
+  const str = String(input || '');
+  const padded = str.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((str.length + 3) % 4);
+  return Buffer.from(padded, 'base64');
+}
+
+function constantTimeEqualText(a, b) {
+  const hashA = crypto.createHash('sha256').update(String(a || ''), 'utf8').digest();
+  const hashB = crypto.createHash('sha256').update(String(b || ''), 'utf8').digest();
+  return crypto.timingSafeEqual(hashA, hashB);
+}
+
+function getRuntimeAuthConfig() {
+  const username = String(process.env.ADMIN_USERNAME || '').trim();
+  const passwordHash = String(process.env.ADMIN_PASSWORD_HASH || '').trim();
+  const sessionSecret = String(process.env.SESSION_SECRET || '').trim();
+  const validHash = /^scrypt\$[0-9a-f]{16,}\$[0-9a-f]{128}$/i.test(passwordHash);
+  const configured = Boolean(username && validHash && sessionSecret.length >= 16);
+  return { configured, username, sessionSecret };
+}
+
+/**
+ * Generates a short-lived HMAC-signed path-scoped preview token (`vprev.<exp>.<sig>`)
+ * so `<iframe src="/video-projects/s/:token/:id/scene.html">` works even when third-party
+ * cookies are blocked AND relative `./assets/*` URLs automatically inherit `:token`.
+ */
+export function createVideoPreviewToken(
+  sessionSecret = String(process.env.SESSION_SECRET || '').trim(),
+  ttlSeconds = PREVIEW_TOKEN_TTL_SECONDS,
+  nowMs = Date.now()
+) {
+  if (!sessionSecret || sessionSecret.length < 16) {
+    return '';
+  }
+  const exp = Math.floor(nowMs / 1000) + Math.max(30, Math.floor(ttlSeconds));
+  const payload = `vprev.${exp}`;
+  const sig = crypto.createHmac('sha256', sessionSecret).update(payload).digest();
+  return `${payload}.${toBase64Url(sig)}`;
+}
+
+export function verifyVideoPreviewOrSessionToken(
+  token,
+  authCfg = getRuntimeAuthConfig(),
+  nowMs = Date.now()
+) {
+  if (!token || typeof token !== 'string' || !authCfg.configured) {
+    return false;
+  }
+  const trimmed = token.trim();
+  const parts = trimmed.split('.');
+
+  // 1. Short-lived path-scoped preview token: vprev.<exp>.<sig>
+  if (parts.length === 3 && parts[0] === 'vprev') {
+    const exp = Number.parseInt(parts[1], 10);
+    if (!Number.isFinite(exp) || nowMs >= exp * 1000) {
+      return false;
+    }
+    let actualSig;
+    try {
+      actualSig = fromBase64Url(parts[2]);
+    } catch {
+      return false;
+    }
+    const expectedSig = crypto
+      .createHmac('sha256', authCfg.sessionSecret)
+      .update(`vprev.${parts[1]}`)
+      .digest();
+    return (
+      actualSig.length === expectedSig.length &&
+      crypto.timingSafeEqual(actualSig, expectedSig)
+    );
+  }
+
+  // 2. Standard signed session token: <payloadBase64Url>.<sigBase64Url>
+  if (parts.length === 2 && parts[0] && parts[1]) {
+    let actualSig;
+    try {
+      actualSig = fromBase64Url(parts[1]);
+    } catch {
+      return false;
+    }
+    const expectedSig = crypto
+      .createHmac('sha256', authCfg.sessionSecret)
+      .update(parts[0])
+      .digest();
+    if (
+      actualSig.length !== expectedSig.length ||
+      !crypto.timingSafeEqual(actualSig, expectedSig)
+    ) {
+      return false;
+    }
+    try {
+      const parsed = JSON.parse(fromBase64Url(parts[0]).toString('utf8'));
+      if (
+        !parsed ||
+        typeof parsed.sub !== 'string' ||
+        typeof parsed.exp !== 'number' ||
+        nowMs >= parsed.exp * 1000
+      ) {
+        return false;
+      }
+      return constantTimeEqualText(parsed.sub, authCfg.username);
+    } catch {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+function parseCookieToken(cookieHeader) {
+  if (!cookieHeader || typeof cookieHeader !== 'string') return '';
+  for (const pair of cookieHeader.split(';')) {
+    const idx = pair.indexOf('=');
+    if (idx <= 0) continue;
+    const key = pair.slice(0, idx).trim();
+    if (key !== SESSION_COOKIE_NAME) continue;
+    const rawVal = pair.slice(idx + 1).trim();
+    try {
+      return decodeURIComponent(rawVal);
+    } catch {
+      return rawVal;
+    }
+  }
+  return '';
+}
+
+function extractBearerToken(authHeader) {
+  if (!authHeader || typeof authHeader !== 'string') return '';
+  const trimmed = authHeader.trim();
+  if (!/^bearer\s+/i.test(trimmed)) return '';
+  return trimmed.replace(/^bearer\s+/i, '').trim();
+}
+
+function authorizeVideoProjectPreview(req, pathToken = '') {
+  const authCfg = getRuntimeAuthConfig();
+  if (!authCfg.configured) {
+    return {
+      ok: false,
+      status: 503,
+      error: 'Server authentication is not configured (fail closed).',
+    };
+  }
+
+  const queryToken = typeof req.query?.token === 'string' ? req.query.token : '';
+  const cookieToken = parseCookieToken(req.headers.cookie);
+  const bearerToken = extractBearerToken(req.headers.authorization);
+
+  const candidates = [pathToken, queryToken, cookieToken, bearerToken].filter(Boolean);
+  for (const candidate of candidates) {
+    if (verifyVideoPreviewOrSessionToken(candidate, authCfg)) {
+      return { ok: true, status: 200 };
+    }
+  }
+
+  return {
+    ok: false,
+    status: 401,
+    error: 'Authentication required to access video project preview.',
+  };
+}
 
 async function fileExists(p) {
   try {
@@ -66,6 +275,24 @@ async function sendFileWithRange(req, res, filePath, isDownload = false) {
     ...(isDownload ? { 'Content-Disposition': `attachment; filename="${path.basename(filePath)}"` } : {}),
   };
 
+  const pipeStream = (stream) =>
+    new Promise((resolve, reject) => {
+      stream.on('error', (err) => {
+        if (!res.headersSent) {
+          res.status(500).end('Stream read error');
+        } else {
+          res.destroy(err);
+        }
+        reject(err);
+      });
+      res.on('close', () => {
+        stream.destroy();
+        resolve();
+      });
+      stream.on('end', resolve);
+      stream.pipe(res);
+    });
+
   const rangeHeader = req.headers.range;
   if (rangeHeader && stat.size > 0) {
     const match = /^bytes=(\d*)-(\d*)$/.exec(String(rangeHeader).trim());
@@ -74,30 +301,26 @@ async function sendFileWithRange(req, res, filePath, isDownload = false) {
       const end = match[2] ? Math.min(stat.size - 1, Number(match[2])) : stat.size - 1;
       if (start <= end && start < stat.size) {
         const chunkLen = end - start + 1;
-        const fh = await fs.open(filePath, 'r');
-        try {
-          const buf = Buffer.allocUnsafe(chunkLen);
-          await fh.read(buf, 0, chunkLen, start);
-          res.writeHead(206, {
-            ...baseHeaders,
-            'Content-Range': `bytes ${start}-${end}/${stat.size}`,
-            'Content-Length': chunkLen,
-          });
-          res.end(buf);
-          return;
-        } finally {
-          await fh.close();
-        }
+        res.writeHead(206, {
+          ...baseHeaders,
+          'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+          'Content-Length': chunkLen,
+        });
+        await pipeStream(createReadStream(filePath, { start, end }));
+        return;
       }
     }
   }
 
-  const data = await fs.readFile(filePath);
   res.writeHead(200, {
     ...baseHeaders,
-    'Content-Length': data.length,
+    'Content-Length': stat.size,
   });
-  res.end(data);
+  if (stat.size === 0) {
+    res.end();
+    return;
+  }
+  await pipeStream(createReadStream(filePath));
 }
 
 async function inspectAudioEntry(absPath, relPath) {
@@ -203,8 +426,10 @@ async function getFullProjectDetails(projectId) {
     // no qa report yet
   }
 
+  const authCfg = getRuntimeAuthConfig();
   return {
     config,
+    previewToken: authCfg.configured ? createVideoPreviewToken(authCfg.sessionSecret) : null,
     stems: {
       acts: actStems,
       music: musicStem,
@@ -242,11 +467,13 @@ function startBackgroundJob(projectId, type, opts = {}) {
     projectId,
     type,
     status: 'running',
+    createdAt: Date.now(),
     controller,
     events: [],
     listeners: new Set(),
   };
   jobs.set(id, job);
+  pruneCompletedJobs();
 
   const log = (msg) => emitJobEvent(job, 'log', { message: String(msg) });
   const onProgress = (p) => emitJobEvent(job, 'progress', p);
@@ -279,6 +506,20 @@ function startBackgroundJob(projectId, type, opts = {}) {
           signal: job.controller.signal,
           log,
         });
+      } else if (type === 'noop-test' && (process.env.VITEST || process.env.NODE_ENV === 'test')) {
+        const waitMs = Math.min(2000, Math.max(10, Number(opts.holdMs) || 80));
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(resolve, waitMs);
+          job.controller.signal.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(timer);
+              reject(new Error('Job cancelled'));
+            },
+            { once: true }
+          );
+        });
+        result = { noop: true };
       } else {
         throw new Error(`Unsupported job type: ${type}`);
       }
@@ -299,6 +540,7 @@ function startBackgroundJob(projectId, type, opts = {}) {
         res.end();
       }
       job.listeners.clear();
+      pruneCompletedJobs();
     }
   })();
 
@@ -313,14 +555,46 @@ function sendError(res, error) {
   });
 }
 
+async function handleServeVideoProjectPreview(req, res, pathToken = '') {
+  try {
+    const auth = authorizeVideoProjectPreview(req, pathToken);
+    if (!auth.ok) {
+      return res.status(auth.status).json({ error: auth.error });
+    }
+
+    const projectId = assertValidProjectId(req.params.id);
+    const rawRel = decodeURIComponent(req.params[0] || 'scene.html').replace(/^\/+/, '');
+    const rel = rawRel === '' ? 'scene.html' : rawRel;
+
+    // Strictly restrict preview route to scene.html and assets/* (never project.json, audio/*, or output/*)
+    const isAllowed =
+      rel === 'scene.html' ||
+      (rel.startsWith('assets/') && !path.basename(rel).startsWith('.'));
+    if (!isAllowed) {
+      return res.status(403).json({
+        error: 'Access to project config, audio, and outputs is restricted to /api/video-studio.',
+      });
+    }
+
+    const projectPaths = getProjectPaths(projectId);
+    const absPath = resolveProjectRelative(projectPaths.root, rel);
+    if (!(await fileExists(absPath))) {
+      return res.status(404).send('Not found');
+    }
+    return await sendFileWithRange(req, res, absPath, false);
+  } catch (error) {
+    return res.status(400).send(error instanceof Error ? error.message : 'Bad request');
+  }
+}
+
 /**
  * Mount Video Studio local API routes (protected by api/index.ts auth gate)
- * and strictly scoped preview routes (/video-engine, /engine/motion-sdk.js, /video-projects/:id/scene.html & assets/*).
+ * and authenticated preview routes (/video-projects/s/:token/:id/* & /video-projects/:id/*).
  */
 export function registerVideoStudioRoutes(app) {
   fs.mkdir(PROJECTS_DIR, { recursive: true }).catch(() => {});
 
-  // Restricted static preview routes (Safeguard 3: ONLY motion-sdk + scene.html + assets/*)
+  // Restricted static SDK route (strictly serves motion-sdk.js only)
   app.get(['/engine/motion-sdk.js', '/video-engine/motion-sdk.js'], async (req, res) => {
     try {
       await sendFileWithRange(req, res, path.join(ENGINE_DIR, 'motion-sdk.js'), false);
@@ -329,29 +603,14 @@ export function registerVideoStudioRoutes(app) {
     }
   });
 
+  // Path-scoped token preview route so relative ./assets/* URLs inside scene.html inherit :token automatically
+  app.get('/video-projects/s/:token/:id/*', async (req, res) => {
+    return handleServeVideoProjectPreview(req, res, req.params.token);
+  });
+
+  // Session cookie / Bearer token preview route
   app.get('/video-projects/:id/*', async (req, res) => {
-    try {
-      const projectId = assertValidProjectId(req.params.id);
-      const rawRel = decodeURIComponent(req.params[0] || 'scene.html').replace(/^\/+/, '');
-      const rel = rawRel === '' ? 'scene.html' : rawRel;
-
-      // Restrict unauthenticated preview surface strictly to scene.html and assets/*
-      const isAllowed =
-        rel === 'scene.html' ||
-        (rel.startsWith('assets/') && !path.basename(rel).startsWith('.'));
-      if (!isAllowed) {
-        return res.status(403).json({ error: 'Access to project config, audio, and outputs requires /api/video-studio auth.' });
-      }
-
-      const projectPaths = getProjectPaths(projectId);
-      const absPath = resolveProjectRelative(projectPaths.root, rel);
-      if (!(await fileExists(absPath))) {
-        return res.status(404).send('Not found');
-      }
-      return await sendFileWithRange(req, res, absPath, false);
-    } catch (error) {
-      return res.status(400).send(error instanceof Error ? error.message : 'Bad request');
-    }
+    return handleServeVideoProjectPreview(req, res, '');
   });
 
   // Authenticated API routes (automatically guarded by api/index.ts auth middleware)
@@ -366,9 +625,12 @@ export function registerVideoStudioRoutes(app) {
       ffmpegAvailable = false;
     }
     const ids = await listProjectIds();
+    const authCfg = getRuntimeAuthConfig();
     res.json({
+      serverAvailable: true,
       localRenderAvailable: true,
       ffmpegAvailable,
+      previewToken: authCfg.configured ? createVideoPreviewToken(authCfg.sessionSecret) : null,
       projectsCount: ids.length,
     });
   });
@@ -473,7 +735,15 @@ export function registerVideoStudioRoutes(app) {
           return res.status(400).json({ error: 'Valid filename query param or x-file-name header is required.' });
         }
 
-        const rawBuf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+        let rawBuf = Buffer.alloc(0);
+        if (Buffer.isBuffer(req.body)) {
+          rawBuf = req.body;
+        } else if (typeof req.body === 'string' && req.body.length > 0) {
+          rawBuf = Buffer.from(req.body, 'utf8');
+        } else if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
+          rawBuf = Buffer.from(JSON.stringify(req.body), 'utf8');
+        }
+
         if (rawBuf.length === 0) {
           return res.status(400).json({ error: 'Empty upload body.' });
         }
@@ -536,12 +806,22 @@ export function registerVideoStudioRoutes(app) {
     try {
       const projectId = assertValidProjectId(req.params.id);
       await loadProjectConfig(projectId);
+
+      // Single-active-job concurrency lock
+      const activeJob = findActiveJob();
+      if (activeJob) {
+        return res.status(409).json({
+          error: `Another video job (${activeJob.id}: ${activeJob.type} on ${activeJob.projectId}) is already running.`,
+          activeJobId: activeJob.id,
+        });
+      }
+
       const body = req.body || {};
       const type = String(body.type || 'build');
       const job = startBackgroundJob(projectId, type, body);
-      res.status(202).json({ ok: true, jobId: job.id, type });
+      return res.status(202).json({ ok: true, jobId: job.id, type });
     } catch (error) {
-      sendError(res, error);
+      return sendError(res, error);
     }
   });
 

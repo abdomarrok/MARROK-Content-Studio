@@ -22,7 +22,6 @@ const jsFiles = [
   'engine/build-pipeline.mjs',
   'scripts/new-project.mjs',
   'scripts/lint-check.mjs',
-  'studio/server.mjs',
   'studio/expressRouter.mjs',
 ];
 
@@ -31,7 +30,6 @@ for (const rel of jsFiles) {
 }
 
 const htmlFiles = [
-  'studio/public/index.html',
   'templates/starter-project/scene.html',
 ];
 

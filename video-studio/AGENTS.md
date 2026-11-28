@@ -61,8 +61,10 @@ Validated by `engine/schema.mjs`:
 
 ## 4. Build, Preview & QA Workflow
 
+All workflows run through `npm run dev` (Express `server.ts` mounting `video-studio/studio/expressRouter.mjs`) or the `npm run video:*` CLI scripts:
+
 ```powershell
-# 1. Start unified Studio UI (http://localhost:3000 -> Video Studio tab)
+# 1. Start unified Studio UI (http://localhost:3000 -> Film Studio tab)
 npm run dev
 
 # 2. Generate only changed VO stems + DSP stems + master.wav
@@ -76,6 +78,9 @@ npm run video:build -- --project <id> --vertical
 
 # 5. Standalone QA verification (ffprobe + output/qa-sheet.png)
 npm run video:qa -- --project <id>
+
+# 6. Syntax & inline <script> validation across video-studio/
+npm run video:lint
 ```
 
 Always inspect `projects/<id>/output/qa-sheet.png` and `projects/<id>/output/qa-report.json` after building to verify framing, transparency cutouts, duration, and 48 kHz audio sync.

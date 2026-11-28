@@ -112,12 +112,14 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <button
                 type="button"
+                data-testid="header-phase-create"
                 onClick={() => onPhaseChange('studio')}
                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                   activePhase === 'studio'
                     ? 'bg-white/12 text-white'
                     : 'text-slate-400 hover:text-white'
                 }`}
+                title="Create Carousels, Single Slides, Memes & In-Browser 9:16 Canvas Motion Reels"
               >
                 <Layers
                   className="w-3.5 h-3.5 shrink-0"
@@ -127,6 +129,24 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
               <button
                 type="button"
+                data-testid="header-phase-video"
+                onClick={() => onPhaseChange('video')}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  activePhase === 'video'
+                    ? 'bg-white/12 text-white'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="Multi-Act 16:9 & 9:16 HTML/VO Film Studio (Local FFmpeg Engine)"
+              >
+                <Film
+                  className="w-3.5 h-3.5 shrink-0"
+                  style={{ color: activePhase === 'video' ? currentPalette.accent : undefined }}
+                />
+                <span>Film Studio</span>
+              </button>
+              <button
+                type="button"
+                data-testid="header-phase-publish"
                 onClick={() => onPhaseChange('publish')}
                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                   activePhase === 'publish'
@@ -142,19 +162,6 @@ export const Header: React.FC<HeaderProps> = ({
                     · {pendingReviewCount}
                   </span>
                 )}
-              </button>
-              <button
-                type="button"
-                onClick={() => onPhaseChange('video')}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                  activePhase === 'video'
-                    ? 'bg-[#364BDE]/30 text-indigo-100'
-                    : 'text-slate-400 hover:text-indigo-200'
-                }`}
-                title="Open Multi-Project Deterministic Video & Audio Studio"
-              >
-                <Film className="w-3.5 h-3.5 text-[#6b82ff] shrink-0" />
-                <span>Video Studio</span>
               </button>
             </div>
           )}
@@ -189,7 +196,7 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           )}
 
-          {activePhase === 'studio' && (
+          {(activePhase === 'studio' || activePhase === 'video') && (
             <button
               type="button"
               onClick={onOpenThemeCustomizer}

@@ -259,10 +259,11 @@ export const MotionReelViewport: React.FC<MotionReelViewportProps> = ({
           />
 
           {/* Top Overlay Info Bar */}
-          <div className="absolute top-2.5 inset-x-2.5 flex items-center justify-between pointer-events-none">
-            <div className="px-2 py-0.5 rounded-md bg-black/70 backdrop-blur-md border border-white/10 text-[10px] font-mono text-slate-200 flex items-center gap-1.5">
+          <div className="absolute top-2.5 inset-x-2.5 flex items-center justify-between pointer-events-none gap-1.5">
+            <div className="px-2 py-0.5 rounded-md bg-black/75 backdrop-blur-md border border-white/10 text-[10px] font-mono text-slate-200 flex items-center gap-1.5">
               <Film className="w-3 h-3" style={{ color: theme.accent }} />
               <span className="uppercase">{reelConfig.templateId}</span>
+              <span className="text-slate-400">· 9:16 Canvas Reel (In-Browser)</span>
             </div>
 
             {activeScene && (

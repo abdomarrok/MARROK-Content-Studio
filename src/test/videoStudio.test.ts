@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,7 +6,13 @@ import express from 'express';
 import type { Server } from 'node:http';
 import { app as baseApiApp } from '../../api/index.ts';
 import { hashPasswordScrypt, resetAuthStateForTest } from '../lib/security/sessionAuth.ts';
-import { registerVideoStudioRoutes } from '../../video-studio/studio/expressRouter.mjs';
+import {
+  createVideoPreviewToken,
+  getVideoStudioJobsSize,
+  MAX_COMPLETED_JOBS,
+  registerVideoStudioRoutes,
+  resetVideoStudioJobsForTest,
+} from '../../video-studio/studio/expressRouter.mjs';
 import {
   loadProjectConfig,
   ProjectValidationError,
@@ -237,7 +243,7 @@ describe('Video Studio Core Engine & Express Integration', () => {
     });
   });
 
-  describe('4. Express Fail-Closed Auth & Restricted Preview Surface', () => {
+  describe('4. Express Fail-Closed Auth, Capabilities, Concurrency Lock, Write Isolation & Scoped Preview Surface', () => {
     let server: Server;
     let baseUrl = '';
     let bearerToken = '';
@@ -245,12 +251,17 @@ describe('Video Studio Core Engine & Express Integration', () => {
     const prevUser = process.env.ADMIN_USERNAME;
     const prevHash = process.env.ADMIN_PASSWORD_HASH;
     const prevSecret = process.env.SESSION_SECRET;
+    const prevDeployContext = process.env.DEPLOY_CONTEXT;
+    const prevAllowPreviewWrites = process.env.ALLOW_PREVIEW_WRITES;
 
     beforeAll(async () => {
       resetAuthStateForTest();
+      resetVideoStudioJobsForTest();
       process.env.ADMIN_USERNAME = 'video-tester';
       process.env.ADMIN_PASSWORD_HASH = hashPasswordScrypt('test-password-123!');
       process.env.SESSION_SECRET = 'super-secret-signing-key-for-video-studio-tests';
+      delete process.env.DEPLOY_CONTEXT;
+      delete process.env.ALLOW_PREVIEW_WRITES;
 
       const testApp = express();
       testApp.use(baseApiApp);
@@ -275,7 +286,16 @@ describe('Video Studio Core Engine & Express Integration', () => {
       bearerToken = loginData.token;
     });
 
+    afterEach(() => {
+      resetVideoStudioJobsForTest();
+      if (prevDeployContext === undefined) delete process.env.DEPLOY_CONTEXT;
+      else process.env.DEPLOY_CONTEXT = prevDeployContext;
+      if (prevAllowPreviewWrites === undefined) delete process.env.ALLOW_PREVIEW_WRITES;
+      else process.env.ALLOW_PREVIEW_WRITES = prevAllowPreviewWrites;
+    });
+
     afterAll(async () => {
+      resetVideoStudioJobsForTest();
       if (prevUser === undefined) delete process.env.ADMIN_USERNAME;
       else process.env.ADMIN_USERNAME = prevUser;
       if (prevHash === undefined) delete process.env.ADMIN_PASSWORD_HASH;
@@ -286,7 +306,7 @@ describe('Video Studio Core Engine & Express Integration', () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     });
 
-    it('rejects unauthenticated /api/video-studio/* with 401 and allows authenticated requests (200)', async () => {
+    it('rejects unauthenticated /api/video-studio/* with 401 and returns separated serverAvailable/ffmpegAvailable + previewToken when authenticated', async () => {
       const unauthCap = await fetch(`${baseUrl}/api/video-studio/capabilities`);
       expect(unauthCap.status).toBe(401);
 
@@ -298,7 +318,11 @@ describe('Video Studio Core Engine & Express Integration', () => {
       });
       expect(authedCap.status).toBe(200);
       const capJson = await authedCap.json();
+      expect(capJson.serverAvailable).toBe(true);
       expect(capJson.localRenderAvailable).toBe(true);
+      expect(typeof capJson.ffmpegAvailable).toBe('boolean');
+      expect(typeof capJson.previewToken).toBe('string');
+      expect(capJson.previewToken.startsWith('vprev.')).toBe(true);
 
       const authedProj = await fetch(`${baseUrl}/api/video-studio/projects/marrok-brand-film`, {
         headers: { Authorization: `Bearer ${bearerToken}` },
@@ -306,23 +330,187 @@ describe('Video Studio Core Engine & Express Integration', () => {
       expect(authedProj.status).toBe(200);
       const projJson = await authedProj.json();
       expect(projJson.config.id).toBe('marrok-brand-film');
+      expect(typeof projJson.previewToken).toBe('string');
     });
 
-    it('allows /video-projects/:id/scene.html & assets/* while blocking project.json, audio/*, and output/* (403)', async () => {
-      const sceneRes = await fetch(`${baseUrl}/video-projects/marrok-brand-film/scene.html?embed=1`);
-      expect(sceneRes.status).toBe(200);
-
+    it('protects /video-projects/* with session auth AND path-scoped preview token (/video-projects/s/:token/:id/*) while keeping /engine/motion-sdk.js static-only', async () => {
+      // Static SDK remains accessible
       const sdkRes = await fetch(`${baseUrl}/engine/motion-sdk.js`);
       expect(sdkRes.status).toBe(200);
 
-      const blockedConfig = await fetch(`${baseUrl}/video-projects/marrok-brand-film/project.json`);
+      // Unauthenticated /video-projects/:id/scene.html is rejected (401)
+      const unauthSceneRes = await fetch(`${baseUrl}/video-projects/marrok-brand-film/scene.html?embed=1`);
+      expect(unauthSceneRes.status).toBe(401);
+
+      // Invalid or expired path-scoped preview token is rejected (401)
+      const invalidTokenRes = await fetch(
+        `${baseUrl}/video-projects/s/vprev.12345.invalidsig/marrok-brand-film/scene.html?embed=1`
+      );
+      expect(invalidTokenRes.status).toBe(401);
+
+      const expiredToken = createVideoPreviewToken(
+        process.env.SESSION_SECRET!,
+        60,
+        Date.now() - 120_000
+      );
+      const expiredRes = await fetch(
+        `${baseUrl}/video-projects/s/${expiredToken}/marrok-brand-film/scene.html?embed=1`
+      );
+      expect(expiredRes.status).toBe(401);
+
+      // Authenticated with Bearer header on /video-projects/:id/scene.html succeeds (200)
+      const bearerSceneRes = await fetch(`${baseUrl}/video-projects/marrok-brand-film/scene.html?embed=1`, {
+        headers: { Authorization: `Bearer ${bearerToken}` },
+      });
+      expect(bearerSceneRes.status).toBe(200);
+
+      // Authenticated with path-scoped preview token on scene.html AND relative ./assets/* succeeds (200 & 206 Range)
+      const validPreviewToken = createVideoPreviewToken(process.env.SESSION_SECRET!, 600);
+      const scopedSceneRes = await fetch(
+        `${baseUrl}/video-projects/s/${validPreviewToken}/marrok-brand-film/scene.html?embed=1`
+      );
+      expect(scopedSceneRes.status).toBe(200);
+
+      const scopedAssetRangeRes = await fetch(
+        `${baseUrl}/video-projects/s/${validPreviewToken}/marrok-brand-film/assets/52997ef7-be0b-4fdf-8975-07856ea48856.jfif`,
+        {
+          headers: { Range: 'bytes=0-31' },
+        }
+      );
+      expect(scopedAssetRangeRes.status).toBe(206);
+      const rangeBuf = Buffer.from(await scopedAssetRangeRes.arrayBuffer());
+      expect(rangeBuf.length).toBe(32);
+
+      // Even with a valid token, non-preview files (project.json, audio/*, output/*) remain blocked (403)
+      const blockedConfig = await fetch(
+        `${baseUrl}/video-projects/s/${validPreviewToken}/marrok-brand-film/project.json`
+      );
       expect(blockedConfig.status).toBe(403);
 
-      const blockedAudio = await fetch(`${baseUrl}/video-projects/marrok-brand-film/audio/master.wav`);
+      const blockedAudio = await fetch(
+        `${baseUrl}/video-projects/s/${validPreviewToken}/marrok-brand-film/audio/master.wav`
+      );
       expect(blockedAudio.status).toBe(403);
 
-      const blockedOutput = await fetch(`${baseUrl}/video-projects/marrok-brand-film/output/final-16x9.mp4`);
+      const blockedOutput = await fetch(
+        `${baseUrl}/video-projects/s/${validPreviewToken}/marrok-brand-film/output/final-16x9.mp4`
+      );
       expect(blockedOutput.status).toBe(403);
+    });
+
+    it('enforces ALLOW_PREVIEW_WRITES deploy-preview write isolation on mutating /api/video-studio/* requests', async () => {
+      process.env.DEPLOY_CONTEXT = 'deploy-preview';
+      process.env.ALLOW_PREVIEW_WRITES = 'false';
+
+      // Read-only GET still works in preview mode
+      const getRes = await fetch(`${baseUrl}/api/video-studio/projects`, {
+        headers: { Authorization: `Bearer ${bearerToken}` },
+      });
+      expect(getRes.status).toBe(200);
+
+      // Mutating POST/PUT is blocked with 403
+      const blockedJobRes = await fetch(`${baseUrl}/api/video-studio/projects/marrok-brand-film/jobs`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${bearerToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ type: 'noop-test' }),
+      });
+      expect(blockedJobRes.status).toBe(403);
+
+      // Setting ALLOW_PREVIEW_WRITES=true permits the mutation
+      process.env.ALLOW_PREVIEW_WRITES = 'true';
+      const allowedJobRes = await fetch(`${baseUrl}/api/video-studio/projects/marrok-brand-film/jobs`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${bearerToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ type: 'noop-test', holdMs: 20 }),
+      });
+      expect(allowedJobRes.status).toBe(202);
+    });
+
+    it('enforces single-active-job concurrency lock (409 Conflict) and caps completed job history to 50 entries', async () => {
+      // Launch a long-enough noop-test job
+      const firstJobRes = await fetch(`${baseUrl}/api/video-studio/projects/marrok-brand-film/jobs`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${bearerToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ type: 'noop-test', holdMs: 400 }),
+      });
+      expect(firstJobRes.status).toBe(202);
+      const firstJob = await firstJobRes.json();
+      expect(firstJob.jobId).toBeTruthy();
+
+      // Launching a second job while the first is running returns 409 Conflict
+      const conflictRes = await fetch(`${baseUrl}/api/video-studio/projects/marrok-brand-film/jobs`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${bearerToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ type: 'noop-test', holdMs: 50 }),
+      });
+      expect(conflictRes.status).toBe(409);
+      const conflictBody = await conflictRes.json();
+      expect(conflictBody.activeJobId).toBe(firstJob.jobId);
+
+      // Cancel the first job and verify a new job can run
+      const cancelRes = await fetch(`${baseUrl}/api/video-studio/jobs/${firstJob.jobId}/cancel`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${bearerToken}` },
+      });
+      expect(cancelRes.status).toBe(200);
+      await new Promise((r) => setTimeout(r, 30));
+
+      // Run 55 fast jobs sequentially and verify the jobs Map stays capped at MAX_COMPLETED_JOBS (50)
+      for (let i = 0; i < 55; i++) {
+        const res = await fetch(`${baseUrl}/api/video-studio/projects/marrok-brand-film/jobs`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${bearerToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ type: 'noop-test', holdMs: 10 }),
+        });
+        expect(res.status).toBe(202);
+        await new Promise((r) => setTimeout(r, 18));
+      }
+      expect(getVideoStudioJobsSize()).toBeLessThanOrEqual(MAX_COMPLETED_JOBS);
+    });
+
+    it('accepts raw binary and application/json asset uploads without express.json() stream consumption conflict', async () => {
+      const testAssetPath = path.join(
+        getProjectPaths('marrok-brand-film').assetsDir,
+        'vitest-temp-upload.json'
+      );
+      try {
+        const payload = JSON.stringify({ hello: 'video-studio-raw-upload' });
+        const uploadRes = await fetch(
+          `${baseUrl}/api/video-studio/projects/marrok-brand-film/assets?filename=vitest-temp-upload.json&target=assets`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${bearerToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: payload,
+          }
+        );
+        expect(uploadRes.status).toBe(200);
+        const uploadBody = await uploadRes.json();
+        expect(uploadBody.ok).toBe(true);
+        expect(uploadBody.file).toBe('assets/vitest-temp-upload.json');
+
+        const savedText = await fs.readFile(testAssetPath, 'utf8');
+        expect(JSON.parse(savedText)).toEqual({ hello: 'video-studio-raw-upload' });
+      } finally {
+        await fs.rm(testAssetPath, { force: true }).catch(() => {});
+      }
     });
   });
 });

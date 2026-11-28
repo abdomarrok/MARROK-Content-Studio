@@ -27,7 +27,7 @@ Creators provide a single input (topic prompt, engineering summary, architecture
 - **Autonomous Visual Pacing Balancer:** Enforces zero adjacent duplicate diagram layouts across `row` slides by rotating through `['topology', 'stack', 'isolation', 'takeaway']` using the least-used variant.
 - **Self-Healing Canvas Typography:** Auto-fits text inside pills, badges, node cards, and comparison columns using `fitTextInBox`, stepping down font size or smart-wrapping to 2 lines to prevent any overflow without manual edits.
 - **Dynamic Vertical Optical Centering:** Measures exact graphic bottom and bilingual copy block height, distributing vertical breathing room with a 38% top cushion / 62% bottom ratio.
-- **Arabic RTL Line-Height & Margin Polish:** Generous line-heights (1.45x–1.55x) prevent ascender/descender clashes with English text, strictly maintaining the right safe margin ($x \le 945$).
+- **Arabic RTL Line-Height & Margin Polish:** Generous line-heights (1.45x–1.55x) prevent ascender/descender clashes with English text, strictly maintaining the right safe margin (`SAFE_MARGIN_RIGHT = 930`).
 - **Markdown & Syntax Stripping:** Eliminates noisy bolding markers (`**`), header symbols (`#`), and stray ellipsis dots that clutter high-impact mobile slides.
 - **Arabic BiDi Punctuation Linting:** Automatically detects Latin words in Arabic lines and places punctuation on the correct side, eliminating punctuation jump artifacts.
 - **Spec §8 Limit Fitting:** Single source of truth (`CHAR_LIMITS` in `src/lib/qaChecks.ts`) guarantees English headlines stay $\le 45$ chars (`arTitle` $\le 40$) and English body text stays $\le 140$ chars (`arBody` $\le 150$).
@@ -35,12 +35,12 @@ Creators provide a single input (topic prompt, engineering summary, architecture
 - **Pre-Publish QA & Platform Safety Gate:** Runs both structural QA checks (`src/lib/qaChecks.ts`) and platform safety/originality checks (`src/lib/riskChecks.ts`).
 
 ### 🛡️ Slide Layout Awareness & Anti-Collision Engine (`src/lib/canvas/layoutAwareness.ts`)
-MARROK guarantees that slide elements never collide or overlay each other across all 8 slide archetypes:
+MARROK guarantees that slide elements never collide or overlay each other across all 10 slide archetypes:
 - **Zero-Overlap Clearance Guarantee:** Dynamically computes the effective physical bottom of any visual card (factoring in card height, scaling, and $dY$ translations), guaranteeing a minimum $44\text{px}$ positive clearance before the headline starts.
 - **Alphabetic Baseline Compensation:** Offsets canvas font baselines (`firstBaselineY = actualTitleTop + fontSize * 0.82`) so tall capital letters never overlap diagram borders.
 - **Cascading Vertical Flow:** Each subsequent block strictly flows below its preceding neighbor with guaranteed minimum safe gaps (`MIN_GAP_TITLES = 18px`, `MIN_GAP_TITLE_TO_BODY = 36px`, `MIN_GAP_BODIES = 22px`).
 - **Anti-Collision Drag Clamping (`clampElementDrag`):** Restricts viewport pointer dragging, keyboard arrow nudges, and inspector sliders so elements cannot be dragged onto neighboring blocks or outside safe zones.
-- **Footer Ceiling Compression Pass:** Automatically compresses and shifts text stacks if long copy or user offsets approach the TikTok pagination dots at $y = 1710\text{px}$.
+- **Footer Ceiling Compression Pass:** Automatically compresses and shifts text stacks if long copy or user offsets approach the footer ceiling (`SAFE_FOOTER_CEILING_Y = 1428px`).
 
 ### 🖼️ AI Architecture Diagram Studio (`gemini-nano-banana-2.1`)
 - **Native 9:16 Vertical Diagrams:** Powered by `POST /api/generate-image` utilizing configurable Gemini image models (`GEMINI_IMAGE_MODELS`, default `gemini-nano-banana-2.1,gemini-3.1-flash-lite-image`) with `{ aspectRatio: '9:16', imageSize: '1K' }`.
@@ -74,17 +74,20 @@ MARROK guarantees that slide elements never collide or overlay each other across
 - **Posted History Cadence Analysis (`analyzePostHistoryCadence`):** Inspects your posted Vault history (`postStatus === 'posted'`) to prevent consecutive same-color posts on your social grid.
 - **Harmonious Conflict Resolution (`resolveHarmoniousPaletteWithoutRepetition`):** Automatically rotates to the least-used harmonious palette when an AI-synthesized topic matches a recently used accent color, and displays a live **Recommended Next Palette** banner inside the Theme Customizer.
 
-### 🎬 9:16 Motion Reel Studio (`src/lib/motion/`)
-- **Authentic MARROK Slide Chrome in Motion:** Every frame renders MARROK's OLED base background, radial ambient glow, `108px` engineering grid, CAD safe-zone reticles (`SYS_REF // 1080x1920.CAD_SAFE // MOTION_REEL`), glowing `32×32px` `drawMarrokVectorBadge` header + `MARROK` wordmark, elevated dark surface cards, and animated scene pagination footer.
-- **4 Spring-Physics Templates:**
-  - `marrok-slides` (**MARROK Slide Deck**): Animates your full carousel or single-slide deck with orbital hub schematics, 3-stage pipelines, live typing code terminals, counting benchmark metrics with sparklines, and spring-animated bilingual EN/AR headlines and body copy.
-  - `kinetic-text` (**Kinetic Slide Hook**): High-retention staggered Arabic & English typography with MARROK vector badges and surface cards.
-  - `brand-intro` (**MARROK Brand Intro**): Staggered geometric matrix build, radial scatter reveal of the MARROK vector logo, and bilingual slide lockup.
-  - `product-showcase` (**Architecture & Metrics**): Problem hook card, UI assembly, staggered mechanisms, and a 200x metric counter.
-- **48kHz Procedural SFX Synthesizer & Video Exporter:** Synthesizes mathematical sound effects (`click`, `pop`, `thump`, `whoosh`) synced to scene keyframes and exports muxed **1080×1920 WebM/MP4 Video**, **16-bit PCM WAV Audio**, or **Standalone HTML**.
+### 🎬 In-Browser 9:16 Motion Reel (`Create → Reel` · `src/lib/motion/`) & Multi-Act Film Studio (`Film Studio` · `video-studio/`)
+- **In-Browser 9:16 Canvas Motion Reel (`Create → Reel`):**
+  - Renders MARROK's OLED base background, radial ambient glow, `108px` engineering grid, CAD safe-zone reticles (`SYS_REF // 1080x1920.CAD_SAFE // MOTION_REEL`), glowing `32×32px` `drawMarrokVectorBadge` header + `MARROK` wordmark, elevated dark surface cards, and animated scene pagination footer directly in the browser.
+  - **4 Spring-Physics Templates:**
+    - `marrok-slides` (**MARROK Slide Deck**): Animates your full carousel or single-slide deck with orbital hub schematics, 3-stage pipelines, live typing code terminals, counting benchmark metrics with sparklines, and spring-animated bilingual EN/AR headlines and body copy.
+    - `kinetic-text` (**Kinetic Slide Hook**): High-retention staggered Arabic & English typography with MARROK vector badges and surface cards.
+    - `brand-intro` (**MARROK Brand Intro**): Staggered geometric matrix build, radial scatter reveal of the MARROK vector logo, and bilingual slide lockup.
+    - `product-showcase` (**Architecture & Metrics**): Problem hook card, UI assembly, staggered mechanisms, and a 200x metric counter.
+  - **48kHz Procedural SFX Synthesizer & Video Exporter:** Synthesizes mathematical sound effects (`click`, `pop`, `thump`, `whoosh`) synced to scene keyframes and exports muxed **1080×1920 WebM/MP4 Video**, **16-bit PCM WAV Audio**, or **Standalone HTML**.
+- **Multi-Act 16:9 & 9:16 Film Studio (`Film Studio` · `video-studio/`):**
+  - Config-driven (`project.json`) multi-act HTML/DOM stage (`scene.html`) with SHA-256 cached ElevenLabs & Gemini TTS voiceovers, 48kHz 24-bit stereo DSP music + SFX stems, FFmpeg sidechain ducking (`apad` + `asplit=2`), headless Playwright Chromium 60fps rendering (`16:9` & `9:16`), standalone Bundled HTML export, and `ffprobe` + contact-sheet QA.
 
 ### 🚀 Consolidated Publish & Posts Hub — Direct Buffer + Zernio APIs (`src/components/studio/PublishingHubWorkspace.tsx`, `src/components/studio/PostManagerPanel.tsx`)
-Switch between **`1. Create Studio`** and **`2. Publish & Posts (N)`** from the top header to access the flattened **`Inbox → Draft → Schedule`** workspace:
+Switch between **`Create`**, **`Film Studio`**, and **`Publish`** from the top header to access the flattened **`Inbox → Draft → Schedule`** workspace:
 - **100% Direct 4-Channel API Routing:**
   - **Buffer Free GraphQL API (`https://api.buffer.com`):** Directly publishes or schedules carousels and single-slide posts to **Instagram (`@marrok_org`)**, **Facebook (`Marrok (Algiers)`)**, and **LinkedIn (`Marrok`)** (10-slot rolling queue per channel, using `metadata.instagram.type: 'post'` for native multi-slide Instagram carousels).
   - **Zernio Free REST API v1 (`https://zernio.com/api/v1`) & Hosted MCP Server (`https://mcp.zernio.com/mcp`):** Directly publishes or schedules **TikTok Photo Carousels (`@marrokorg`, up to 35 `9:16` slides)** and **Instagram (`@marrok_org`)** with unlimited posts on Zernio's 2-account Free Tier.
@@ -142,7 +145,7 @@ Switch between **`1. Create Studio`** and **`2. Publish & Posts (N)`** from the 
 ## 🚀 Quick Start
 
 ### 1. Prerequisites
-- Node.js `>= 20.0.0` (see `.nvmrc`)
+- Node.js `>= 22.0.0` (see `.nvmrc`)
 - `npm` (single lockfile: `package-lock.json`)
 - (Optional) Google Gemini API Key (app includes a zero-latency deterministic synthesizer fallback that operates without an API key)
 
@@ -198,7 +201,6 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 | `npm run build` | Compiles production bundle with Vite into `/dist` |
 | `npm run start` | Launches server (`NODE_ENV=production npm run start` serves `/dist`) |
 | `npm run clean` | Cleans build artifacts |
-| `npm run video:studio` | Starts the standalone local Video Studio server |
 | `npm run video:new` | Scaffolds a new deterministic video project under `video-studio/projects/` |
 | `npm run video:audio` | Generates voiceovers (with hash cache), DSP stems, and `master.wav` |
 | `npm run video:render` | Renders deterministic video frames via Playwright and FFmpeg |

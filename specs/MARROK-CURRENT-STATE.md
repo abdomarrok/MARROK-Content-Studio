@@ -1,30 +1,31 @@
 # MARROK Content Studio — Current State Specification
 
-**Document Version:** 1.0.0  
+**Document Version:** 1.1.0  
 **Verification Date:** November 2026  
 **Auditor:** Senior Software Architect & Engineering Lead  
-**Scope:** Complete Codebase, Test Suite (172 Tests, 26 Suites), Serverless Backend & Build Artifacts  
+**Scope:** Complete Codebase, Test Suite (35 Test Suites), Local Express Film Studio, Serverless Backend & Build Artifacts  
 
 ---
 
 ## 1. System Status & Verification Summary
 
-The MARROK Content Studio is a high-grade, production-deployed web application combining a deterministic HTML5 Canvas graphics engine, server-side Gemini AI generation with zero-cost fallback cascades, bilingual English-Arabic typography, procedural motion reel synthesis, and multi-channel social media publishing.
+The MARROK Content Studio is a high-grade, production-deployed web application combining a deterministic HTML5 Canvas graphics engine, server-side Gemini AI generation with zero-cost fallback cascades, bilingual English-Arabic typography, in-browser 9:16 procedural motion reel synthesis, multi-act 16:9 & 9:16 HTML/VO Film Studio rendering (`video-studio/`), and multi-channel social media publishing.
 
 ### 1.1 High-Level Status Matrix
 
 | Subsystem / Capability | Implementation Status | Test Coverage | Live Verification Notes |
 | :--- | :---: | :---: | :--- |
 | **HTML5 Canvas Slide Renderer** | **Fully Operational** | 100% (Vitest) | Deterministic pure read-only projection; 1080x1920 @ 95% JPEG quality. |
-| **Safe Zone & Collision Engine** | **Fully Operational** | 100% (Vitest) | `x <= 945`, `y <= 1710` strictly enforced; anti-collision vertical clamping. |
-| **Mobile Typography Floor** | **Fully Operational** | 100% (Vitest) | Minimum $\ge 26\text{px}$ floor enforced across all text elements in `renderSlide.ts`. |
+| **Safe Zone & Collision Engine** | **Fully Operational** | 100% (Vitest) | `SAFE_MARGIN_RIGHT = 930`, `SAFE_FOOTER_CEILING_Y = 1428` strictly enforced; anti-collision vertical clamping. |
+| **Mobile Typography Floor** | **Fully Operational** | 100% (Vitest) | Minimum $\ge 24\text{px}$ title/body/diagram floor ($\ge 22\text{px}$ footer) enforced across all presets. |
 | **Bilingual EN + AR BiDi Layout** | **Fully Operational** | 100% (Vitest) | Native RTL/LTR direction switching, Arabic glyph shaping, and font stacks. |
-| **9 Slide Archetypes** | **Fully Operational** | 100% (Vitest) | `hub`, `row`, `number`, `metric`, `code`, `compare`, `image`, `cta` all render. |
-| **9 Diagram Variants** | **Fully Operational** | 100% (Vitest) | `topology`, `stack`, `isolation`, `takeaway`, `scatter`, `graph`, `clusters`, etc. |
+| **10 Slide Archetypes** | **Fully Operational** | 100% (Vitest) | `hub`, `row`, `subjectPair`, `number`, `metric`, `code`, `compare`, `image`, `poster`, `cta` all render. |
+| **9 Diagram Variants** | **Fully Operational** | 100% (Vitest) | `topology`, `stack`, `isolation`, `takeaway`, `scatter`, `graph`, `clusters`, `split`, `features`. |
 | **AI Generation Key Pool Cascade** | **Fully Operational** | 100% (Vitest) | Multi-key failover -> zero-cost Pollinations fallback -> local offline synthesizer. |
 | **AI Image & Flux Fallback** | **Fully Operational** | 100% (Vitest) | Gemini 9:16 text-to-image with zero-cost Flux fallback when keys expire. |
 | **Single-Slide Video Muxing** | **Fully Operational** | 100% (Vitest) | Browser `MediaRecorder` + audio preservation with MARROK vector chrome. |
-| **9:16 Motion Reel Engine** | **Fully Operational** | 100% (Vitest) | Damped harmonic springs, 48kHz procedural SFX (`click`, `pop`, `thump`, `whoosh`). |
+| **9:16 Motion Reel Engine (`Create → Reel`)** | **Fully Operational** | 100% (Vitest) | In-browser damped harmonic springs, 48kHz procedural SFX (`click`, `pop`, `thump`, `whoosh`). |
+| **Film Studio (`video-studio/`)** | **Fully Operational** | 100% (Vitest) | Multi-act 16:9 & 9:16 deterministic HTML/DOM + ElevenLabs/Gemini VO + FFmpeg sidechain mix & Playwright render (`server.ts`). |
 | **Export Formats (5-in-1 ZIP, JPG)**| **Fully Operational** | 100% (Vitest) | Slides, bilingual captions, first comment, citations, metadata all bundled. |
 | **Neon PostgreSQL Cloud Vault** | **Operational with Fallback**| 100% (Vitest) | Atomic upserts via `JSONB`; auto-falls back to local JSON and IndexedDB. |
 | **Buffer GraphQL Publishing** | **Operational** | Unit Tested | Direct API dispatch for Instagram, Facebook, LinkedIn (10-post free queue). |
@@ -45,9 +46,9 @@ The MARROK Content Studio is a high-grade, production-deployed web application c
   - Body paragraph gaps: $\ge 22\text{px}$
 - **Bounds Synchronization (`layoutBounds.ts`):** Computes exact bounding boxes for user dragging and inspector selection overlays. Hit-testing is accurate to the pixel.
 - **Safe Zones (`constants.ts`):** Respects TikTok and Instagram UI overlays:
-  - Top CAD margin: $y \ge 120\text{px}$
-  - Right interaction strip clearance: $x \le 945\text{px}$
-  - Bottom description/music badge clearance: $y \le 1710\text{px}$
+  - Top header safe margin: `SAFE_HEADER_Y = 206px`
+  - Left/Right margins: `SAFE_MARGIN_LEFT = 84px`, `SAFE_MARGIN_RIGHT = 930px`
+  - Bottom footer ceiling: `SAFE_FOOTER_CEILING_Y = 1428px` (`SAFE_MAX_Y = 1650px`)
 
 ### 2.2 Bilingual Typography & Formatting
 - **English/Arabic Parity:** Every slide maintains synchronized bilingual fields (`enTitle`/`arTitle`, `enBody`/`arBody`, `enCategory`/`arCategory`).
@@ -55,7 +56,7 @@ The MARROK Content Studio is a high-grade, production-deployed web application c
   - English: `system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`
   - Arabic: `"Cairo", "Tajawal", "Noto Sans Arabic", "Segoe UI", sans-serif`
   - Code: `"JetBrains Mono", "Fira Code", monospace`
-- **Text Fitting (`textLayout.ts`):** Binary search dynamic font scaling with hard floor at $26\text{px}$. If text cannot fit at $26\text{px}$, lines are intelligently wrapped or clipped with an ellipsis indicator rather than breaking layout.
+- **Text Fitting (`textLayout.ts`):** Dynamic font scaling with hard floor at $24\text{px}$ ($22\text{px}$ for footers). If text cannot fit at $24\text{px}$, lines are intelligently wrapped or clipped with an ellipsis indicator rather than breaking layout.
 
 ### 2.3 AI Synthesis Key Cascade (`api/controllers/generateController.ts`)
 - **Key Hierarchy:** Client Key $\to$ Client Backup $\to$ Server Key $\to$ Server Backup $\to$ Key Pool.
@@ -150,7 +151,7 @@ The MARROK Content Studio is a high-grade, production-deployed web application c
    `renderSlide.ts` must remain pure and synchronous. Never introduce async operations, DOM queries, or network requests into the canvas rendering cycle.
 
 3. **Mobile Readability Floor:**
-   Text elements must never be scaled below $26\text{px}$, regardless of content length. If copy exceeds available clearance, it must be truncated with an ellipsis or reformatted via layout awareness.
+   Title, body, and diagram label elements must never be scaled below $24\text{px}$ ($\ge 22\text{px}$ for footers), regardless of content length. If copy exceeds available clearance, it must be truncated with an ellipsis or reformatted via layout awareness.
 
 4. **Node/Browser Decoupling:**
    Shared utility files (e.g. `src/lib/publish/tiktokTitle.ts`) must remain pure string utilities with zero browser or canvas imports so they compile cleanly in Vercel's Node.js runtime without DOM errors.
@@ -159,12 +160,10 @@ The MARROK Content Studio is a high-grade, production-deployed web application c
 
 ## 6. Verification Test Baseline
 
-The codebase currently passes all regression tests:
+The codebase passes all regression and architecture boundary tests:
 ```bash
-npm test -- --run
+npm test
 ```
-- **Test Files:** 27 passed (27)
-- **Tests:** 175 passed (175)
-- **Duration:** 5.57s
+- **Test Files:** 61 passed (61) — 470 tests passed
 - **Pass Rate:** 100%
 

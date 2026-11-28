@@ -14,7 +14,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
@@ -35,6 +35,9 @@ jobs:
 
       - name: Typecheck & Lint
         run: npm run lint
+
+      - name: Video Studio Syntax & HTML Script Lint
+        run: npm run video:lint
 
       - name: Run Vitest unit & integration suite
         run: npm test

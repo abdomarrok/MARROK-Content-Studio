@@ -2,32 +2,32 @@
 
 ## Quick facts
 - React 19 + TypeScript 7, Vite 8, Tailwind v4, Express (`server.ts` + `api/index.ts`), `@google/genai`; single npm package `marrok-content-studio`, no workspaces. Node `>=22` (`.nvmrc` = 22).
-- Path alias `@/*` -> repo root (tsconfig + vite). HTTP flow: `server.ts` -> Express `api/index.ts` + Vite middleware (dev when `NODE_ENV !== 'production'`) or `dist/` static (prod). UI flow: `src/main.tsx` -> `src/App.tsx` (`AuthGateModal`, lazy modals) -> Phase 1 `src/components/AutonomousStudio.tsx`, Phase 2 `src/components/studio/PublishingHubWorkspace.tsx`, or Phase 3 `src/components/studio/video/VideoStudioWorkspace.tsx` (local Express Video Studio).
+- Path alias `@/*` -> repo root (tsconfig + vite). HTTP flow: `server.ts` -> Express `api/index.ts` + Vite middleware (dev when `NODE_ENV !== 'production'`) or `dist/` static (prod). UI flow: `src/main.tsx` -> `src/App.tsx` (`AuthGateModal`, lazy modals) -> top-bar workflow **Create** (`src/components/AutonomousStudio.tsx`) -> **Film Studio** (`src/components/studio/video/VideoStudioWorkspace.tsx`, local Express multi-act 16:9 & 9:16 HTML/VO engine) -> **Publish** (`src/components/studio/PublishingHubWorkspace.tsx`).
 - Shared types `src/types.ts`; palettes `src/lib/theme/palettes.ts`; feed color cadence `src/lib/theme/cadenceEngine.ts`. Five canvas presets (`tiktok-9:16`, `ig-4:5`, `ig-3:4`, `ig-1:1`, `ig-9:16`) and four post formats (`PostFormat = 'carousel' | 'single' | 'meme' | 'reel'`).
 
 ## Commands
 - Install: `npm install` (`.npmrc` sets `legacy-peer-deps=true`; `package-lock.json` is the only lockfile).
 - `npm run dev` — Express + Vite on `http://localhost:3000`, binds `0.0.0.0` (`PORT` overrides).
-- `npm run lint` / `npm run typecheck` — both `tsc --noEmit`. `npm test` — Vitest (jsdom, `isolate: false`; 35 specs). Single file: `npx vitest run src/lib/qaAndRiskChecks.test.ts`; filter: `npm test -- <pattern>`; watch: `npm run test:watch`.
+- `npm run lint` / `npm run typecheck` — both `tsc --noEmit`. `npm test` — Vitest (jsdom, `isolate: false`; 61 specs / 470 tests). Single file: `npx vitest run src/lib/qaAndRiskChecks.test.ts`; filter: `npm test -- <pattern>`; watch: `npm run test:watch`.
 - `npm run test:e2e` — Playwright (`e2e/smoke.spec.ts`), auto-starts `npx tsx server.ts` on `:3000`, mobile 390px + desktop projects. Excluded from Vitest and not run by CI.
 - `npm run build` — production bundle -> `dist/`. `npm run preview`, `npm run clean` as defined.
 - `npm run start` — does **not** set `NODE_ENV`; without it it runs Vite middleware, not `dist/`. Production: `$env:NODE_ENV='production'; npm run start` (PowerShell).
 - `npm run hash-password` — masked scrypt hash for `ADMIN_PASSWORD_HASH`.
-- **Merged Video Studio (`video-studio/`)**:
+- **Merged Film Studio (`video-studio/`)**:
   - `npm run video:new -- <id> [--name "..."] [--duration 15]` — scaffold a new deterministic video project under `video-studio/projects/<id>/`.
   - `npm run video:audio -- --project <id> [--act <actId>] [--force]` — SHA-256 cached ElevenLabs/Gemini VO + procedural DSP stems + FFmpeg `apad` + `asplit=2` mix (`audio/master.wav`).
   - `npm run video:render -- --project <id> [--fast]` — Playwright Chromium -> FFmpeg silent MP4 (`--fast` uses 720p/30fps).
   - `npm run video:build -- --project <id> [--vertical]` — full VO -> DSP -> Mix -> Render -> Mux -> 9:16 Vertical -> QA pipeline.
   - `npm run video:qa -- --project <id>` — `ffprobe` validation + `output/qa-sheet.png` contact sheet.
   - `npm run video:lint` — syntax & inline `<script>` checks across `video-studio/`.
-  - Video Studio Express routes (`video-studio/studio/expressRouter.mjs`) mount **only** in `server.ts` (never in `api/`) so `/api` remains at 11 files for Vercel Hobby limits while still enforcing `api/index.ts`'s fail-closed auth gate. See `video-studio/AGENTS.md` and `specs/video-studio-merge.md`.
-- Before finishing run `npm run lint` + `npm test` (add `npm run build` for bundling/import regressions). CI (`.github/workflows/ci.yml`) runs install, lint, test, build on Node from `.nvmrc`.
+  - Film Studio Express routes (`video-studio/studio/expressRouter.mjs`) mount **only** in `server.ts` (never in `api/`) so `/api` remains at 11 files for Vercel Hobby limits while enforcing `api/index.ts`'s fail-closed auth gate, path-scoped preview token auth (`/video-projects/s/:token/:id/*`), single-active-job concurrency locking (`409`), and `fs.createReadStream` streaming. See `video-studio/AGENTS.md` and `specs/video-studio-merge.md`.
+- Before finishing run `npm run lint` + `npm run video:lint` + `npm test` (add `npm run build` for bundling/import regressions). CI (`.github/workflows/ci.yml`) runs install, lint, `video:lint`, test, build on Node from `.nvmrc`.
 
 ## Auth & security gate
 - Protected `/api/*` routes fail closed (`503`) until `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH` (scrypt), and `SESSION_SECRET` (>=16 chars) are set. Only `/api/health`, `/health`, and `/api/auth/*` are unauthenticated. Login sets `__Host-marrok_session`; clients may also send `Authorization: Bearer <token>` (iframe token in `sessionStorage` key `marrok_iframe_session_token_v1`). Local `.env` supplies these; Vitest tests set their own.
 - Cron/webhook callers bypass the session only with `x-api-secret: API_SHARED_SECRET`; the Telegram webhook additionally validates `x-telegram-bot-api-secret-token` against `TELEGRAM_WEBHOOK_SECRET` (`src/lib/security/sessionAuth.ts`).
 - CORS is a strict allowlist (`ALLOWED_ORIGINS` / `ALLOWED_ORIGIN` / `APP_URL` -> `src/lib/security/corsPolicy.ts`; wildcard `*` rejected; unknown Origin -> `403`). Server Gemini keys are only exposed to authenticated requests or a matching `x-api-secret`.
-- Deploy previews/branch deploys reject mutating `/api/posts` and `/api/publish/*` unless `ALLOW_PREVIEW_WRITES=true` (`src/lib/security/env.ts`).
+- Deploy previews/branch deploys reject mutating `/api/posts`, `/api/publish/*`, and `/api/video-studio/*` unless `ALLOW_PREVIEW_WRITES=true` (`src/lib/security/env.ts`).
 
 ## Deployment & API surface
 - Vercel (`vercel.json`): rewrites `/api/*` -> `/api/index`, SPA fallback `/(.*)` -> `/index.html`; `api/index.ts` restores the real path from `x-matched-path`/`x-forwarded-uri`. Preserve this.

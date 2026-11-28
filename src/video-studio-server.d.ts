@@ -1,5 +1,10 @@
 declare module '*video-studio/studio/expressRouter.mjs' {
   import type { Express } from 'express';
+  export const MAX_COMPLETED_JOBS: number;
+  export function createVideoPreviewToken(sessionSecret: string, ttlSeconds?: number, nowMs?: number): string;
+  export function verifyVideoPreviewOrSessionToken(token: string, authCfg: any, nowMs?: number): boolean;
+  export function resetVideoStudioJobsForTest(): void;
+  export function getVideoStudioJobsSize(): number;
   export function registerVideoStudioRoutes(app: Express): void;
 }
 

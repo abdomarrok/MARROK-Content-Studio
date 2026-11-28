@@ -16,7 +16,9 @@ import {
   AlertTriangle,
   Square,
   Sparkles,
+  FileCode2,
 } from 'lucide-react';
+import { DEFAULT_PALETTES, ThemePalette } from '../../../types.ts';
 import { withClientAuthHeaders } from '../../../lib/security/clientSessionToken.ts';
 
 interface VoiceSettings {
@@ -119,6 +121,7 @@ interface ProjectSummary {
 
 interface ProjectDetails {
   config: ProjectConfig;
+  previewToken?: string | null;
   stems: {
     acts: StemEntry[];
     music: StemEntry | null;
@@ -149,20 +152,25 @@ interface ProjectDetails {
 }
 
 interface VideoStudioWorkspaceProps {
+  theme?: ThemePalette;
   onShowToast: (msg: string) => void;
   onAuthRequired?: () => void;
 }
 
 export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
+  theme = DEFAULT_PALETTES.teal,
   onShowToast,
   onAuthRequired,
 }) => {
+  const accentColor = theme?.accent || '#37E2C0';
+
   const [capabilities, setCapabilities] = useState<{
     checked: boolean;
-    localRenderAvailable: boolean;
+    serverAvailable: boolean;
     ffmpegAvailable: boolean;
-  }>({ checked: false, localRenderAvailable: true, ffmpegAvailable: false });
+  }>({ checked: false, serverAvailable: true, ffmpegAvailable: false });
 
+  const [previewToken, setPreviewToken] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string>('marrok-brand-film');
   const [details, setDetails] = useState<ProjectDetails | null>(null);
@@ -277,6 +285,9 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
       const data = (await res.json()) as ProjectDetails;
       setDetails(data);
       setDraftConfig(structuredClone(data.config));
+      if (data.previewToken) {
+        setPreviewToken(data.previewToken);
+      }
 
       // Load authenticated audio/master.wav and output/qa-sheet.png blobs
       if (masterBlobRef.current) {
@@ -326,19 +337,23 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
     try {
       const capRes = await authFetch('/api/video-studio/capabilities', { cache: 'no-store' });
       if (capRes.status === 404) {
-        setCapabilities({ checked: true, localRenderAvailable: false, ffmpegAvailable: false });
+        setCapabilities({ checked: true, serverAvailable: false, ffmpegAvailable: false });
         return;
       }
       if (!capRes.ok) {
-        setCapabilities({ checked: true, localRenderAvailable: false, ffmpegAvailable: false });
+        setCapabilities({ checked: true, serverAvailable: false, ffmpegAvailable: false });
         return;
       }
       const cap = await capRes.json();
+      const isServerUp = Boolean(cap.serverAvailable ?? cap.localRenderAvailable);
       setCapabilities({
         checked: true,
-        localRenderAvailable: Boolean(cap.localRenderAvailable),
+        serverAvailable: isServerUp,
         ffmpegAvailable: Boolean(cap.ffmpegAvailable),
       });
+      if (cap.previewToken) {
+        setPreviewToken(String(cap.previewToken));
+      }
 
       const listRes = await authFetch('/api/video-studio/projects', { cache: 'no-store' });
       if (!listRes.ok) return;
@@ -351,7 +366,7 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
         await loadProjectDetails(initial);
       }
     } catch {
-      setCapabilities({ checked: true, localRenderAvailable: false, ffmpegAvailable: false });
+      setCapabilities({ checked: true, serverAvailable: false, ffmpegAvailable: false });
     }
   }, [authFetch, loadProjectDetails]);
 
@@ -463,12 +478,15 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
     }
     setDetails(data.project);
     setDraftConfig(structuredClone(data.project.config));
+    if (data.project?.previewToken) {
+      setPreviewToken(data.project.previewToken);
+    }
     onShowToast('✓ Saved project.json');
     return true;
   };
 
   const handleRegenerateVo = async (actId: string | null = null) => {
-    if (isBusyAudio) return;
+    if (isBusyAudio || !capabilities.ffmpegAvailable) return;
     setIsBusyAudio(true);
     try {
       const saved = await handleSaveConfig();
@@ -491,7 +509,7 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
   };
 
   const handleRebuildMix = async () => {
-    if (isBusyAudio) return;
+    if (isBusyAudio || !capabilities.ffmpegAvailable) return;
     setIsBusyAudio(true);
     try {
       const res = await authFetch(`/api/video-studio/projects/${encodeURIComponent(selectedId)}/audio/mix`, {
@@ -536,6 +554,10 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
   };
 
   const handleBinaryUpload = async (file: File, filename: string, target: 'assets' | 'audio') => {
+    if (target === 'audio' && !capabilities.ffmpegAvailable) {
+      onShowToast('⚠️ Audio stem conversion requires local FFmpeg on PATH');
+      return;
+    }
     try {
       const res = await authFetch(
         `/api/video-studio/projects/${encodeURIComponent(selectedId)}/assets?filename=${encodeURIComponent(filename)}&target=${target}`,
@@ -548,6 +570,9 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Upload failed');
       await loadProjectDetails(selectedId);
+      if (target === 'assets') {
+        setIframeEpoch((n) => n + 1);
+      }
       onShowToast(`✓ Uploaded ${data.file}`);
     } catch (err) {
       onShowToast(`⚠️ ${err instanceof Error ? err.message : 'Upload failed'}`);
@@ -567,7 +592,27 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   };
 
+  const handleExportBundledHtml = () => {
+    const win = iframeRef.current?.contentWindow as
+      | (Window & { exportBundledHTML?: () => Promise<void> | void })
+      | null;
+    try {
+      if (win && typeof win.exportBundledHTML === 'function') {
+        void win.exportBundledHTML();
+        onShowToast('✓ Exporting standalone bundled HTML from stage...');
+        return;
+      }
+    } catch {
+      // fallback below
+    }
+    onShowToast('Stage preview is still loading — try again in a moment.');
+  };
+
   const handleStartJob = async (type: 'render-fast' | 'render' | 'vertical' | 'build' | 'qa') => {
+    if (!capabilities.ffmpegAvailable) {
+      onShowToast('⚠️ Local FFmpeg & ffprobe on PATH are required for rendering and QA jobs.');
+      return;
+    }
     if (jobAbortRef.current) jobAbortRef.current.abort();
     const abortCtrl = new AbortController();
     jobAbortRef.current = abortCtrl;
@@ -644,7 +689,9 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
       }
     } catch (err) {
       if ((err as Error)?.name !== 'AbortError') {
-        setJobStatus(`Error: ${err instanceof Error ? err.message : 'Stream error'}`);
+        const msg = err instanceof Error ? err.message : 'Stream error';
+        setJobStatus(`Error: ${msg}`);
+        onShowToast(`⚠️ ${msg}`);
       }
       setActiveJobId(null);
     }
@@ -685,14 +732,23 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
     }
   };
 
-  if (capabilities.checked && !capabilities.localRenderAvailable) {
+  if (capabilities.checked && !capabilities.serverAvailable) {
     return (
       <div className="flex-1 flex items-center justify-center p-6">
-        <div className="max-w-lg w-full rounded-2xl border border-white/15 bg-[#1A1A2E] p-6 text-center space-y-3">
-          <Film className="w-8 h-8 text-[#364BDE] mx-auto" />
-          <h2 className="text-lg font-bold text-white">Local Video Studio Engine Required</h2>
+        <div className="max-w-lg w-full rounded-2xl border border-[#1E2833] bg-[#0b1118] p-6 text-center space-y-3">
+          <Film className="w-8 h-8 mx-auto" style={{ color: accentColor }} />
+          <h2 className="text-lg font-bold text-white">Local Film Studio Server Required</h2>
           <p className="text-xs text-slate-300 leading-relaxed">
-            Deterministic Playwright + FFmpeg rendering, voiceover caching, and QA contact-sheet generation run on the local Express server (<code className="text-indigo-300">npm run dev</code>) or CLI (<code className="text-indigo-300">npm run video:build -- --project marrok-brand-film --vertical</code>).
+            Multi-act HTML/VO film authoring, voiceover caching, and Playwright + FFmpeg rendering run on the local Express server (
+            <code className="px-1.5 py-0.5 rounded bg-[#121A21] border border-[#1E2833] text-white font-mono">
+              npm run dev
+            </code>
+            ) or CLI (
+            <code className="px-1.5 py-0.5 rounded bg-[#121A21] border border-[#1E2833] text-white font-mono">
+              npm run video:build -- --project marrok-brand-film --vertical
+            </code>
+            ). For in-browser 9:16 social reels, use{' '}
+            <strong className="text-white">Create → Reel</strong>.
           </p>
         </div>
       </div>
@@ -702,21 +758,35 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
   const cfg = draftConfig || details?.config;
   const totalFrames = cfg ? Math.round(cfg.video.durationSec * cfg.video.fps) : 0;
   const curFrame = cfg ? Math.round(previewTime * cfg.video.fps) : 0;
+  const ffmpegDisabledReason = !capabilities.ffmpegAvailable
+    ? 'Requires local FFmpeg & ffprobe on PATH'
+    : undefined;
+
+  const iframeBasePath = previewToken
+    ? `/video-projects/s/${encodeURIComponent(previewToken)}/${encodeURIComponent(selectedId)}/scene.html`
+    : `/video-projects/${encodeURIComponent(selectedId)}/scene.html`;
 
   return (
-    <div className="flex-1 flex flex-col gap-4 min-h-0">
+    <div className="flex-1 flex flex-col gap-3 min-h-0">
       {/* Top Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-[#1A1A2E] px-4 py-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#1E2833] bg-[#0b1118] px-4 py-2.5">
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2 text-xs font-bold tracking-wider uppercase text-indigo-300">
-            <Film className="w-4 h-4 text-[#364BDE]" />
-            <span>Video Studio</span>
+          <div className="flex items-center gap-2 text-xs font-bold tracking-wider uppercase text-white">
+            <Film className="w-4 h-4 shrink-0" style={{ color: accentColor }} />
+            <span>Film Studio</span>
+            <span
+              data-testid="film-studio-engine-distinction"
+              className="hidden sm:inline-flex items-center px-2 py-0.5 rounded-md bg-[#121A21] border border-[#1E2833] text-[10px] font-mono font-normal normal-case tracking-normal text-slate-300"
+              title="Multi-Act 16:9 & 9:16 HTML/DOM + Voiceover engine (distinct from Create → Reel's in-browser 9:16 Canvas Motion Reel)"
+            >
+              Multi-Act 16:9 &amp; 9:16 HTML/VO · Local FFmpeg Engine
+            </span>
           </div>
           <select
             value={selectedId}
             onChange={(e) => handleSelectProject(e.target.value)}
             aria-label="Select video project"
-            className="rounded-lg border border-white/15 bg-[#0D0D0D] px-3 py-1.5 text-xs text-white"
+            className="rounded-lg border border-[#1E2833] bg-[#080d11] px-3 py-1.5 text-xs text-white focus:outline-none"
           >
             {projects.map((p) => (
               <option key={p.id} value={p.id}>
@@ -727,20 +797,20 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
           <button
             type="button"
             onClick={() => setIsNewModalOpen(true)}
-            className="flex items-center gap-1 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 px-2.5 py-1.5 text-xs font-semibold text-white cursor-pointer"
+            className="flex items-center gap-1 rounded-lg border border-[#1E2833] bg-[#121A21] hover:bg-white/[0.08] px-2.5 py-1.5 text-xs font-semibold text-white cursor-pointer transition-colors"
           >
-            <Plus className="w-3.5 h-3.5" /> New Project
+            <Plus className="w-3.5 h-3.5" style={{ color: accentColor }} /> New Project
           </button>
         </div>
 
         <div className="flex items-center gap-2 text-[11px] font-mono">
           {cfg && (
-            <span className="px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-slate-300">
+            <span className="px-2.5 py-1 rounded-lg bg-[#121A21] border border-[#1E2833] text-slate-300">
               {cfg.video.width}×{cfg.video.height} · {cfg.video.fps}fps · {cfg.video.durationSec}s
             </span>
           )}
           <span
-            className={`px-2.5 py-1 rounded-full border ${
+            className={`px-2.5 py-1 rounded-lg border ${
               masterAudioUrl
                 ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-300'
                 : 'border-amber-400/40 bg-amber-500/10 text-amber-300'
@@ -751,20 +821,60 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
         </div>
       </div>
 
+      {/* Graceful Degradation Notice when FFmpeg is not available in the container */}
+      {capabilities.checked && capabilities.serverAvailable && !capabilities.ffmpegAvailable && (
+        <div
+          role="status"
+          data-testid="film-studio-ffmpeg-notice"
+          className="flex flex-wrap items-center justify-between gap-2.5 px-3.5 py-2 rounded-xl border border-amber-500/30 bg-amber-500/[0.07] text-xs text-amber-100"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <div className="min-w-0">
+              <span className="font-semibold text-amber-200">Preview &amp; Script Mode Active</span>
+              <span aria-hidden="true" className="text-amber-500/60 mx-1.5">·</span>
+              <span className="text-amber-100/90">
+                FFmpeg/ffprobe were not detected on <code className="font-mono">PATH</code> in this container. Interactive 60fps HTML stage preview,{' '}
+                <code className="font-mono">project.json</code> editing, and Bundled HTML export work normally; audio mixing &amp; MP4 rendering require local FFmpeg.
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleExportBundledHtml}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-amber-400/40 bg-amber-500/20 hover:bg-amber-500/30 text-[11px] font-semibold text-amber-100 cursor-pointer shrink-0 transition-colors"
+          >
+            <FileCode2 className="w-3.5 h-3.5" />
+            <span>Export Bundled HTML</span>
+          </button>
+        </div>
+      )}
+
       {/* Main 2-Column Workspace */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1 min-h-0">
         {/* Left: Synchronized Stage Preview */}
-        <section className="lg:col-span-7 rounded-xl border border-white/10 bg-[#1A1A2E] flex flex-col overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-white/10 bg-[#0D0D0D]/50 flex items-center justify-between gap-2 flex-wrap">
+        <section className="lg:col-span-7 rounded-xl border border-[#1E2833] bg-[#0b1118] flex flex-col overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-[#1E2833] bg-[#080d11]/80 flex items-center justify-between gap-2 flex-wrap">
             <div>
               <div className="text-sm font-bold text-white">Synchronized Stage Preview</div>
               <div className="text-[11px] text-slate-400">
                 {masterAudioUrl
                   ? 'Master clock locked to audio/master.wav'
-                  : 'Silent clock (rebuild audio mix for voiceover + music sync)'}
+                  : capabilities.ffmpegAvailable
+                  ? 'Silent clock (rebuild audio mix for voiceover + music sync)'
+                  : 'Silent 60fps DOM clock (FFmpeg required to build audio/master.wav)'}
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={handleExportBundledHtml}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-[#1E2833] bg-[#121A21] hover:bg-white/[0.08] text-xs font-medium text-slate-200 cursor-pointer transition-colors"
+                title="Bundle scene.html and all project assets into a standalone self-contained HTML file"
+              >
+                <FileCode2 className="w-3.5 h-3.5" style={{ color: accentColor }} />
+                <span>Bundled HTML</span>
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -772,18 +882,19 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                   setPreviewAspect((a) => (a === '16:9' ? '9:16' : '16:9'));
                   setIframeEpoch((n) => n + 1);
                 }}
-                className="px-2.5 py-1 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-xs font-medium text-slate-200 cursor-pointer"
+                className="px-2.5 py-1 rounded-lg border border-[#1E2833] bg-[#121A21] hover:bg-white/[0.08] text-xs font-medium text-slate-200 cursor-pointer transition-colors"
               >
                 Aspect: {previewAspect}
               </button>
               <button
                 type="button"
                 onClick={() => setSafeZonesVisible((v) => !v)}
-                className={`px-2.5 py-1 rounded-lg border text-xs font-medium cursor-pointer ${
+                className={`px-2.5 py-1 rounded-lg border text-xs font-medium cursor-pointer transition-colors ${
                   safeZonesVisible
-                    ? 'border-[#364BDE] bg-[#364BDE]/25 text-indigo-200'
-                    : 'border-white/15 bg-white/5 text-slate-200'
+                    ? 'border-white/30 bg-white/12 text-white'
+                    : 'border-[#1E2833] bg-[#121A21] text-slate-300 hover:text-white'
                 }`}
+                style={safeZonesVisible ? { borderColor: accentColor, color: accentColor } : undefined}
               >
                 Safe-Zones: {safeZonesVisible ? 'On' : 'Off'}
               </button>
@@ -792,24 +903,30 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
 
           <div className="p-4 flex-1 flex flex-col justify-between gap-3">
             <div
-              className={`relative bg-black rounded-lg overflow-hidden border border-white/10 mx-auto w-full ${
+              className={`relative bg-[#080d11] rounded-lg overflow-hidden border border-[#1E2833] mx-auto w-full ${
                 previewAspect === '9:16' ? 'max-w-[300px] aspect-[9/16]' : 'aspect-video'
               }`}
             >
               <iframe
                 ref={iframeRef}
-                key={`${selectedId}-${previewAspect}-${iframeEpoch}`}
-                src={`/video-projects/${encodeURIComponent(selectedId)}/scene.html?embed=1${
+                key={`${selectedId}-${previewAspect}-${iframeEpoch}-${Boolean(previewToken)}`}
+                src={`${iframeBasePath}?embed=1${
                   previewAspect === '9:16' ? '&aspect=9:16' : ''
                 }&e=${iframeEpoch}`}
-                title="Video Studio Scene Preview"
+                title="Film Studio Scene Preview"
                 className="w-full h-full border-0 block"
                 onLoad={() => syncStageTime(previewTimeRef.current)}
               />
               {safeZonesVisible && (
                 <div className="absolute inset-0 pointer-events-none z-10">
-                  <div className="absolute inset-[12%_10%_22%_8%] border border-dashed border-[#364BDE] bg-[#364BDE]/5 rounded-lg">
-                    <span className="absolute top-1.5 left-2 text-[10px] font-mono bg-[#0D0D0D]/80 text-indigo-200 px-1.5 py-0.5 rounded">
+                  <div
+                    className="absolute inset-[12%_10%_22%_8%] border border-dashed rounded-lg"
+                    style={{ borderColor: accentColor, backgroundColor: `${accentColor}10` }}
+                  >
+                    <span
+                      className="absolute top-1.5 left-2 text-[10px] font-mono bg-[#080d11]/90 px-1.5 py-0.5 rounded"
+                      style={{ color: accentColor }}
+                    >
                       TikTok / Reels Safe Zone
                     </span>
                   </div>
@@ -829,7 +946,8 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                 <button
                   type="button"
                   onClick={() => (isPlaying ? stopPlayback() : startPlayback())}
-                  className="flex items-center gap-1.5 rounded-lg bg-[#364BDE] hover:bg-[#4A5FF0] px-3 py-1.5 text-xs font-semibold text-white cursor-pointer"
+                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-slate-950 cursor-pointer transition-opacity hover:opacity-90"
+                  style={{ backgroundColor: accentColor }}
                 >
                   {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
                   {isPlaying ? 'Pause' : 'Play'}
@@ -840,7 +958,7 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                     stopPlayback();
                     if (cfg) syncStageTime(previewTimeRef.current - 1 / cfg.video.fps);
                   }}
-                  className="rounded-lg border border-white/15 bg-white/5 px-2 py-1.5 text-xs text-slate-200 cursor-pointer"
+                  className="rounded-lg border border-[#1E2833] bg-[#121A21] hover:bg-white/[0.08] px-2 py-1.5 text-xs text-slate-200 cursor-pointer"
                   title="Step back 1 frame"
                 >
                   <SkipBack className="w-3.5 h-3.5" />
@@ -851,7 +969,7 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                     stopPlayback();
                     if (cfg) syncStageTime(previewTimeRef.current + 1 / cfg.video.fps);
                   }}
-                  className="rounded-lg border border-white/15 bg-white/5 px-2 py-1.5 text-xs text-slate-200 cursor-pointer"
+                  className="rounded-lg border border-[#1E2833] bg-[#121A21] hover:bg-white/[0.08] px-2 py-1.5 text-xs text-slate-200 cursor-pointer"
                   title="Step forward 1 frame"
                 >
                   <SkipForward className="w-3.5 h-3.5" />
@@ -866,7 +984,8 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                     stopPlayback();
                     syncStageTime(Number(e.target.value));
                   }}
-                  className="flex-1 min-w-[120px] accent-[#364BDE]"
+                  className="flex-1 min-w-[120px]"
+                  style={{ accentColor }}
                 />
                 <span className="font-mono text-xs tabular-nums text-slate-300">
                   {previewTime.toFixed(2).padStart(5, '0')}s · Frame {curFrame}/{totalFrames}
@@ -886,11 +1005,16 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                         stopPlayback();
                         syncStageTime(act.startSec);
                       }}
-                      className={`px-2 py-1 rounded text-[11px] font-mono cursor-pointer border ${
+                      className={`px-2 py-1 rounded text-[11px] font-mono cursor-pointer border transition-colors ${
                         active
-                          ? 'bg-[#364BDE] border-[#364BDE] text-white'
-                          : 'bg-[#0D0D0D] border-white/10 text-slate-300 hover:border-white/25'
+                          ? 'text-slate-950 font-bold'
+                          : 'bg-[#080d11] border-[#1E2833] text-slate-300 hover:border-white/25'
                       }`}
+                      style={
+                        active
+                          ? { backgroundColor: accentColor, borderColor: accentColor }
+                          : undefined
+                      }
                     >
                       {act.id} ({act.startSec}s)
                     </button>
@@ -902,27 +1026,29 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
         </section>
 
         {/* Right: Script/Mixer & Build/QA Console */}
-        <section className="lg:col-span-5 rounded-xl border border-white/10 bg-[#1A1A2E] flex flex-col min-h-0 overflow-hidden">
-          <div className="flex border-b border-white/10 bg-[#0D0D0D]/40">
+        <section className="lg:col-span-5 rounded-xl border border-[#1E2833] bg-[#0b1118] flex flex-col min-h-0 overflow-hidden">
+          <div className="flex border-b border-[#1E2833] bg-[#080d11]/80">
             <button
               type="button"
               onClick={() => setActiveTab('script')}
-              className={`flex-1 py-2.5 text-xs font-bold border-b-2 cursor-pointer ${
+              className={`flex-1 py-2.5 text-xs font-bold border-b-2 cursor-pointer transition-colors ${
                 activeTab === 'script'
-                  ? 'text-white border-[#364BDE] bg-[#364BDE]/10'
-                  : 'text-slate-400 border-transparent'
+                  ? 'text-white bg-white/[0.04]'
+                  : 'text-slate-400 border-transparent hover:text-slate-200'
               }`}
+              style={activeTab === 'script' ? { borderColor: accentColor } : undefined}
             >
               Script, Voice &amp; Mixer
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('build')}
-              className={`flex-1 py-2.5 text-xs font-bold border-b-2 cursor-pointer ${
+              className={`flex-1 py-2.5 text-xs font-bold border-b-2 cursor-pointer transition-colors ${
                 activeTab === 'build'
-                  ? 'text-white border-[#364BDE] bg-[#364BDE]/10'
-                  : 'text-slate-400 border-transparent'
+                  ? 'text-white bg-white/[0.04]'
+                  : 'text-slate-400 border-transparent hover:text-slate-200'
               }`}
+              style={activeTab === 'build' ? { borderColor: accentColor } : undefined}
             >
               Build &amp; QA Console
             </button>
@@ -934,23 +1060,26 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                 <button
                   type="button"
                   onClick={handleSaveConfig}
-                  className="flex items-center gap-1.5 rounded-lg bg-[#364BDE] hover:bg-[#4A5FF0] px-3 py-1.5 text-xs font-semibold text-white cursor-pointer"
+                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-slate-950 cursor-pointer transition-opacity hover:opacity-90"
+                  style={{ backgroundColor: accentColor }}
                 >
                   <Save className="w-3.5 h-3.5" /> Save project.json
                 </button>
                 <button
                   type="button"
-                  disabled={isBusyAudio}
+                  disabled={isBusyAudio || !capabilities.ffmpegAvailable}
                   onClick={() => handleRegenerateVo(null)}
-                  className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40 cursor-pointer"
+                  title={ffmpegDisabledReason || 'Generate voiceovers for changed acts and remix master.wav'}
+                  className="flex items-center gap-1.5 rounded-lg border border-[#1E2833] bg-[#121A21] hover:bg-white/[0.08] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
                 >
-                  <Sparkles className="w-3.5 h-3.5 text-indigo-300" /> Regenerate Changed Acts
+                  <Sparkles className="w-3.5 h-3.5" style={{ color: accentColor }} /> Regenerate Changed Acts
                 </button>
                 <button
                   type="button"
-                  disabled={isBusyAudio}
+                  disabled={isBusyAudio || !capabilities.ffmpegAvailable}
                   onClick={handleRebuildMix}
-                  className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40 cursor-pointer"
+                  title={ffmpegDisabledReason || 'Rebuild audio/master.wav from voiceover, music, and SFX stems'}
+                  className="flex items-center gap-1.5 rounded-lg border border-[#1E2833] bg-[#121A21] hover:bg-white/[0.08] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
                 >
                   <RefreshCw className="w-3.5 h-3.5" /> Rebuild Mix
                 </button>
@@ -963,7 +1092,7 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                   return (
                     <div
                       key={act.id}
-                      className="rounded-xl border border-white/10 bg-[#0D0D0D]/70 p-3 space-y-2"
+                      className="rounded-xl border border-[#1E2833] bg-[#121A21]/75 p-3 space-y-2"
                     >
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="text-xs font-bold text-white">
@@ -986,14 +1115,14 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                               Pending
                             </span>
                           )}
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-mono border border-indigo-400/30 bg-[#364BDE]/20 text-indigo-200">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-mono border border-[#1E2833] bg-[#080d11] text-slate-300">
                             {stem?.cached ? 'Cached' : 'Changed'}
                           </span>
                           {stem?.ready && (
                             <button
                               type="button"
                               onClick={() => handleToggleStemPlay(stem.file)}
-                              className="px-2 py-0.5 rounded border border-white/15 bg-white/5 text-[11px] text-white cursor-pointer"
+                              className="px-2 py-0.5 rounded border border-[#1E2833] bg-[#080d11] hover:bg-white/[0.08] text-[11px] text-white cursor-pointer"
                             >
                               <Volume2 className="w-3 h-3 inline mr-1" />
                               Play
@@ -1001,9 +1130,10 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                           )}
                           <button
                             type="button"
-                            disabled={isBusyAudio}
+                            disabled={isBusyAudio || !capabilities.ffmpegAvailable}
                             onClick={() => handleRegenerateVo(act.id)}
-                            className="px-2 py-0.5 rounded border border-white/15 bg-white/5 hover:bg-white/10 text-[11px] text-white cursor-pointer disabled:opacity-40"
+                            title={ffmpegDisabledReason || `Regenerate voiceover for ${act.id}`}
+                            className="px-2 py-0.5 rounded border border-[#1E2833] bg-[#080d11] hover:bg-white/[0.08] text-[11px] text-white cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                           >
                             Regenerate
                           </button>
@@ -1018,7 +1148,7 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                           setDraftConfig(next);
                         }}
                         rows={2}
-                        className="w-full rounded-lg border border-white/15 bg-[#131320] px-2.5 py-1.5 text-xs text-white"
+                        className="w-full rounded-lg border border-[#1E2833] bg-[#080d11] px-2.5 py-1.5 text-xs text-white focus:outline-none"
                       />
 
                       <div className="grid grid-cols-2 gap-2">
@@ -1033,7 +1163,7 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                               next.acts[idx].startSec = Number(e.target.value);
                               setDraftConfig(next);
                             }}
-                            className="mt-0.5 w-full rounded border border-white/15 bg-[#131320] px-2 py-1 text-xs text-white"
+                            className="mt-0.5 w-full rounded border border-[#1E2833] bg-[#080d11] px-2 py-1 text-xs text-white"
                           />
                         </label>
                         <label className="text-[11px] text-slate-400">
@@ -1047,7 +1177,7 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                               next.acts[idx].maxDurationSec = Number(e.target.value);
                               setDraftConfig(next);
                             }}
-                            className="mt-0.5 w-full rounded border border-white/15 bg-[#131320] px-2 py-1 text-xs text-white"
+                            className="mt-0.5 w-full rounded border border-[#1E2833] bg-[#080d11] px-2 py-1 text-xs text-white"
                           />
                         </label>
                       </div>
@@ -1063,12 +1193,13 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                               : null;
                             setDraftConfig(next);
                           }}
+                          style={{ accentColor }}
                         />
                         Per-act voiceOverride
                       </label>
 
                       {hasOverride && act.voiceOverride && (
-                        <div className="grid grid-cols-2 gap-2 rounded-lg border border-[#364BDE]/35 bg-[#364BDE]/10 p-2">
+                        <div className="grid grid-cols-2 gap-2 rounded-lg border border-[#1E2833] bg-[#080d11]/90 p-2">
                           <select
                             value={act.voiceOverride.provider || ''}
                             onChange={(e) => {
@@ -1080,7 +1211,7 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                               next.acts[idx].voiceOverride = ov;
                               setDraftConfig(next);
                             }}
-                            className="rounded border border-white/15 bg-[#0D0D0D] px-2 py-1 text-xs text-white"
+                            className="rounded border border-[#1E2833] bg-[#121A21] px-2 py-1 text-xs text-white"
                           >
                             <option value="">Inherit provider</option>
                             <option value="elevenlabs">elevenlabs</option>
@@ -1098,7 +1229,7 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                               next.acts[idx].voiceOverride = ov;
                               setDraftConfig(next);
                             }}
-                            className="rounded border border-white/15 bg-[#0D0D0D] px-2 py-1 text-xs text-white"
+                            className="rounded border border-[#1E2833] bg-[#121A21] px-2 py-1 text-xs text-white"
                           />
                         </div>
                       )}
@@ -1108,7 +1239,7 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
               </div>
 
               {/* Music, SFX & Assets */}
-              <div className="space-y-2 pt-2 border-t border-white/10">
+              <div className="space-y-2 pt-2 border-t border-[#1E2833]">
                 <div className="text-xs font-bold text-slate-300">Music, SFX &amp; Custom Stems</div>
                 {[
                   details.stems.master && { label: 'Master Mix', entry: details.stems.master, replaceable: false },
@@ -1123,7 +1254,7 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                   .map(({ label, entry, replaceable }) => (
                     <div
                       key={entry.file}
-                      className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-[#0D0D0D]/70 px-3 py-2"
+                      className="flex items-center justify-between gap-2 rounded-lg border border-[#1E2833] bg-[#121A21]/75 px-3 py-2"
                     >
                       <div className="min-w-0">
                         <div className="text-xs font-semibold text-white truncate">
@@ -1140,17 +1271,25 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                           <button
                             type="button"
                             onClick={() => handleToggleStemPlay(entry.file)}
-                            className="px-2 py-1 rounded border border-white/15 bg-white/5 text-[11px] text-white cursor-pointer"
+                            className="px-2 py-1 rounded border border-[#1E2833] bg-[#080d11] hover:bg-white/[0.08] text-[11px] text-white cursor-pointer"
                           >
                             Play
                           </button>
                         )}
                         {replaceable && (
-                          <label className="px-2 py-1 rounded border border-white/15 bg-white/5 text-[11px] text-white cursor-pointer">
+                          <label
+                            title={ffmpegDisabledReason || `Upload custom audio stem for ${entry.file}`}
+                            className={`px-2 py-1 rounded border border-[#1E2833] bg-[#080d11] text-[11px] text-white ${
+                              capabilities.ffmpegAvailable
+                                ? 'hover:bg-white/[0.08] cursor-pointer'
+                                : 'opacity-40 cursor-not-allowed'
+                            }`}
+                          >
                             Replace
                             <input
                               type="file"
                               accept="audio/*"
+                              disabled={!capabilities.ffmpegAvailable}
                               className="hidden"
                               onChange={(e) => {
                                 const f = e.target.files?.[0];
@@ -1164,8 +1303,8 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                   ))}
 
                 <div className="flex items-center gap-2 pt-1">
-                  <label className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 px-3 py-1.5 text-xs font-semibold text-white cursor-pointer">
-                    <Upload className="w-3.5 h-3.5" /> Upload Asset
+                  <label className="inline-flex items-center gap-1.5 rounded-lg border border-[#1E2833] bg-[#121A21] hover:bg-white/[0.08] px-3 py-1.5 text-xs font-semibold text-white cursor-pointer transition-colors">
+                    <Upload className="w-3.5 h-3.5" style={{ color: accentColor }} /> Upload Asset
                     <input
                       type="file"
                       className="hidden"
@@ -1188,41 +1327,47 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  disabled={Boolean(activeJobId)}
+                  disabled={Boolean(activeJobId) || !capabilities.ffmpegAvailable}
+                  title={ffmpegDisabledReason || 'Render fast 720p/30fps preview MP4'}
                   onClick={() => handleStartJob('render-fast')}
-                  className="px-2.5 py-1.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-xs font-semibold text-white disabled:opacity-40 cursor-pointer"
+                  className="px-2.5 py-1.5 rounded-lg border border-[#1E2833] bg-[#121A21] hover:bg-white/[0.08] text-xs font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
                 >
                   Render Draft (720p)
                 </button>
                 <button
                   type="button"
-                  disabled={Boolean(activeJobId)}
+                  disabled={Boolean(activeJobId) || !capabilities.ffmpegAvailable}
+                  title={ffmpegDisabledReason || 'Render master 1920x1080 60fps MP4'}
                   onClick={() => handleStartJob('render')}
-                  className="px-2.5 py-1.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-xs font-semibold text-white disabled:opacity-40 cursor-pointer"
+                  className="px-2.5 py-1.5 rounded-lg border border-[#1E2833] bg-[#121A21] hover:bg-white/[0.08] text-xs font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
                 >
                   Render 16:9
                 </button>
                 <button
                   type="button"
-                  disabled={Boolean(activeJobId)}
+                  disabled={Boolean(activeJobId) || !capabilities.ffmpegAvailable}
+                  title={ffmpegDisabledReason || 'Export 1080x1920 9:16 vertical MP4'}
                   onClick={() => handleStartJob('vertical')}
-                  className="px-2.5 py-1.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-xs font-semibold text-white disabled:opacity-40 cursor-pointer"
+                  className="px-2.5 py-1.5 rounded-lg border border-[#1E2833] bg-[#121A21] hover:bg-white/[0.08] text-xs font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
                 >
                   Export 9:16
                 </button>
                 <button
                   type="button"
-                  disabled={Boolean(activeJobId)}
+                  disabled={Boolean(activeJobId) || !capabilities.ffmpegAvailable}
+                  title={ffmpegDisabledReason || 'Run complete VO -> DSP -> Mix -> Render -> 9:16 -> QA pipeline'}
                   onClick={() => handleStartJob('build')}
-                  className="px-3 py-1.5 rounded-lg bg-[#364BDE] hover:bg-[#4A5FF0] text-xs font-semibold text-white disabled:opacity-40 cursor-pointer"
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-950 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-opacity hover:opacity-90"
+                  style={{ backgroundColor: accentColor }}
                 >
                   Full Build
                 </button>
                 <button
                   type="button"
-                  disabled={Boolean(activeJobId)}
+                  disabled={Boolean(activeJobId) || !capabilities.ffmpegAvailable}
+                  title={ffmpegDisabledReason || 'Inspect stream technical metrics and generate QA contact sheet'}
                   onClick={() => handleStartJob('qa')}
-                  className="px-2.5 py-1.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-xs font-semibold text-white disabled:opacity-40 cursor-pointer"
+                  className="px-2.5 py-1.5 rounded-lg border border-[#1E2833] bg-[#121A21] hover:bg-white/[0.08] text-xs font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
                 >
                   Run QA
                 </button>
@@ -1238,10 +1383,10 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
               </div>
 
               <div>
-                <div className="h-2 rounded-full bg-[#0D0D0D] border border-white/10 overflow-hidden">
+                <div className="h-2 rounded-full bg-[#080d11] border border-[#1E2833] overflow-hidden">
                   <div
-                    className="h-full bg-[#364BDE] transition-all duration-150"
-                    style={{ width: `${jobPct}%` }}
+                    className="h-full transition-all duration-150"
+                    style={{ width: `${jobPct}%`, backgroundColor: accentColor }}
                   />
                 </div>
                 <div className="flex justify-between mt-1 text-[11px] font-mono text-slate-300">
@@ -1250,17 +1395,24 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                 </div>
               </div>
 
-              <pre className="rounded-lg border border-white/10 bg-[#07070b] p-3 font-mono text-[11px] text-slate-300 h-40 overflow-y-auto whitespace-pre-wrap">
+              <pre className="rounded-lg border border-[#1E2833] bg-[#080d11] p-3 font-mono text-[11px] text-slate-300 h-40 overflow-y-auto whitespace-pre-wrap">
                 {jobLogs}
               </pre>
 
               {/* Downloads */}
               <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleExportBundledHtml}
+                  className="flex items-center gap-1.5 rounded-lg border border-[#1E2833] bg-[#121A21] hover:bg-white/[0.08] px-2.5 py-1.5 text-xs text-white cursor-pointer transition-colors"
+                >
+                  <FileCode2 className="w-3.5 h-3.5" style={{ color: accentColor }} /> Bundled HTML
+                </button>
                 {details.outputs.final16x9 && (
                   <button
                     type="button"
                     onClick={() => handleAuthenticatedDownload('output/final-16x9.mp4', `${selectedId}-16x9.mp4`)}
-                    className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 px-2.5 py-1.5 text-xs text-white cursor-pointer"
+                    className="flex items-center gap-1.5 rounded-lg border border-[#1E2833] bg-[#121A21] hover:bg-white/[0.08] px-2.5 py-1.5 text-xs text-white cursor-pointer transition-colors"
                   >
                     <Download className="w-3.5 h-3.5" /> 16:9 MP4
                   </button>
@@ -1269,7 +1421,7 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                   <button
                     type="button"
                     onClick={() => handleAuthenticatedDownload('output/final-9x16.mp4', `${selectedId}-9x16.mp4`)}
-                    className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 px-2.5 py-1.5 text-xs text-white cursor-pointer"
+                    className="flex items-center gap-1.5 rounded-lg border border-[#1E2833] bg-[#121A21] hover:bg-white/[0.08] px-2.5 py-1.5 text-xs text-white cursor-pointer transition-colors"
                   >
                     <Download className="w-3.5 h-3.5" /> 9:16 MP4
                   </button>
@@ -1278,7 +1430,7 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                   <button
                     type="button"
                     onClick={() => handleAuthenticatedDownload('audio/master.wav', `${selectedId}-master.wav`)}
-                    className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 px-2.5 py-1.5 text-xs text-white cursor-pointer"
+                    className="flex items-center gap-1.5 rounded-lg border border-[#1E2833] bg-[#121A21] hover:bg-white/[0.08] px-2.5 py-1.5 text-xs text-white cursor-pointer transition-colors"
                   >
                     <Download className="w-3.5 h-3.5" /> master.wav
                   </button>
@@ -1286,7 +1438,7 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
               </div>
 
               {details.qaReport && (
-                <div className="rounded-lg border border-white/10 bg-[#0D0D0D]/70 p-3 space-y-1.5 text-xs">
+                <div className="rounded-lg border border-[#1E2833] bg-[#121A21]/75 p-3 space-y-1.5 text-xs">
                   <div className="flex items-center gap-1.5 font-bold">
                     {details.qaReport.passed ? (
                       <>
@@ -1324,7 +1476,7 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                 <img
                   src={qaSheetUrl}
                   alt="QA Contact Sheet"
-                  className="w-full rounded-lg border border-white/10"
+                  className="w-full rounded-lg border border-[#1E2833]"
                 />
               )}
             </div>
@@ -1334,9 +1486,9 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
 
       {/* New Project Modal */}
       {isNewModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-          <div className="w-full max-w-md rounded-2xl border border-white/15 bg-[#1A1A2E] p-5 space-y-3">
-            <h3 className="text-base font-bold text-white">Create Video Project</h3>
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl border border-[#1E2833] bg-[#0b1118] p-5 space-y-3 shadow-2xl">
+            <h3 className="text-base font-bold text-white">Create Film Studio Project</h3>
             <label className="block text-xs text-slate-300">
               Project ID (slug)
               <input
@@ -1344,7 +1496,7 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                 placeholder="acme-launch-film"
                 value={newProjId}
                 onChange={(e) => setNewProjId(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-white/15 bg-[#0D0D0D] px-3 py-2 text-xs text-white"
+                className="mt-1 w-full rounded-lg border border-[#1E2833] bg-[#080d11] px-3 py-2 text-xs text-white focus:outline-none"
               />
             </label>
             <label className="block text-xs text-slate-300">
@@ -1354,7 +1506,7 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                 placeholder="Acme Launch Film"
                 value={newProjName}
                 onChange={(e) => setNewProjName(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-white/15 bg-[#0D0D0D] px-3 py-2 text-xs text-white"
+                className="mt-1 w-full rounded-lg border border-[#1E2833] bg-[#080d11] px-3 py-2 text-xs text-white focus:outline-none"
               />
             </label>
             <label className="block text-xs text-slate-300">
@@ -1365,21 +1517,22 @@ export const VideoStudioWorkspace: React.FC<VideoStudioWorkspaceProps> = ({
                 max={180}
                 value={newProjDuration}
                 onChange={(e) => setNewProjDuration(Number(e.target.value))}
-                className="mt-1 w-full rounded-lg border border-white/15 bg-[#0D0D0D] px-3 py-2 text-xs text-white"
+                className="mt-1 w-full rounded-lg border border-[#1E2833] bg-[#080d11] px-3 py-2 text-xs text-white focus:outline-none"
               />
             </label>
             <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
                 onClick={() => setIsNewModalOpen(false)}
-                className="px-3 py-1.5 rounded-lg border border-white/15 text-xs text-slate-300 cursor-pointer"
+                className="px-3 py-1.5 rounded-lg border border-[#1E2833] bg-[#121A21] text-xs text-slate-300 hover:text-white cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleCreateProject}
-                className="px-3 py-1.5 rounded-lg bg-[#364BDE] text-xs font-semibold text-white cursor-pointer"
+                className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-950 cursor-pointer"
+                style={{ backgroundColor: accentColor }}
               >
                 Create Project
               </button>

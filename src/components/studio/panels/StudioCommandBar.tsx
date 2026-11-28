@@ -333,10 +333,11 @@ export const StudioCommandBar: React.FC<StudioCommandBarProps> = ({
                 : 'text-slate-400 hover:text-white'
             }`}
             style={activePostFormat === 'reel' ? { color: theme.accent } : undefined}
-            title="Animated 9:16 Motion Reel Video"
+            title="In-Browser 9:16 Canvas Motion Reel (from Carousel Slides — use Film Studio for multi-act 16:9 & 9:16 HTML/VO films)"
           >
             <Film className="w-3 h-3" />
             <span>Reel</span>
+            <span className="hidden xl:inline text-[9px] font-mono opacity-70">9:16</span>
           </button>
         </div>
 

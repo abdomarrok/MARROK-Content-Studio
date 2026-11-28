@@ -137,7 +137,14 @@ app.use((req, res, next) => {
   return next();
 });
 
-app.use(express.json({ limit: serverConfig.jsonBodyLimit }));
+const jsonBodyParser = express.json({ limit: serverConfig.jsonBodyLimit });
+app.use((req, res, next) => {
+  const pathOnly = (req.originalUrl || req.url || '').split('?')[0];
+  if (/^\/api\/video-studio\/projects\/[^/]+\/assets\/?$/.test(pathOnly)) {
+    return next();
+  }
+  return jsonBodyParser(req, res, next);
+});
 
 // Minimal unauthenticated liveness & readiness probes (zero secret/SQL telemetry)
 app.get(['/api/health', '/health'], async (req, res) => {
@@ -394,13 +401,14 @@ app.use(async (req, res, next) => {
     jti: session.jti,
   };
 
-  // Deploy Previews must never write to production DB or publishing channels
+  // Deploy Previews must never write to production DB, publishing channels, or video studio filesystem
   const isMutating = req.method !== 'GET' && req.method !== 'HEAD';
   const isIsolatedProtectedWrite =
     pathOnly.startsWith('/api/posts') ||
     pathOnly.startsWith('/posts') ||
     pathOnly.startsWith('/api/publish/') ||
-    pathOnly.startsWith('/publish/');
+    pathOnly.startsWith('/publish/') ||
+    pathOnly.startsWith('/api/video-studio');
   if (isMutating && isIsolatedProtectedWrite && isPreviewWriteBlocked()) {
     return res.status(403).json({
       error: 'Deploy Previews are read-isolated and cannot mutate production posts or publishing channels.',
